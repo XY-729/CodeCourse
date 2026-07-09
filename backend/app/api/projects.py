@@ -139,9 +139,9 @@ def regenerate_course(project_id: int) -> ProjectActionResponse:
 def generate_outline(project_id: int, payload: GenerateOutlineRequest, background_tasks: BackgroundTasks) -> GenerationTaskResponse:
     repo_root = _project_root(project_id)
     settings = get_llm_settings()
-    task, reused = create_or_reuse_outline_task(project_id, repo_root, payload.scope, settings.get("model"))
+    task, reused = create_or_reuse_outline_task(project_id, repo_root, payload.scope, settings.get("model"), payload.instructions)
     if not reused:
-        background_tasks.add_task(run_outline_generation_task, project_id, task.id, payload.scope)
+        background_tasks.add_task(run_outline_generation_task, project_id, task.id, payload.scope, payload.instructions)
     return _to_task_response(task)
 
 
@@ -149,9 +149,9 @@ def generate_outline(project_id: int, payload: GenerateOutlineRequest, backgroun
 def generate_file_lesson(project_id: int, payload: GenerateFileLessonRequest, background_tasks: BackgroundTasks) -> GenerationTaskResponse:
     repo_root = _project_root(project_id)
     settings = get_llm_settings()
-    task, reused = create_or_reuse_file_lesson_task(project_id, repo_root, payload.path, payload.mode, settings.get("model"))
+    task, reused = create_or_reuse_file_lesson_task(project_id, repo_root, payload.path, payload.mode, settings.get("model"), payload.instructions)
     if not reused:
-        background_tasks.add_task(run_file_lesson_task, project_id, task.id, payload.path, payload.mode)
+        background_tasks.add_task(run_file_lesson_task, project_id, task.id, payload.path, payload.mode, payload.instructions)
     return _to_task_response(task)
 
 

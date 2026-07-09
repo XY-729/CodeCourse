@@ -51,11 +51,13 @@ class LearningScopeRequest(BaseModel):
 
 class GenerateOutlineRequest(BaseModel):
     scope: LearningScopeRequest = Field(default_factory=LearningScopeRequest)
+    instructions: str = Field(default="", max_length=4000)
 
 
 class GenerateFileLessonRequest(BaseModel):
     path: str = Field(min_length=1, max_length=1000)
     mode: Literal["brief", "detailed"] = "brief"
+    instructions: str = Field(default="", max_length=4000)
 
 
 class GenerationTaskResponse(BaseModel):

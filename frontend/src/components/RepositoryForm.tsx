@@ -24,11 +24,13 @@ export default function RepositoryForm({ loading, onSubmit }: Props) {
           onChange={(event) => setUrl(event.target.value)}
           placeholder="git@github.com:owner/repo.git"
         />
-        <span className={isHttpsGithub ? "input-hint warning" : "input-hint"}>{isHttpsGithub ? "当前 VM 建议使用 SSH 地址" : "支持 GitHub SSH / HTTPS"}</span>
+        <span className={isHttpsGithub ? "input-hint warning" : "input-hint"}>
+          {isHttpsGithub ? "当前 VM 建议使用 SSH 地址" : "支持 GitHub SSH / HTTPS；导入不会调用模型 API"}
+        </span>
       </div>
       <button type="submit" disabled={loading || !url.trim()} title="导入仓库">
         <Download size={16} />
-        <span>{loading ? "导入中" : "导入"}</span>
+        <span>{loading ? "导入中..." : "导入"}</span>
       </button>
     </form>
   );

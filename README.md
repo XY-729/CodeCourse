@@ -2,19 +2,27 @@
 
 这是一个面向学习的 GitHub 项目阅读与课程生成工具。第一阶段只做项目导入、结构扫描、Markdown 课程生成、代码阅读和课程阅读，不运行代码，不调试，不做多人协作。
 
+## 当前规则
+
+- 导入仓库只执行 clone、扫描和创建项目记录，不调用模型 API。
+- 导入后默认生成的 `project_map.md` 和 `outline.md` 都是“待生成”占位内容。
+- 所有会调用模型 API 的动作都必须由用户点击按钮并确认。
+- 选中文件后，可以按需生成“粗略介绍”或“详细分析”。
+- 已生成内容可以通过填写新的补充要求后重新生成。
+- 模型返回空内容或格式异常时，不覆盖旧课件。
+- 新生成内容统一写入 `workspace/generated/<project_id>/`，避免污染被克隆仓库。
+
 ## 功能
 
 - 输入 GitHub 仓库 URL，后端使用 `git clone --depth 1` 克隆到 `workspace/repos/`。
-- 导入流程只做 clone、扫描、项目记录创建和规则模板总纲生成，不阻塞等待模型。
 - 扫描目录树并忽略 `.git`、`node_modules`、`build`、`dist`、`target`、`__pycache__` 等目录。
 - 识别 README、package.json、pyproject.toml、Cargo.toml、go.mod、Dockerfile 等关键文件。
-- 新生成内容统一写入 `workspace/generated/<project_id>/`，避免污染被克隆仓库。
 - 前端提供三栏布局：文件树和课程目录、只读 Monaco 代码阅读器或 Markdown 阅读器、解释面板。
+- 左栏和右栏支持拖拽调整宽度。
 - 前端支持配置 DeepSeek / OpenAI Compatible 模型 API，并提供 DeepSeek API Key 跳转按钮。
 - 支持按学习范围生成 AI 总纲：全项目、指定目录、指定文件。
-- 支持选中文件后按需生成粗略版或详细版文件课件。
-- 同一文件、同一模式、同一 prompt 版本和同一输入哈希会复用已完成任务，避免重复消耗 token。
-- 模型不可用或任务失败时保留旧课件，规则模板回退内容仍可阅读。
+- 支持用户补充生成要求，例如“面向 C++ 初学者”“重点讲判题核心”“输出自测题”。
+- 同一输入、同一要求、同一模式和同一 prompt 版本会复用已完成任务，避免重复消耗 token。
 
 ## GitHub URL 建议
 
@@ -34,6 +42,7 @@ git@github.com:owner/repo.git
 - 网页填写的 API Key 只保存在本机 SQLite：`workspace/app.db`
 - API 不会回显完整 Key，只返回是否已配置和掩码后的 Key
 - 可通过面板里的 `DeepSeek API Key` 按钮跳转到 `https://platform.deepseek.com/api_keys`
+- 连通性测试会先弹出确认，再调用模型 API
 
 读取优先级：
 
@@ -43,15 +52,7 @@ git@github.com:owner/repo.git
 
 `.env` 与 `workspace/app.db` 已加入 `.gitignore`。
 
-## 启动方式
-
-### 本机开发
-
-在开发机器上分别启动后端和前端，通过 `http://localhost:5173` 访问。
-
-Vite dev server 内置了 proxy，会将同源的 `/api` 请求转发到后端的 `http://127.0.0.1:8000`，无需手动配置 CORS 或跨域。
-
-**1. 启动后端**
+## 启动后端
 
 ```bash
 cd /home/xiyuan729/github-project-learner/backend
@@ -61,48 +62,15 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-> 后端监听 `0.0.0.0:8000` 是为了同时支持本机和局域网访问。如果只在本机开发，可以不加 `--host 0.0.0.0`。
-
-**2. 启动前端**
+## 启动前端
 
 ```bash
 cd /home/xiyuan729/github-project-learner/frontend
 npm install
-npm run dev
-```
-
-浏览器打开 `http://localhost:5173`。
-
-### 虚拟机 / 局域网访问
-
-当后端运行在虚拟机或另一台机器上时，需要通过局域网 IP 访问。
-
-**后端**（在 VM 上）：
-```bash
-cd backend
-source .venv/bin/activate
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**前端**（在 VM 上）：
-```bash
-cd frontend
 npm run dev -- --host 0.0.0.0
 ```
 
-浏览器访问 `http://<VM_IP>:5173`（例如 `http://192.168.60.131:5173`）。
-
-Vite proxy 会将 `/api` 转发到同一台机器上的 `http://127.0.0.1:8000`，因此无论从本机还是局域网访问前端，API 请求都能正确路由到后端。
-
-### SSH 隧道访问
-
-如果 VM 不能直接暴露端口，可以通过 SSH 隧道转发：
-
-```bash
-ssh -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 linux-vm
-```
-
-然后打开 `http://localhost:5173`。
+浏览器访问 `http://<vm-ip>:5173`。如果通过 SSH 隧道访问 Windows 本机，转发 `5173` 和 `8000` 后打开 `http://localhost:5173`。
 
 ## API 概览
 

@@ -30,6 +30,7 @@ import Sidebar from "./components/Sidebar";
 
 type ViewerMode = "empty" | "code" | "course";
 type ScopeType = LearningScope["type"];
+type DragTarget = "sidebar" | "explain" | null;
 
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
 
@@ -46,6 +47,11 @@ function parentDir(path: string): string {
   return parts.join("/");
 }
 
+function taskLabel(task: GenerationTask): string {
+  const type = task.task_type === "file_lesson" ? "文件课件" : "项目总纲";
+  return `${type} / ${task.status}`;
+}
+
 export default function App() {
   const [project, setProject] = useState<Project | null>(null);
   const [tree, setTree] = useState<TreeNode | null>(null);
@@ -58,25 +64,54 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [busyProjectId, setBusyProjectId] = useState<number | null>(null);
   const [explainLoading, setExplainLoading] = useState(false);
-  const [explanation, setExplanation] = useState("");
-  const [provider, setProvider] = useState("template");
+  const [explanation, setExplanation] = useState("选择文件或课件后，可点击右上角刷新按钮手动生成解释。调用模型 API 前会再次确认。");
+  const [provider, setProvider] = useState("manual");
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [scopeType, setScopeType] = useState<ScopeType>("full_project");
   const [scopePathsText, setScopePathsText] = useState("");
+  const [generationInstructions, setGenerationInstructions] = useState("");
   const [activeTask, setActiveTask] = useState<GenerationTask | null>(null);
   const [taskMessage, setTaskMessage] = useState("");
+  const [sidebarWidth, setSidebarWidth] = useState(300);
+  const [explainWidth, setExplainWidth] = useState(320);
+  const [dragTarget, setDragTarget] = useState<DragTarget>(null);
 
   const selectedCourseTitle = useMemo(() => {
     return courses.find((file) => file.filename === selectedCourse)?.title ?? selectedCourse;
   }, [courses, selectedCourse]);
 
+  const selectedContext = fileContent?.path ?? selectedCourse ?? "";
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
 
   useEffect(() => {
     loadProjects();
   }, []);
+
+  useEffect(() => {
+    if (!dragTarget) {
+      return;
+    }
+    function onMouseMove(event: MouseEvent) {
+      if (dragTarget === "sidebar") {
+        setSidebarWidth(Math.min(520, Math.max(220, event.clientX)));
+      } else if (dragTarget === "explain") {
+        setExplainWidth(Math.min(560, Math.max(240, window.innerWidth - event.clientX)));
+      }
+    }
+    function onMouseUp() {
+      setDragTarget(null);
+    }
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    document.body.classList.add("resizing");
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.body.classList.remove("resizing");
+    };
+  }, [dragTarget]);
 
   function buildScope(): LearningScope {
     if (scopeType === "full_project") {
@@ -117,87 +152,54 @@ export default function App() {
   async function openProject(nextProject: Project) {
     setError("");
     setLoading(true);
-
     try {
       const freshProject = await getProject(nextProject.id);
       setProject(freshProject);
-
-      // 1. 文件树是核心功能，必须优先加载，且独立失败提示
-      try {
-        const nextTree = await getTree(freshProject.id);
-        setTree(nextTree);
-      } catch (caught) {
-        setTree(null);
-        setCourses([]);
-        setMode("empty");
-        setError(caught instanceof Error ? `读取文件树失败：${caught.message}` : "读取文件树失败");
-        return;
-      }
-
-      // 2. 课程目录是次核心，失败不应该影响文件树
-      let nextCourses: CourseFile[] = [];
-      try {
-        nextCourses = await getCourseFiles(freshProject.id);
-        setCourses(nextCourses);
-      } catch (caught) {
-        setCourses([]);
-        setError(caught instanceof Error ? `读取课程目录失败：${caught.message}` : "读取课程目录失败");
-      }
-
-      // 3. 任务列表是附加功能，失败不能影响文件树和课程阅读
-      try {
-        const tasks = await listGenerationTasks(freshProject.id);
-        setActiveTask(tasks[0] ?? null);
-        setTaskMessage(tasks[0] ? `最近任务：${tasks[0].task_type} / ${tasks[0].status}` : "默认显示规则模板回退总纲");
-      } catch (caught) {
-        setActiveTask(null);
-        setTaskMessage("任务状态接口不可用，不影响文件阅读。");
-      }
-
+      const [nextTree, nextCourses, tasks] = await Promise.all([
+        getTree(freshProject.id),
+        getCourseFiles(freshProject.id),
+        listGenerationTasks(freshProject.id),
+      ]);
+      setTree(nextTree);
+      setCourses(nextCourses);
+      setActiveTask(tasks[0] ?? null);
+      setTaskMessage(tasks[0] ? `最近任务：${taskLabel(tasks[0])}` : "当前默认内容为“待生成”，不会自动调用模型 API。");
       setFileContent(null);
-
+      setProvider("manual");
+      setExplanation("已打开项目。请选择文件或课件；需要解释时手动点击右侧刷新按钮。");
       const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
-
-      if (!firstCourse) {
-        setSelectedCourse(null);
-        setMarkdown("");
-        setMode("empty");
-        setExplanation("");
-        return;
-      }
-
-      try {
-        const firstContent = await getCourseContent(freshProject.id, firstCourse.filename);
+      if (firstCourse) {
+        const content = await getCourseContent(freshProject.id, firstCourse.filename);
         setSelectedCourse(firstCourse.filename);
-        setMarkdown(firstContent.content);
+        setMarkdown(content.content);
         setMode("course");
-      } catch (caught) {
+      } else {
         setSelectedCourse(null);
         setMarkdown("");
         setMode("empty");
-        setError(caught instanceof Error ? `读取默认课件失败：${caught.message}` : "读取默认课件失败");
       }
-
-      try {
-        const result = await explainCurrent(freshProject.id, firstCourse.filename, "course");
-        setProvider(result.provider);
-        setExplanation(result.explanation);
-      } catch {
-        setProvider("template");
-        setExplanation("解释面板加载失败，不影响文件树和课件阅读。");
-      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "打开项目失败");
     } finally {
       setLoading(false);
     }
   }
 
-  async function refreshExplain(nextMode = mode, path = fileContent?.path ?? selectedCourse) {
+  async function refreshExplain(nextMode = mode, path = selectedContext) {
     if (!project) {
+      return;
+    }
+    if (!path) {
+      setExplanation("请先选择一个文件或课件。");
+      return;
+    }
+    const ok = window.confirm("将调用模型 API 生成解释，可能消耗 token。是否继续？");
+    if (!ok) {
       return;
     }
     setExplainLoading(true);
     try {
-      const result = await explainCurrent(project.id, path ?? null, nextMode === "course" ? "course" : "file");
+      const result = await explainCurrent(project.id, path, nextMode === "course" ? "course" : "file");
       setProvider(result.provider);
       setExplanation(result.explanation);
     } catch (caught) {
@@ -210,7 +212,7 @@ export default function App() {
   async function handleImport(url: string) {
     setLoading(true);
     setError("");
-    setExplanation("");
+    setExplanation("导入项目不会自动调用模型 API。");
     setTaskMessage("");
     try {
       const imported = await importProject(url);
@@ -233,14 +235,13 @@ export default function App() {
       setFileContent(content);
       setSelectedCourse(null);
       setMode("code");
+      setProvider("manual");
+      setExplanation("已选择文件。可在上方输入要求后生成粗略介绍或详细分析；右侧解释需要手动确认。");
       if (scopeType === "files") {
         setScopePathsText(path);
       } else if (scopeType === "directories") {
         setScopePathsText(parentDir(path));
       }
-      const result = await explainCurrent(project.id, path, "file");
-      setProvider(result.provider);
-      setExplanation(result.explanation);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "读取文件失败");
     }
@@ -257,11 +258,10 @@ export default function App() {
       setMarkdown(content.content);
       setFileContent(null);
       setMode("course");
-      const result = await explainCurrent(project.id, filename, "course");
-      setProvider(result.provider);
-      setExplanation(result.explanation);
+      setProvider("manual");
+      setExplanation("已选择课件。若要重新生成，请在中间栏上方输入新的要求后点击生成按钮。");
     } catch (caught) {
-      setError(caught instanceof Error ? "读取课件失败：" + caught.message : "读取课件失败");
+      setError(caught instanceof Error ? caught.message : "读取课程失败");
     }
   }
 
@@ -270,7 +270,7 @@ export default function App() {
       return;
     }
     setActiveTask(initialTask);
-    setTaskMessage(`任务已创建：${initialTask.task_type} / ${initialTask.status}`);
+    setTaskMessage(`任务已创建：${taskLabel(initialTask)}`);
     let nextTask = initialTask;
     for (let attempt = 0; attempt < 90; attempt += 1) {
       if (TERMINAL_TASK_STATUSES.has(nextTask.status)) {
@@ -279,18 +279,23 @@ export default function App() {
       await new Promise((resolve) => window.setTimeout(resolve, 1500));
       nextTask = await getGenerationTask(project.id, initialTask.id);
       setActiveTask(nextTask);
-      setTaskMessage(`生成任务：${nextTask.task_type} / ${nextTask.status}`);
+      setTaskMessage(`生成任务：${taskLabel(nextTask)}`);
     }
-    await refreshCourses(project.id);
+    const nextCourses = await refreshCourses(project.id);
     const freshProject = await getProject(project.id);
     setProject(freshProject);
     setProjects((items) => items.map((item) => (item.id === freshProject.id ? freshProject : item)));
     if (nextTask.status === "completed") {
-      setTaskMessage("生成完成，课程目录已刷新");
-      if (selectedCourse) {
-        const refreshedContent = await getCourseContent(project.id, selectedCourse).catch(() => null);
-        if (refreshedContent) {
-          setMarkdown(refreshedContent.content);
+      setTaskMessage("生成完成，课程目录已刷新。");
+      const preferred = nextTask.task_type === "file_lesson"
+        ? nextCourses.find((item) => item.filename === nextTask.output_path?.split("/").slice(-2).join("/"))
+        : nextCourses.find((item) => item.filename === "outline.md");
+      if (preferred) {
+        await handleSelectCourse(preferred.filename);
+      } else if (selectedCourse) {
+        const content = await getCourseContent(project.id, selectedCourse).catch(() => null);
+        if (content) {
+          setMarkdown(content.content);
         }
       }
     } else if (nextTask.status === "failed") {
@@ -302,9 +307,13 @@ export default function App() {
     if (!project) {
       return;
     }
+    const ok = window.confirm("将调用模型 API 生成或重新生成项目总纲，可能消耗 token。是否继续？");
+    if (!ok) {
+      return;
+    }
     setError("");
     try {
-      const task = await generateOutline(project.id, buildScope());
+      const task = await generateOutline(project.id, buildScope(), generationInstructions);
       await trackTask(task);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建总纲任务失败");
@@ -315,9 +324,14 @@ export default function App() {
     if (!project || !fileContent) {
       return;
     }
+    const label = nextMode === "brief" ? "粗略介绍" : "详细分析";
+    const ok = window.confirm(`将调用模型 API 为 ${fileContent.path} 生成或重新生成${label}，可能消耗 token。是否继续？`);
+    if (!ok) {
+      return;
+    }
     setError("");
     try {
-      const task = await generateFileLesson(project.id, fileContent.path, nextMode);
+      const task = await generateFileLesson(project.id, fileContent.path, nextMode, generationInstructions);
       await trackTask(task);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建文件课件任务失败");
@@ -334,14 +348,14 @@ export default function App() {
         await openProject(nextProject);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "重新生成失败");
+      setError(caught instanceof Error ? caught.message : "重置待生成内容失败");
     } finally {
       setBusyProjectId(null);
     }
   }
 
   async function handleDelete(nextProject: Project) {
-    if (!window.confirm(`删除本地导入项目 ${nextProject.name}？克隆目录也会删除。`)) {
+    if (!window.confirm(`删除本地导入项目 ${nextProject.name}？克隆目录和生成内容都会删除。`)) {
       return;
     }
     setBusyProjectId(nextProject.id);
@@ -358,7 +372,7 @@ export default function App() {
         setSelectedCourse(null);
         setMarkdown("");
         setMode("empty");
-        setExplanation("");
+        setExplanation("选择文件或课件后，可点击右上角刷新按钮手动生成解释。");
         setTaskMessage("");
         if (remaining.length > 0) {
           await openProject(remaining[0]);
@@ -384,7 +398,10 @@ export default function App() {
         </button>
       </header>
       {error ? <div className="error-bar">{error}</div> : null}
-      <main className="workbench">
+      <main
+        className="workbench"
+        style={{ gridTemplateColumns: `${sidebarWidth}px 6px minmax(0, 1fr) 6px ${explainWidth}px` }}
+      >
         <Sidebar
           projects={projects}
           currentProjectId={project?.id ?? null}
@@ -399,6 +416,7 @@ export default function App() {
           onSelectFile={handleSelectFile}
           onSelectCourse={handleSelectCourse}
         />
+        <div className="resize-handle" onMouseDown={() => setDragTarget("sidebar")} title="拖拽调整左栏宽度" />
         <section className="center-pane">
           <div className="generation-bar">
             <div className="scope-controls">
@@ -414,18 +432,27 @@ export default function App() {
                 disabled={!project || scopeType === "full_project" || isTaskRunning}
               />
               <button onClick={handleGenerateOutline} disabled={!project || isTaskRunning}>
-                生成 AI 总纲
+                生成/重新生成 AI 总纲
               </button>
             </div>
+            <textarea
+              className="generation-instructions"
+              value={generationInstructions}
+              onChange={(event) => setGenerationInstructions(event.target.value)}
+              placeholder="重新提出要求，例如：面向 C++ 初学者；重点讲判题核心；每节课必须给出相关文件和自测题。"
+              disabled={!project || isTaskRunning}
+            />
             <div className="lesson-actions">
               <button onClick={() => handleGenerateFileLesson("brief")} disabled={!canGenerateFileLesson || isTaskRunning}>
-                生成粗略课件
+                生成/重新生成粗略介绍
               </button>
               <button onClick={() => handleGenerateFileLesson("detailed")} disabled={!canGenerateFileLesson || isTaskRunning}>
-                生成详细课件
+                生成/重新生成详细分析
               </button>
             </div>
-            <div className={`task-status ${activeTask?.status === "failed" ? "failed" : ""}`}>{taskMessage || "导入后先显示规则模板回退内容；AI 内容按需生成。"}</div>
+            <div className={`task-status ${activeTask?.status === "failed" ? "failed" : ""}`}>
+              {taskMessage || "默认内容均为“待生成”；所有模型 API 调用都需要手动点击并确认。"}
+            </div>
           </div>
           {mode === "code" && fileContent ? (
             <CodeViewer path={fileContent.path} language={fileContent.language} content={fileContent.content} />
@@ -433,6 +460,7 @@ export default function App() {
           {mode === "course" ? <MarkdownViewer title={selectedCourseTitle} content={markdown} /> : null}
           {mode === "empty" ? <div className="empty-state">导入仓库后开始阅读</div> : null}
         </section>
+        <div className="resize-handle" onMouseDown={() => setDragTarget("explain")} title="拖拽调整右栏宽度" />
         <ExplainPanel provider={provider} explanation={explanation} loading={explainLoading} onRefresh={() => refreshExplain()} />
       </main>
       <LLMSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />

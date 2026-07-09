@@ -10,7 +10,7 @@ export default function MarkdownViewer({ title, content }: Props) {
   return (
     <div className="viewer markdown-viewer">
       <div className="viewer-header">
-        <span>{title ?? "课程"}</span>
+        <span>{title ?? "课件"}</span>
         <strong>Markdown</strong>
       </div>
       <article className="markdown-body">

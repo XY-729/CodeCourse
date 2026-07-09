@@ -9,16 +9,31 @@ body {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .topbar {
@@ -133,7 +148,21 @@ select {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 300px minmax(420px, 1fr) 320px;
+  grid-template-columns: 300px 6px minmax(0, 1fr) 6px 320px;
+  overflow: hidden;
+}
+
+.resize-handle {
+  width: 6px;
+  min-width: 6px;
+  background: #eef1f4;
+  border-left: 1px solid #d5dbe3;
+  border-right: 1px solid #d5dbe3;
+  cursor: col-resize;
+}
+
+.resize-handle:hover {
+  background: #cfe3de;
 }
 
 .sidebar,
@@ -314,11 +343,12 @@ select {
 }
 
 .generation-bar {
-  min-height: 78px;
+  min-height: 118px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     "scope lesson"
+    "instructions instructions"
     "status status";
   gap: 8px 12px;
   padding: 10px 12px;
@@ -340,6 +370,21 @@ select {
 
 .lesson-actions {
   grid-area: lesson;
+}
+
+.generation-instructions {
+  grid-area: instructions;
+  width: 100%;
+  height: 42px;
+  min-height: 42px;
+  max-height: 78px;
+  resize: vertical;
+  border: 1px solid #c8d0da;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: #18212f;
+  background: #ffffff;
+  line-height: 1.35;
 }
 
 .scope-controls select,
@@ -375,7 +420,8 @@ select {
 
 .generation-bar button:disabled,
 .scope-controls input:disabled,
-.scope-controls select:disabled {
+.scope-controls select:disabled,
+.generation-instructions:disabled {
   opacity: 0.58;
   cursor: not-allowed;
 }
@@ -418,6 +464,7 @@ select {
 
 .code-viewer > section {
   flex: 1;
+  min-height: 0;
 }
 
 .markdown-body {
@@ -625,10 +672,14 @@ select {
   }
 
   .workbench {
-    grid-template-columns: 260px minmax(360px, 1fr);
+    grid-template-columns: 260px 0 minmax(0, 1fr);
   }
 
   .explain-panel {
+    display: none;
+  }
+
+  .resize-handle {
     display: none;
   }
 
@@ -645,7 +696,13 @@ select {
     grid-template-columns: 1fr;
     grid-template-areas:
       "scope"
+      "instructions"
       "lesson"
       "status";
+  }
+
+  .scope-controls,
+  .lesson-actions {
+    flex-wrap: wrap;
   }
 }

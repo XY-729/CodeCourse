@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
 
 export type Project = {
   id: number;
@@ -88,20 +88,13 @@ export type GenerationTask = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, {
-      headers: {
-        "Content-Type": "application/json",
-        ...init?.headers,
-      },
-      ...init,
-    });
-  } catch {
-    throw new Error(
-      "无法连接后端 API，请确认 FastAPI 已启动并监听 8000 端口。"
-    );
-  }
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...init?.headers,
+    },
+    ...init,
+  });
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }));
     const detail = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string }) => item.msg).join("; ") : body.detail;
@@ -170,17 +163,17 @@ export function getCourseContent(projectId: number, filename: string): Promise<{
   return request<{ filename: string; content: string }>(`/projects/${projectId}/course/${filename.split("/").map(encodeURIComponent).join("/")}`);
 }
 
-export function generateOutline(projectId: number, scope: LearningScope): Promise<GenerationTask> {
+export function generateOutline(projectId: number, scope: LearningScope, instructions: string): Promise<GenerationTask> {
   return request<GenerationTask>(`/projects/${projectId}/outline/generate`, {
     method: "POST",
-    body: JSON.stringify({ scope }),
+    body: JSON.stringify({ scope, instructions }),
   });
 }
 
-export function generateFileLesson(projectId: number, path: string, mode: "brief" | "detailed"): Promise<GenerationTask> {
+export function generateFileLesson(projectId: number, path: string, mode: "brief" | "detailed", instructions: string): Promise<GenerationTask> {
   return request<GenerationTask>(`/projects/${projectId}/lessons/file`, {
     method: "POST",
-    body: JSON.stringify({ path, mode }),
+    body: JSON.stringify({ path, mode, instructions }),
   });
 }
 

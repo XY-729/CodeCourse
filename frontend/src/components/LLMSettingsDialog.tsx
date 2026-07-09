@@ -52,7 +52,7 @@ export default function LLMSettingsDialog({ open, onClose }: Props) {
       setSettings(saved);
       setApiKey("");
       setClearApiKey(false);
-      setMessage("已保存");
+      setMessage("已保存。API Key 仅保存在本机，接口不会回显完整 Key。");
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "保存失败");
     } finally {
@@ -61,6 +61,10 @@ export default function LLMSettingsDialog({ open, onClose }: Props) {
   }
 
   async function runTest() {
+    const ok = window.confirm("将调用模型 API 做连通性测试，可能消耗少量 token。是否继续？");
+    if (!ok) {
+      return;
+    }
     setTesting(true);
     setMessage("");
     try {
@@ -126,7 +130,7 @@ export default function LLMSettingsDialog({ open, onClose }: Props) {
                 checked={settings.enabled}
                 onChange={(event) => setSettings({ ...settings, enabled: event.target.checked })}
               />
-              <span>启用模型解释</span>
+              <span>启用模型 API</span>
             </label>
             <label className="toggle-row">
               <input type="checkbox" checked={clearApiKey} onChange={(event) => setClearApiKey(event.target.checked)} />
@@ -134,7 +138,7 @@ export default function LLMSettingsDialog({ open, onClose }: Props) {
             </label>
           </div>
         ) : (
-          <div className="empty">读取中</div>
+          <div className="empty">读取中...</div>
         )}
         <div className="settings-actions">
           <a className="link-button" href={DEEPSEEK_API_KEY_URL} target="_blank" rel="noreferrer">
@@ -143,11 +147,11 @@ export default function LLMSettingsDialog({ open, onClose }: Props) {
           </a>
           <button type="button" className="secondary-button" onClick={runTest} disabled={testing || saving}>
             <TestTube2 size={15} />
-            {testing ? "测试中" : "测试"}
+            {testing ? "测试中..." : "测试"}
           </button>
           <button type="submit" disabled={saving || !settings}>
             <Save size={15} />
-            {saving ? "保存中" : "保存"}
+            {saving ? "保存中..." : "保存"}
           </button>
           <button type="button" className="secondary-button" onClick={() => setClearApiKey(true)} title="标记清除 Key">
             <Trash2 size={15} />

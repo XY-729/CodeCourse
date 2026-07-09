@@ -48,7 +48,7 @@ export default function Sidebar({
                   className="icon-button"
                   onClick={() => onRegenerateProject(project)}
                   disabled={busyProjectId === project.id}
-                  title="重新生成课程"
+                  title="重置为待生成"
                 >
                   <RefreshCw size={14} />
                 </button>
