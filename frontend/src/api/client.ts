@@ -66,6 +66,27 @@ export type LLMTestResponse = {
   message: string;
 };
 
+export type LearningScope = {
+  type: "full_project" | "directories" | "files";
+  paths: string[];
+};
+
+export type GenerationTask = {
+  id: number;
+  project_id: number;
+  task_type: string;
+  status: "queued" | "running" | "completed" | "failed" | string;
+  source_path?: string | null;
+  mode?: string | null;
+  model?: string | null;
+  prompt_version: string;
+  input_hash: string;
+  output_path?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -139,7 +160,29 @@ export function getCourseFiles(projectId: number): Promise<CourseFile[]> {
 }
 
 export function getCourseContent(projectId: number, filename: string): Promise<{ filename: string; content: string }> {
-  return request<{ filename: string; content: string }>(`/projects/${projectId}/course/${encodeURIComponent(filename)}`);
+  return request<{ filename: string; content: string }>(`/projects/${projectId}/course/${filename.split("/").map(encodeURIComponent).join("/")}`);
+}
+
+export function generateOutline(projectId: number, scope: LearningScope): Promise<GenerationTask> {
+  return request<GenerationTask>(`/projects/${projectId}/outline/generate`, {
+    method: "POST",
+    body: JSON.stringify({ scope }),
+  });
+}
+
+export function generateFileLesson(projectId: number, path: string, mode: "brief" | "detailed"): Promise<GenerationTask> {
+  return request<GenerationTask>(`/projects/${projectId}/lessons/file`, {
+    method: "POST",
+    body: JSON.stringify({ path, mode }),
+  });
+}
+
+export function listGenerationTasks(projectId: number): Promise<GenerationTask[]> {
+  return request<GenerationTask[]>(`/projects/${projectId}/tasks`);
+}
+
+export function getGenerationTask(projectId: number, taskId: number): Promise<GenerationTask> {
+  return request<GenerationTask>(`/projects/${projectId}/tasks/${taskId}`);
 }
 
 export function explainCurrent(

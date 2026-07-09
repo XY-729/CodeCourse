@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from app.models.schemas import CourseContentResponse
-from app.services.course_generator import read_course_file
+from app.services.generation_service import read_project_course_file
 from app.services.storage import get_project
 
 router = APIRouter(prefix="/api/projects", tags=["course"])
@@ -18,10 +18,10 @@ def _project_root(project_id: int) -> Path:
     return Path(project.local_path).resolve()
 
 
-@router.get("/{project_id}/course/{filename}", response_model=CourseContentResponse)
+@router.get("/{project_id}/course/{filename:path}", response_model=CourseContentResponse)
 def get_course_content(project_id: int, filename: str) -> CourseContentResponse:
     try:
-        content = read_course_file(_project_root(project_id), filename)
+        content = read_project_course_file(_project_root(project_id), project_id, filename)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Course file not found")
     return CourseContentResponse(filename=filename, content=content)

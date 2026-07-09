@@ -2,16 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 import {
   CourseFile,
   FileContent,
+  GenerationTask,
+  LearningScope,
   Project,
   TreeNode,
   deleteProject,
   explainCurrent,
+  generateFileLesson,
+  generateOutline,
   getCourseContent,
   getCourseFiles,
+  getGenerationTask,
   getProject,
   getProjectFile,
   getTree,
   importProject,
+  listGenerationTasks,
   listProjects,
   regenerateProject,
 } from "./api/client";
@@ -23,6 +29,22 @@ import RepositoryForm from "./components/RepositoryForm";
 import Sidebar from "./components/Sidebar";
 
 type ViewerMode = "empty" | "code" | "course";
+type ScopeType = LearningScope["type"];
+
+const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
+
+function parseScopePaths(value: string): string[] {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parentDir(path: string): string {
+  const parts = path.split("/");
+  parts.pop();
+  return parts.join("/");
+}
 
 export default function App() {
   const [project, setProject] = useState<Project | null>(null);
@@ -40,14 +62,39 @@ export default function App() {
   const [provider, setProvider] = useState("template");
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scopeType, setScopeType] = useState<ScopeType>("full_project");
+  const [scopePathsText, setScopePathsText] = useState("");
+  const [activeTask, setActiveTask] = useState<GenerationTask | null>(null);
+  const [taskMessage, setTaskMessage] = useState("");
 
   const selectedCourseTitle = useMemo(() => {
     return courses.find((file) => file.filename === selectedCourse)?.title ?? selectedCourse;
   }, [courses, selectedCourse]);
 
+  const canGenerateFileLesson = Boolean(project && fileContent);
+  const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
+
   useEffect(() => {
     loadProjects();
   }, []);
+
+  function buildScope(): LearningScope {
+    if (scopeType === "full_project") {
+      return { type: "full_project", paths: [] };
+    }
+    const typedPaths = parseScopePaths(scopePathsText);
+    if (typedPaths.length > 0) {
+      return { type: scopeType, paths: typedPaths };
+    }
+    if (scopeType === "files" && fileContent?.path) {
+      return { type: scopeType, paths: [fileContent.path] };
+    }
+    if (scopeType === "directories" && fileContent?.path) {
+      const dir = parentDir(fileContent.path);
+      return { type: scopeType, paths: dir ? [dir] : [] };
+    }
+    return { type: scopeType, paths: [] };
+  }
 
   async function loadProjects() {
     try {
@@ -61,15 +108,27 @@ export default function App() {
     }
   }
 
+  async function refreshCourses(projectId: number): Promise<CourseFile[]> {
+    const nextCourses = await getCourseFiles(projectId);
+    setCourses(nextCourses);
+    return nextCourses;
+  }
+
   async function openProject(nextProject: Project) {
     setError("");
     setLoading(true);
     try {
       const freshProject = await getProject(nextProject.id);
       setProject(freshProject);
-      const [nextTree, nextCourses] = await Promise.all([getTree(freshProject.id), getCourseFiles(freshProject.id)]);
+      const [nextTree, nextCourses, tasks] = await Promise.all([
+        getTree(freshProject.id),
+        getCourseFiles(freshProject.id),
+        listGenerationTasks(freshProject.id),
+      ]);
       setTree(nextTree);
       setCourses(nextCourses);
+      setActiveTask(tasks[0] ?? null);
+      setTaskMessage(tasks[0] ? `最近任务：${tasks[0].task_type} / ${tasks[0].status}` : "默认显示规则模板回退总纲");
       setFileContent(null);
       const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
       if (firstCourse) {
@@ -113,6 +172,7 @@ export default function App() {
     setLoading(true);
     setError("");
     setExplanation("");
+    setTaskMessage("");
     try {
       const imported = await importProject(url);
       await loadProjects();
@@ -134,6 +194,11 @@ export default function App() {
       setFileContent(content);
       setSelectedCourse(null);
       setMode("code");
+      if (scopeType === "files") {
+        setScopePathsText(path);
+      } else if (scopeType === "directories") {
+        setScopePathsText(parentDir(path));
+      }
       const result = await explainCurrent(project.id, path, "file");
       setProvider(result.provider);
       setExplanation(result.explanation);
@@ -161,6 +226,65 @@ export default function App() {
     }
   }
 
+  async function trackTask(initialTask: GenerationTask) {
+    if (!project) {
+      return;
+    }
+    setActiveTask(initialTask);
+    setTaskMessage(`任务已创建：${initialTask.task_type} / ${initialTask.status}`);
+    let nextTask = initialTask;
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      if (TERMINAL_TASK_STATUSES.has(nextTask.status)) {
+        break;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+      nextTask = await getGenerationTask(project.id, initialTask.id);
+      setActiveTask(nextTask);
+      setTaskMessage(`生成任务：${nextTask.task_type} / ${nextTask.status}`);
+    }
+    await refreshCourses(project.id);
+    const freshProject = await getProject(project.id);
+    setProject(freshProject);
+    setProjects((items) => items.map((item) => (item.id === freshProject.id ? freshProject : item)));
+    if (nextTask.status === "completed") {
+      setTaskMessage("生成完成，课程目录已刷新");
+      if (selectedCourse) {
+        const content = await getCourseContent(project.id, selectedCourse).catch(() => null);
+        if (content) {
+          setMarkdown(content.content);
+        }
+      }
+    } else if (nextTask.status === "failed") {
+      setTaskMessage(`生成失败：${nextTask.error_message ?? "未知错误"}。旧课件已保留。`);
+    }
+  }
+
+  async function handleGenerateOutline() {
+    if (!project) {
+      return;
+    }
+    setError("");
+    try {
+      const task = await generateOutline(project.id, buildScope());
+      await trackTask(task);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "创建总纲任务失败");
+    }
+  }
+
+  async function handleGenerateFileLesson(nextMode: "brief" | "detailed") {
+    if (!project || !fileContent) {
+      return;
+    }
+    setError("");
+    try {
+      const task = await generateFileLesson(project.id, fileContent.path, nextMode);
+      await trackTask(task);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "创建文件课件任务失败");
+    }
+  }
+
   async function handleRegenerate(nextProject: Project) {
     setBusyProjectId(nextProject.id);
     setError("");
@@ -178,7 +302,7 @@ export default function App() {
   }
 
   async function handleDelete(nextProject: Project) {
-    if (!window.confirm(`删除本地导入项目 ${nextProject.name}？生成课程和克隆目录也会删除。`)) {
+    if (!window.confirm(`删除本地导入项目 ${nextProject.name}？克隆目录也会删除。`)) {
       return;
     }
     setBusyProjectId(nextProject.id);
@@ -196,6 +320,7 @@ export default function App() {
         setMarkdown("");
         setMode("empty");
         setExplanation("");
+        setTaskMessage("");
         if (remaining.length > 0) {
           await openProject(remaining[0]);
         }
@@ -236,6 +361,33 @@ export default function App() {
           onSelectCourse={handleSelectCourse}
         />
         <section className="center-pane">
+          <div className="generation-bar">
+            <div className="scope-controls">
+              <select value={scopeType} onChange={(event) => setScopeType(event.target.value as ScopeType)} disabled={!project || isTaskRunning}>
+                <option value="full_project">全项目</option>
+                <option value="directories">指定目录</option>
+                <option value="files">指定文件</option>
+              </select>
+              <input
+                value={scopePathsText}
+                onChange={(event) => setScopePathsText(event.target.value)}
+                placeholder="目录或文件路径，多个用逗号分隔"
+                disabled={!project || scopeType === "full_project" || isTaskRunning}
+              />
+              <button onClick={handleGenerateOutline} disabled={!project || isTaskRunning}>
+                生成 AI 总纲
+              </button>
+            </div>
+            <div className="lesson-actions">
+              <button onClick={() => handleGenerateFileLesson("brief")} disabled={!canGenerateFileLesson || isTaskRunning}>
+                生成粗略课件
+              </button>
+              <button onClick={() => handleGenerateFileLesson("detailed")} disabled={!canGenerateFileLesson || isTaskRunning}>
+                生成详细课件
+              </button>
+            </div>
+            <div className={`task-status ${activeTask?.status === "failed" ? "failed" : ""}`}>{taskMessage || "导入后先显示规则模板回退内容；AI 内容按需生成。"}</div>
+          </div>
           {mode === "code" && fileContent ? (
             <CodeViewer path={fileContent.path} language={fileContent.language} content={fileContent.content} />
           ) : null}

@@ -5,14 +5,16 @@
 ## 功能
 
 - 输入 GitHub 仓库 URL，后端使用 `git clone --depth 1` 克隆到 `workspace/repos/`。
+- 导入流程只做 clone、扫描、项目记录创建和规则模板总纲生成，不阻塞等待模型。
 - 扫描目录树并忽略 `.git`、`node_modules`、`build`、`dist`、`target`、`__pycache__` 等目录。
 - 识别 README、package.json、pyproject.toml、Cargo.toml、go.mod、Dockerfile 等关键文件。
-- 在被导入项目根目录生成 `.generated_course/project_map.md`、`outline.md` 和 `lesson_01.md` 到 `lesson_04.md`。
+- 新生成内容统一写入 `workspace/generated/<project_id>/`，避免污染被克隆仓库。
 - 前端提供三栏布局：文件树和课程目录、只读 Monaco 代码阅读器或 Markdown 阅读器、解释面板。
-- 支持查看已导入项目列表、切换项目、重新生成课程、删除本地导入。
-- 针对 C/C++、Node、Python、Go、Rust、Docker 等项目生成更贴近技术栈的课程大纲。
-- 前端内置模型 API 设置面板，可保存 DeepSeek / OpenAI Compatible 的 Base URL、Model 和 API Key。
-- 未启用模型 API 或调用失败时，解释面板自动回退到规则模板解释。
+- 前端支持配置 DeepSeek / OpenAI Compatible 模型 API，并提供 DeepSeek API Key 跳转按钮。
+- 支持按学习范围生成 AI 总纲：全项目、指定目录、指定文件。
+- 支持选中文件后按需生成粗略版或详细版文件课件。
+- 同一文件、同一模式、同一 prompt 版本和同一输入哈希会复用已完成任务，避免重复消耗 token。
+- 模型不可用或任务失败时保留旧课件，规则模板回退内容仍可阅读。
 
 ## GitHub URL 建议
 
@@ -22,8 +24,6 @@
 git@github.com:owner/repo.git
 ```
 
-如果使用 HTTPS 导入失败，前端会提示改用 SSH，后端也会返回更具体的网络、认证或仓库不存在错误。
-
 ## 模型 API 设置
 
 点击页面右上角 `模型 API`：
@@ -31,10 +31,17 @@ git@github.com:owner/repo.git
 - Provider 默认 `DeepSeek`
 - Base URL 默认 `https://api.deepseek.com`
 - Model 默认 `deepseek-v4-flash`
-- API Key 保存在本地 SQLite：`workspace/app.db`
+- 网页填写的 API Key 只保存在本机 SQLite：`workspace/app.db`
+- API 不会回显完整 Key，只返回是否已配置和掩码后的 Key
 - 可通过面板里的 `DeepSeek API Key` 按钮跳转到 `https://platform.deepseek.com/api_keys`
 
-保存并启用后，右侧解释面板会优先调用模型；如果未配置、未启用或调用失败，会回退到规则解释。
+读取优先级：
+
+1. 环境变量 `DEEPSEEK_API_KEY` 或 `GPL_LLM_API_KEY`
+2. 项目根目录 `.env`
+3. SQLite 设置
+
+`.env` 与 `workspace/app.db` 已加入 `.gitignore`。
 
 ## 启动后端
 
@@ -54,7 +61,7 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-浏览器访问 `http://<vm-ip>:5173`。如果浏览器运行在 VM 内，也可以访问 `http://localhost:5173`。
+浏览器访问 `http://<vm-ip>:5173`。如果通过 SSH 隧道访问 Windows 本机，转发 `5173` 和 `8000` 后打开 `http://localhost:5173`。
 
 ## API 概览
 
@@ -67,6 +74,10 @@ npm run dev -- --host 0.0.0.0
 - `GET /api/projects/{project_id}/file?path=...`
 - `GET /api/projects/{project_id}/course`
 - `GET /api/projects/{project_id}/course/{filename}`
+- `POST /api/projects/{project_id}/outline/generate`
+- `POST /api/projects/{project_id}/lessons/file`
+- `GET /api/projects/{project_id}/tasks`
+- `GET /api/projects/{project_id}/tasks/{task_id}`
 - `POST /api/explain`
 - `GET /api/settings/llm`
 - `PUT /api/settings/llm`
@@ -74,7 +85,7 @@ npm run dev -- --host 0.0.0.0
 
 ## MVP 边界
 
-第一阶段不执行被导入项目代码，不提供运行、调试、补全或协作功能。项目分析使用规则扫描，不生成完整 AST 或调用图。
+第一阶段不执行被导入项目代码，不提供运行、调试、补全或协作功能。项目分析使用规则扫描和正则信号提取，不生成完整 AST 或调用图。
 
 ## 检查
 

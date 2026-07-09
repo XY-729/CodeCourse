@@ -44,6 +44,36 @@ class CourseContentResponse(BaseModel):
     content: str
 
 
+class LearningScopeRequest(BaseModel):
+    type: Literal["full_project", "directories", "files"] = "full_project"
+    paths: list[str] = Field(default_factory=list)
+
+
+class GenerateOutlineRequest(BaseModel):
+    scope: LearningScopeRequest = Field(default_factory=LearningScopeRequest)
+
+
+class GenerateFileLessonRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=1000)
+    mode: Literal["brief", "detailed"] = "brief"
+
+
+class GenerationTaskResponse(BaseModel):
+    id: int
+    project_id: int
+    task_type: str
+    status: str
+    source_path: Optional[str] = None
+    mode: Optional[str] = None
+    model: Optional[str] = None
+    prompt_version: str
+    input_hash: str
+    output_path: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
 class ExplainRequest(BaseModel):
     project_id: int
     path: Optional[str] = None

@@ -4,9 +4,11 @@ import os
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 WORKSPACE_ROOT = Path(os.getenv("GPL_WORKSPACE_ROOT", PROJECT_ROOT / "workspace")).resolve()
 REPOS_ROOT = WORKSPACE_ROOT / "repos"
+GENERATED_ROOT = WORKSPACE_ROOT / "generated"
 DB_PATH = Path(os.getenv("GPL_DB_PATH", WORKSPACE_ROOT / "app.db")).resolve()
 LLM_PROVIDER = os.getenv("GPL_LLM_PROVIDER", "template")
 LLM_API_KEY = os.getenv("GPL_LLM_API_KEY", "")
+PROMPT_VERSION = os.getenv("GPL_PROMPT_VERSION", "coursegen-v1")
 
 IGNORED_DIRS = {
     ".git",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from app.models.schemas import CourseFile, TreeNode
 from app.services.scanner import list_key_files, scan_tree
@@ -12,40 +13,50 @@ TECH_HINTS = {
     "cpp": {
         "name": "C/C++",
         "signals": {"CMakeLists.txt", "Makefile"},
-        "lesson": "构建入口、源码目录、头文件边界和测试用例",
+        "lesson": "构建入口、源码目录、头文件边界和测试用例。",
         "files": {"src", "include", "tests", "sandbox"},
     },
     "node": {
-        "name": "Node/前端",
+        "name": "Node/Frontend",
         "signals": {"package.json"},
-        "lesson": "package scripts、组件结构、状态流和构建配置",
+        "lesson": "package scripts、组件结构、状态流和构建配置。",
         "files": {"src", "components", "pages", "app"},
     },
     "python": {
         "name": "Python",
         "signals": {"pyproject.toml", "requirements.txt"},
-        "lesson": "包结构、依赖声明、入口脚本和测试布局",
+        "lesson": "包结构、依赖声明、入口脚本和测试布局。",
         "files": {"app", "src", "tests"},
     },
     "rust": {
         "name": "Rust",
         "signals": {"Cargo.toml"},
-        "lesson": "crate 结构、模块声明、依赖和测试",
+        "lesson": "crate 结构、模块声明、依赖和测试。",
         "files": {"src", "tests", "examples"},
     },
     "go": {
         "name": "Go",
         "signals": {"go.mod"},
-        "lesson": "module、package、cmd 入口和内部包边界",
+        "lesson": "module、package、cmd 入口和 internal/pkg 边界。",
         "files": {"cmd", "internal", "pkg"},
     },
     "docker": {
-        "name": "容器化",
+        "name": "Container",
         "signals": {"Dockerfile", "docker-compose.yml", "docker-compose.yaml"},
-        "lesson": "镜像构建、服务编排和运行环境",
+        "lesson": "镜像构建、服务编排和运行环境。",
         "files": {"deploy", "docker", "ops"},
     },
 }
+
+PREFERRED_COURSE_FILES = [
+    "project_map.md",
+    "outline.md",
+    "lesson_01.md",
+    "lesson_02.md",
+    "lesson_03.md",
+    "lesson_04.md",
+    "lesson_05.md",
+]
 
 
 def _title_from_markdown(path: Path) -> str:
@@ -55,31 +66,31 @@ def _title_from_markdown(path: Path) -> str:
                 return line[2:].strip()
     except UnicodeDecodeError:
         pass
-    return path.stem.replace("_", " ").title()
+    return path.stem.replace("_", " ").replace("-", " ").title()
 
 
-def list_course_files(repo_root: Path) -> list[CourseFile]:
-    course_dir = repo_root / GENERATED_DIR
+def list_course_files_from_dir(course_dir: Path) -> list[CourseFile]:
     if not course_dir.exists():
         return []
-    preferred = [
-        "project_map.md",
-        "outline.md",
-        "lesson_01.md",
-        "lesson_02.md",
-        "lesson_03.md",
-        "lesson_04.md",
-        "lesson_05.md",
+    preferred = [course_dir / name for name in PREFERRED_COURSE_FILES if (course_dir / name).is_file()]
+    extras = sorted(path for path in course_dir.rglob("*.md") if path.name not in PREFERRED_COURSE_FILES)
+    return [
+        CourseFile(filename=path.relative_to(course_dir).as_posix(), title=_title_from_markdown(path))
+        for path in [*preferred, *extras]
     ]
-    files = [course_dir / name for name in preferred if (course_dir / name).is_file()]
-    extras = sorted(path for path in course_dir.glob("*.md") if path.name not in preferred)
-    return [CourseFile(filename=path.name, title=_title_from_markdown(path)) for path in [*files, *extras]]
 
 
-def read_course_file(repo_root: Path, filename: str) -> str:
-    if "/" in filename or "\\" in filename or not filename.endswith(".md"):
+def list_course_files(repo_root: Path, course_dir: Optional[Path] = None) -> list[CourseFile]:
+    return list_course_files_from_dir(course_dir or (repo_root / GENERATED_DIR))
+
+
+def read_course_file(repo_root: Path, filename: str, course_dir: Optional[Path] = None) -> str:
+    if "\\" in filename or not filename.endswith(".md"):
         raise FileNotFoundError(filename)
-    path = repo_root / GENERATED_DIR / filename
+    root = (course_dir or (repo_root / GENERATED_DIR)).resolve()
+    path = (root / filename).resolve()
+    if path != root and root not in path.parents:
+        raise FileNotFoundError(filename)
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(filename)
     return path.read_text(encoding="utf-8")
@@ -114,7 +125,7 @@ def _collect_files(tree: TreeNode) -> list[str]:
     return files[:40]
 
 
-def _detect_tech_profile(repo_root: Path, key_files: list[Path], directories: list[str]) -> list[dict[str, str]]:
+def _detect_tech_profile(key_files: list[Path], directories: list[str]) -> list[dict[str, str]]:
     key_names = {path.name for path in key_files}
     dir_names = {Path(item).name for item in directories}
     matched: list[dict[str, str]] = []
@@ -123,7 +134,7 @@ def _detect_tech_profile(repo_root: Path, key_files: list[Path], directories: li
             matched.append({"name": hint["name"], "lesson": hint["lesson"]})
     if matched:
         return matched
-    return [{"name": "通用代码项目", "lesson": "README、目录结构、入口文件和测试样例"}]
+    return [{"name": "通用代码项目", "lesson": "README、目录结构、入口文件和测试样例。"}]
 
 
 def _format_tech_profile(profile: list[dict[str, str]]) -> str:
@@ -135,7 +146,7 @@ def _describe_key_file(path: Path) -> str:
     if name.lower() == "readme.md":
         return "项目入口说明，通常包含定位、安装方式和快速开始。"
     if name == "package.json":
-        return "前端或 Node.js 项目的依赖、脚本和包信息。"
+        return "Node.js 或前端项目的依赖、脚本和包信息。"
     if name == "pyproject.toml":
         return "Python 项目的构建系统、依赖和工具配置。"
     if name == "requirements.txt":
@@ -155,17 +166,33 @@ def _describe_key_file(path: Path) -> str:
     return "重要配置或说明文件。"
 
 
-def generate_course(repo_root: Path) -> list[CourseFile]:
+def _metadata_block(generation_method: str, model: str, scope: str, uncertainty: str) -> str:
+    return (
+        f"> 生成方式：{generation_method}\n"
+        f"> 模型/规则：{model}\n"
+        f"> 学习范围：{scope}\n"
+        f"> 不确定项：{uncertainty}\n\n"
+    )
+
+
+def generate_course(
+    repo_root: Path,
+    course_dir: Optional[Path] = None,
+    generation_method: str = "规则模板回退",
+    model: str = "rule-template",
+    scope: str = "full_project",
+) -> list[CourseFile]:
     repo_root = repo_root.resolve()
-    course_dir = repo_root / GENERATED_DIR
-    course_dir.mkdir(parents=True, exist_ok=True)
+    target_dir = (course_dir or (repo_root / GENERATED_DIR)).resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     tree = scan_tree(repo_root)
     key_files = list_key_files(repo_root)
     directories = _collect_directories(tree)
     files = _collect_files(tree)
-    tech_profile = _detect_tech_profile(repo_root, key_files, directories)
+    tech_profile = _detect_tech_profile(key_files, directories)
     tech_names = "、".join(item["name"] for item in tech_profile)
+    meta = _metadata_block(generation_method, model, scope, "规则分析无法确认所有目录职责，请结合源码阅读校正。")
 
     key_file_lines = [
         f"- `{path.relative_to(repo_root).as_posix()}`: {_describe_key_file(path)}"
@@ -178,7 +205,7 @@ def generate_course(repo_root: Path) -> list[CourseFile]:
 
     project_map = f"""# 项目结构说明
 
-## 目录概览
+{meta}## 目录概览
 {chr(10).join(directory_lines)}
 
 ## 关键文件
@@ -196,7 +223,7 @@ def generate_course(repo_root: Path) -> list[CourseFile]:
 
     outline = f"""# 项目学习总纲
 
-## 技术栈判断
+{meta}## 技术栈判断
 当前规则分析识别到：{tech_names}。
 
 | 课次 | 主题 | 学习目标 |
@@ -218,7 +245,7 @@ def generate_course(repo_root: Path) -> list[CourseFile]:
     lessons = {
         "lesson_01.md": f"""# 第 1 课：项目定位与目录地图
 
-## 学习目标
+{meta}## 学习目标
 - 说明项目的主要用途和适合的阅读入口。
 - 认识顶层目录和关键配置文件。
 - 建立第一轮代码阅读路线。
@@ -239,7 +266,7 @@ def generate_course(repo_root: Path) -> list[CourseFile]:
 """,
         "lesson_02.md": f"""# 第 2 课：技术栈与构建配置
 
-## 学习目标
+{meta}## 学习目标
 - 识别项目语言、包管理器和构建工具。
 - 理解关键配置文件如何影响项目结构。
 - 区分源码文件和工程配置文件。
@@ -264,7 +291,7 @@ def generate_course(repo_root: Path) -> list[CourseFile]:
 """,
         "lesson_03.md": f"""# 第 3 课：核心源码阅读路线
 
-## 学习目标
+{meta}## 学习目标
 - 从文件树中挑选第一批需要精读的源码文件。
 - 按入口、核心模块、边界模块组织阅读顺序。
 - 为后续函数和类级别分析保留问题清单。
@@ -285,7 +312,7 @@ def generate_course(repo_root: Path) -> list[CourseFile]:
 """,
         "lesson_04.md": f"""# 第 4 课：测试、部署与运行边界
 
-## 学习目标
+{meta}## 学习目标
 - 找到测试目录、脚本、CI、容器或部署配置。
 - 理解项目如何验证核心行为。
 - 在不运行代码的前提下，建立安全边界和运行环境认知。
@@ -306,9 +333,9 @@ def generate_course(repo_root: Path) -> list[CourseFile]:
 - 哪些脚本或配置暗示了部署流程？
 - 哪些运行相关内容应该在学习器里只读展示，不能执行？
 """,
-        "lesson_05.md": """# 第 5 课：扩展与二次开发方向
+        "lesson_05.md": f"""# 第 5 课：扩展与二次开发方向
 
-## 学习目标
+{meta}## 学习目标
 - 总结项目结构中的稳定点和可扩展点。
 - 识别适合下一阶段深入分析的模块。
 - 将阅读结论转化为学习笔记和改造计划。
@@ -327,9 +354,9 @@ def generate_course(repo_root: Path) -> list[CourseFile]:
 """,
     }
 
-    (course_dir / "project_map.md").write_text(project_map, encoding="utf-8")
-    (course_dir / "outline.md").write_text(outline, encoding="utf-8")
+    (target_dir / "project_map.md").write_text(project_map, encoding="utf-8")
+    (target_dir / "outline.md").write_text(outline, encoding="utf-8")
     for filename, content in lessons.items():
-        (course_dir / filename).write_text(content, encoding="utf-8")
+        (target_dir / filename).write_text(content, encoding="utf-8")
 
-    return list_course_files(repo_root)
+    return list_course_files(repo_root, target_dir)
