@@ -117,45 +117,75 @@ export default function App() {
   async function openProject(nextProject: Project) {
     setError("");
     setLoading(true);
+
     try {
       const freshProject = await getProject(nextProject.id);
       setProject(freshProject);
-      const [nextTree, nextCourses, tasks] = await Promise.all([
-        getTree(freshProject.id),
-        getCourseFiles(freshProject.id),
-        listGenerationTasks(freshProject.id),
-      ]);
-      setTree(nextTree);
-      setCourses(nextCourses);
-      setActiveTask(tasks[0] ?? null);
-      setTaskMessage(tasks[0] ? `最近任务：${tasks[0].task_type} / ${tasks[0].status}` : "默认显示规则模板回退总纲");
+
+      // 1. 文件树是核心功能，必须优先加载，且独立失败提示
+      try {
+        const nextTree = await getTree(freshProject.id);
+        setTree(nextTree);
+      } catch (caught) {
+        setTree(null);
+        setCourses([]);
+        setMode("empty");
+        setError(caught instanceof Error ? `读取文件树失败：${caught.message}` : "读取文件树失败");
+        return;
+      }
+
+      // 2. 课程目录是次核心，失败不应该影响文件树
+      let nextCourses: CourseFile[] = [];
+      try {
+        nextCourses = await getCourseFiles(freshProject.id);
+        setCourses(nextCourses);
+      } catch (caught) {
+        setCourses([]);
+        setError(caught instanceof Error ? `读取课程目录失败：${caught.message}` : "读取课程目录失败");
+      }
+
+      // 3. 任务列表是附加功能，失败不能影响文件树和课程阅读
+      try {
+        const tasks = await listGenerationTasks(freshProject.id);
+        setActiveTask(tasks[0] ?? null);
+        setTaskMessage(tasks[0] ? `最近任务：${tasks[0].task_type} / ${tasks[0].status}` : "默认显示规则模板回退总纲");
+      } catch (caught) {
+        setActiveTask(null);
+        setTaskMessage("任务状态接口不可用，不影响文件阅读。");
+      }
+
       setFileContent(null);
+
       const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
-      if (firstCourse) {
-        let firstContent;
-        try {
-          firstContent = await getCourseContent(freshProject.id, firstCourse.filename);
-        } catch (e) {
-          setError("读取课件失败：" + (e instanceof Error ? e.message : "未知错误"));
-          setMode("empty");
-          setExplanation("");
-          return;
-        }
-        const content = firstContent;
-        setSelectedCourse(firstCourse.filename);
-        setMarkdown(content.content);
-        setMode("course");
-        const result = await explainCurrent(freshProject.id, firstCourse.filename, "course");
-        setProvider(result.provider);
-        setExplanation(result.explanation);
-      } else {
+
+      if (!firstCourse) {
         setSelectedCourse(null);
         setMarkdown("");
         setMode("empty");
         setExplanation("");
+        return;
       }
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "打开项目失败");
+
+      try {
+        const firstContent = await getCourseContent(freshProject.id, firstCourse.filename);
+        setSelectedCourse(firstCourse.filename);
+        setMarkdown(firstContent.content);
+        setMode("course");
+      } catch (caught) {
+        setSelectedCourse(null);
+        setMarkdown("");
+        setMode("empty");
+        setError(caught instanceof Error ? `读取默认课件失败：${caught.message}` : "读取默认课件失败");
+      }
+
+      try {
+        const result = await explainCurrent(freshProject.id, firstCourse.filename, "course");
+        setProvider(result.provider);
+        setExplanation(result.explanation);
+      } catch {
+        setProvider("template");
+        setExplanation("解释面板加载失败，不影响文件树和课件阅读。");
+      }
     } finally {
       setLoading(false);
     }
