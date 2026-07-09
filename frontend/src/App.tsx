@@ -132,7 +132,16 @@ export default function App() {
       setFileContent(null);
       const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
       if (firstCourse) {
-        const content = await getCourseContent(freshProject.id, firstCourse.filename);
+        let firstContent;
+        try {
+          firstContent = await getCourseContent(freshProject.id, firstCourse.filename);
+        } catch (e) {
+          setError("读取课件失败：" + (e instanceof Error ? e.message : "未知错误"));
+          setMode("empty");
+          setExplanation("");
+          return;
+        }
+        const content = firstContent;
         setSelectedCourse(firstCourse.filename);
         setMarkdown(content.content);
         setMode("course");
@@ -222,7 +231,7 @@ export default function App() {
       setProvider(result.provider);
       setExplanation(result.explanation);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "读取课程失败");
+      setError(caught instanceof Error ? "读取课件失败：" + caught.message : "读取课件失败");
     }
   }
 
@@ -249,9 +258,9 @@ export default function App() {
     if (nextTask.status === "completed") {
       setTaskMessage("生成完成，课程目录已刷新");
       if (selectedCourse) {
-        const content = await getCourseContent(project.id, selectedCourse).catch(() => null);
-        if (content) {
-          setMarkdown(content.content);
+        const refreshedContent = await getCourseContent(project.id, selectedCourse).catch(() => null);
+        if (refreshedContent) {
+          setMarkdown(refreshedContent.content);
         }
       }
     } else if (nextTask.status === "failed") {

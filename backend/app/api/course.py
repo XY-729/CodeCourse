@@ -23,5 +23,5 @@ def get_course_content(project_id: int, filename: str) -> CourseContentResponse:
     try:
         content = read_project_course_file(_project_root(project_id), project_id, filename)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Course file not found")
+        raise HTTPException(status_code=404, detail=f"Course file not found: {filename}")
     return CourseContentResponse(filename=filename, content=content)

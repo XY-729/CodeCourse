@@ -14,6 +14,19 @@ GITHUB_HTTPS_RE = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.
 GITHUB_SSH_RE = re.compile(r"^git@github\.com:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$")
 
 
+def normalize_github_repo_key(url: str) -> str:
+    cleaned = url.strip().rstrip("/")
+    if cleaned.endswith(".git"):
+        cleaned = cleaned[:-4]
+    https_match = re.match(r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$", cleaned)
+    if https_match:
+        return f"github.com/{https_match.group(1).lower()}/{https_match.group(2).lower()}"
+    ssh_match = re.match(r"^git@github\.com:([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)$", cleaned)
+    if ssh_match:
+        return f"github.com/{ssh_match.group(1).lower()}/{ssh_match.group(2).lower()}"
+    return cleaned
+
+
 def validate_git_url(url: str) -> str:
     cleaned = url.strip()
     if GITHUB_HTTPS_RE.match(cleaned) or GITHUB_SSH_RE.match(cleaned):

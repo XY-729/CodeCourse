@@ -19,6 +19,7 @@ class ProjectRecord:
     status: str
     created_at: str
     updated_at: str
+    repo_key: str = ""
 
 
 @dataclass
@@ -48,7 +49,7 @@ def init_storage() -> None:
             CREATE TABLE IF NOT EXISTS projects (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                url TEXT NOT NULL UNIQUE,
+                url TEXT NOT NULL,
                 local_path TEXT NOT NULL,
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL,
@@ -56,6 +57,19 @@ def init_storage() -> None:
             )
             """
         )
+        # Migration: add repo_key column if it doesn't exist
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()]
+        if "repo_key" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN repo_key TEXT")
+            conn.commit()
+        # Backfill null repo_keys
+        null_rows = conn.execute("SELECT id, url FROM projects WHERE repo_key IS NULL").fetchall()
+        if null_rows:
+            from app.services.git_service import normalize_github_repo_key
+            for row in null_rows:
+                rk = normalize_github_repo_key(row[1])
+                conn.execute("UPDATE projects SET repo_key = ? WHERE id = ?", (rk, row[0]))
+            conn.commit()
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS app_settings (
@@ -97,6 +111,7 @@ def _row_to_project(row: sqlite3.Row) -> ProjectRecord:
         status=row["status"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        repo_key=row["repo_key"] or "",
     )
 
 
@@ -136,31 +151,51 @@ def get_project_by_url(url: str) -> Optional[ProjectRecord]:
         return _row_to_project(row) if row else None
 
 
+def _get_project_by_repo_key(conn: sqlite3.Connection, repo_key: str) -> Optional[ProjectRecord]:
+    row = conn.execute("SELECT * FROM projects WHERE repo_key = ?", (repo_key,)).fetchone()
+    return _row_to_project(row) if row else None
+
+
 def list_projects() -> list[ProjectRecord]:
     with _connect() as conn:
-        rows = conn.execute("SELECT * FROM projects ORDER BY updated_at DESC, id DESC").fetchall()
+        rows = conn.execute(
+            """
+            SELECT p.* FROM projects p
+            WHERE p.id NOT IN (
+                SELECT p2.id FROM projects p2
+                INNER JOIN projects p3 ON p2.repo_key = p3.repo_key
+                    AND p2.repo_key IS NOT NULL
+                    AND (p2.updated_at < p3.updated_at
+                         OR (p2.updated_at = p3.updated_at AND p2.id < p3.id))
+            )
+            ORDER BY p.updated_at DESC, p.id DESC
+            """
+        ).fetchall()
         return [_row_to_project(row) for row in rows]
 
 
 def upsert_project(name: str, url: str, local_path: Path, status: str) -> ProjectRecord:
+    from app.services.git_service import normalize_github_repo_key
+
+    repo_key = normalize_github_repo_key(url)
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
-        existing = conn.execute("SELECT * FROM projects WHERE url = ?", (url,)).fetchone()
+        existing = conn.execute("SELECT * FROM projects WHERE repo_key = ?", (repo_key,)).fetchone()
         if existing:
             conn.execute(
-                "UPDATE projects SET name = ?, local_path = ?, status = ?, updated_at = ? WHERE url = ?",
-                (name, str(local_path), status, now, url),
+                "UPDATE projects SET name = ?, url = ?, local_path = ?, status = ?, updated_at = ? WHERE repo_key = ?",
+                (name, url, str(local_path), status, now, repo_key),
             )
         else:
             conn.execute(
-                "INSERT INTO projects (name, url, local_path, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (name, url, str(local_path), status, now, now),
+                "INSERT INTO projects (name, url, repo_key, local_path, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (name, url, repo_key, str(local_path), status, now, now),
             )
         conn.commit()
-    project = get_project_by_url(url)
-    if project is None:
-        raise RuntimeError("project was not persisted")
-    return project
+        row = conn.execute("SELECT * FROM projects WHERE repo_key = ?", (repo_key,)).fetchone()
+        if row is None:
+            raise RuntimeError("project was not persisted")
+        return _row_to_project(row)
 
 
 def update_project_status(project_id: int, status: str) -> Optional[ProjectRecord]:

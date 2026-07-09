@@ -43,7 +43,15 @@ git@github.com:owner/repo.git
 
 `.env` 与 `workspace/app.db` 已加入 `.gitignore`。
 
-## 启动后端
+## 启动方式
+
+### 本机开发
+
+在开发机器上分别启动后端和前端，通过 `http://localhost:5173` 访问。
+
+Vite dev server 内置了 proxy，会将同源的 `/api` 请求转发到后端的 `http://127.0.0.1:8000`，无需手动配置 CORS 或跨域。
+
+**1. 启动后端**
 
 ```bash
 cd /home/xiyuan729/github-project-learner/backend
@@ -53,15 +61,48 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## 启动前端
+> 后端监听 `0.0.0.0:8000` 是为了同时支持本机和局域网访问。如果只在本机开发，可以不加 `--host 0.0.0.0`。
+
+**2. 启动前端**
 
 ```bash
 cd /home/xiyuan729/github-project-learner/frontend
 npm install
+npm run dev
+```
+
+浏览器打开 `http://localhost:5173`。
+
+### 虚拟机 / 局域网访问
+
+当后端运行在虚拟机或另一台机器上时，需要通过局域网 IP 访问。
+
+**后端**（在 VM 上）：
+```bash
+cd backend
+source .venv/bin/activate
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+**前端**（在 VM 上）：
+```bash
+cd frontend
 npm run dev -- --host 0.0.0.0
 ```
 
-浏览器访问 `http://<vm-ip>:5173`。如果通过 SSH 隧道访问 Windows 本机，转发 `5173` 和 `8000` 后打开 `http://localhost:5173`。
+浏览器访问 `http://<VM_IP>:5173`（例如 `http://192.168.60.131:5173`）。
+
+Vite proxy 会将 `/api` 转发到同一台机器上的 `http://127.0.0.1:8000`，因此无论从本机还是局域网访问前端，API 请求都能正确路由到后端。
+
+### SSH 隧道访问
+
+如果 VM 不能直接暴露端口，可以通过 SSH 隧道转发：
+
+```bash
+ssh -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 linux-vm
+```
+
+然后打开 `http://localhost:5173`。
 
 ## API 概览
 

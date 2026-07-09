@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 export type Project = {
   id: number;
@@ -88,13 +88,20 @@ export type GenerationTask = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-    ...init,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...init?.headers,
+      },
+      ...init,
+    });
+  } catch {
+    throw new Error(
+      "无法连接后端 API，请确认 FastAPI 已启动并监听 8000 端口。"
+    );
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }));
     const detail = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string }) => item.msg).join("; ") : body.detail;
