@@ -88,6 +88,41 @@ class ExplainResponse(BaseModel):
     explanation: str
 
 
+class QAAskRequest(BaseModel):
+    source_type: Literal["file", "course", "selection"]
+    source_path: Optional[str] = Field(default=None, max_length=1000)
+    selected_text: str = Field(min_length=1, max_length=20000)
+    question: str = Field(min_length=1, max_length=4000)
+    provider: str = Field(default="deepseek", max_length=80)
+    base_url: str = Field(default="https://api.deepseek.com", max_length=500)
+    model: str = Field(default="deepseek-v4-flash", max_length=160)
+
+
+class QARecordResponse(BaseModel):
+    id: int
+    project_id: int
+    source_type: str
+    source_path: Optional[str] = None
+    selected_text: str
+    question: str
+    answer_md: str
+    provider: str
+    model: str
+    output_path: Optional[str] = None
+    favorite: bool
+    created_at: str
+    updated_at: str
+
+
+class QAUpdateRequest(BaseModel):
+    question: Optional[str] = Field(default=None, min_length=1, max_length=4000)
+    answer_md: Optional[str] = Field(default=None, min_length=1, max_length=100000)
+
+
+class QAFavoriteRequest(BaseModel):
+    favorite: bool
+
+
 class ProjectActionResponse(BaseModel):
     id: int
     status: str

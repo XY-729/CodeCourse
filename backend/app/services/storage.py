@@ -39,6 +39,23 @@ class GenerationTask:
     updated_at: str
 
 
+@dataclass
+class QARecord:
+    id: int
+    project_id: int
+    source_type: str
+    source_path: Optional[str]
+    selected_text: str
+    question: str
+    answer_md: str
+    provider: str
+    model: str
+    output_path: Optional[str]
+    favorite: bool
+    created_at: str
+    updated_at: str
+
+
 def init_storage() -> None:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     REPOS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -99,6 +116,26 @@ def init_storage() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS qa_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                source_type TEXT NOT NULL,
+                source_path TEXT,
+                selected_text TEXT NOT NULL,
+                question TEXT NOT NULL,
+                answer_md TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                output_path TEXT,
+                favorite INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            )
+            """
+        )
         conn.commit()
 
 
@@ -128,6 +165,24 @@ def _row_to_task(row: sqlite3.Row) -> GenerationTask:
         input_hash=row["input_hash"],
         output_path=row["output_path"],
         error_message=row["error_message"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
+    return QARecord(
+        id=row["id"],
+        project_id=row["project_id"],
+        source_type=row["source_type"],
+        source_path=row["source_path"],
+        selected_text=row["selected_text"],
+        question=row["question"],
+        answer_md=row["answer_md"],
+        provider=row["provider"],
+        model=row["model"],
+        output_path=row["output_path"],
+        favorite=bool(row["favorite"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -209,6 +264,7 @@ def update_project_status(project_id: int, status: str) -> Optional[ProjectRecor
 def delete_project(project_id: int) -> bool:
     with _connect() as conn:
         conn.execute("DELETE FROM generation_tasks WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM qa_records WHERE project_id = ?", (project_id,))
         cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         return cursor.rowcount > 0
@@ -321,6 +377,121 @@ def find_completed_task(
             (project_id, task_type, input_hash, prompt_version, source_path, mode),
         ).fetchone()
         return _row_to_task(row) if row else None
+
+
+def create_qa_record(
+    project_id: int,
+    source_type: str,
+    source_path: Optional[str],
+    selected_text: str,
+    question: str,
+    answer_md: str,
+    provider: str,
+    model: str,
+    output_path: Optional[Path] = None,
+) -> QARecord:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO qa_records (
+                project_id, source_type, source_path, selected_text, question,
+                answer_md, provider, model, output_path, favorite, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            """,
+            (
+                project_id,
+                source_type,
+                source_path,
+                selected_text,
+                question,
+                answer_md,
+                provider,
+                model,
+                str(output_path) if output_path else None,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        record_id = int(cursor.lastrowid)
+    record = get_qa_record(project_id, record_id)
+    if record is None:
+        raise RuntimeError("qa record was not persisted")
+    return record
+
+
+def get_qa_record(project_id: int, record_id: int) -> Optional[QARecord]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM qa_records WHERE project_id = ? AND id = ?",
+            (project_id, record_id),
+        ).fetchone()
+        return _row_to_qa_record(row) if row else None
+
+
+def list_qa_records(project_id: int, query: str = "", favorite: Optional[bool] = None) -> list[QARecord]:
+    clauses = ["project_id = ?"]
+    params: list[object] = [project_id]
+    if query.strip():
+        clauses.append("(question LIKE ? OR selected_text LIKE ? OR answer_md LIKE ? OR source_path LIKE ?)")
+        like = f"%{query.strip()}%"
+        params.extend([like, like, like, like])
+    if favorite is not None:
+        clauses.append("favorite = ?")
+        params.append(1 if favorite else 0)
+    sql = f"SELECT * FROM qa_records WHERE {' AND '.join(clauses)} ORDER BY updated_at DESC, id DESC"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_row_to_qa_record(row) for row in rows]
+
+
+def update_qa_record(
+    project_id: int,
+    record_id: int,
+    question: Optional[str] = None,
+    answer_md: Optional[str] = None,
+    output_path: Optional[Path] = None,
+) -> Optional[QARecord]:
+    existing = get_qa_record(project_id, record_id)
+    if existing is None:
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE qa_records
+            SET question = ?,
+                answer_md = ?,
+                output_path = COALESCE(?, output_path),
+                updated_at = ?
+            WHERE project_id = ? AND id = ?
+            """,
+            (
+                question if question is not None else existing.question,
+                answer_md if answer_md is not None else existing.answer_md,
+                str(output_path) if output_path else None,
+                now,
+                project_id,
+                record_id,
+            ),
+        )
+        conn.commit()
+    return get_qa_record(project_id, record_id)
+
+
+def set_qa_favorite(project_id: int, record_id: int, favorite: bool) -> Optional[QARecord]:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE qa_records SET favorite = ?, updated_at = ? WHERE project_id = ? AND id = ?",
+            (1 if favorite else 0, now, project_id, record_id),
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            return None
+    return get_qa_record(project_id, record_id)
 
 
 def get_setting(key: str) -> Optional[str]:

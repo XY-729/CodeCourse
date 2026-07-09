@@ -6,9 +6,10 @@ type Props = {
   node: TreeNode;
   selectedPath: string | null;
   onSelect: (path: string) => void;
+  onDragItem?: (kind: "file", path: string) => void;
 };
 
-function TreeItem({ node, selectedPath, onSelect }: Props) {
+function TreeItem({ node, selectedPath, onSelect, onDragItem }: Props) {
   const [open, setOpen] = useState(node.path === "");
   const isFile = node.type === "file";
   const selected = isFile && selectedPath === node.path;
@@ -23,7 +24,20 @@ function TreeItem({ node, selectedPath, onSelect }: Props) {
 
   return (
     <div className="tree-item">
-      <button className={`tree-row ${selected ? "selected" : ""}`} onClick={click} title={node.path || node.name}>
+      <button
+        className={`tree-row ${selected ? "selected" : ""}`}
+        onClick={click}
+        title={isFile ? `${node.path} - 可拖拽到中间工作区` : node.path || node.name}
+        draggable={isFile}
+        onDragStart={(event) => {
+          if (!isFile) {
+            return;
+          }
+          event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "file", path: node.path }));
+          event.dataTransfer.effectAllowed = "copy";
+          onDragItem?.("file", node.path);
+        }}
+      >
         <ChevronRight size={14} className={open && !isFile ? "chevron open" : "chevron"} />
         {isFile ? <File size={14} /> : <Folder size={14} />}
         <span>{node.name}</span>
@@ -32,7 +46,13 @@ function TreeItem({ node, selectedPath, onSelect }: Props) {
       {!isFile && open ? (
         <div className="tree-children">
           {node.children.map((child) => (
-            <TreeItem key={child.path || child.name} node={child} selectedPath={selectedPath} onSelect={onSelect} />
+            <TreeItem
+              key={child.path || child.name}
+              node={child}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+              onDragItem={onDragItem}
+            />
           ))}
         </div>
       ) : null}

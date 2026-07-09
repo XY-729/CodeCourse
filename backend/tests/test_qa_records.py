@@ -1,0 +1,139 @@
+"""Tests for persistent selected-text QA records."""
+
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+
+def _setup_temp_db():
+    import app.core.config as cfg
+    import app.services.storage as storage
+
+    tmpdir = tempfile.TemporaryDirectory()
+    workspace = Path(tmpdir.name)
+
+    db_path = workspace / "app.db"
+    repos = workspace / "repos"
+    generated = workspace / "generated"
+
+    cfg.DB_PATH = db_path
+    cfg.WORKSPACE_ROOT = workspace
+    cfg.REPOS_ROOT = repos
+    cfg.GENERATED_ROOT = generated
+
+    storage.DB_PATH = db_path
+    storage.GENERATED_ROOT = generated
+    storage.REPOS_ROOT = repos
+    storage.WORKSPACE_ROOT = workspace
+
+    storage.init_storage()
+    return tmpdir, workspace, generated
+
+
+class QARecordEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self._tmpdir, self.workspace, self.generated = _setup_temp_db()
+
+        import app.services.generation_service as generation_service
+        import app.services.qa_service as qa_service
+        from app.main import app
+
+        generation_service.GENERATED_ROOT = self.generated
+        qa_service.project_course_dir = lambda project_id: (self.generated / str(project_id)).resolve()
+        self.client = TestClient(app)
+
+        from app.services.storage import set_setting, upsert_project
+
+        repo_dir = self.workspace / "repos" / "repo"
+        repo_dir.mkdir(parents=True)
+        (repo_dir / "README.md").write_text("# Test\n", encoding="utf-8")
+        self.project = upsert_project("repo", "https://github.com/test/repo.git", repo_dir, "scanned")
+        set_setting("llm.enabled", "true")
+        set_setting("llm.api_key", "fake-key")
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def test_ask_creates_record_and_markdown_file(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="## Answer\nUse the selected function."):
+            resp = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "def main():\n    return 1",
+                    "question": "这段代码负责什么？",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["source_path"], "src/main.py")
+        self.assertIn("Answer", data["answer_md"])
+
+        output_path = Path(data["output_path"])
+        self.assertTrue(output_path.is_file())
+        text = output_path.read_text(encoding="utf-8")
+        self.assertIn("选区问答", text)
+        self.assertIn("这段代码负责什么？", text)
+
+    def test_search_favorite_and_edit_update_markdown(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="初始回答"):
+            created = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "学习总纲",
+                    "question": "如何开始？",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            ).json()
+
+        fav = self.client.post(f"/api/projects/{self.project.id}/qa/{created['id']}/favorite", json={"favorite": True})
+        self.assertEqual(fav.status_code, 200)
+        self.assertTrue(fav.json()["favorite"])
+
+        filtered = self.client.get(f"/api/projects/{self.project.id}/qa?query=开始&favorite=true")
+        self.assertEqual(filtered.status_code, 200)
+        self.assertEqual(len(filtered.json()), 1)
+
+        edited = self.client.put(
+            f"/api/projects/{self.project.id}/qa/{created['id']}",
+            json={"answer_md": "编辑后的 Markdown 回答"},
+        )
+        self.assertEqual(edited.status_code, 200)
+        output_path = Path(edited.json()["output_path"])
+        self.assertIn("编辑后的 Markdown 回答", output_path.read_text(encoding="utf-8"))
+
+    def test_missing_api_key_does_not_create_empty_record(self):
+        with patch("app.services.qa_service.get_llm_settings", return_value={"enabled": "false", "api_key": ""}):
+            resp = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "print('x')",
+                    "question": "解释",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 400)
+        history = self.client.get(f"/api/projects/{self.project.id}/qa")
+        self.assertEqual(history.status_code, 200)
+        self.assertEqual(history.json(), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

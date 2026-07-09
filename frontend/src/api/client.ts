@@ -35,6 +35,34 @@ export type ExplainResponse = {
   explanation: string;
 };
 
+export type SourceType = "file" | "course" | "selection";
+
+export type QARecord = {
+  id: number;
+  project_id: number;
+  source_type: SourceType;
+  source_path?: string | null;
+  selected_text: string;
+  question: string;
+  answer_md: string;
+  provider: string;
+  model: string;
+  output_path?: string | null;
+  favorite: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type QAAskPayload = {
+  source_type: SourceType;
+  source_path?: string | null;
+  selected_text: string;
+  question: string;
+  provider: string;
+  base_url: string;
+  model: string;
+};
+
 export type ProjectActionResponse = {
   id: number;
   status: string;
@@ -194,5 +222,46 @@ export function explainCurrent(
   return request<ExplainResponse>("/explain", {
     method: "POST",
     body: JSON.stringify({ project_id: projectId, path, mode, selection }),
+  });
+}
+
+export function askQuestion(projectId: number, payload: QAAskPayload): Promise<QARecord> {
+  return request<QARecord>(`/projects/${projectId}/qa/ask`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listQARecords(projectId: number, query = "", favorite?: boolean): Promise<QARecord[]> {
+  const params = new URLSearchParams();
+  if (query.trim()) {
+    params.set("query", query.trim());
+  }
+  if (favorite !== undefined) {
+    params.set("favorite", String(favorite));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<QARecord[]>(`/projects/${projectId}/qa${suffix}`);
+}
+
+export function getQARecord(projectId: number, qaId: number): Promise<QARecord> {
+  return request<QARecord>(`/projects/${projectId}/qa/${qaId}`);
+}
+
+export function updateQARecord(
+  projectId: number,
+  qaId: number,
+  payload: { question?: string; answer_md?: string },
+): Promise<QARecord> {
+  return request<QARecord>(`/projects/${projectId}/qa/${qaId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setQAFavorite(projectId: number, qaId: number, favorite: boolean): Promise<QARecord> {
+  return request<QARecord>(`/projects/${projectId}/qa/${qaId}/favorite`, {
+    method: "POST",
+    body: JSON.stringify({ favorite }),
   });
 }
