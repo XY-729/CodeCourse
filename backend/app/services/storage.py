@@ -37,6 +37,15 @@ def init_storage() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         conn.commit()
 
 
@@ -110,3 +119,45 @@ def delete_project(project_id: int) -> bool:
         cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         return cursor.rowcount > 0
+
+
+def get_setting(key: str) -> Optional[str]:
+    with _connect() as conn:
+        row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+
+def set_setting(key: str, value: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+            """,
+            (key, value, now),
+        )
+        conn.commit()
+
+
+def get_llm_settings() -> dict[str, str]:
+    return {
+        "provider": get_setting("llm.provider") or "deepseek",
+        "base_url": get_setting("llm.base_url") or "https://api.deepseek.com",
+        "model": get_setting("llm.model") or "deepseek-v4-flash",
+        "api_key": get_setting("llm.api_key") or "",
+        "enabled": get_setting("llm.enabled") or "false",
+    }
+
+
+def save_llm_settings(provider: str, base_url: str, model: str, enabled: bool, api_key: Optional[str], clear_api_key: bool) -> dict[str, str]:
+    set_setting("llm.provider", provider.strip() or "deepseek")
+    set_setting("llm.base_url", base_url.strip().rstrip("/") or "https://api.deepseek.com")
+    set_setting("llm.model", model.strip() or "deepseek-v4-flash")
+    set_setting("llm.enabled", "true" if enabled else "false")
+    if clear_api_key:
+        set_setting("llm.api_key", "")
+    elif api_key is not None and api_key.strip():
+        set_setting("llm.api_key", api_key.strip())
+    return get_llm_settings()

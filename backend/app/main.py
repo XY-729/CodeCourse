@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import course, files, projects
+from app.api import course, files, projects, settings
 from app.services.storage import init_storage
 
 
@@ -28,6 +28,7 @@ app.add_middleware(
 app.include_router(projects.router)
 app.include_router(files.router)
 app.include_router(course.router)
+app.include_router(settings.router)
 
 
 @app.get("/api/health")

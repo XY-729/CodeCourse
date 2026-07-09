@@ -17,6 +17,7 @@ import {
 } from "./api/client";
 import CodeViewer from "./components/CodeViewer";
 import ExplainPanel from "./components/ExplainPanel";
+import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import RepositoryForm from "./components/RepositoryForm";
 import Sidebar from "./components/Sidebar";
@@ -38,6 +39,7 @@ export default function App() {
   const [explanation, setExplanation] = useState("");
   const [provider, setProvider] = useState("template");
   const [error, setError] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const selectedCourseTitle = useMemo(() => {
     return courses.find((file) => file.filename === selectedCourse)?.title ?? selectedCourse;
@@ -213,6 +215,9 @@ export default function App() {
           <span>{project ? project.name : "MVP"}</span>
         </div>
         <RepositoryForm loading={loading} onSubmit={handleImport} />
+        <button className="topbar-action" onClick={() => setSettingsOpen(true)} title="配置模型 API">
+          模型 API
+        </button>
       </header>
       {error ? <div className="error-bar">{error}</div> : null}
       <main className="workbench">
@@ -239,6 +244,7 @@ export default function App() {
         </section>
         <ExplainPanel provider={provider} explanation={explanation} loading={explainLoading} onRefresh={() => refreshExplain()} />
       </main>
+      <LLMSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

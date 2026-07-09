@@ -42,6 +42,30 @@ export type ProjectActionResponse = {
   course_files: string[];
 };
 
+export type LLMSettings = {
+  provider: string;
+  base_url: string;
+  model: string;
+  enabled: boolean;
+  has_api_key: boolean;
+  masked_api_key: string | null;
+};
+
+export type SaveLLMSettingsPayload = {
+  provider: string;
+  base_url: string;
+  model: string;
+  enabled: boolean;
+  api_key?: string;
+  clear_api_key?: boolean;
+};
+
+export type LLMTestResponse = {
+  ok: boolean;
+  provider: string;
+  message: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -82,6 +106,23 @@ export function regenerateProject(projectId: number): Promise<ProjectActionRespo
 export function deleteProject(projectId: number): Promise<ProjectActionResponse> {
   return request<ProjectActionResponse>(`/projects/${projectId}`, {
     method: "DELETE",
+  });
+}
+
+export function getLLMSettings(): Promise<LLMSettings> {
+  return request<LLMSettings>("/settings/llm");
+}
+
+export function saveLLMSettings(payload: SaveLLMSettingsPayload): Promise<LLMSettings> {
+  return request<LLMSettings>("/settings/llm", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function testLLMSettings(): Promise<LLMTestResponse> {
+  return request<LLMTestResponse>("/settings/llm/test", {
+    method: "POST",
   });
 }
 

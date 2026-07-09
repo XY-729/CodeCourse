@@ -11,7 +11,8 @@
 - 前端提供三栏布局：文件树和课程目录、只读 Monaco 代码阅读器或 Markdown 阅读器、解释面板。
 - 支持查看已导入项目列表、切换项目、重新生成课程、删除本地导入。
 - 针对 C/C++、Node、Python、Go、Rust、Docker 等项目生成更贴近技术栈的课程大纲。
-- 预留 LLM provider 配置；没有 `GPL_LLM_API_KEY` 时使用规则模板解释。
+- 前端内置模型 API 设置面板，可保存 DeepSeek / OpenAI Compatible 的 Base URL、Model 和 API Key。
+- 未启用模型 API 或调用失败时，解释面板自动回退到规则模板解释。
 
 ## GitHub URL 建议
 
@@ -22,6 +23,18 @@ git@github.com:owner/repo.git
 ```
 
 如果使用 HTTPS 导入失败，前端会提示改用 SSH，后端也会返回更具体的网络、认证或仓库不存在错误。
+
+## 模型 API 设置
+
+点击页面右上角 `模型 API`：
+
+- Provider 默认 `DeepSeek`
+- Base URL 默认 `https://api.deepseek.com`
+- Model 默认 `deepseek-v4-flash`
+- API Key 保存在本地 SQLite：`workspace/app.db`
+- 可通过面板里的 `DeepSeek API Key` 按钮跳转到 `https://platform.deepseek.com/api_keys`
+
+保存并启用后，右侧解释面板会优先调用模型；如果未配置、未启用或调用失败，会回退到规则解释。
 
 ## 启动后端
 
@@ -55,6 +68,9 @@ npm run dev -- --host 0.0.0.0
 - `GET /api/projects/{project_id}/course`
 - `GET /api/projects/{project_id}/course/{filename}`
 - `POST /api/explain`
+- `GET /api/settings/llm`
+- `PUT /api/settings/llm`
+- `POST /api/settings/llm/test`
 
 ## MVP 边界
 

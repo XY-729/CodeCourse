@@ -61,3 +61,27 @@ class ProjectActionResponse(BaseModel):
     status: str
     message: str
     course_files: list[str] = Field(default_factory=list)
+
+
+class LLMSettingsRequest(BaseModel):
+    provider: str = "deepseek"
+    base_url: str = "https://api.deepseek.com"
+    model: str = "deepseek-v4-flash"
+    api_key: Optional[str] = None
+    enabled: bool = False
+    clear_api_key: bool = False
+
+
+class LLMSettingsResponse(BaseModel):
+    provider: str
+    base_url: str
+    model: str
+    enabled: bool
+    has_api_key: bool
+    masked_api_key: Optional[str] = None
+
+
+class LLMTestResponse(BaseModel):
+    ok: bool
+    provider: str
+    message: str
