@@ -1,0 +1,8 @@
+workspace/app.db
+workspace/repos/
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+__pycache__/
+*.pyc
