@@ -1,8 +1,6 @@
-import { Edit3, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
+import { Edit3, Loader2, Search, Send, Star, Trash2 } from "lucide-react";
 import type { MouseEvent } from "react";
 import type { LLMSettings, QARecord, SourceType } from "../api/client";
-import type { Annotation, AnnotationType } from "../types";
-import { ANNOTATION_COLORS, ANNOTATION_LABELS } from "../types";
 
 export type SelectionSummary = {
   sourceType: SourceType;
@@ -10,8 +8,6 @@ export type SelectionSummary = {
   selectedText: string;
   language?: string;
 };
-
-const QUICK_ANNOTATION_TYPES: AnnotationType[] = ["highlight", "important", "question", "concept", "code"];
 
 type Props = {
   selection: SelectionSummary | null;
@@ -24,7 +20,6 @@ type Props = {
   settings: LLMSettings | null;
   panelError: string;
   askHeight: number;
-  annotations?: Annotation[];
   onAskResizeStart: (event: MouseEvent<HTMLDivElement>) => void;
   onQuestionChange: (value: string) => void;
   onSelectionTextChange: (value: string) => void;
@@ -37,9 +32,7 @@ type Props = {
   onRenameRecord: (record: QARecord) => void;
   onToggleFavorite: (record: QARecord) => void;
   onOpenSettings: () => void;
-  onCreateAnnotation?: (type: AnnotationType) => void;
   onExplain?: () => void;
-  onDeleteAnnotation?: (id: string) => void;
 };
 
 function sourceLabel(type: SourceType) {
@@ -70,7 +63,6 @@ export default function ExplainPanel({
   settings,
   panelError,
   askHeight,
-  annotations = [],
   onAskResizeStart,
   onQuestionChange,
   onSelectionTextChange,
@@ -83,9 +75,7 @@ export default function ExplainPanel({
   onRenameRecord,
   onToggleFavorite,
   onOpenSettings,
-  onCreateAnnotation,
   onExplain,
-  onDeleteAnnotation,
 }: Props) {
   const selectedLength = selection?.selectedText.length ?? 0;
   const modelReady = Boolean(settings?.enabled && settings.has_api_key);
@@ -126,20 +116,9 @@ export default function ExplainPanel({
               </button>
 
               {selection.sourceType === "course" && selection.selectedText.trim() ? (
-                <div className="annotation-quick-actions">
-                  {QUICK_ANNOTATION_TYPES.map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      className="annotation-quick-btn"
-                      onClick={() => onCreateAnnotation?.(type)}
-                    >
-                      <span className="annotation-badge" style={{ backgroundColor: ANNOTATION_COLORS[type] }} />
-                      {ANNOTATION_LABELS[type]}
-                    </button>
-                  ))}
-                  <button type="button" className="annotation-quick-btn" onClick={handleExplainClick}>
-                    解释这段
+                <div className="explain-action-row">
+                  <button type="button" className="explain-action-btn" onClick={handleExplainClick}>
+                    解释当前选中内容
                   </button>
                 </div>
               ) : null}
@@ -148,28 +127,6 @@ export default function ExplainPanel({
             <div className="empty small">尚未选中文本</div>
           )}
         </div>
-
-        {annotations.length > 0 ? (
-          <div className="qa-section">
-            <div className="qa-section-title">已保存标注 ({annotations.length})</div>
-            <div className="annotation-list">
-              {annotations.map((ann) => (
-                <div key={ann.id} className="annotation-item">
-                  <span className="annotation-badge" style={{ backgroundColor: ANNOTATION_COLORS[ann.type] }} />
-                  <span className="annotation-item-text">{ann.selectedText}</span>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={() => onDeleteAnnotation?.(ann.id)}
-                    title="删除标注"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : null}
 
         <div className="qa-section ask-box">
           <textarea

@@ -1,26 +1,33 @@
-export type AnnotationType = "highlight" | "important" | "question" | "concept" | "code";
+export type AnnotationColor = "yellow" | "blue" | "green" | "red" | "purple";
+
+export type AnnotationStyle = {
+  color?: AnnotationColor;
+  bold?: boolean;
+  underline?: boolean;
+};
 
 export type Annotation = {
   id: string;
   courseFile: string;
   selectedText: string;
-  type: AnnotationType;
-  note?: string;
+  style: AnnotationStyle;
   createdAt: string;
 };
 
-export const ANNOTATION_COLORS: Record<AnnotationType, string> = {
-  highlight: "#fff59d",
-  important: "#ffcdd2",
-  question: "#b3e5fc",
-  concept: "#c8e6c9",
-  code: "#e1bee7",
+export const COLOR_VALUES: Record<AnnotationColor, string> = {
+  yellow: "#fff59d",
+  blue: "#b3e5fc",
+  green: "#c8e6c9",
+  red: "#ffcdd2",
+  purple: "#e1bee7",
 };
 
-export const ANNOTATION_LABELS: Record<AnnotationType, string> = {
-  highlight: "高亮",
-  important: "重点",
-  question: "疑问",
-  concept: "概念",
-  code: "代码",
+export const COLOR_LABELS: Record<AnnotationColor, string> = {
+  yellow: "黄色",
+  blue: "蓝色",
+  green: "绿色",
+  red: "红色",
+  purple: "紫色",
 };
+
+export const ALL_COLORS: AnnotationColor[] = ["yellow", "blue", "green", "red", "purple"];

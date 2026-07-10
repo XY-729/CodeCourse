@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { HighlightRecord } from "../api/client";
 import type { Annotation } from "../types";
-import { ANNOTATION_COLORS } from "../types";
+import { COLOR_VALUES } from "../types";
 import type { ViewerSelection } from "./CodeViewer";
 
 type Props = {
@@ -19,7 +19,7 @@ type Props = {
   onContextMenu?: (event: React.MouseEvent, text: string, sourcePath: string) => void;
 };
 
-/* ---- Backend highlights (yellow <mark>) ---- */
+/* ---- Backend highlights ---- */
 function applyHighlightToText(text: string, highlight: HighlightRecord, keyPrefix: string): ReactNode[] {
   if (!highlight.selected_text || !text.includes(highlight.selected_text)) {
     return [text];
@@ -38,23 +38,40 @@ function applyHighlightToText(text: string, highlight: HighlightRecord, keyPrefi
   });
 }
 
-function applyHighlights(text: string, highlights: HighlightRecord[]): ReactNode[] {
-  let parts: ReactNode[] = [text];
-  for (const highlight of highlights) {
-    parts = parts.flatMap((part, index) =>
-      typeof part === "string" ? applyHighlightToText(part, highlight, `hl-${index}`) : [part],
-    );
+/* ---- Local annotations with composable styles ---- */
+function buildAnnotationClasses(annotation: Annotation): string {
+  const classes: string[] = ["reader-highlight"];
+  const { style } = annotation;
+  if (style.color) {
+    classes.push(`annotation-color-${style.color}`);
   }
-  return parts;
+  if (style.bold) {
+    classes.push("annotation-bold");
+  }
+  if (style.underline) {
+    classes.push("annotation-underline");
+  }
+  return classes.join(" ");
 }
 
-/* ---- Local annotations (type-specific colors) ---- */
+function buildAnnotationInlineStyle(annotation: Annotation): React.CSSProperties {
+  const s: React.CSSProperties = {};
+  if (annotation.style.color) {
+    s.backgroundColor = COLOR_VALUES[annotation.style.color];
+  }
+  return s;
+}
+
 function applyAnnotationToText(text: string, annotation: Annotation, keyPrefix: string): ReactNode[] {
+  // Skip annotations with no visible style
+  if (!annotation.style.color && !annotation.style.bold && !annotation.style.underline) {
+    return [text];
+  }
   if (!text.includes(annotation.selectedText)) {
     return [text];
   }
-  const color = ANNOTATION_COLORS[annotation.type];
-  const cls = `annotation-${annotation.type}`;
+  const cls = buildAnnotationClasses(annotation);
+  const inlineStyle = buildAnnotationInlineStyle(annotation);
   const parts = text.split(annotation.selectedText);
   // TODO: use positional matching (offsets) to handle duplicate text precisely
   return parts.flatMap((part, index) => {
@@ -63,21 +80,11 @@ function applyAnnotationToText(text: string, annotation: Annotation, keyPrefix: 
     }
     return [
       part,
-      <mark key={`${keyPrefix}-${annotation.id}-${index}`} className={`reader-highlight ${cls}`} style={{ backgroundColor: color }}>
+      <mark key={`${keyPrefix}-${annotation.id}-${index}`} className={cls} style={inlineStyle}>
         {annotation.selectedText}
       </mark>,
     ];
   });
-}
-
-function applyAnnotations(text: string, annotations: Annotation[]): ReactNode[] {
-  let parts: ReactNode[] = [text];
-  for (const annotation of annotations) {
-    parts = parts.flatMap((part, index) =>
-      typeof part === "string" ? applyAnnotationToText(part, annotation, `ann-${index}`) : [part],
-    );
-  }
-  return parts;
 }
 
 /* ---- Temp selection preview ---- */
@@ -99,15 +106,7 @@ function applyTempSelection(text: string, tempText: string, keyPrefix: string): 
   });
 }
 
-function applyTempToAll(text: string, tempText: string): ReactNode[] {
-  let parts: ReactNode[] = [text];
-  parts = parts.flatMap((part, index) =>
-    typeof part === "string" ? applyTempSelection(part, tempText, `tmp-${index}`) : [part],
-  );
-  return parts;
-}
-
-/* ---- Combined rendering (highlights → annotations → temp, temp wins visually) ---- */
+/* ---- Combined rendering (highlights -> annotations -> temp, temp wins visually) ---- */
 function highlightChildren(
   children: ReactNode,
   highlights: HighlightRecord[],
@@ -149,7 +148,7 @@ export default function MarkdownViewer({
   annotations = [],
   tempSelectedText,
   onSelectionChange,
-  onCreateHighlight: _onCreateHighlight, // kept for backward compat, no longer rendered
+  onCreateHighlight: _onCreateHighlight,
   onContextMenu,
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
@@ -162,7 +161,6 @@ export default function MarkdownViewer({
       return;
     }
     if (selection.isCollapsed) {
-      // User clicked elsewhere — clear temp selection
       setSelectedText("");
       onSelectionChange?.({
         sourceType: "course",

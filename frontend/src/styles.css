@@ -1056,19 +1056,27 @@ button:disabled,
   font-size: 13px;
 }
 
-/* ---- Annotation type colors ---- */
-.annotation-highlight { background: #fff59d; }
-.annotation-important { background: #ffcdd2; }
-.annotation-question  { background: #b3e5fc; }
-.annotation-concept   { background: #c8e6c9; }
-.annotation-code      { background: #e1bee7; }
+/* ---- Composable annotation styles ---- */
+.annotation-color-yellow { background: #fff59d; }
+.annotation-color-blue   { background: #b3e5fc; }
+.annotation-color-green  { background: #c8e6c9; }
+.annotation-color-red    { background: #ffcdd2; }
+.annotation-color-purple { background: #e1bee7; }
+
+.annotation-bold {
+  font-weight: 700;
+}
+
+.annotation-underline {
+  text-decoration: underline;
+}
 
 .temp-selection {
   background: rgba(253, 224, 71, 0.45);
   border-radius: 3px;
 }
 
-/* ---- Context menu ---- */
+/* ---- Context menu / style toolbar ---- */
 .context-menu-overlay {
   position: fixed;
   inset: 0;
@@ -1078,7 +1086,7 @@ button:disabled,
 .context-menu {
   position: fixed;
   z-index: 21;
-  min-width: 184px;
+  min-width: 210px;
   background: #ffffff;
   border: 1px solid #c8d0da;
   border-radius: 8px;
@@ -1086,89 +1094,116 @@ button:disabled,
   padding: 6px;
 }
 
-.context-menu-item {
-  width: 100%;
+.toolbar-section-label {
+  padding: 4px 10px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #7b8794;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.toolbar-color-row {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.toolbar-color-swatch {
+  width: 28px;
+  height: 28px;
+  border: 2px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  cursor: pointer;
-  font-size: 13px;
-  text-align: left;
-  color: #263444;
-}
-
-.context-menu-item:hover {
-  background: #eef2f6;
-}
-
-.context-menu-separator {
-  height: 1px;
-  background: #e5e9ee;
-  margin: 4px 6px;
-}
-
-/* ---- Annotation badge ---- */
-.annotation-badge {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
+  justify-content: center;
   flex: 0 0 auto;
 }
 
-/* ---- Quick action buttons in ExplainPanel ---- */
-.annotation-quick-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+.toolbar-color-swatch:hover {
+  border-color: #9aa4b2;
 }
 
-.annotation-quick-btn {
+.toolbar-color-swatch.active {
+  border-color: #25766c;
+  box-shadow: 0 0 0 1px #25766c;
+}
+
+.toolbar-color-none {
+  width: 28px;
   height: 28px;
-  padding: 0 8px;
+  border: 2px dashed #c8d0da;
+  border-radius: 5px;
+  cursor: pointer;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  font-size: 14px;
+  color: #9aa4b2;
+}
+
+.toolbar-color-none:hover {
+  border-color: #7b8794;
+  color: #607086;
+}
+
+.toolbar-color-none.active {
+  border-style: solid;
+  border-color: #25766c;
+  box-shadow: 0 0 0 1px #25766c;
+}
+
+.toolbar-toggle-row {
+  display: flex;
+  gap: 4px;
+  padding: 4px 8px 6px;
+}
+
+.toolbar-toggle-btn {
+  height: 30px;
+  padding: 0 12px;
   border: 1px solid #c8d0da;
   border-radius: 5px;
   background: #ffffff;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #263444;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #263444;
 }
 
-.annotation-quick-btn:hover {
+.toolbar-toggle-btn:hover {
   background: #eef2f6;
 }
 
-/* ---- Annotation list in ExplainPanel ---- */
-.annotation-list {
-  max-height: 160px;
-  overflow: auto;
+.toolbar-toggle-btn.active {
+  border-color: #25766c;
+  color: #155d54;
+  background: #d9ece8;
 }
 
-.annotation-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: 5px;
-  margin-bottom: 3px;
-  background: #fbfcfd;
-  border: 1px solid #e5e9ee;
+/* ---- Explain panel explain button ---- */
+.explain-action-row {
+  padding: 4px 8px 8px;
 }
 
-.annotation-item-text {
-  flex: 1;
-  min-width: 0;
-  font-size: 12px;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.explain-action-btn {
+  width: 100%;
+  height: 32px;
+  border: 1px solid #25766c;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #25766c;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.explain-action-btn:hover {
+  background: #e6f4f1;
 }
