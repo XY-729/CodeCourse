@@ -311,7 +311,7 @@ export default function App() {
   const [explainWidth, setExplainWidth] = useState(360);
   const [sidebarProjectHeight, setSidebarProjectHeight] = useState(150);
   const [sidebarCourseHeight, setSidebarCourseHeight] = useState(240);
-  const [qaAskHeight, setQAAskHeight] = useState(390);
+  const [qaAskHeight, setQAAskHeight] = useState(560);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [layout, setLayout] = useState<LayoutNode>(() => createInitialLayout());
   const [activeGroupId, setActiveGroupId] = useState(ROOT_GROUP_ID);
@@ -365,7 +365,7 @@ export default function App() {
       } else if (currentDrag.kind === "sidebar-course") {
         setSidebarCourseHeight(clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420));
       } else if (currentDrag.kind === "qa-ask") {
-        setQAAskHeight(clamp(currentDrag.startHeight + currentDrag.startY - event.clientY, 230, 560));
+        setQAAskHeight(clamp(currentDrag.startHeight + currentDrag.startY - event.clientY, 230, 720));
       } else if (currentDrag.kind === "split") {
         const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
         const nextRatio = currentDrag.startRatio + delta / Math.max(1, currentDrag.size);
