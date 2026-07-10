@@ -614,6 +614,16 @@ def set_qa_favorite(project_id: int, record_id: int, favorite: bool) -> Optional
     return get_qa_record(project_id, record_id)
 
 
+def delete_qa_record(project_id: int, record_id: int) -> bool:
+    with _connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM qa_records WHERE project_id = ? AND id = ?",
+            (project_id, record_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
 def get_setting(key: str) -> Optional[str]:
     with _connect() as conn:
         row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()

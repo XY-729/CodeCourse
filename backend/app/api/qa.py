@@ -84,3 +84,13 @@ def toggle_favorite(project_id: int, qa_id: int, payload: QAFavoriteRequest) -> 
     if record is None:
         raise HTTPException(status_code=404, detail="QA record not found")
     return _to_response(record)
+
+
+@router.delete("/{project_id}/qa/{qa_id}")
+def delete_history_item(project_id: int, qa_id: int):
+    _require_project(project_id)
+    from app.services.qa_service import delete_record
+    deleted = delete_record(project_id, qa_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="QA record not found")
+    return {"deleted": True, "id": qa_id}

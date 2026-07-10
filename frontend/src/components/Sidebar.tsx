@@ -21,6 +21,7 @@ type Props = {
   onDeleteProject: (project: Project) => void;
   onSelectFile: (path: string) => void;
   onSelectCourse: (filename: string) => void;
+  onDeleteCourse?: (file: CourseFile) => void;
 };
 
 export default function Sidebar({
@@ -40,6 +41,7 @@ export default function Sidebar({
   onDeleteProject,
   onSelectFile,
   onSelectCourse,
+  onDeleteCourse,
 }: Props) {
   return (
     <aside
@@ -90,7 +92,7 @@ export default function Sidebar({
       <section className="sidebar-section">
         <h2>课程目录</h2>
         <div className="sidebar-scroll compact">
-          <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} />
+          <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDelete={onDeleteCourse} />
         </div>
       </section>
     </aside>

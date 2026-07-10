@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +10,7 @@ from app.services.llm_client import call_openai_compatible_chat
 from app.services.storage import (
     QARecord,
     create_qa_record,
+    delete_qa_record,
     get_llm_settings,
     get_qa_record,
     list_qa_records,
@@ -17,24 +19,53 @@ from app.services.storage import (
 )
 
 
-def _qa_dir(project_id: int) -> Path:
-    return project_course_dir(project_id) / "qa"
+def _generate_title_from_question(question: str) -> str:
+    text = question.strip()
+    for prefix in [
+        "请解释这段内容：", "请解释：", "请解释",
+        "解释这段内容：", "解释：", "解释",
+        "请问：", "请问", "问：", "问题：",
+        "这段代码是做什么的：", "这段代码",
+    ]:
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+    text = re.sub(r'\s+', ' ', text)
+    if len(text) > 50:
+        text = text[:50].rstrip()
+    if not text:
+        return "选区问答说明"
+    if not any(text.endswith(s) for s in ["分析", "说明", "解释", "介绍", "实现", "原理", "流程"]):
+        text = text + "说明"
+    return text
 
 
-def _record_path(project_id: int, record_id: int) -> Path:
-    return _qa_dir(project_id) / f"qa_{record_id:04d}.md"
+def _safe_filename(title: str, record_id: int, max_len: int = 80) -> str:
+    safe = re.sub(r'[^\w一-鿿\s-]', '', title)
+    safe = re.sub(r'[\s_]+', '_', safe).strip('_')
+    if len(safe) > max_len:
+        safe = safe[:max_len].rstrip('_')
+    return f"{safe or 'qa_record'}_{record_id:04d}"
+
+
+def _selection_answers_dir(project_id: int) -> Path:
+    return project_course_dir(project_id) / "selection_answers"
+
+
+def _resolve_output_path(project_id: int, relative_output_path: str) -> Path:
+    course_dir = project_course_dir(project_id)
+    return (course_dir / relative_output_path).resolve()
 
 
 def _format_record_markdown(record: QARecord) -> str:
     source_path = record.source_path or "(无路径)"
     favorite = "true" if record.favorite else "false"
-    title = record.display_title or f"选区问答 #{record.id}"
+    title = record.display_title or f"问答记录 #{record.id}"
     selected_text = record.selected_text or "无选区内容"
     return f"""# {title}
 
 > 来源类型：{record.source_type}
 > 来源路径：{source_path}
-> 显示标题：{title}
 > 模型：{record.model}
 > 收藏：{favorite}
 > 创建时间：{record.created_at}
@@ -57,13 +88,20 @@ def _format_record_markdown(record: QARecord) -> str:
 
 
 def _write_record_markdown(record: QARecord) -> QARecord:
-    path = _record_path(record.project_id, record.id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_format_record_markdown(record), encoding="utf-8")
-    updated = update_qa_record(record.project_id, record.id, output_path=path)
-    if updated is None:
-        raise RuntimeError("QA record disappeared after markdown write")
-    return updated
+    if record.output_path:
+        full_path = _resolve_output_path(record.project_id, record.output_path)
+    else:
+        safe_name = _safe_filename(record.display_title or "qa", record.id)
+        full_path = _selection_answers_dir(record.project_id) / f"{safe_name}.md"
+        rel_path = f"selection_answers/{safe_name}.md"
+        updated = update_qa_record(record.project_id, record.id, output_path=Path(rel_path))
+        if updated is None:
+            raise RuntimeError("QA record disappeared during path update")
+        record = updated
+
+    full_path.parent.mkdir(parents=True, exist_ok=True)
+    full_path.write_text(_format_record_markdown(record), encoding="utf-8")
+    return record
 
 
 def _settings_for_request(payload: QAAskRequest) -> dict[str, str]:
@@ -118,6 +156,8 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
     if not answer:
         raise RuntimeError("模型返回为空内容，未创建问答记录。")
 
+    title = _generate_title_from_question(question)
+
     record = create_qa_record(
         project_id=project_id,
         source_type=payload.source_type,
@@ -127,8 +167,16 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
         answer_md=answer,
         provider=settings["provider"],
         model=settings["model"],
+        display_title=title,
     )
-    return _write_record_markdown(record)
+
+    safe_name = _safe_filename(title, record.id)
+    relative_path = f"selection_answers/{safe_name}.md"
+    record_with_path = update_qa_record(project_id, record.id, output_path=Path(relative_path))
+    if record_with_path is None:
+        raise RuntimeError("QA record disappeared during path update")
+
+    return _write_record_markdown(record_with_path)
 
 
 def search_records(project_id: int, query: str = "", favorite: Optional[bool] = None) -> list[QARecord]:
@@ -157,3 +205,17 @@ def favorite_record(project_id: int, record_id: int, favorite: bool) -> Optional
     if record is None:
         return None
     return _write_record_markdown(record)
+
+
+def delete_record(project_id: int, record_id: int) -> bool:
+    record = get_qa_record(project_id, record_id)
+    if record is None:
+        return False
+    if record.output_path:
+        try:
+            full_path = _resolve_output_path(project_id, record.output_path)
+            if full_path.exists():
+                full_path.unlink()
+        except OSError:
+            pass
+    return delete_qa_record(project_id, record_id)

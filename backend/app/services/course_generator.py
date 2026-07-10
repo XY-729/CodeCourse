@@ -12,6 +12,18 @@ PREFERRED_COURSE_FILES = [
     "outline.md",
 ]
 
+GROUP_LABELS = {
+    "": "项目总纲",
+    "files": "文件课件",
+    "selection_answers": "选区问答",
+}
+
+
+def _derive_group(filename: str) -> str:
+    parts = filename.split("/")
+    parent = "" if len(parts) == 1 else parts[0]
+    return GROUP_LABELS.get(parent, parent or "项目总纲")
+
 
 def _title_from_markdown(path: Path) -> str:
     try:
@@ -29,7 +41,11 @@ def list_course_files_from_dir(course_dir: Path) -> list[CourseFile]:
     preferred = [course_dir / name for name in PREFERRED_COURSE_FILES if (course_dir / name).is_file()]
     extras = sorted(path for path in course_dir.rglob("*.md") if path.name not in PREFERRED_COURSE_FILES)
     return [
-        CourseFile(filename=path.relative_to(course_dir).as_posix(), title=_title_from_markdown(path))
+        CourseFile(
+            filename=path.relative_to(course_dir).as_posix(),
+            title=_title_from_markdown(path),
+            group=_derive_group(path.relative_to(course_dir).as_posix()),
+        )
         for path in [*preferred, *extras]
     ]
 

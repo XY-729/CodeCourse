@@ -37,6 +37,7 @@ class FileContentResponse(BaseModel):
 class CourseFile(BaseModel):
     filename: str
     title: str
+    group: str = ""
 
 
 class CourseContentResponse(BaseModel):

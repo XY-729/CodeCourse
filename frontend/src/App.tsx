@@ -22,6 +22,8 @@ import {
   regenerateProject,
   setQAFavorite,
   updateQARecord,
+  deleteQARecord,
+  deleteCourseFile,
 } from "./api/client";
 import type {
   CourseFile,
@@ -320,6 +322,7 @@ export default function App() {
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sourcePath: string; selectedText: string; existingStyle: AnnotationStyle } | null>(null);
   const [tempSelectedText, setTempSelectedText] = useState<string | null>(null);
+  const [editingCourseItemId, setEditingCourseItemId] = useState<string | null>(null);
 
   const idCounter = useRef(1);
   const canGenerateFileLesson = Boolean(project && fileContent);
@@ -346,7 +349,7 @@ export default function App() {
       } else if (currentDrag.kind === "sidebar-course") {
         setSidebarCourseHeight(clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420));
       } else if (currentDrag.kind === "qa-ask") {
-        setQAAskHeight(clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 230, 560));
+        setQAAskHeight(clamp(currentDrag.startHeight + currentDrag.startY - event.clientY, 230, 560));
       } else if (currentDrag.kind === "split") {
         const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
         const nextRatio = currentDrag.startRatio + delta / Math.max(1, currentDrag.size);
@@ -564,16 +567,30 @@ export default function App() {
       if (!record) {
         return null;
       }
-      return {
-        id: `qa:${record.id}`,
-        type: "qa",
-        path: record.output_path ?? `qa/${record.id}`,
-        title: qaTitle(record),
-        content: record.answer_md,
-        qaRecordId: record.id,
-        favorite: record.favorite,
-        dirty: false,
-      };
+      const relPath = _normalizeOutputPath(record.output_path, record.id, project.id);
+      try {
+        const result = await getCourseContent(project.id, relPath);
+        return {
+          id: `course:${relPath}`,
+          type: "course",
+          path: relPath,
+          title: qaTitle(record),
+          content: result.content,
+          qaRecordId: record.id,
+          favorite: record.favorite,
+        };
+      } catch {
+        return {
+          id: `qa:${record.id}`,
+          type: "qa",
+          path: relPath,
+          title: qaTitle(record),
+          content: record.answer_md,
+          qaRecordId: record.id,
+          favorite: record.favorite,
+          dirty: false,
+        };
+      }
     }
     return null;
   }
@@ -610,18 +627,62 @@ export default function App() {
     });
   }
 
-  function openQAInActiveGroup(record: QARecord) {
+  function _normalizeOutputPath(outputPath: string | null | undefined, recordId: number, projectId: number): string {
+    if (!outputPath) {
+      return `qa/${recordId}`;
+    }
+    // If it's already a relative path, use as-is
+    if (!outputPath.startsWith('/') && !outputPath.includes('\\')) {
+      return outputPath;
+    }
+    // Old absolute path: extract everything after "generated/{projectId}/"
+    const marker = `generated/${projectId}/`;
+    const idx = outputPath.indexOf(marker);
+    if (idx !== -1) {
+      return outputPath.slice(idx + marker.length);
+    }
+    // Fallback: try to extract relative path from any "generated/" prefix
+    const genIdx = outputPath.lastIndexOf('generated/');
+    if (genIdx !== -1) {
+      // Skip past "generated/{id}/"
+      const after = outputPath.slice(genIdx + 'generated/'.length);
+      const slashIdx = after.indexOf('/');
+      return slashIdx !== -1 ? after.slice(slashIdx + 1) : after;
+    }
+    return `qa/${recordId}`;
+  }
+
+  async function openQAInActiveGroup(record: QARecord) {
+    if (!project) {
+      return;
+    }
     setSelectedQA(record);
-    openItemInGroup(activeGroupId, {
-      id: `qa:${record.id}`,
-      type: "qa",
-      path: record.output_path ?? `qa/${record.id}`,
-      title: qaTitle(record),
-      content: record.answer_md,
-      qaRecordId: record.id,
-      favorite: record.favorite,
-      dirty: false,
-    });
+    const relPath = _normalizeOutputPath(record.output_path, record.id, project.id);
+    try {
+      const result = await getCourseContent(project.id, relPath);
+      setSelectedCourse(relPath);
+      setFileContent(null);
+      openItemInGroup(activeGroupId, {
+        id: `course:${relPath}`,
+        type: "course",
+        path: relPath,
+        title: qaTitle(record),
+        content: result.content,
+        qaRecordId: record.id,
+        favorite: record.favorite,
+      });
+    } catch {
+      openItemInGroup(activeGroupId, {
+        id: `qa:${record.id}`,
+        type: "qa",
+        path: relPath,
+        title: qaTitle(record),
+        content: record.answer_md,
+        qaRecordId: record.id,
+        favorite: record.favorite,
+        dirty: false,
+      });
+    }
   }
 
   async function openProject(nextProject: Project) {
@@ -933,6 +994,8 @@ export default function App() {
   }
 
   function handleContextMenuOpen(event: MouseEvent, sourcePath: string, selectedText: string) {
+    event.preventDefault();
+    event.stopPropagation();
     const existing = findAnnotation(sourcePath, selectedText);
     setContextMenu({
       x: event.clientX,
@@ -985,6 +1048,72 @@ export default function App() {
 
   function handleToggleUnderline() {
     upsertAnnotation((prev) => ({ ...prev, underline: !prev.underline }));
+  }
+
+  async function handleDeleteQA(record: QARecord) {
+    if (!project) {
+      return;
+    }
+    if (!window.confirm(`删除问答记录 "${qaTitle(record)}"？此操作不可撤销。`)) {
+      return;
+    }
+    try {
+      await deleteQARecord(project.id, record.id);
+      setQAHistory((items) => items.filter((item) => item.id !== record.id));
+      if (selectedQA?.id === record.id) {
+        setSelectedQA(null);
+      }
+      setLayout((prev) =>
+        updateEveryGroup(prev, (group) => ({
+          ...group,
+          items: group.items.filter((item) => item.qaRecordId !== record.id),
+          activeItemId: group.items.find((item) => item.qaRecordId === record.id && item.id === group.activeItemId)
+            ? group.items.filter((i) => i.id !== group.activeItemId).pop()?.id ?? null
+            : group.activeItemId,
+        })),
+      );
+      await refreshCourses(project.id);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "删除失败");
+    }
+  }
+
+  async function handleDeleteCourse(file: CourseFile) {
+    if (!project) {
+      return;
+    }
+    if (!window.confirm(`删除课件 "${file.title}"？此操作不可撤销。`)) {
+      return;
+    }
+    try {
+      await deleteCourseFile(project.id, file.filename);
+      // Also delete any QA record pointing to this file
+      const matchingRecords = qaHistory.filter((r) => r.output_path === file.filename);
+      for (const record of matchingRecords) {
+        try {
+          await deleteQARecord(project.id, record.id);
+        } catch { /* file may already be gone */ }
+      }
+      if (matchingRecords.length > 0) {
+        setQAHistory((items) => items.filter((item) => !matchingRecords.includes(item)));
+        if (selectedQA && matchingRecords.some((r) => r.id === selectedQA.id)) {
+          setSelectedQA(null);
+        }
+      }
+      await refreshCourses(project.id);
+      const itemId = `course:${file.filename}`;
+      setLayout((prev) =>
+        updateEveryGroup(prev, (group) => ({
+          ...group,
+          items: group.items.filter((item) => item.id !== itemId),
+          activeItemId: group.activeItemId === itemId
+            ? group.items.filter((i) => i.id !== itemId).pop()?.id ?? null
+            : group.activeItemId,
+        })),
+      );
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "删除课件失败");
+    }
   }
 
   async function handleSaveQAItem(groupId: string, item: OpenItem) {
@@ -1117,16 +1246,88 @@ export default function App() {
             />
           ) : null}
           {activeItem?.type === "course" ? (
-            <MarkdownViewer
-              title={activeItem.title}
-              sourcePath={activeItem.path}
-              content={activeItem.content}
-              highlights={highlights.filter((highlight) => highlight.source_type === "course" && highlight.source_path === activeItem.path)}
-              annotations={annotations.filter((ann) => ann.courseFile === activeItem.path)}
-              tempSelectedText={tempSelectedText}
-              onSelectionChange={handleSelection}
-              onContextMenu={(event, text, sourcePath) => handleContextMenuOpen(event, sourcePath, text)}
-            />
+            editingCourseItemId === activeItem.id ? (
+              <div className="viewer qa-editor-view">
+                <div className="viewer-header">
+                  <span>{activeItem.title} - 编辑 Markdown</span>
+                  <div className="viewer-actions">
+                    <button
+                      className="secondary-button compact"
+                      onClick={async () => {
+                        if (!project) return; let rid = activeItem.qaRecordId; if (!rid) { const found = qaHistory.find((x) => x.output_path === activeItem.path); rid = found?.id; } if (!rid) return;
+                        try {
+                          const record = qaHistory.find((r) => r.id === rid);
+                          if (!record) return;
+                          const updated = await updateQARecord(project.id, rid!, { answer_md: activeItem.content });
+                          setQAHistory((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+                          if (selectedQA?.id === updated.id) setSelectedQA(updated);
+                          try {
+                            const fresh = await getCourseContent(project.id, activeItem.path);
+                            setLayout((prev) =>
+                              updateGroup(prev, group.id, (g) => ({
+                                ...g,
+                                items: g.items.map((item) =>
+                                  item.id === activeItem.id ? { ...item, content: fresh.content, dirty: false } : item,
+                                ),
+                              })),
+                            );
+                          } catch {}
+                          setEditingCourseItemId(null);
+                        } catch (caught) {
+                          setError(caught instanceof Error ? caught.message : "保存失败");
+                        }
+                      }}
+                    >
+                      <Save size={14} />
+                      保存
+                    </button>
+                    <button
+                      className="secondary-button compact"
+                      onClick={() => setEditingCourseItemId(null)}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  className="qa-workspace-editor"
+                  value={activeItem.content}
+                  onChange={(event) => {
+                    const newContent = event.target.value;
+                    setLayout((prev) =>
+                      updateGroup(prev, group.id, (g) => ({
+                        ...g,
+                        items: g.items.map((item) =>
+                          item.id === activeItem.id ? { ...item, content: newContent, dirty: true } : item,
+                        ),
+                      })),
+                    );
+                  }}
+                />
+              </div>
+            ) : (
+              <MarkdownViewer
+                title={activeItem.title}
+                sourcePath={activeItem.path}
+                content={activeItem.content}
+                highlights={highlights.filter((highlight) => highlight.source_type === "course" && highlight.source_path === activeItem.path)}
+                annotations={annotations.filter((ann) => ann.courseFile === activeItem.path)}
+                tempSelectedText={tempSelectedText}
+                onSelectionChange={handleSelection}
+                onContextMenu={(event, text, sourcePath) => handleContextMenuOpen(event, sourcePath, text)}
+                headerActions={(activeItem.qaRecordId || activeItem.path.startsWith("selection_answers/") || activeItem.path.startsWith("qa/")) ? (
+                  <button
+                    className="secondary-button compact"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setEditingCourseItemId(activeItem.id);
+                    }}
+                  >
+                    编辑
+                  </button>
+                ) : null}
+              />
+            )
           ) : null}
           {activeItem?.type === "qa" ? (
             <div className="viewer qa-editor-view">
@@ -1264,6 +1465,7 @@ export default function App() {
           onDeleteProject={handleDelete}
           onSelectFile={handleSelectFile}
           onSelectCourse={handleSelectCourse}
+          onDeleteCourse={handleDeleteCourse}
         />
         <div
           className="resize-handle"
@@ -1334,6 +1536,7 @@ export default function App() {
           onFavoriteOnlyChange={setQAFavoriteOnly}
           onSelectRecord={setSelectedQA}
           onOpenRecord={(record) => openQAInActiveGroup(record)}
+          onDeleteRecord={handleDeleteQA}
           onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
           onOpenSettings={() => setSettingsOpen(true)}

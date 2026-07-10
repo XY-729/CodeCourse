@@ -17,6 +17,7 @@ type Props = {
   onSelectionChange?: (selection: ViewerSelection) => void;
   onCreateHighlight?: (text: string) => void;
   onContextMenu?: (event: React.MouseEvent, text: string, sourcePath: string) => void;
+  headerActions?: ReactNode;
 };
 
 /* ---- Backend highlights ---- */
@@ -150,6 +151,7 @@ export default function MarkdownViewer({
   onSelectionChange,
   onCreateHighlight: _onCreateHighlight,
   onContextMenu,
+  headerActions,
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
   const [selectedText, setSelectedText] = useState("");
@@ -161,12 +163,6 @@ export default function MarkdownViewer({
       return;
     }
     if (selection.isCollapsed) {
-      setSelectedText("");
-      onSelectionChange?.({
-        sourceType: "course",
-        sourcePath: sourcePath ?? title,
-        selectedText: "",
-      });
       return;
     }
     const text = selection.toString().trim();
@@ -186,18 +182,31 @@ export default function MarkdownViewer({
   }
 
   function handleContextMenu(event: React.MouseEvent) {
-    if (!selectedText.trim()) {
-      return;
-    }
     const article = articleRef.current;
-    const selection = window.getSelection();
-    if (!article || !selection || selection.isCollapsed) {
+    if (!article || !article.contains(event.target as Node)) {
       return;
     }
-    if (article.contains(event.target as Node)) {
-      event.preventDefault();
-      onContextMenu?.(event, selectedText, sourcePath ?? title ?? "");
+
+    const liveText = window.getSelection()?.toString().trim();
+    const text = liveText || selectedText.trim();
+
+    if (!text) {
+      return;
     }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (liveText) {
+      setSelectedText(liveText);
+      onSelectionChange?.({
+        sourceType: "course",
+        sourcePath: sourcePath ?? title,
+        selectedText: liveText,
+      });
+    }
+
+    onContextMenu?.(event, text, sourcePath ?? title ?? "");
   }
 
   const highlightedComponents = {
@@ -238,6 +247,7 @@ export default function MarkdownViewer({
       <div className="viewer-header">
         <span>{title ?? "课件"}</span>
         <div className="viewer-actions">
+          {headerActions}
           <strong>Markdown</strong>
         </div>
       </div>

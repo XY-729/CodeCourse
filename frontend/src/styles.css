@@ -1207,3 +1207,75 @@ button:disabled,
 .explain-action-btn:hover {
   background: #e6f4f1;
 }
+
+
+/* ---- Course group headers ---- */
+.course-group {
+  margin-bottom: 2px;
+}
+
+.course-group-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #607086;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.course-group-header:hover {
+  background: #e7edf2;
+}
+
+.course-group-header small {
+  margin-left: auto;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+.course-row-wrapper {
+  display: flex;
+  align-items: center;
+}
+
+.course-row-wrapper .course-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.course-row-wrapper .icon-button.danger.compact {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  opacity: 0;
+  flex: 0 0 auto;
+}
+
+.course-row-wrapper:hover .icon-button.danger.compact {
+  opacity: 1;
+}
+
+/* ---- History row delete button ---- */
+.history-delete {
+  position: absolute;
+  right: 52px;
+  top: 9px;
+  color: #9aa4b2;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.qa-history-row:hover .history-delete {
+  opacity: 0.6;
+}
+
+.history-delete:hover {
+  opacity: 1 !important;
+  color: #9f1d1d;
+}

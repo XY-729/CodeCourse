@@ -29,6 +29,7 @@ type Props = {
   onFavoriteOnlyChange: (value: boolean) => void;
   onSelectRecord: (record: QARecord) => void;
   onOpenRecord: (record: QARecord) => void;
+  onDeleteRecord?: (record: QARecord) => void;
   onRenameRecord: (record: QARecord) => void;
   onToggleFavorite: (record: QARecord) => void;
   onOpenSettings: () => void;
@@ -72,6 +73,7 @@ export default function ExplainPanel({
   onFavoriteOnlyChange,
   onSelectRecord,
   onOpenRecord,
+  onDeleteRecord,
   onRenameRecord,
   onToggleFavorite,
   onOpenSettings,
@@ -88,7 +90,70 @@ export default function ExplainPanel({
   }
 
   return (
-    <aside className="explain-panel qa-panel" style={{ gridTemplateRows: `${askHeight}px 6px minmax(0, 1fr)` }}>
+    <aside className="explain-panel qa-panel" style={{ gridTemplateRows: `minmax(0, 1fr) 6px ${askHeight}px` }}>
+      <section className="qa-history-section">
+        <div className="qa-section history-tools">
+          <div className="search-row">
+            <Search size={14} />
+            <input value={historyQuery} onChange={(event) => onHistoryQueryChange(event.target.value)} placeholder="搜索历史" />
+          </div>
+          <label className="favorite-filter">
+            <input type="checkbox" checked={favoriteOnly} onChange={(event) => onFavoriteOnlyChange(event.target.checked)} />
+            只看收藏
+          </label>
+        </div>
+
+        <div className="qa-history">
+          {history.length ? (
+            history.map((record) => (
+              <button
+                key={record.id}
+                className={`qa-history-row ${selectedRecord?.id === record.id ? "selected" : ""}`}
+                onClick={() => onSelectRecord(record)}
+                onDoubleClick={() => onOpenRecord(record)}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "qa", qaId: record.id }));
+                  event.dataTransfer.effectAllowed = "copy";
+                }}
+                title="双击在工作区编辑"
+              >
+                <span>{record.display_title || record.question}</span>
+                <small>{record.model}</small>
+                <Trash2
+                  size={14}
+                  className="history-delete"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDeleteRecord?.(record);
+                  }}
+                />
+                <Edit3
+                  size={14}
+                  className="history-rename"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRenameRecord(record);
+                  }}
+                />
+                <Star
+                  size={14}
+                  className={record.favorite ? "history-star starred" : "history-star"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleFavorite(record);
+                  }}
+                />
+              </button>
+            ))
+          ) : (
+            <div className="empty small">暂无问答历史</div>
+          )}
+        </div>
+      </section>
+
+      <div className="resize-handle-y" onMouseDown={onAskResizeStart} title="上下拖动调整提问区高度" />
+
       <section className="qa-ask-section">
         <div className="panel-title">
           <span>选区提问</span>
@@ -150,61 +215,6 @@ export default function ExplainPanel({
             {loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
             {loading ? "生成中..." : "询问"}
           </button>
-        </div>
-      </section>
-
-      <div className="resize-handle-y" onMouseDown={onAskResizeStart} title="上下拖动调整提问区高度" />
-
-      <section className="qa-history-section">
-        <div className="qa-section history-tools">
-          <div className="search-row">
-            <Search size={14} />
-            <input value={historyQuery} onChange={(event) => onHistoryQueryChange(event.target.value)} placeholder="搜索历史" />
-          </div>
-          <label className="favorite-filter">
-            <input type="checkbox" checked={favoriteOnly} onChange={(event) => onFavoriteOnlyChange(event.target.checked)} />
-            只看收藏
-          </label>
-        </div>
-
-        <div className="qa-history">
-          {history.length ? (
-            history.map((record) => (
-              <button
-                key={record.id}
-                className={`qa-history-row ${selectedRecord?.id === record.id ? "selected" : ""}`}
-                onClick={() => onSelectRecord(record)}
-                onDoubleClick={() => onOpenRecord(record)}
-                draggable
-                onDragStart={(event) => {
-                  event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "qa", qaId: record.id }));
-                  event.dataTransfer.effectAllowed = "copy";
-                }}
-                title="双击在工作区编辑"
-              >
-                <span>{record.display_title || record.question}</span>
-                <small>{record.model}</small>
-                <Edit3
-                  size={14}
-                  className="history-rename"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRenameRecord(record);
-                  }}
-                />
-                <Star
-                  size={14}
-                  className={record.favorite ? "history-star starred" : "history-star"}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggleFavorite(record);
-                  }}
-                />
-              </button>
-            ))
-          ) : (
-            <div className="empty small">暂无问答历史</div>
-          )}
         </div>
       </section>
     </aside>

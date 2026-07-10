@@ -22,6 +22,7 @@ export type TreeNode = {
 export type CourseFile = {
   filename: string;
   title: string;
+  group: string;
 };
 
 export type FileContent = {
@@ -129,9 +130,10 @@ export type GenerationTask = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const hasBody = init?.body != null;
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
-      "Content-Type": "application/json",
+      ...(hasBody ? { "Content-Type": "application/json" } : {}),
       ...init?.headers,
     },
     ...init,
@@ -207,6 +209,13 @@ export function getCourseContent(projectId: number, filename: string): Promise<{
   return request<{ filename: string; content: string }>(`/projects/${projectId}/course/${filename.split("/").map(encodeURIComponent).join("/")}`);
 }
 
+export function deleteCourseFile(projectId: number, filename: string): Promise<{ deleted: boolean; filename: string }> {
+  return request<{ deleted: boolean; filename: string }>(
+    `/projects/${projectId}/course/${filename.split("/").map(encodeURIComponent).join("/")}`,
+    { method: "DELETE" },
+  );
+}
+
 export function generateOutline(projectId: number, scope: LearningScope, instructions: string): Promise<GenerationTask> {
   return request<GenerationTask>(`/projects/${projectId}/outline/generate`, {
     method: "POST",
@@ -279,6 +288,12 @@ export function setQAFavorite(projectId: number, qaId: number, favorite: boolean
   return request<QARecord>(`/projects/${projectId}/qa/${qaId}/favorite`, {
     method: "POST",
     body: JSON.stringify({ favorite }),
+  });
+}
+
+export function deleteQARecord(projectId: number, qaId: number): Promise<{ deleted: boolean; id: number }> {
+  return request<{ deleted: boolean; id: number }>(`/projects/${projectId}/qa/${qaId}`, {
+    method: "DELETE",
   });
 }
 
