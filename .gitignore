@@ -1,6 +1,4 @@
-workspace/app.db
-workspace/generated/
-workspace/repos/
+workspace/
 .env
 backend/.venv/
 frontend/node_modules/

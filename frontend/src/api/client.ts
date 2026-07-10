@@ -126,6 +126,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }));
     const detail = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string }) => item.msg).join("; ") : body.detail;
+    if (detail === "Not Found" || response.status === 404) {
+      throw new Error("接口未找到，请重启后端服务后重试。");
+    }
     throw new Error(detail ?? response.statusText);
   }
   return response.json() as Promise<T>;

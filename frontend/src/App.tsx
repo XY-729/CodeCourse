@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import type { DragEvent } from "react";
-import { X } from "lucide-react";
+import { useEffect, useState } from "react";
+import type { DragEvent, MouseEvent } from "react";
+import { Columns2, PanelLeft, Save, Star, X } from "lucide-react";
 import {
   askQuestion,
   deleteProject,
@@ -21,7 +21,16 @@ import {
   setQAFavorite,
   updateQARecord,
 } from "./api/client";
-import type { CourseFile, FileContent, GenerationTask, LearningScope, Project, QARecord, TreeNode } from "./api/client";
+import type {
+  CourseFile,
+  FileContent,
+  GenerationTask,
+  LearningScope,
+  LLMSettings,
+  Project,
+  QARecord,
+  TreeNode,
+} from "./api/client";
 import CodeViewer, { ViewerSelection } from "./components/CodeViewer";
 import ExplainPanel, { SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
@@ -30,9 +39,9 @@ import RepositoryForm from "./components/RepositoryForm";
 import Sidebar from "./components/Sidebar";
 
 type ScopeType = LearningScope["type"];
-type DragTarget = "sidebar" | "explain" | null;
 type PaneId = "left" | "right";
-type OpenItemType = "file" | "course";
+type OpenItemType = "file" | "course" | "qa";
+type WorkspaceMode = "single" | "split";
 
 type OpenItem = {
   id: string;
@@ -41,9 +50,23 @@ type OpenItem = {
   title: string;
   content: string;
   language?: string;
+  qaRecordId?: number;
+  favorite?: boolean;
+  dirty?: boolean;
 };
 
+type DragState =
+  | { kind: "sidebar-width"; startX: number; startWidth: number }
+  | { kind: "explain-width"; startX: number; startWidth: number }
+  | { kind: "sidebar-project"; startY: number; startHeight: number }
+  | { kind: "sidebar-course"; startY: number; startHeight: number }
+  | { kind: "qa-ask"; startY: number; startHeight: number };
+
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
 
 function parseScopePaths(value: string): string[] {
   return value
@@ -78,6 +101,7 @@ export default function App() {
   const [busyProjectId, setBusyProjectId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [llmSettings, setLLMSettings] = useState<LLMSettings | null>(null);
   const [scopeType, setScopeType] = useState<ScopeType>("full_project");
   const [scopePathsText, setScopePathsText] = useState("");
   const [generationInstructions, setGenerationInstructions] = useState("");
@@ -85,58 +109,63 @@ export default function App() {
   const [taskMessage, setTaskMessage] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [explainWidth, setExplainWidth] = useState(360);
-  const [dragTarget, setDragTarget] = useState<DragTarget>(null);
+  const [sidebarProjectHeight, setSidebarProjectHeight] = useState(150);
+  const [sidebarCourseHeight, setSidebarCourseHeight] = useState(240);
+  const [qaAskHeight, setQAAskHeight] = useState(390);
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("split");
   const [activePane, setActivePane] = useState<PaneId>("left");
   const [openItems, setOpenItems] = useState<Record<PaneId, OpenItem[]>>(emptyPanes);
   const [activeItemIds, setActiveItemIds] = useState<Record<PaneId, string | null>>({ left: null, right: null });
 
   const [selection, setSelection] = useState<SelectionSummary | null>(null);
   const [qaQuestion, setQAQuestion] = useState("");
-  const [qaProvider, setQAProvider] = useState("deepseek");
-  const [qaBaseUrl, setQABaseUrl] = useState("https://api.deepseek.com");
-  const [qaModel, setQAModel] = useState("deepseek-v4-flash");
   const [qaLoading, setQALoading] = useState(false);
   const [qaHistory, setQAHistory] = useState<QARecord[]>([]);
   const [qaHistoryQuery, setQAHistoryQuery] = useState("");
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
-  const [editingAnswer, setEditingAnswer] = useState("");
+  const [qaPanelError, setQAPanelError] = useState("");
 
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
   const showBusy = loading || isTaskRunning || qaLoading;
 
-  const selectedCourseTitle = useMemo(() => {
-    return courses.find((file) => file.filename === selectedCourse)?.title ?? selectedCourse;
-  }, [courses, selectedCourse]);
-
   useEffect(() => {
     loadProjects();
+    loadLLMSettings();
   }, []);
 
   useEffect(() => {
-    if (!dragTarget) {
+    if (!dragState) {
       return;
     }
-    function onMouseMove(event: MouseEvent) {
-      if (dragTarget === "sidebar") {
-        setSidebarWidth(Math.min(520, Math.max(220, event.clientX)));
-      } else if (dragTarget === "explain") {
-        setExplainWidth(Math.min(620, Math.max(300, window.innerWidth - event.clientX)));
+    const currentDrag = dragState;
+    function onMouseMove(event: globalThis.MouseEvent) {
+      if (currentDrag.kind === "sidebar-width") {
+        setSidebarWidth(clamp(currentDrag.startWidth + event.clientX - currentDrag.startX, 220, 520));
+      } else if (currentDrag.kind === "explain-width") {
+        setExplainWidth(clamp(currentDrag.startWidth - (event.clientX - currentDrag.startX), 300, 620));
+      } else if (currentDrag.kind === "sidebar-project") {
+        setSidebarProjectHeight(clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 96, 320));
+      } else if (currentDrag.kind === "sidebar-course") {
+        setSidebarCourseHeight(clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420));
+      } else if (currentDrag.kind === "qa-ask") {
+        setQAAskHeight(clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 230, 560));
       }
     }
     function onMouseUp() {
-      setDragTarget(null);
+      setDragState(null);
     }
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
-    document.body.classList.add("resizing");
+    document.body.classList.add(currentDrag.kind.includes("width") ? "resizing-x" : "resizing-y");
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
-      document.body.classList.remove("resizing");
+      document.body.classList.remove("resizing-x", "resizing-y");
     };
-  }, [dragTarget]);
+  }, [dragState]);
 
   useEffect(() => {
     if (!project) {
@@ -147,6 +176,14 @@ export default function App() {
     }, 180);
     return () => window.clearTimeout(timer);
   }, [project?.id, qaHistoryQuery, qaFavoriteOnly]);
+
+  async function loadLLMSettings() {
+    try {
+      setLLMSettings(await getLLMSettings());
+    } catch {
+      setLLMSettings(null);
+    }
+  }
 
   function buildScope(): LearningScope {
     if (scopeType === "full_project") {
@@ -191,12 +228,12 @@ export default function App() {
     try {
       const records = await listQARecords(projectId, qaHistoryQuery, qaFavoriteOnly ? true : undefined);
       setQAHistory(records);
+      setQAPanelError("");
       if (selectedQA && !records.some((record) => record.id === selectedQA.id)) {
         setSelectedQA(null);
-        setEditingAnswer("");
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "加载问答历史失败");
+      setQAPanelError(caught instanceof Error ? caught.message : "加载历史失败");
     }
   }
 
@@ -209,14 +246,29 @@ export default function App() {
     setActivePane(pane);
   }
 
+  function updateOpenQARecord(record: QARecord) {
+    setOpenItems((prev) => ({
+      left: prev.left.map((item) => (item.qaRecordId === record.id ? { ...item, favorite: record.favorite } : item)),
+      right: prev.right.map((item) => (item.qaRecordId === record.id ? { ...item, favorite: record.favorite } : item)),
+    }));
+  }
+
   function activateItem(pane: PaneId, item: OpenItem) {
     setActivePane(pane);
     setActiveItemIds((prev) => ({ ...prev, [pane]: item.id }));
     if (item.type === "file") {
       setFileContent({ path: item.path, content: item.content, language: item.language ?? "plaintext" });
       setSelectedCourse(null);
-    } else {
+    } else if (item.type === "course") {
       setSelectedCourse(item.path);
+      setFileContent(null);
+    } else if (item.type === "qa") {
+      setFileContent(null);
+      setSelectedCourse(null);
+      const record = qaHistory.find((entry) => entry.id === item.qaRecordId);
+      if (record) {
+        setSelectedQA(record);
+      }
     }
   }
 
@@ -251,12 +303,27 @@ export default function App() {
   async function openCourseInPane(projectId: number, filename: string, pane: PaneId) {
     const content = await getCourseContent(projectId, filename);
     setSelectedCourse(filename);
+    setFileContent(null);
     rememberOpenItem(pane, {
       id: `course:${filename}`,
       type: "course",
       path: filename,
       title: courses.find((file) => file.filename === filename)?.title ?? filename,
       content: content.content,
+    });
+  }
+
+  function openQAInPane(record: QARecord, pane = activePane) {
+    setSelectedQA(record);
+    rememberOpenItem(pane, {
+      id: `qa:${record.id}`,
+      type: "qa",
+      path: record.output_path ?? `qa/${record.id}`,
+      title: `回答 #${record.id}`,
+      content: record.answer_md,
+      qaRecordId: record.id,
+      favorite: record.favorite,
+      dirty: false,
     });
   }
 
@@ -274,21 +341,17 @@ export default function App() {
       ]);
       setTree(nextTree);
       setCourses(nextCourses);
+      setLLMSettings(settings);
       setActiveTask(tasks[0] ?? null);
-      setTaskMessage(tasks[0] ? `最近任务：${taskLabel(tasks[0])}` : "默认内容均为“待生成”；所有模型 API 调用都需要手动点击并确认。");
+      setTaskMessage(tasks[0] ? `最近任务：${taskLabel(tasks[0])}` : "待生成");
       setFileContent(null);
       setSelectedCourse(null);
       setSelection(null);
       setQAQuestion("");
       setSelectedQA(null);
-      setEditingAnswer("");
+      setQAPanelError("");
       setOpenItems(emptyPanes());
       setActiveItemIds({ left: null, right: null });
-      if (settings) {
-        setQAProvider(settings.provider || "deepseek");
-        setQABaseUrl(settings.base_url || "https://api.deepseek.com");
-        setQAModel(settings.model || "deepseek-v4-flash");
-      }
       await refreshQAHistory(freshProject.id);
       const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
       if (firstCourse) {
@@ -312,7 +375,7 @@ export default function App() {
   async function handleImport(url: string) {
     setLoading(true);
     setError("");
-    setTaskMessage("正在导入项目。导入阶段不会自动调用模型 API。");
+    setTaskMessage("正在导入项目");
     try {
       const imported = await importProject(url);
       await loadProjects();
@@ -369,7 +432,7 @@ export default function App() {
     setProject(freshProject);
     setProjects((items) => items.map((item) => (item.id === freshProject.id ? freshProject : item)));
     if (nextTask.status === "completed") {
-      setTaskMessage("生成完成，课程目录已刷新。");
+      setTaskMessage("生成完成");
       const preferred = nextTask.task_type === "file_lesson"
         ? nextCourses.find((item) => item.filename === nextTask.output_path?.split("/").slice(-2).join("/"))
         : nextCourses.find((item) => item.filename === "outline.md");
@@ -377,7 +440,7 @@ export default function App() {
         await openCourseInPane(project.id, preferred.filename, "right");
       }
     } else if (nextTask.status === "failed") {
-      setTaskMessage(`生成失败：${nextTask.error_message ?? "未知错误"}。旧课件已保留。`);
+      setTaskMessage(`生成失败：${nextTask.error_message ?? "未知错误"}`);
     }
   }
 
@@ -385,7 +448,7 @@ export default function App() {
     if (!project) {
       return;
     }
-    const ok = window.confirm("将调用模型 API 生成或重新生成项目总纲，可能消耗 token。是否继续？");
+    const ok = window.confirm("将调用模型 API 生成项目总纲，可能消耗 token。是否继续？");
     if (!ok) {
       return;
     }
@@ -403,7 +466,7 @@ export default function App() {
       return;
     }
     const label = nextMode === "brief" ? "粗略介绍" : "详细分析";
-    const ok = window.confirm(`将调用模型 API 为 ${fileContent.path} 生成或重新生成${label}，可能消耗 token。是否继续？`);
+    const ok = window.confirm(`将调用模型 API 为 ${fileContent.path} 生成${label}，可能消耗 token。是否继续？`);
     if (!ok) {
       return;
     }
@@ -433,7 +496,7 @@ export default function App() {
   }
 
   async function handleDelete(nextProject: Project) {
-    if (!window.confirm(`删除本地导入项目 ${nextProject.name}？克隆目录和生成内容都会删除。`)) {
+    if (!window.confirm(`删除本地导入项目 ${nextProject.name}？`)) {
       return;
     }
     setBusyProjectId(nextProject.id);
@@ -474,63 +537,71 @@ export default function App() {
   }
 
   async function handleAsk() {
-    if (!project || !selection || !qaQuestion.trim()) {
+    if (!project || !selection || !qaQuestion.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) {
       return;
     }
-    const ok = window.confirm(`将调用模型 API 使用 ${qaModel} 回答当前选区问题，可能消耗 token。是否继续？`);
+    const ok = window.confirm(`将调用模型 API 使用 ${llmSettings.model} 回答当前选区问题，可能消耗 token。是否继续？`);
     if (!ok) {
       return;
     }
     setQALoading(true);
-    setError("");
+    setQAPanelError("");
     try {
       const record = await askQuestion(project.id, {
         source_type: selection.sourceType,
         source_path: selection.sourcePath,
         selected_text: selection.selectedText,
         question: qaQuestion,
-        provider: qaProvider,
-        base_url: qaBaseUrl,
-        model: qaModel,
+        provider: llmSettings.provider,
+        base_url: llmSettings.base_url,
+        model: llmSettings.model,
       });
       setSelectedQA(record);
-      setEditingAnswer(record.answer_md);
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
       setQAQuestion("");
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "生成回答失败");
+      setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
     } finally {
       setQALoading(false);
     }
   }
 
-  async function handleSaveQA() {
-    if (!project || !selectedQA) {
+  async function handleSaveQAItem(pane: PaneId, item: OpenItem) {
+    if (!project || !item.qaRecordId) {
       return;
     }
     setError("");
     try {
-      const record = await updateQARecord(project.id, selectedQA.id, { answer_md: editingAnswer });
+      const record = await updateQARecord(project.id, item.qaRecordId, { answer_md: item.content });
       setSelectedQA(record);
-      setEditingAnswer(record.answer_md);
-      setQAHistory((items) => items.map((item) => (item.id === record.id ? record : item)));
+      setQAHistory((items) => items.map((entry) => (entry.id === record.id ? record : entry)));
+      setOpenItems((prev) => ({
+        ...prev,
+        [pane]: prev[pane].map((entry) =>
+          entry.id === item.id ? { ...entry, content: record.answer_md, favorite: record.favorite, dirty: false } : entry,
+        ),
+      }));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "保存问答失败");
+      setError(caught instanceof Error ? caught.message : "保存回答失败");
     }
   }
 
-  async function handleToggleFavorite(record: QARecord) {
+  async function handleToggleFavorite(recordOrItem: QARecord | OpenItem) {
     if (!project) {
       return;
     }
-    setError("");
+    const id = "source_type" in recordOrItem ? recordOrItem.id : recordOrItem.qaRecordId;
+    const favorite = "source_type" in recordOrItem ? recordOrItem.favorite : Boolean(recordOrItem.favorite);
+    if (!id) {
+      return;
+    }
     try {
-      const updated = await setQAFavorite(project.id, record.id, !record.favorite);
+      const updated = await setQAFavorite(project.id, id, !favorite);
       setSelectedQA(updated);
-      setEditingAnswer(updated.answer_md);
       setQAHistory((items) => items.map((item) => (item.id === updated.id ? updated : item)));
+      updateOpenQARecord(updated);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "切换收藏失败");
+      setQAPanelError(caught instanceof Error ? caught.message : "切换收藏失败");
     }
   }
 
@@ -559,6 +630,13 @@ export default function App() {
     }
   }
 
+  function updateQAItemContent(pane: PaneId, itemId: string, content: string) {
+    setOpenItems((prev) => ({
+      ...prev,
+      [pane]: prev[pane].map((item) => (item.id === itemId ? { ...item, content, dirty: true } : item)),
+    }));
+  }
+
   function renderPane(pane: PaneId) {
     const items = openItems[pane];
     const activeId = activeItemIds[pane];
@@ -579,7 +657,7 @@ export default function App() {
               onClick={() => activateItem(pane, item)}
               title={item.path}
             >
-              <span>{item.title}</span>
+              <span>{item.dirty ? `${item.title} *` : item.title}</span>
               <X
                 size={13}
                 onClick={(event) => {
@@ -607,11 +685,34 @@ export default function App() {
               onSelectionChange={handleSelection}
             />
           ) : null}
+          {activeItem?.type === "qa" ? (
+            <div className="viewer qa-editor-view">
+              <div className="viewer-header">
+                <span>{activeItem.dirty ? `${activeItem.title} *` : activeItem.title}</span>
+                <div className="viewer-actions">
+                  <button className="icon-button" onClick={() => handleToggleFavorite(activeItem)} title="收藏/取消收藏">
+                    <Star size={14} className={activeItem.favorite ? "starred" : ""} />
+                  </button>
+                  <button className="secondary-button compact" onClick={() => handleSaveQAItem(pane, activeItem)} disabled={!activeItem.dirty}>
+                    <Save size={14} />
+                    保存
+                  </button>
+                </div>
+              </div>
+              <textarea
+                className="qa-workspace-editor"
+                value={activeItem.content}
+                onChange={(event) => updateQAItemContent(pane, activeItem.id, event.target.value)}
+              />
+            </div>
+          ) : null}
           {!activeItem ? <div className="empty-state">点击或拖拽左侧文件/课件到这里阅读</div> : null}
         </div>
       </section>
     );
   }
+
+  const visiblePanes: PaneId[] = workspaceMode === "split" ? ["left", "right"] : [activePane];
 
   return (
     <div className="app-shell">
@@ -649,13 +750,21 @@ export default function App() {
           selectedPath={fileContent?.path ?? null}
           selectedCourse={selectedCourse}
           busyProjectId={busyProjectId}
+          projectHeight={sidebarProjectHeight}
+          courseHeight={sidebarCourseHeight}
+          onResizeProjectStart={(event) => setDragState({ kind: "sidebar-project", startY: event.clientY, startHeight: sidebarProjectHeight })}
+          onResizeCourseStart={(event) => setDragState({ kind: "sidebar-course", startY: event.clientY, startHeight: sidebarCourseHeight })}
           onSelectProject={openProject}
           onRegenerateProject={handleRegenerate}
           onDeleteProject={handleDelete}
           onSelectFile={handleSelectFile}
           onSelectCourse={handleSelectCourse}
         />
-        <div className="resize-handle" onMouseDown={() => setDragTarget("sidebar")} title="拖拽调整左栏宽度" />
+        <div
+          className="resize-handle"
+          onMouseDown={(event) => setDragState({ kind: "sidebar-width", startX: event.clientX, startWidth: sidebarWidth })}
+          title="拖拽调整左栏宽度"
+        />
         <section className="center-pane">
           <div className="generation-bar">
             <div className="scope-controls">
@@ -667,67 +776,88 @@ export default function App() {
               <input
                 value={scopePathsText}
                 onChange={(event) => setScopePathsText(event.target.value)}
-                placeholder="目录或文件路径，多个用逗号分隔"
+                placeholder="目录或文件路径"
                 disabled={!project || scopeType === "full_project" || isTaskRunning}
               />
               <button onClick={handleGenerateOutline} disabled={!project || isTaskRunning}>
-                生成/重新生成 AI 总纲
+                生成 AI 总纲
               </button>
+            </div>
+            <div className="workspace-controls">
+              <button
+                className={workspaceMode === "single" ? "selected" : ""}
+                onClick={() => setWorkspaceMode("single")}
+                title="单工作区"
+              >
+                <PanelLeft size={15} />
+              </button>
+              <button
+                className={workspaceMode === "split" ? "selected" : ""}
+                onClick={() => setWorkspaceMode("split")}
+                title="双工作区"
+              >
+                <Columns2 size={15} />
+              </button>
+              <button className={activePane === "left" ? "selected" : ""} onClick={() => setActivePane("left")}>左</button>
+              <button className={activePane === "right" ? "selected" : ""} onClick={() => setActivePane("right")}>右</button>
             </div>
             <textarea
               className="generation-instructions"
               value={generationInstructions}
               onChange={(event) => setGenerationInstructions(event.target.value)}
-              placeholder="重新提出要求，例如：面向 C++ 初学者；重点讲判题核心；每节课必须给出相关文件和自测题。"
+              placeholder="生成要求"
               disabled={!project || isTaskRunning}
             />
             <div className="lesson-actions">
               <button onClick={() => handleGenerateFileLesson("brief")} disabled={!canGenerateFileLesson || isTaskRunning}>
-                生成/重新生成粗略介绍
+                生成粗略介绍
               </button>
               <button onClick={() => handleGenerateFileLesson("detailed")} disabled={!canGenerateFileLesson || isTaskRunning}>
-                生成/重新生成详细分析
+                生成详细分析
               </button>
             </div>
             <div className={`task-status ${activeTask?.status === "failed" ? "failed" : ""}`}>
-              {taskMessage || "默认内容均为“待生成”；所有模型 API 调用都需要手动点击并确认。"}
+              {taskMessage || "待生成"}
             </div>
           </div>
-          <div className="reader-workspace">
-            {renderPane("left")}
-            {renderPane("right")}
+          <div className={`reader-workspace ${workspaceMode}`}>
+            {visiblePanes.map((pane) => renderPane(pane))}
           </div>
         </section>
-        <div className="resize-handle" onMouseDown={() => setDragTarget("explain")} title="拖拽调整右栏宽度" />
+        <div
+          className="resize-handle"
+          onMouseDown={(event) => setDragState({ kind: "explain-width", startX: event.clientX, startWidth: explainWidth })}
+          title="拖拽调整右栏宽度"
+        />
         <ExplainPanel
           selection={selection}
           question={qaQuestion}
-          provider={qaProvider}
-          baseUrl={qaBaseUrl}
-          model={qaModel}
           loading={qaLoading}
           history={qaHistory}
           historyQuery={qaHistoryQuery}
           favoriteOnly={qaFavoriteOnly}
           selectedRecord={selectedQA}
-          editingAnswer={editingAnswer}
+          settings={llmSettings}
+          panelError={qaPanelError}
+          askHeight={qaAskHeight}
+          onAskResizeStart={(event: MouseEvent<HTMLDivElement>) => setDragState({ kind: "qa-ask", startY: event.clientY, startHeight: qaAskHeight })}
           onQuestionChange={setQAQuestion}
-          onProviderChange={setQAProvider}
-          onBaseUrlChange={setQABaseUrl}
-          onModelChange={setQAModel}
           onAsk={handleAsk}
           onHistoryQueryChange={setQAHistoryQuery}
           onFavoriteOnlyChange={setQAFavoriteOnly}
-          onSelectRecord={(record) => {
-            setSelectedQA(record);
-            setEditingAnswer(record.answer_md);
-          }}
+          onSelectRecord={setSelectedQA}
+          onOpenRecord={(record) => openQAInPane(record)}
           onToggleFavorite={handleToggleFavorite}
-          onEditingAnswerChange={setEditingAnswer}
-          onSaveRecord={handleSaveQA}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       </main>
-      <LLMSettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <LLMSettingsDialog
+        open={settingsOpen}
+        onClose={() => {
+          setSettingsOpen(false);
+          loadLLMSettings();
+        }}
+      />
     </div>
   );
 }

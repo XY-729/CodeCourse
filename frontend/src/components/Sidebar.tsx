@@ -1,4 +1,5 @@
 import { RefreshCw, Trash2 } from "lucide-react";
+import type { MouseEvent } from "react";
 import type { CourseFile, Project, TreeNode } from "../api/client";
 import CourseList from "./CourseList";
 import FileTree from "./FileTree";
@@ -11,6 +12,10 @@ type Props = {
   selectedPath: string | null;
   selectedCourse: string | null;
   busyProjectId: number | null;
+  projectHeight: number;
+  courseHeight: number;
+  onResizeProjectStart: (event: MouseEvent<HTMLDivElement>) => void;
+  onResizeCourseStart: (event: MouseEvent<HTMLDivElement>) => void;
   onSelectProject: (project: Project) => void;
   onRegenerateProject: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
@@ -26,6 +31,10 @@ export default function Sidebar({
   selectedPath,
   selectedCourse,
   busyProjectId,
+  projectHeight,
+  courseHeight,
+  onResizeProjectStart,
+  onResizeCourseStart,
   onSelectProject,
   onRegenerateProject,
   onDeleteProject,
@@ -33,8 +42,11 @@ export default function Sidebar({
   onSelectCourse,
 }: Props) {
   return (
-    <aside className="sidebar">
-      <section className="project-section">
+    <aside
+      className="sidebar"
+      style={{ gridTemplateRows: `${projectHeight}px 6px minmax(120px, 1fr) 6px ${courseHeight}px` }}
+    >
+      <section className="sidebar-section">
         <h2>已导入项目</h2>
         <div className="sidebar-scroll compact">
           {projects.length ? (
@@ -67,13 +79,15 @@ export default function Sidebar({
           )}
         </div>
       </section>
-      <section>
+      <div className="resize-handle-y" onMouseDown={onResizeProjectStart} title="上下拖动调整项目区高度" />
+      <section className="sidebar-section">
         <h2>文件树</h2>
         <div className="sidebar-scroll">
           {tree ? <FileTree node={tree} selectedPath={selectedPath} onSelect={onSelectFile} /> : <div className="empty">暂无项目</div>}
         </div>
       </section>
-      <section>
+      <div className="resize-handle-y" onMouseDown={onResizeCourseStart} title="上下拖动调整课程目录高度" />
+      <section className="sidebar-section">
         <h2>课程目录</h2>
         <div className="sidebar-scroll compact">
           <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} />
