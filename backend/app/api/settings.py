@@ -64,16 +64,18 @@ def test_llm_settings() -> LLMTestResponse:
 
 @router.get("/prompts")
 def read_prompts():
-    from app.services.prompt_store import PROMPT_DEFAULTS, load_prompt
+    from app.services.prompt_store import EDITABLE_PROMPT_KEYS, load_prompt
     result = {}
-    for key in sorted(PROMPT_DEFAULTS.keys()):
+    for key in EDITABLE_PROMPT_KEYS:
         result[key] = load_prompt(key)
     return result
 
 
 @router.put("/prompts")
 def write_prompts(payload: dict[str, str]):
-    from app.services.prompt_store import save_prompt
+    from app.services.prompt_store import EDITABLE_PROMPT_KEYS, save_prompt
     for key, value in payload.items():
+        if key not in EDITABLE_PROMPT_KEYS:
+            continue
         save_prompt(key, value)
     return {"ok": True}

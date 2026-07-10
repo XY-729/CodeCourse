@@ -1,6 +1,6 @@
 from app.services.storage import get_setting, set_setting
 
-PROMPT_INJECTION_SYSTEM_PROMPT = """你是一名资深软件工程讲师，负责根据真实项目材料生成项目学习总纲和选区解释。
+PROMPT_INJECTION_SYSTEM_PROMPT = """你是一名资深软件工程讲师，负责根据真实项目材料生成项目学习总纲、文件课件和 AI 助手回答。
 
 必须遵守以下规则：
 
@@ -299,13 +299,60 @@ DEFAULT_FILE_LESSON_TEMPLATE = """请为选定文件生成 {mode_label} 版 Mark
 仓库材料如下：
 {prompt_input}"""
 
+DEFAULT_QA_ANSWER_PROMPT = """你是这个项目内置的 AI 助手，负责回答项目、文件、课件、已有回答或用户附带上下文相关的问题。
+
+来源类型：{source_type}
+来源路径：{source_path}
+用户问题：
+{question}
+
+上下文材料：
+{context_text}
+
+回答风格：
+- 你不是百科机器人。先回答用户现在问的事，再补必要背景。
+- 面向刚开始读这个项目的小白开发者，用开发者能行动的说法解释。
+- 如果用户问“这个文件是干什么用的”，直接说明文件职责、它处理什么输入/输出、通常被谁使用、下一步该读哪些符号。
+- 如果用户问“这个函数为什么这样写”，说明它解决的问题、关键分支/参数、调用关系和修改风险。
+- 如果用户问“这个课件怎么学”，说明它对应的真实文件、学习顺序和检查自己是否读懂的方法。
+- 如果用户问“项目入口在哪/我只想学某部分”，给出具体路径、关键词和阅读路线。
+- 如果有用户附带上下文，优先解释上下文；如果没有，就基于当前文件、课件或项目摘要回答，不要反复强调“没有选区”。
+- 回答要有干活信息：具体文件名、目录名、函数名、类名、装饰器、配置项、关键词、验证方法，能给就给。
+- 对孤立词（例如 FastAPI），先用一句话讲“它是什么”，再讲“在这个项目里怎么识别/去哪看”，不要只写“它负责路由和请求处理”。
+- 材料不足时，把不确定点放到最后 1-2 句，并告诉用户如何验证。
+- 不编造不存在的文件、函数、类、接口或运行结果。
+
+输出要求：
+TITLE: 只写核心名词或最短主题，不要副标题。选中 FastAPI 就写 TITLE: FastAPI；问某个文件就写文件名；问项目入口就写 项目入口。
+
+正文不要为了格式凑章节，不要重复题目。根据问题选择最有用的组织方式，但通常应包含：
+1. **一句话结论**：直接回答是什么/干什么/怎么学。
+2. **怎么在项目里认出来**：列出具体路径、代码形态、关键词或符号。
+3. **下一步看哪里**：给 2-4 个可执行阅读动作。
+4. **不确定项**：只有确实无法确认时才写，放最后。
+
+对于“这是什么 / 什么意思 / 解释一下”这类问题，推荐写成：
+- **它是什么**：一句小白能听懂的话。
+- **在这个项目里怎么看**：结合上下文说它为什么出现。
+- **你接下来找什么**：列出具体文件、关键词或代码形态。
+
+正文控制在 150-350 字，除非用户明确要求详细分析。"""
+
 PROMPT_DEFAULTS = {
     "prompt.system": PROMPT_INJECTION_SYSTEM_PROMPT,
     "prompt.outline": DEFAULT_OUTLINE_PROMPT,
     "prompt.file_lesson.detailed_expected": DEFAULT_FILE_LESSON_DETAILED,
     "prompt.file_lesson.brief_expected": DEFAULT_FILE_LESSON_BRIEF,
     "prompt.file_lesson.template": DEFAULT_FILE_LESSON_TEMPLATE,
+    "prompt.qa.answer": DEFAULT_QA_ANSWER_PROMPT,
 }
+
+EDITABLE_PROMPT_KEYS = (
+    "prompt.system",
+    "prompt.file_lesson.detailed_expected",
+    "prompt.file_lesson.brief_expected",
+    "prompt.qa.answer",
+)
 
 
 def load_prompt(key: str) -> str:

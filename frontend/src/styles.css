@@ -837,6 +837,17 @@ button:disabled,
   font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
 
+.context-preview {
+  margin-top: 8px;
+  padding: 8px;
+  color: #435269;
+  background: #f3f6f8;
+  border: 1px solid #d7dee6;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .selection-editor {
   width: 100%;
   min-height: 94px;

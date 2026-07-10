@@ -39,7 +39,7 @@ import type {
 } from "./api/client";
 import CodeViewer, { ViewerRange, ViewerSelection } from "./components/CodeViewer";
 import ContextMenu from "./components/ContextMenu";
-import ExplainPanel, { SelectionSummary } from "./components/ExplainPanel";
+import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
@@ -499,6 +499,85 @@ export default function App() {
         setSelectedQA(record);
       }
     }
+  }
+
+  function getActiveOpenItem(): OpenItem | null {
+    const group = findGroup(layout, activeGroupId);
+    return group?.items.find((item) => item.id === group.activeItemId) ?? null;
+  }
+
+  function buildAssistantContextSummary(): AssistantContextSummary | null {
+    if (!project) {
+      return null;
+    }
+    const activeItem = getActiveOpenItem();
+    if (!activeItem) {
+      return {
+        label: "项目",
+        sourceType: "selection",
+        sourcePath: project.name,
+        preview: "将使用项目结构说明和学习总纲作为上下文。",
+      };
+    }
+    if (activeItem.type === "file") {
+      return {
+        label: "当前文件",
+        sourceType: "file",
+        sourcePath: activeItem.path,
+        preview: `语言：${activeItem.language ?? "plaintext"}。可直接询问这个文件的职责、入口、调用关系或修改风险。`,
+      };
+    }
+    if (activeItem.qaRecordId || activeItem.type === "qa") {
+      return {
+        label: "当前回答",
+        sourceType: "selection",
+        sourcePath: activeItem.path,
+        preview: `将使用回答内容摘要作为上下文：${activeItem.title}`,
+      };
+    }
+    return {
+      label: "当前课件",
+      sourceType: "course",
+      sourcePath: activeItem.path,
+      preview: `将使用课件内容摘要作为上下文：${activeItem.title}`,
+    };
+  }
+
+  function buildAskPayloadContext(): Pick<Parameters<typeof askQuestion>[1], "source_type" | "source_path" | "selected_text"> {
+    if (selection) {
+      return {
+        source_type: selection.sourceType,
+        source_path: selection.sourcePath,
+        selected_text: selection.selectedText,
+      };
+    }
+    const activeItem = getActiveOpenItem();
+    if (activeItem?.type === "file") {
+      return {
+        source_type: "file",
+        source_path: activeItem.path,
+        selected_text: "",
+      };
+    }
+    if (activeItem?.qaRecordId || activeItem?.type === "qa") {
+      return {
+        source_type: "selection",
+        source_path: activeItem.path,
+        selected_text: activeItem.content.slice(0, 20000),
+      };
+    }
+    if (activeItem?.type === "course") {
+      return {
+        source_type: "course",
+        source_path: activeItem.path,
+        selected_text: "",
+      };
+    }
+    return {
+      source_type: "selection",
+      source_path: null,
+      selected_text: "",
+    };
   }
 
   function openItemInGroup(groupId: string, item: OpenItem) {
@@ -969,17 +1048,18 @@ export default function App() {
     if (!project || !qaQuestion.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) {
       return;
     }
-    const ok = window.confirm(`将调用模型 API 使用 ${llmSettings.model} 回答当前选区问题，可能消耗 token。是否继续？`);
+    const ok = window.confirm(`将调用模型 API 使用 ${llmSettings.model} 回答当前问题，可能消耗 token。是否继续？`);
     if (!ok) {
       return;
     }
     setQALoading(true);
     setQAPanelError("");
     try {
+      const context = buildAskPayloadContext();
       const record = await askQuestion(project.id, {
-        source_type: selection?.sourceType ?? "selection",
-        source_path: selection?.sourcePath ?? null,
-        selected_text: selection?.selectedText ?? "",
+        source_type: context.source_type,
+        source_path: context.source_path,
+        selected_text: context.selected_text,
         question: qaQuestion,
         provider: llmSettings.provider,
         base_url: llmSettings.base_url,
@@ -1660,6 +1740,7 @@ export default function App() {
         />
         <ExplainPanel
           selection={selection}
+          contextSummary={buildAssistantContextSummary()}
           question={qaQuestion}
           loading={qaLoading}
           history={qaHistory}

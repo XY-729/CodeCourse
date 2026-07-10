@@ -3,11 +3,10 @@ import { Loader2 } from "lucide-react";
 import { getPrompts, savePrompts } from "../api/client";
 
 const PROMPT_LABELS: Record<string, string> = {
-  "prompt.system": "系统提示词（用于总纲和文件课件）",
-  "prompt.outline": "总纲生成提示词",
-  "prompt.file_lesson.detailed_expected": "文件课件 - 详细分析要求",
-  "prompt.file_lesson.brief_expected": "文件课件 - 粗略介绍要求",
-  "prompt.file_lesson.template": "文件课件 - 提示词模板",
+  "prompt.system": "总体要求",
+  "prompt.file_lesson.detailed_expected": "详细生成",
+  "prompt.file_lesson.brief_expected": "粗略介绍",
+  "prompt.qa.answer": "AI 助手",
 };
 
 type Props = {

@@ -4,14 +4,18 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from fastapi import HTTPException
+
 from app.models.schemas import QAAskRequest
-from app.services.generation_service import project_course_dir
+from app.services.generation_service import extract_file_signals, project_course_dir
 from app.services.prompt_store import load_prompt
 from app.services.llm_client import call_openai_compatible_chat
+from app.services.scanner import read_text_file
 from app.services.storage import (
     QARecord,
     create_qa_record,
     delete_qa_record,
+    get_project,
     get_llm_settings,
     get_qa_record,
     list_qa_records,
@@ -20,29 +24,91 @@ from app.services.storage import (
 )
 
 
-def _generate_title_from_question(question: str) -> str:
-    text = question.strip()
-    for prefix in [
-        "请解释这段内容：", "请解释：", "请解释",
-        "解释这段内容：", "解释：", "解释",
-        "请问：", "请问", "问：", "问题：",
-        "这段代码是做什么的：", "这段代码",
-    ]:
-        if text.startswith(prefix):
-            text = text[len(prefix):].strip()
-            break
-    text = re.sub(r'\s+', ' ', text)
-    if len(text) > 50:
-        text = text[:50].rstrip()
+TITLE_LINE_RE = re.compile(r"^\s*(?:TITLE|标题)\s*[:：]\s*(.+?)\s*$", re.IGNORECASE)
+TITLE_SPLIT_RE = re.compile(r"[:：,，。；;、\s]+")
+
+
+def _clean_title(text: str, max_len: int = 60) -> str:
+    cleaned = re.sub(r"\s+", " ", text.strip().strip("#").strip())
+    cleaned = cleaned.strip("「」『』[]【】`*_ ")
+    if len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].rstrip()
+    return cleaned
+
+
+def _selection_title_fragment(selected_text: str) -> str:
+    text = selected_text.strip()
     if not text:
-        return "选区问答说明"
-    if not any(text.endswith(s) for s in ["分析", "说明", "解释", "介绍", "实现", "原理", "流程"]):
-        text = text + "说明"
-    return text
+        return ""
+    first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+    first_line = re.sub(r"[`*_#>\[\]{}()]+", " ", first_line)
+    first_line = re.sub(r"\s+", " ", first_line).strip(" ：:，,。.;；")
+    if len(first_line) > 24:
+        first_line = first_line[:24].rstrip()
+    return first_line
+
+
+def _compact_title(candidate: str, selected_text: str) -> str:
+    selected_fragment = _selection_title_fragment(selected_text)
+    if selected_fragment and len(selected_fragment) <= 24:
+        return selected_fragment
+    title = _clean_title(candidate)
+    if not title:
+        return selected_fragment
+    head = TITLE_SPLIT_RE.split(title, maxsplit=1)[0].strip()
+    if 1 <= len(head) <= 24:
+        return head
+    if len(title) > 24:
+        return title[:24].rstrip()
+    return title
+
+
+def _fallback_title(question: str, selected_text: str, source_path: Optional[str]) -> str:
+    question_text = _clean_title(question, max_len=50)
+    selected_fragment = _selection_title_fragment(selected_text)
+    generic_questions = {
+        "这是什么",
+        "这是啥",
+        "这个是什么",
+        "什么意思",
+        "这是什么意思",
+        "解释",
+        "请解释",
+        "说明一下",
+        "介绍一下",
+    }
+    is_generic = question_text in generic_questions or (len(question_text) <= 8 and "什么" in question_text)
+    if is_generic and selected_fragment:
+        return _compact_title(selected_fragment, selected_text)
+    if selected_fragment and question_text:
+        return _compact_title(selected_fragment, selected_text)
+    if question_text:
+        return _compact_title(question_text, selected_text)
+    return "选区问答"
+
+
+def _parse_answer_title(raw_answer: str, question: str, selected_text: str, source_path: Optional[str]) -> tuple[str, str]:
+    lines = raw_answer.strip().splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    if lines:
+        match = TITLE_LINE_RE.match(lines[0])
+        if match:
+            title = _compact_title(match.group(1), selected_text) or _fallback_title(question, selected_text, source_path)
+            answer = "\n".join(lines[1:]).strip()
+            return title, answer
+    return _fallback_title(question, selected_text, source_path), raw_answer.strip()
+
+
+def _render_prompt_template(template: str, values: dict[str, str]) -> str:
+    rendered = template
+    for key, value in values.items():
+        rendered = rendered.replace("{" + key + "}", value)
+    return rendered
 
 
 def _safe_filename(title: str, record_id: int, max_len: int = 80) -> str:
-    safe = re.sub(r'[^\w一-鿿\s-]', '', title)
+    safe = re.sub(r"[^\w\u4e00-\u9fff\s-]", "", title)
     safe = re.sub(r'[\s_]+', '_', safe).strip('_')
     if len(safe) > max_len:
         safe = safe[:max_len].rstrip('_')
@@ -58,33 +124,144 @@ def _resolve_output_path(project_id: int, relative_output_path: str) -> Path:
     return (course_dir / relative_output_path).resolve()
 
 
+def _shorten(text: str, limit: int = 5000) -> str:
+    cleaned = text.strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[:limit].rstrip() + "\n\n...[已截断]"
+
+
+def _project_root(project_id: int) -> Optional[Path]:
+    project = get_project(project_id)
+    if project is None:
+        return None
+    return Path(project.local_path).resolve()
+
+
+def _read_generated_markdown(project_id: int, relative_path: str, limit: int = 5000) -> str:
+    course_dir = project_course_dir(project_id).resolve()
+    target = (course_dir / relative_path).resolve()
+    if target != course_dir and course_dir not in target.parents:
+        return ""
+    if not target.is_file():
+        return ""
+    try:
+        return _shorten(target.read_text(encoding="utf-8"), limit)
+    except UnicodeDecodeError:
+        return ""
+
+
+def _project_context(project_id: int) -> str:
+    project_map = _read_generated_markdown(project_id, "project_map.md", 4000)
+    outline = _read_generated_markdown(project_id, "outline.md", 4000)
+    parts = ["上下文类型：项目级问题"]
+    if project_map:
+        parts.append(f"\n项目结构说明摘要：\n```markdown\n{project_map}\n```")
+    if outline:
+        parts.append(f"\n学习总纲摘要：\n```markdown\n{outline}\n```")
+    if len(parts) == 1:
+        parts.append("\n当前项目还没有可用的 project_map.md 或 outline.md，请基于项目名称和用户问题回答，并明确说明材料不足。")
+    return "\n".join(parts)
+
+
+def _file_context(project_id: int, source_path: Optional[str]) -> str:
+    if not source_path:
+        return _project_context(project_id)
+    root = _project_root(project_id)
+    if root is None:
+        return f"上下文类型：当前代码文件\n文件路径：{source_path}\n无法读取项目记录。"
+    try:
+        content, language = read_text_file(root, source_path)
+    except HTTPException as exc:
+        return f"上下文类型：当前代码文件\n文件路径：{source_path}\n读取失败：{exc.detail}"
+    imports, symbols = extract_file_signals(content)
+    head = content[:2200]
+    tail = content[-2200:] if len(content) > 2200 else ""
+    return f"""上下文类型：当前代码文件
+文件路径：{source_path}
+语言：{language}
+文件大小：{len(content.encode("utf-8"))} bytes
+
+import/include/依赖线索：
+{chr(10).join(imports[:30]) or "无明显 import/include"}
+
+函数/类/配置项线索：
+{", ".join(symbols[:60]) or "未从正则中提取到明显符号"}
+
+文件开头摘要：
+```text
+{head}
+```
+
+文件结尾摘要：
+```text
+{tail or "(同文件开头，文件较短)"}
+```"""
+
+
+def _course_context(project_id: int, source_path: Optional[str]) -> str:
+    if not source_path:
+        return _project_context(project_id)
+    content = _read_generated_markdown(project_id, source_path, 7000)
+    if not content:
+        return f"上下文类型：当前课件\n课件路径：{source_path}\n课件内容无法读取，请基于路径和用户问题回答。"
+    return f"""上下文类型：当前课件或回答 Markdown
+路径：{source_path}
+
+内容摘要：
+```markdown
+{content}
+```"""
+
+
+def _build_assistant_context(project_id: int, payload: QAAskRequest, selected_text: str) -> str:
+    if selected_text:
+        return f"""上下文类型：用户附带上下文
+来源类型：{payload.source_type}
+来源路径：{payload.source_path or "(无路径)"}
+
+附带上下文：
+```text
+{selected_text}
+```"""
+    if payload.source_type == "file":
+        return _file_context(project_id, payload.source_path)
+    if payload.source_type == "course":
+        return _course_context(project_id, payload.source_path)
+    return _project_context(project_id)
+
+
 def _format_record_markdown(record: QARecord) -> str:
     source_path = record.source_path or "(无路径)"
     favorite = "true" if record.favorite else "false"
     title = record.display_title or f"问答记录 #{record.id}"
-    selected_text = record.selected_text or "无选区内容"
+    context_text = record.selected_text or "无附带上下文，回答基于当前文件、课件或项目摘要。"
     return f"""# {title}
-
-> 来源类型：{record.source_type}
-> 来源路径：{source_path}
-> 模型：{record.model}
-> 收藏：{favorite}
-> 创建时间：{record.created_at}
-> 更新时间：{record.updated_at}
 
 ## 问题
 
 {record.question}
 
-## 选中内容
+## 附带上下文
 
 ```text
-{selected_text}
+{context_text}
 ```
 
 ## 回答
 
 {record.answer_md}
+
+---
+
+## 记录信息
+
+- 来源类型：{record.source_type}
+- 来源路径：{source_path}
+- 模型：{record.model}
+- 收藏：{favorite}
+- 创建时间：{record.created_at}
+- 更新时间：{record.updated_at}
 """
 
 
@@ -123,28 +300,19 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
     question = payload.question.strip()
     if not question:
         raise RuntimeError("问题为空，无法提问。")
-    selected_text_for_prompt = selected_text or "无选区内容。请优先回答用户问题，并说明由于没有选区，只能基于问题本身给出通用学习建议。"
+    context_text = _build_assistant_context(project_id, payload, selected_text)
 
-    prompt = f"""请基于用户选中的代码或课件片段回答问题。目标是教学，不是泛泛解释。
-
-来源类型：{payload.source_type}
-来源路径：{payload.source_path or "(无路径)"}
-用户问题：
-{question}
-
-选中内容：
-```text
-{selected_text_for_prompt}
-```
-
-输出要求：
-1. 先直接回答用户问题。
-2. 引用选中内容中的关键符号、语句或概念作为证据。
-3. 如果需要联系上下文，请明确说明哪些信息缺失，不要编造。
-4. 给出 1-3 个下一步阅读建议。
-5. 输出 Markdown。
-"""
-    answer = call_openai_compatible_chat(
+    prompt = _render_prompt_template(
+        load_prompt("prompt.qa.answer"),
+        {
+            "source_type": payload.source_type,
+            "source_path": payload.source_path or "(无路径)",
+            "question": question,
+            "selected_text": selected_text,
+            "context_text": context_text,
+        },
+    )
+    raw_answer = call_openai_compatible_chat(
         settings["base_url"],
         settings["api_key"],
         settings["model"],
@@ -154,10 +322,9 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
         ],
         timeout=90,
     ).strip()
+    title, answer = _parse_answer_title(raw_answer, question, selected_text, payload.source_path)
     if not answer:
         raise RuntimeError("模型返回为空内容，未创建问答记录。")
-
-    title = _generate_title_from_question(question)
 
     record = create_qa_record(
         project_id=project_id,

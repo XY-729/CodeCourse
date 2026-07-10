@@ -9,8 +9,16 @@ export type SelectionSummary = {
   language?: string;
 };
 
+export type AssistantContextSummary = {
+  label: string;
+  sourceType: SourceType;
+  sourcePath: string | null;
+  preview: string;
+};
+
 type Props = {
   selection: SelectionSummary | null;
+  contextSummary: AssistantContextSummary | null;
   question: string;
   loading: boolean;
   history: QARecord[];
@@ -54,6 +62,7 @@ function configuredModelLabel(settings: LLMSettings | null) {
 
 export default function ExplainPanel({
   selection,
+  contextSummary,
   question,
   loading,
   history,
@@ -147,12 +156,12 @@ export default function ExplainPanel({
 
       <section className="qa-ask-section">
         <div className="panel-title">
-          <span>选区提问</span>
+          <span>AI 助手</span>
           {loading ? <Loader2 size={16} className="spin" /> : null}
         </div>
 
         <div className="qa-section selection-card">
-          <div className="qa-section-title">当前选区</div>
+          <div className="qa-section-title">附带上下文</div>
           {selection ? (
             <>
               <div className="selection-meta">
@@ -173,8 +182,16 @@ export default function ExplainPanel({
                 </button>
               </div>
             </>
+          ) : contextSummary ? (
+            <>
+              <div className="selection-meta">
+                <span>{contextSummary.label}</span>
+              </div>
+              <div className="selection-path">{contextSummary.sourcePath ?? "项目上下文"}</div>
+              <div className="context-preview">{contextSummary.preview}</div>
+            </>
           ) : (
-            <div className="empty small">尚未选中文本</div>
+            <div className="context-preview">将根据当前项目和已生成课程回答。</div>
           )}
         </div>
 
@@ -182,7 +199,7 @@ export default function ExplainPanel({
           <textarea
             value={question}
             onChange={(event) => onQuestionChange(event.target.value)}
-            placeholder="输入问题"
+            placeholder="问项目、文件、课件或选中内容"
             disabled={loading}
           />
           <div className="model-row">
