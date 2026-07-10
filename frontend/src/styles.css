@@ -351,7 +351,7 @@ button:disabled,
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
-    "scope workspace"
+    "scope lesson"
     "instructions lesson"
     "status status";
   gap: 8px 12px;
@@ -361,8 +361,7 @@ button:disabled,
 }
 
 .scope-controls,
-.lesson-actions,
-.workspace-controls {
+.lesson-actions {
   min-width: 0;
   display: flex;
   align-items: center;
@@ -376,26 +375,6 @@ button:disabled,
 .lesson-actions {
   grid-area: lesson;
   justify-content: flex-end;
-}
-
-.workspace-controls {
-  grid-area: workspace;
-}
-
-.workspace-controls button {
-  height: 30px;
-  min-width: 32px;
-  border: 1px solid #c8d0da;
-  border-radius: 6px;
-  padding: 0 8px;
-  color: #536276;
-  background: #ffffff;
-}
-
-.workspace-controls button.selected {
-  border-color: #25766c;
-  color: #155d54;
-  background: #eef8f6;
 }
 
 .generation-instructions {
@@ -455,20 +434,58 @@ button:disabled,
 .reader-workspace {
   flex: 1;
   min-height: 0;
-  display: grid;
-  gap: 1px;
+  display: flex;
   background: #d5dbe3;
 }
 
-.reader-workspace.split {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+.split-node {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  background: #d5dbe3;
 }
 
-.reader-workspace.single {
-  grid-template-columns: minmax(0, 1fr);
+.split-node.row {
+  flex-direction: row;
+}
+
+.split-node.column {
+  flex-direction: column;
+}
+
+.split-child {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+
+.split-resizer {
+  flex: 0 0 6px;
+  background: #d5dbe3;
+  position: relative;
+  z-index: 4;
+}
+
+.split-resizer.row {
+  cursor: col-resize;
+  border-left: 1px solid #c3ccd6;
+  border-right: 1px solid #c3ccd6;
+}
+
+.split-resizer.column {
+  cursor: row-resize;
+  border-top: 1px solid #c3ccd6;
+  border-bottom: 1px solid #c3ccd6;
+}
+
+.split-resizer:hover {
+  background: #9dcac1;
 }
 
 .reader-pane {
+  position: relative;
+  flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -480,6 +497,46 @@ button:disabled,
 
 .reader-pane.active {
   outline-color: #6fb2a7;
+}
+
+.drop-preview {
+  position: absolute;
+  pointer-events: none;
+  z-index: 10;
+  border: 2px solid #25766c;
+  background: rgba(37, 118, 108, 0.16);
+}
+
+.drop-preview.center {
+  inset: 20%;
+}
+
+.drop-preview.left {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 24%;
+}
+
+.drop-preview.right {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 24%;
+}
+
+.drop-preview.top {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 24%;
+}
+
+.drop-preview.bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 24%;
 }
 
 .pane-tabs {

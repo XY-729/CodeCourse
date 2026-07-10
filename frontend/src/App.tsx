@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
-import { Columns2, PanelLeft, Save, Star, X } from "lucide-react";
+import { Save, Star, X } from "lucide-react";
 import {
   askQuestion,
   deleteProject,
@@ -39,9 +39,9 @@ import RepositoryForm from "./components/RepositoryForm";
 import Sidebar from "./components/Sidebar";
 
 type ScopeType = LearningScope["type"];
-type PaneId = "left" | "right";
 type OpenItemType = "file" | "course" | "qa";
-type WorkspaceMode = "single" | "split";
+type SplitDirection = "row" | "column";
+type DropZone = "center" | "left" | "right" | "top" | "bottom";
 
 type OpenItem = {
   id: string;
@@ -55,14 +55,46 @@ type OpenItem = {
   dirty?: boolean;
 };
 
+type EditorGroup = {
+  id: string;
+  items: OpenItem[];
+  activeItemId: string | null;
+};
+
+type GroupNode = {
+  type: "group";
+  group: EditorGroup;
+};
+
+type SplitNode = {
+  type: "split";
+  id: string;
+  direction: SplitDirection;
+  ratio: number;
+  first: LayoutNode;
+  second: LayoutNode;
+};
+
+type LayoutNode = GroupNode | SplitNode;
+
 type DragState =
   | { kind: "sidebar-width"; startX: number; startWidth: number }
   | { kind: "explain-width"; startX: number; startWidth: number }
   | { kind: "sidebar-project"; startY: number; startHeight: number }
   | { kind: "sidebar-course"; startY: number; startHeight: number }
-  | { kind: "qa-ask"; startY: number; startHeight: number };
+  | { kind: "qa-ask"; startY: number; startHeight: number }
+  | { kind: "split"; splitId: string; direction: SplitDirection; startX: number; startY: number; startRatio: number; size: number };
+
+type DropPayload = {
+  kind?: string;
+  path?: string;
+  filename?: string;
+  qaId?: number;
+};
 
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
+const MAX_GROUPS = 9;
+const ROOT_GROUP_ID = "group-1";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -86,8 +118,132 @@ function taskLabel(task: GenerationTask): string {
   return `${type} / ${task.status}`;
 }
 
-function emptyPanes(): Record<PaneId, OpenItem[]> {
-  return { left: [], right: [] };
+function createGroup(id: string): GroupNode {
+  return { type: "group", group: { id, items: [], activeItemId: null } };
+}
+
+function createInitialLayout(): LayoutNode {
+  return createGroup(ROOT_GROUP_ID);
+}
+
+function countGroups(node: LayoutNode): number {
+  if (node.type === "group") {
+    return 1;
+  }
+  return countGroups(node.first) + countGroups(node.second);
+}
+
+function findGroup(node: LayoutNode, groupId: string): EditorGroup | null {
+  if (node.type === "group") {
+    return node.group.id === groupId ? node.group : null;
+  }
+  return findGroup(node.first, groupId) ?? findGroup(node.second, groupId);
+}
+
+function updateGroup(node: LayoutNode, groupId: string, updater: (group: EditorGroup) => EditorGroup): LayoutNode {
+  if (node.type === "group") {
+    return node.group.id === groupId ? { ...node, group: updater(node.group) } : node;
+  }
+  return {
+    ...node,
+    first: updateGroup(node.first, groupId, updater),
+    second: updateGroup(node.second, groupId, updater),
+  };
+}
+
+function updateEveryGroup(node: LayoutNode, updater: (group: EditorGroup) => EditorGroup): LayoutNode {
+  if (node.type === "group") {
+    return { ...node, group: updater(node.group) };
+  }
+  return {
+    ...node,
+    first: updateEveryGroup(node.first, updater),
+    second: updateEveryGroup(node.second, updater),
+  };
+}
+
+function updateSplitRatio(node: LayoutNode, splitId: string, ratio: number): LayoutNode {
+  if (node.type === "group") {
+    return node;
+  }
+  if (node.id === splitId) {
+    return { ...node, ratio: clamp(ratio, 0.15, 0.85) };
+  }
+  return {
+    ...node,
+    first: updateSplitRatio(node.first, splitId, ratio),
+    second: updateSplitRatio(node.second, splitId, ratio),
+  };
+}
+
+function splitGroup(
+  node: LayoutNode,
+  groupId: string,
+  direction: SplitDirection,
+  placement: "before" | "after",
+  newGroup: GroupNode,
+  splitId: string,
+): LayoutNode {
+  if (node.type === "group") {
+    if (node.group.id !== groupId) {
+      return node;
+    }
+    return placement === "before"
+      ? { type: "split", id: splitId, direction, ratio: 0.5, first: newGroup, second: node }
+      : { type: "split", id: splitId, direction, ratio: 0.5, first: node, second: newGroup };
+  }
+  return {
+    ...node,
+    first: splitGroup(node.first, groupId, direction, placement, newGroup, splitId),
+    second: splitGroup(node.second, groupId, direction, placement, newGroup, splitId),
+  };
+}
+
+function openItem(group: EditorGroup, item: OpenItem): EditorGroup {
+  const existing = group.items.filter((entry) => entry.id !== item.id);
+  return { ...group, items: [...existing, item], activeItemId: item.id };
+}
+
+function closeItem(group: EditorGroup, itemId: string): EditorGroup {
+  const nextItems = group.items.filter((item) => item.id !== itemId);
+  const nextActive = group.activeItemId === itemId ? nextItems[nextItems.length - 1]?.id ?? null : group.activeItemId;
+  return { ...group, items: nextItems, activeItemId: nextActive };
+}
+
+function detectDropZone(event: DragEvent<HTMLElement>): DropZone {
+  const rect = event.currentTarget.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width;
+  const y = (event.clientY - rect.top) / rect.height;
+  const edge = 0.2;
+  if (y <= edge) {
+    return "top";
+  }
+  if (y >= 1 - edge) {
+    return "bottom";
+  }
+  if (x <= edge) {
+    return "left";
+  }
+  if (x >= 1 - edge) {
+    return "right";
+  }
+  return "center";
+}
+
+function splitMeta(zone: DropZone): { direction: SplitDirection; placement: "before" | "after" } | null {
+  if (zone === "left") {
+    return { direction: "row", placement: "before" };
+  }
+  if (zone === "right") {
+    return { direction: "row", placement: "after" };
+  }
+  if (zone === "top") {
+    return { direction: "column", placement: "before" };
+  }
+  if (zone === "bottom") {
+    return { direction: "column", placement: "after" };
+  }
+  return null;
 }
 
 export default function App() {
@@ -113,10 +269,9 @@ export default function App() {
   const [sidebarCourseHeight, setSidebarCourseHeight] = useState(240);
   const [qaAskHeight, setQAAskHeight] = useState(390);
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("split");
-  const [activePane, setActivePane] = useState<PaneId>("left");
-  const [openItems, setOpenItems] = useState<Record<PaneId, OpenItem[]>>(emptyPanes);
-  const [activeItemIds, setActiveItemIds] = useState<Record<PaneId, string | null>>({ left: null, right: null });
+  const [layout, setLayout] = useState<LayoutNode>(() => createInitialLayout());
+  const [activeGroupId, setActiveGroupId] = useState(ROOT_GROUP_ID);
+  const [dropPreview, setDropPreview] = useState<{ groupId: string; zone: DropZone } | null>(null);
 
   const [selection, setSelection] = useState<SelectionSummary | null>(null);
   const [qaQuestion, setQAQuestion] = useState("");
@@ -127,6 +282,7 @@ export default function App() {
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
 
+  const idCounter = useRef(1);
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
   const showBusy = loading || isTaskRunning || qaLoading;
@@ -152,6 +308,10 @@ export default function App() {
         setSidebarCourseHeight(clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420));
       } else if (currentDrag.kind === "qa-ask") {
         setQAAskHeight(clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 230, 560));
+      } else if (currentDrag.kind === "split") {
+        const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
+        const nextRatio = currentDrag.startRatio + delta / Math.max(1, currentDrag.size);
+        setLayout((prev) => updateSplitRatio(prev, currentDrag.splitId, nextRatio));
       }
     }
     function onMouseUp() {
@@ -159,7 +319,7 @@ export default function App() {
     }
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
-    document.body.classList.add(currentDrag.kind.includes("width") ? "resizing-x" : "resizing-y");
+    document.body.classList.add(currentDrag.kind === "split" && currentDrag.direction === "row" ? "resizing-x" : currentDrag.kind.includes("width") ? "resizing-x" : "resizing-y");
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
@@ -176,6 +336,11 @@ export default function App() {
     }, 180);
     return () => window.clearTimeout(timer);
   }, [project?.id, qaHistoryQuery, qaFavoriteOnly]);
+
+  function nextId(prefix: string) {
+    idCounter.current += 1;
+    return `${prefix}-${idCounter.current}`;
+  }
 
   async function loadLLMSettings() {
     try {
@@ -237,32 +402,14 @@ export default function App() {
     }
   }
 
-  function rememberOpenItem(pane: PaneId, item: OpenItem) {
-    setOpenItems((prev) => {
-      const existing = prev[pane].filter((entry) => entry.id !== item.id);
-      return { ...prev, [pane]: [...existing, item] };
-    });
-    setActiveItemIds((prev) => ({ ...prev, [pane]: item.id }));
-    setActivePane(pane);
-  }
-
-  function updateOpenQARecord(record: QARecord) {
-    setOpenItems((prev) => ({
-      left: prev.left.map((item) => (item.qaRecordId === record.id ? { ...item, favorite: record.favorite } : item)),
-      right: prev.right.map((item) => (item.qaRecordId === record.id ? { ...item, favorite: record.favorite } : item)),
-    }));
-  }
-
-  function activateItem(pane: PaneId, item: OpenItem) {
-    setActivePane(pane);
-    setActiveItemIds((prev) => ({ ...prev, [pane]: item.id }));
+  function applyActiveItem(item: OpenItem) {
     if (item.type === "file") {
       setFileContent({ path: item.path, content: item.content, language: item.language ?? "plaintext" });
       setSelectedCourse(null);
     } else if (item.type === "course") {
       setSelectedCourse(item.path);
       setFileContent(null);
-    } else if (item.type === "qa") {
+    } else {
       setFileContent(null);
       setSelectedCourse(null);
       const record = qaHistory.find((entry) => entry.id === item.qaRecordId);
@@ -272,16 +419,93 @@ export default function App() {
     }
   }
 
-  function closeItem(pane: PaneId, itemId: string) {
-    setOpenItems((prev) => {
-      const nextPane = prev[pane].filter((item) => item.id !== itemId);
-      const nextActive = activeItemIds[pane] === itemId ? nextPane[nextPane.length - 1]?.id ?? null : activeItemIds[pane];
-      setActiveItemIds((ids) => ({ ...ids, [pane]: nextActive }));
-      return { ...prev, [pane]: nextPane };
-    });
+  function openItemInGroup(groupId: string, item: OpenItem) {
+    setLayout((prev) => updateGroup(prev, groupId, (group) => openItem(group, item)));
+    setActiveGroupId(groupId);
+    applyActiveItem(item);
   }
 
-  async function openFileInPane(projectId: number, path: string, pane: PaneId) {
+  function splitGroupWithItem(groupId: string, zone: DropZone, item: OpenItem) {
+    const meta = splitMeta(zone);
+    if (!meta || countGroups(layout) >= MAX_GROUPS) {
+      if (meta) {
+        setTaskMessage(`最多支持 ${MAX_GROUPS} 个工作区，已在当前工作区打开`);
+      }
+      openItemInGroup(groupId, item);
+      return;
+    }
+    const newGroupId = nextId("group");
+    const newGroup = createGroup(newGroupId);
+    newGroup.group = openItem(newGroup.group, item);
+    setLayout((prev) => splitGroup(prev, groupId, meta.direction, meta.placement, newGroup, nextId("split")));
+    setActiveGroupId(newGroupId);
+    applyActiveItem(item);
+  }
+
+  function closeItemInGroup(groupId: string, itemId: string) {
+    setLayout((prev) => updateGroup(prev, groupId, (group) => closeItem(group, itemId)));
+  }
+
+  function activateItem(groupId: string, item: OpenItem) {
+    setLayout((prev) => updateGroup(prev, groupId, (group) => ({ ...group, activeItemId: item.id })));
+    setActiveGroupId(groupId);
+    applyActiveItem(item);
+  }
+
+  function updateOpenQARecord(record: QARecord) {
+    setLayout((prev) =>
+      updateEveryGroup(prev, (group) => ({
+        ...group,
+        items: group.items.map((item) => (item.qaRecordId === record.id ? { ...item, favorite: record.favorite } : item)),
+      })),
+    );
+  }
+
+  async function buildOpenItem(payload: DropPayload): Promise<OpenItem | null> {
+    if (!project) {
+      return null;
+    }
+    if (payload.kind === "file" && payload.path) {
+      const content = await getProjectFile(project.id, payload.path);
+      return {
+        id: `file:${payload.path}`,
+        type: "file",
+        path: payload.path,
+        title: payload.path.split("/").pop() ?? payload.path,
+        content: content.content,
+        language: content.language,
+      };
+    }
+    if (payload.kind === "course" && payload.filename) {
+      const content = await getCourseContent(project.id, payload.filename);
+      return {
+        id: `course:${payload.filename}`,
+        type: "course",
+        path: payload.filename,
+        title: courses.find((file) => file.filename === payload.filename)?.title ?? payload.filename,
+        content: content.content,
+      };
+    }
+    if (payload.kind === "qa" && payload.qaId) {
+      const record = qaHistory.find((entry) => entry.id === payload.qaId);
+      if (!record) {
+        return null;
+      }
+      return {
+        id: `qa:${record.id}`,
+        type: "qa",
+        path: record.output_path ?? `qa/${record.id}`,
+        title: `回答 #${record.id}`,
+        content: record.answer_md,
+        qaRecordId: record.id,
+        favorite: record.favorite,
+        dirty: false,
+      };
+    }
+    return null;
+  }
+
+  async function openFileInActiveGroup(projectId: number, path: string) {
     const content = await getProjectFile(projectId, path);
     setFileContent(content);
     setSelectedCourse(null);
@@ -290,7 +514,7 @@ export default function App() {
     } else if (scopeType === "directories") {
       setScopePathsText(parentDir(path));
     }
-    rememberOpenItem(pane, {
+    openItemInGroup(activeGroupId, {
       id: `file:${path}`,
       type: "file",
       path,
@@ -300,11 +524,11 @@ export default function App() {
     });
   }
 
-  async function openCourseInPane(projectId: number, filename: string, pane: PaneId) {
+  async function openCourseInActiveGroup(projectId: number, filename: string) {
     const content = await getCourseContent(projectId, filename);
     setSelectedCourse(filename);
     setFileContent(null);
-    rememberOpenItem(pane, {
+    openItemInGroup(activeGroupId, {
       id: `course:${filename}`,
       type: "course",
       path: filename,
@@ -313,9 +537,9 @@ export default function App() {
     });
   }
 
-  function openQAInPane(record: QARecord, pane = activePane) {
+  function openQAInActiveGroup(record: QARecord) {
     setSelectedQA(record);
-    rememberOpenItem(pane, {
+    openItemInGroup(activeGroupId, {
       id: `qa:${record.id}`,
       type: "qa",
       path: record.output_path ?? `qa/${record.id}`,
@@ -339,6 +563,7 @@ export default function App() {
         listGenerationTasks(freshProject.id),
         getLLMSettings().catch(() => null),
       ]);
+      const initialLayout = createInitialLayout();
       setTree(nextTree);
       setCourses(nextCourses);
       setLLMSettings(settings);
@@ -350,20 +575,24 @@ export default function App() {
       setQAQuestion("");
       setSelectedQA(null);
       setQAPanelError("");
-      setOpenItems(emptyPanes());
-      setActiveItemIds({ left: null, right: null });
+      setLayout(initialLayout);
+      setActiveGroupId(ROOT_GROUP_ID);
       await refreshQAHistory(freshProject.id);
       const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
       if (firstCourse) {
         const content = await getCourseContent(freshProject.id, firstCourse.filename);
         setSelectedCourse(firstCourse.filename);
-        rememberOpenItem("right", {
-          id: `course:${firstCourse.filename}`,
-          type: "course",
-          path: firstCourse.filename,
-          title: firstCourse.title,
-          content: content.content,
-        });
+        setLayout(
+          updateGroup(initialLayout, ROOT_GROUP_ID, (group) =>
+            openItem(group, {
+              id: `course:${firstCourse.filename}`,
+              type: "course",
+              path: firstCourse.filename,
+              title: firstCourse.title,
+              content: content.content,
+            }),
+          ),
+        );
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "打开项目失败");
@@ -393,7 +622,7 @@ export default function App() {
     }
     setError("");
     try {
-      await openFileInPane(project.id, path, activePane);
+      await openFileInActiveGroup(project.id, path);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "读取文件失败");
     }
@@ -405,7 +634,7 @@ export default function App() {
     }
     setError("");
     try {
-      await openCourseInPane(project.id, filename, activePane);
+      await openCourseInActiveGroup(project.id, filename);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "读取课程失败");
     }
@@ -437,7 +666,7 @@ export default function App() {
         ? nextCourses.find((item) => item.filename === nextTask.output_path?.split("/").slice(-2).join("/"))
         : nextCourses.find((item) => item.filename === "outline.md");
       if (preferred) {
-        await openCourseInPane(project.id, preferred.filename, "right");
+        await openCourseInActiveGroup(project.id, preferred.filename);
       }
     } else if (nextTask.status === "failed") {
       setTaskMessage(`生成失败：${nextTask.error_message ?? "未知错误"}`);
@@ -511,8 +740,8 @@ export default function App() {
         setCourses([]);
         setFileContent(null);
         setSelectedCourse(null);
-        setOpenItems(emptyPanes());
-        setActiveItemIds({ left: null, right: null });
+        setLayout(createInitialLayout());
+        setActiveGroupId(ROOT_GROUP_ID);
         setSelection(null);
         setQAHistory([]);
         setTaskMessage("");
@@ -566,7 +795,7 @@ export default function App() {
     }
   }
 
-  async function handleSaveQAItem(pane: PaneId, item: OpenItem) {
+  async function handleSaveQAItem(groupId: string, item: OpenItem) {
     if (!project || !item.qaRecordId) {
       return;
     }
@@ -575,12 +804,14 @@ export default function App() {
       const record = await updateQARecord(project.id, item.qaRecordId, { answer_md: item.content });
       setSelectedQA(record);
       setQAHistory((items) => items.map((entry) => (entry.id === record.id ? record : entry)));
-      setOpenItems((prev) => ({
-        ...prev,
-        [pane]: prev[pane].map((entry) =>
-          entry.id === item.id ? { ...entry, content: record.answer_md, favorite: record.favorite, dirty: false } : entry,
-        ),
-      }));
+      setLayout((prev) =>
+        updateGroup(prev, groupId, (group) => ({
+          ...group,
+          items: group.items.map((entry) =>
+            entry.id === item.id ? { ...entry, content: record.answer_md, favorite: record.favorite, dirty: false } : entry,
+          ),
+        })),
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存回答失败");
     }
@@ -605,8 +836,9 @@ export default function App() {
     }
   }
 
-  function handleDrop(event: DragEvent<HTMLElement>, pane: PaneId) {
+  async function handleGroupDrop(event: DragEvent<HTMLElement>, groupId: string) {
     event.preventDefault();
+    event.stopPropagation();
     if (!project) {
       return;
     }
@@ -614,47 +846,60 @@ export default function App() {
     if (!raw) {
       return;
     }
+    const zone = dropPreview?.groupId === groupId ? dropPreview.zone : detectDropZone(event);
+    setDropPreview(null);
     try {
-      const payload = JSON.parse(raw) as { kind?: string; path?: string; filename?: string };
-      if (payload.kind === "file" && payload.path) {
-        openFileInPane(project.id, payload.path, pane).catch((caught) => {
-          setError(caught instanceof Error ? caught.message : "拖拽打开文件失败");
-        });
-      } else if (payload.kind === "course" && payload.filename) {
-        openCourseInPane(project.id, payload.filename, pane).catch((caught) => {
-          setError(caught instanceof Error ? caught.message : "拖拽打开课程失败");
-        });
+      const item = await buildOpenItem(JSON.parse(raw) as DropPayload);
+      if (!item) {
+        return;
       }
-    } catch {
-      setError("拖拽数据无法识别");
+      if (zone === "center") {
+        openItemInGroup(groupId, item);
+      } else {
+        splitGroupWithItem(groupId, zone, item);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "拖拽打开失败");
     }
   }
 
-  function updateQAItemContent(pane: PaneId, itemId: string, content: string) {
-    setOpenItems((prev) => ({
-      ...prev,
-      [pane]: prev[pane].map((item) => (item.id === itemId ? { ...item, content, dirty: true } : item)),
-    }));
+  function updateQAItemContent(groupId: string, itemId: string, content: string) {
+    setLayout((prev) =>
+      updateGroup(prev, groupId, (group) => ({
+        ...group,
+        items: group.items.map((item) => (item.id === itemId ? { ...item, content, dirty: true } : item)),
+      })),
+    );
   }
 
-  function renderPane(pane: PaneId) {
-    const items = openItems[pane];
-    const activeId = activeItemIds[pane];
-    const activeItem = items.find((item) => item.id === activeId) ?? null;
+  function renderGroup(group: EditorGroup) {
+    const activeItem = group.items.find((item) => item.id === group.activeItemId) ?? null;
+    const previewZone = dropPreview?.groupId === group.id ? dropPreview.zone : null;
+
     return (
       <section
-        className={`reader-pane ${activePane === pane ? "active" : ""}`}
-        onClick={() => setActivePane(pane)}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={(event) => handleDrop(event, pane)}
+        key={group.id}
+        className={`reader-pane ${activeGroupId === group.id ? "active" : ""}`}
+        onClick={() => setActiveGroupId(group.id)}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setDropPreview({ groupId: group.id, zone: detectDropZone(event) });
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            setDropPreview((prev) => (prev?.groupId === group.id ? null : prev));
+          }
+        }}
+        onDrop={(event) => handleGroupDrop(event, group.id)}
       >
         <div className="pane-tabs">
-          <span className="pane-name">{pane === "left" ? "左工作区" : "右工作区"}</span>
-          {items.map((item) => (
+          <span className="pane-name">工作区</span>
+          {group.items.map((item) => (
             <button
               key={item.id}
-              className={`pane-tab ${item.id === activeId ? "active" : ""}`}
-              onClick={() => activateItem(pane, item)}
+              className={`pane-tab ${item.id === group.activeItemId ? "active" : ""}`}
+              onClick={() => activateItem(group.id, item)}
               title={item.path}
             >
               <span>{item.dirty ? `${item.title} *` : item.title}</span>
@@ -662,7 +907,7 @@ export default function App() {
                 size={13}
                 onClick={(event) => {
                   event.stopPropagation();
-                  closeItem(pane, item.id);
+                  closeItemInGroup(group.id, item.id);
                 }}
               />
             </button>
@@ -693,7 +938,7 @@ export default function App() {
                   <button className="icon-button" onClick={() => handleToggleFavorite(activeItem)} title="收藏/取消收藏">
                     <Star size={14} className={activeItem.favorite ? "starred" : ""} />
                   </button>
-                  <button className="secondary-button compact" onClick={() => handleSaveQAItem(pane, activeItem)} disabled={!activeItem.dirty}>
+                  <button className="secondary-button compact" onClick={() => handleSaveQAItem(group.id, activeItem)} disabled={!activeItem.dirty}>
                     <Save size={14} />
                     保存
                   </button>
@@ -702,17 +947,50 @@ export default function App() {
               <textarea
                 className="qa-workspace-editor"
                 value={activeItem.content}
-                onChange={(event) => updateQAItemContent(pane, activeItem.id, event.target.value)}
+                onChange={(event) => updateQAItemContent(group.id, activeItem.id, event.target.value)}
               />
             </div>
           ) : null}
-          {!activeItem ? <div className="empty-state">点击或拖拽左侧文件/课件到这里阅读</div> : null}
+          {!activeItem ? <div className="empty-state">点击或拖拽文件/课件到这里阅读</div> : null}
         </div>
+        {previewZone ? <div className={`drop-preview ${previewZone}`} /> : null}
       </section>
     );
   }
 
-  const visiblePanes: PaneId[] = workspaceMode === "split" ? ["left", "right"] : [activePane];
+  function renderLayoutNode(node: LayoutNode) {
+    if (node.type === "group") {
+      return renderGroup(node.group);
+    }
+    return (
+      <div key={node.id} className={`split-node ${node.direction}`}>
+        <div className="split-child" style={{ flex: `${node.ratio} 1 0` }}>
+          {renderLayoutNode(node.first)}
+        </div>
+        <div
+          className={`split-resizer ${node.direction}`}
+          onMouseDown={(event) => {
+            const rect = event.currentTarget.parentElement?.getBoundingClientRect();
+            if (!rect) {
+              return;
+            }
+            setDragState({
+              kind: "split",
+              splitId: node.id,
+              direction: node.direction,
+              startX: event.clientX,
+              startY: event.clientY,
+              startRatio: node.ratio,
+              size: node.direction === "row" ? rect.width : rect.height,
+            });
+          }}
+        />
+        <div className="split-child" style={{ flex: `${1 - node.ratio} 1 0` }}>
+          {renderLayoutNode(node.second)}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -783,24 +1061,6 @@ export default function App() {
                 生成 AI 总纲
               </button>
             </div>
-            <div className="workspace-controls">
-              <button
-                className={workspaceMode === "single" ? "selected" : ""}
-                onClick={() => setWorkspaceMode("single")}
-                title="单工作区"
-              >
-                <PanelLeft size={15} />
-              </button>
-              <button
-                className={workspaceMode === "split" ? "selected" : ""}
-                onClick={() => setWorkspaceMode("split")}
-                title="双工作区"
-              >
-                <Columns2 size={15} />
-              </button>
-              <button className={activePane === "left" ? "selected" : ""} onClick={() => setActivePane("left")}>左</button>
-              <button className={activePane === "right" ? "selected" : ""} onClick={() => setActivePane("right")}>右</button>
-            </div>
             <textarea
               className="generation-instructions"
               value={generationInstructions}
@@ -820,9 +1080,7 @@ export default function App() {
               {taskMessage || "待生成"}
             </div>
           </div>
-          <div className={`reader-workspace ${workspaceMode}`}>
-            {visiblePanes.map((pane) => renderPane(pane))}
-          </div>
+          <div className="reader-workspace">{renderLayoutNode(layout)}</div>
         </section>
         <div
           className="resize-handle"
@@ -846,7 +1104,7 @@ export default function App() {
           onHistoryQueryChange={setQAHistoryQuery}
           onFavoriteOnlyChange={setQAFavoriteOnly}
           onSelectRecord={setSelectedQA}
-          onOpenRecord={(record) => openQAInPane(record)}
+          onOpenRecord={(record) => openQAInActiveGroup(record)}
           onToggleFavorite={handleToggleFavorite}
           onOpenSettings={() => setSettingsOpen(true)}
         />

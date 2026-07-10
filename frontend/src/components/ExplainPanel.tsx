@@ -143,6 +143,11 @@ export default function ExplainPanel({
                 className={`qa-history-row ${selectedRecord?.id === record.id ? "selected" : ""}`}
                 onClick={() => onSelectRecord(record)}
                 onDoubleClick={() => onOpenRecord(record)}
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "qa", qaId: record.id }));
+                  event.dataTransfer.effectAllowed = "copy";
+                }}
                 title="双击在工作区编辑"
               >
                 <span>{record.question}</span>
