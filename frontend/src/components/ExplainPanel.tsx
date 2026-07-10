@@ -79,7 +79,7 @@ export default function ExplainPanel({
   const modelReady = Boolean(settings?.enabled && settings.has_api_key);
 
   return (
-    <aside className="explain-panel qa-panel" style={{ gridTemplateRows: `${askHeight}px 6px minmax(120px, 1fr)` }}>
+    <aside className="explain-panel qa-panel" style={{ gridTemplateRows: `${askHeight}px 6px minmax(0, 1fr)` }}>
       <section className="qa-ask-section">
         <div className="panel-title">
           <span>选区提问</span>
