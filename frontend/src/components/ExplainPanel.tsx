@@ -24,6 +24,7 @@ type Props = {
   onQuestionChange: (value: string) => void;
   onSelectionTextChange: (value: string) => void;
   onClearSelection: () => void;
+  onDismissSelection: () => void;
   onAsk: () => void;
   onHistoryQueryChange: (value: string) => void;
   onFavoriteOnlyChange: (value: boolean) => void;
@@ -68,6 +69,7 @@ export default function ExplainPanel({
   onQuestionChange,
   onSelectionTextChange,
   onClearSelection,
+  onDismissSelection,
   onAsk,
   onHistoryQueryChange,
   onFavoriteOnlyChange,
@@ -175,12 +177,17 @@ export default function ExplainPanel({
                 onChange={(event) => onSelectionTextChange(event.target.value)}
                 disabled={loading}
               />
-              <button type="button" className="secondary-button compact" onClick={onClearSelection} disabled={loading}>
-                <Trash2 size={14} />
-                清空
-              </button>
+              <div className="selection-actions">
+                <button type="button" className="secondary-button compact" onClick={onClearSelection} disabled={loading}>
+                  <Trash2 size={14} />
+                  清空文本
+                </button>
+                <button type="button" className="secondary-button compact" onClick={onDismissSelection} disabled={loading}>
+                  取消选区
+                </button>
+              </div>
 
-              {selection.sourceType === "course" && selection.selectedText.trim() ? (
+              {selection.selectedText.trim() ? (
                 <div className="explain-action-row">
                   <button type="button" className="explain-action-btn" onClick={handleExplainClick}>
                     解释当前选中内容

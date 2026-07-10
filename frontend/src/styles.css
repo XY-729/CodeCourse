@@ -225,6 +225,26 @@ button:disabled,
   border-bottom: 1px solid #d5dbe3;
 }
 
+.sidebar-title-button {
+  height: 26px;
+  border: 1px solid #c8d0da;
+  border-radius: 5px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #25766c;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.sidebar-title-button:hover {
+  border-color: #25766c;
+  background: #eef8f6;
+}
+
 .sidebar-scroll {
   flex: 1;
   min-height: 0;
@@ -274,6 +294,16 @@ button:disabled,
 .qa-history-row.selected {
   background: #d9ece8;
   color: #155d54;
+}
+
+.tree-row.scope-selected {
+  background: #e8f5e9;
+  color: #155d54;
+  box-shadow: inset 3px 0 0 #25766c;
+}
+
+.tree-row.selected.scope-selected {
+  background: #d1ebe5;
 }
 
 .project-row {
@@ -409,6 +439,20 @@ button:disabled,
   min-width: 0;
   flex: 1;
   padding: 0 10px;
+}
+
+.scope-file-summary {
+  min-width: 0;
+  flex: 1;
+  height: 32px;
+  border: 1px solid #c8d0da;
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #607086;
+  background: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .generation-bar button {
@@ -807,6 +851,12 @@ button:disabled,
   font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
 
+.selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .ask-box {
   display: flex;
   flex-direction: column;
@@ -928,6 +978,14 @@ button:disabled,
 .reader-highlight {
   border-radius: 3px;
   padding: 0 2px;
+}
+
+.monaco-persistent-selection {
+  background: rgba(84, 117, 255, 0.42);
+}
+
+.monaco-persistent-selection-inline {
+  background: rgba(84, 117, 255, 0.42);
 }
 
 .spin {
@@ -1072,7 +1130,7 @@ button:disabled,
 }
 
 .temp-selection {
-  background: rgba(253, 224, 71, 0.45);
+  background: rgba(84, 117, 255, 0.42);
   border-radius: 3px;
 }
 
@@ -1086,12 +1144,46 @@ button:disabled,
 .context-menu {
   position: fixed;
   z-index: 21;
-  min-width: 210px;
+  min-width: 230px;
   background: #ffffff;
   border: 1px solid #c8d0da;
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
   padding: 6px;
+}
+
+.toolbar-action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px 2px 8px;
+  border-bottom: 1px solid #edf1f5;
+}
+
+.toolbar-action-btn {
+  height: 30px;
+  border: 1px solid #c8d0da;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: #263444;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.toolbar-action-btn:hover {
+  border-color: #25766c;
+  color: #155d54;
+  background: #eef8f6;
+}
+
+.toolbar-action-btn.danger:hover {
+  border-color: #d9a7a3;
+  color: #9f1d1d;
+  background: #fff1ed;
 }
 
 .toolbar-section-label {
@@ -1278,4 +1370,75 @@ button:disabled,
 .history-delete:hover {
   opacity: 1 !important;
   color: #9f1d1d;
+}
+
+/* ---- Prompt editor ---- */
+.prompt-editor-modal {
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.prompt-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid #d5dbe3;
+  background: #f8fafb;
+  overflow-x: auto;
+}
+
+.prompt-tab {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: #607086;
+  white-space: nowrap;
+}
+
+.prompt-tab:hover {
+  color: #263444;
+  background: #e7edf2;
+}
+
+.prompt-tab.active {
+  color: #155d54;
+  background: #ffffff;
+  border-color: #d5dbe3;
+  font-weight: 600;
+}
+
+.prompt-editor-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+}
+
+.prompt-editor-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #344054;
+}
+
+.prompt-editor-textarea {
+  flex: 1;
+  min-height: 260px;
+  width: 100%;
+  border: 1px solid #c8d0da;
+  border-radius: 6px;
+  padding: 12px;
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  color: #18212f;
+  background: #fbfcfd;
+  resize: vertical;
 }

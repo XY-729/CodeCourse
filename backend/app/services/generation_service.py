@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.core.config import GENERATED_ROOT, PROMPT_VERSION
+from app.services.prompt_store import load_prompt, save_prompt, PROMPT_DEFAULTS
 from app.models.schemas import CourseFile, LearningScopeRequest
 from app.services.course_generator import (
     generate_course,
@@ -40,6 +41,9 @@ def list_project_course_files(repo_root: Path, project_id: int) -> list[CourseFi
     files = list_course_files_from_dir(project_course_dir(project_id))
     if files:
         return files
+    project = get_project(project_id)
+    if project is not None and project.project_type == "learning_plan":
+        return []
     return generate_rule_course(project_id, repo_root)
 
 
@@ -48,6 +52,9 @@ def read_project_course_file(repo_root: Path, project_id: int, filename: str) ->
 
 
 def generate_rule_course(project_id: int, repo_root: Path, scope: str = "full_project") -> list[CourseFile]:
+    project = get_project(project_id)
+    if project is not None and project.project_type == "learning_plan":
+        return []
     return generate_course(repo_root, course_dir=project_course_dir(project_id), scope=scope)
 
 
@@ -102,6 +109,8 @@ def _key_file_summaries(repo_root: Path, limit_per_file: int = 1600) -> str:
 def _scope_to_text(scope: LearningScopeRequest) -> str:
     if scope.type == "full_project":
         return "full_project"
+    if scope.type == "learning_plan":
+        return "learning_plan"
     paths = ", ".join(scope.paths[:80]) if scope.paths else "(未选择路径)"
     return f"{scope.type}: {paths}"
 
@@ -111,6 +120,19 @@ def _clean_instructions(instructions: str) -> str:
 
 
 def build_outline_input(repo_root: Path, scope: LearningScopeRequest, instructions: str = "") -> tuple[str, str]:
+    if scope.type == "learning_plan":
+        user_instructions = _clean_instructions(instructions)
+        prompt_input = f"""学习范围：
+learning_plan
+
+用户学习计划要求：
+{user_instructions or "无"}
+
+说明：
+这是一个不绑定 GitHub 仓库的自定义学习计划项目。不要假设存在 README、目录树或源码文件。
+"""
+        return prompt_input, hash_inputs(PROMPT_VERSION, "outline", "learning_plan", user_instructions)
+
     readme = _read_first_existing(repo_root, ["README.md", "readme.md", "README.rst", "README.txt"])
     tree = "\n".join(_tree_lines(repo_root))
     key_files = _key_file_summaries(repo_root)
@@ -188,8 +210,37 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
         prompt_input, _ = build_outline_input(repo_root, scope, instructions)
         scope_text = _scope_to_text(scope)
         user_instructions = _clean_instructions(instructions)
+        if scope.type == "learning_plan":
+            messages = [
+                {"role": "system", "content": load_prompt("prompt.system")},
+                {
+                    "role": "user",
+                    "content": f"""请根据用户给出的学习目标生成一份高质量学习总纲。
+
+这是一个“学习计划”项目，不绑定任何 GitHub 仓库。不要编造仓库目录、源码文件或 README。
+
+输出要求：
+1. 输出 Markdown。
+2. 标题使用“# 学习计划总纲”。
+3. 开头元信息包含：生成方式、模型/规则、学习范围、用户要求、不确定项。
+4. 必须包含：适合谁学、前置知识、学习目标、课程路径、每节课的学习产出、自测问题、后续可继续生成的课件建议。
+5. 课程路径用表格，给出 4-8 节。
+
+用户要求：
+{user_instructions or "无"}
+""",
+                },
+            ]
+            content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
+            outline = _require_markdown(content)
+            output_dir = project_course_dir(project_id)
+            _atomic_write(output_dir / "outline.md", outline)
+            update_generation_task(task_id, "completed", output_path=output_dir)
+            update_project_status(project_id, "outline_ready")
+            return
+
         messages = [
-            {"role": "system", "content": PROMPT_INJECTION_SYSTEM_PROMPT},
+            {"role": "system", "content": load_prompt("prompt.system")},
             {
                 "role": "user",
                 "content": f"""请生成高质量项目学习总纲，不能空泛，必须落到具体目录和文件。
@@ -354,7 +405,7 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
 4. 关联文件猜测：列出可能相关的文件或目录，并标注不确定性。
 5. 自测问题：3 个能检验是否读懂的问题。"""
         messages = [
-            {"role": "system", "content": PROMPT_INJECTION_SYSTEM_PROMPT},
+            {"role": "system", "content": load_prompt("prompt.system")},
             {
                 "role": "user",
                 "content": f"""请为选定文件生成 {mode} 版 Markdown 课件，目标是教学，不是简单摘要。

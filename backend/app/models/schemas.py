@@ -9,12 +9,17 @@ class ImportProjectRequest(BaseModel):
     url: str = Field(min_length=5, max_length=500)
 
 
+class CreateLearningPlanRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
 class ProjectResponse(BaseModel):
     id: int
     name: str
     url: str
     local_path: str
     status: str
+    project_type: Literal["repository", "learning_plan"] = "repository"
     course_files: list[str] = Field(default_factory=list)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -46,7 +51,7 @@ class CourseContentResponse(BaseModel):
 
 
 class LearningScopeRequest(BaseModel):
-    type: Literal["full_project", "directories", "files"] = "full_project"
+    type: Literal["full_project", "files", "learning_plan"] = "full_project"
     paths: list[str] = Field(default_factory=list)
 
 

@@ -5,16 +5,31 @@ import type { TreeNode } from "../api/client";
 type Props = {
   node: TreeNode;
   selectedPath: string | null;
+  selectedScopePaths?: string[];
+  fileSelectionMode?: boolean;
   onSelect: (path: string) => void;
+  onOpenFile?: (path: string) => void;
   onDragItem?: (kind: "file", path: string) => void;
 };
 
-function TreeItem({ node, selectedPath, onSelect, onDragItem }: Props) {
+function TreeItem({
+  node,
+  selectedPath,
+  selectedScopePaths = [],
+  fileSelectionMode = false,
+  onSelect,
+  onOpenFile,
+  onDragItem,
+}: Props) {
   const [open, setOpen] = useState(node.path === "");
   const isFile = node.type === "file";
   const selected = isFile && selectedPath === node.path;
+  const scopeSelected = isFile && selectedScopePaths.includes(node.path);
 
-  function click() {
+  function click(detail: number) {
+    if (isFile && fileSelectionMode && detail > 1) {
+      return;
+    }
     if (isFile) {
       onSelect(node.path);
       return;
@@ -25,9 +40,16 @@ function TreeItem({ node, selectedPath, onSelect, onDragItem }: Props) {
   return (
     <div className="tree-item">
       <button
-        className={`tree-row ${selected ? "selected" : ""}`}
-        onClick={click}
-        title={isFile ? `${node.path} - 可拖拽到中间工作区` : node.path || node.name}
+        className={`tree-row ${selected ? "selected" : ""} ${scopeSelected ? "scope-selected" : ""}`}
+        onClick={(event) => click(event.detail)}
+        onDoubleClick={(event) => {
+          if (!isFile || !fileSelectionMode) {
+            return;
+          }
+          event.stopPropagation();
+          onOpenFile?.(node.path);
+        }}
+        title={isFile ? `${node.path}${fileSelectionMode ? " - 点击选择，双击打开" : " - 可拖拽到中间工作区"}` : node.path || node.name}
         draggable={isFile}
         onDragStart={(event) => {
           if (!isFile) {
@@ -50,7 +72,10 @@ function TreeItem({ node, selectedPath, onSelect, onDragItem }: Props) {
               key={child.path || child.name}
               node={child}
               selectedPath={selectedPath}
+              selectedScopePaths={selectedScopePaths}
+              fileSelectionMode={fileSelectionMode}
               onSelect={onSelect}
+              onOpenFile={onOpenFile}
               onDragItem={onDragItem}
             />
           ))}

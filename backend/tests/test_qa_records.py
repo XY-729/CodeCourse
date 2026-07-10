@@ -33,6 +33,13 @@ def _setup_temp_db():
     return tmpdir, workspace, generated
 
 
+def _generated_file(generated: Path, project_id: int, output_path: str) -> Path:
+    path = Path(output_path)
+    if path.is_absolute():
+        return path
+    return generated / str(project_id) / path
+
+
 class QARecordEndpointTests(unittest.TestCase):
     def setUp(self):
         self._tmpdir, self.workspace, self.generated = _setup_temp_db()
@@ -77,11 +84,11 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(data["source_path"], "src/main.py")
         self.assertIn("Answer", data["answer_md"])
 
-        output_path = Path(data["output_path"])
+        output_path = _generated_file(self.generated, self.project.id, data["output_path"])
         self.assertTrue(output_path.is_file())
         text = output_path.read_text(encoding="utf-8")
-        self.assertIn("选区问答", text)
         self.assertIn("这段代码负责什么？", text)
+        self.assertIn("Use the selected function.", text)
 
     def test_search_favorite_and_edit_update_markdown(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="初始回答"):
@@ -111,7 +118,7 @@ class QARecordEndpointTests(unittest.TestCase):
             json={"answer_md": "编辑后的 Markdown 回答"},
         )
         self.assertEqual(edited.status_code, 200)
-        output_path = Path(edited.json()["output_path"])
+        output_path = _generated_file(self.generated, self.project.id, edited.json()["output_path"])
         self.assertIn("编辑后的 Markdown 回答", output_path.read_text(encoding="utf-8"))
 
     def test_missing_api_key_does_not_create_empty_record(self):
@@ -152,7 +159,7 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data["selected_text"], "")
-        output_path = Path(data["output_path"])
+        output_path = _generated_file(self.generated, self.project.id, data["output_path"])
         self.assertIn("无选区内容", output_path.read_text(encoding="utf-8"))
 
     def test_rename_history_updates_display_title_only(self):
@@ -179,7 +186,8 @@ class QARecordEndpointTests(unittest.TestCase):
         data = renamed.json()
         self.assertEqual(data["display_title"], "Renamed history item")
         self.assertEqual(data["question"], "Original question")
-        self.assertIn("Renamed history item", Path(data["output_path"]).read_text(encoding="utf-8"))
+        output_path = _generated_file(self.generated, self.project.id, data["output_path"])
+        self.assertIn("Renamed history item", output_path.read_text(encoding="utf-8"))
 
     def test_highlight_create_list_and_delete(self):
         created = self.client.post(

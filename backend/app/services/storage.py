@@ -20,6 +20,7 @@ class ProjectRecord:
     created_at: str
     updated_at: str
     repo_key: str = ""
+    project_type: str = "repository"
 
 
 @dataclass
@@ -92,6 +93,9 @@ def init_storage() -> None:
         cols = [row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()]
         if "repo_key" not in cols:
             conn.execute("ALTER TABLE projects ADD COLUMN repo_key TEXT")
+            conn.commit()
+        if "project_type" not in cols:
+            conn.execute("ALTER TABLE projects ADD COLUMN project_type TEXT NOT NULL DEFAULT 'repository'")
             conn.commit()
         # Backfill null repo_keys
         null_rows = conn.execute("SELECT id, url FROM projects WHERE repo_key IS NULL").fetchall()
@@ -183,6 +187,7 @@ def _row_to_project(row: sqlite3.Row) -> ProjectRecord:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         repo_key=row["repo_key"] or "",
+        project_type=row["project_type"] or "repository",
     )
 
 
@@ -278,7 +283,7 @@ def list_projects() -> list[ProjectRecord]:
         return [_row_to_project(row) for row in rows]
 
 
-def upsert_project(name: str, url: str, local_path: Path, status: str) -> ProjectRecord:
+def upsert_project(name: str, url: str, local_path: Path, status: str, project_type: str = "repository") -> ProjectRecord:
     from app.services.git_service import normalize_github_repo_key
 
     repo_key = normalize_github_repo_key(url)
@@ -292,14 +297,33 @@ def upsert_project(name: str, url: str, local_path: Path, status: str) -> Projec
             )
         else:
             conn.execute(
-                "INSERT INTO projects (name, url, repo_key, local_path, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (name, url, repo_key, str(local_path), status, now, now),
+                "INSERT INTO projects (name, url, repo_key, local_path, status, project_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (name, url, repo_key, str(local_path), status, project_type, now, now),
             )
         conn.commit()
         row = conn.execute("SELECT * FROM projects WHERE repo_key = ?", (repo_key,)).fetchone()
         if row is None:
             raise RuntimeError("project was not persisted")
         return _row_to_project(row)
+
+
+def create_learning_plan_project(name: str, local_path: Path) -> ProjectRecord:
+    now = datetime.now(timezone.utc).isoformat()
+    local_path.mkdir(parents=True, exist_ok=True)
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO projects (name, url, repo_key, local_path, status, project_type, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (name, f"learning-plan://{name}", f"learning_plan:{now}", str(local_path), "learning_plan", "learning_plan", now, now),
+        )
+        conn.commit()
+        project_id = int(cursor.lastrowid)
+    project = get_project(project_id)
+    if project is None:
+        raise RuntimeError("learning plan project was not persisted")
+    return project
 
 
 def update_project_status(project_id: int, status: str) -> Optional[ProjectRecord]:

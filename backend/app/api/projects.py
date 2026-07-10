@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.models.schemas import (
+    CreateLearningPlanRequest,
     ExplainRequest,
     ExplainResponse,
     GenerateFileLessonRequest,
@@ -30,6 +31,7 @@ from app.services.scanner import scan_tree
 from app.core.config import REPOS_ROOT
 from app.services.storage import (
     GenerationTask,
+    create_learning_plan_project,
     delete_project,
     get_generation_task,
     get_llm_settings,
@@ -64,6 +66,7 @@ def _to_project_response(project) -> ProjectResponse:
         url=project.url,
         local_path=project.local_path,
         status=project.status,
+        project_type=project.project_type,
         course_files=course_files,
         created_at=project.created_at,
         updated_at=project.updated_at,
@@ -99,6 +102,23 @@ def import_project(payload: ImportProjectRequest) -> ProjectResponse:
     return response
 
 
+def _safe_plan_dir_name(name: str) -> str:
+    import re
+    from datetime import datetime, timezone
+
+    safe = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", name.strip()).strip("_")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    return f"{safe or 'learning_plan'}_{stamp}"
+
+
+@router.post("/projects/learning-plan", response_model=ProjectResponse)
+def create_learning_plan(payload: CreateLearningPlanRequest) -> ProjectResponse:
+    name = payload.name.strip()
+    root = REPOS_ROOT / "_learning_plans" / _safe_plan_dir_name(name)
+    project = create_learning_plan_project(name, root)
+    return _to_project_response(project)
+
+
 @router.get("/projects", response_model=list[ProjectResponse])
 def get_projects() -> list[ProjectResponse]:
     return [_to_project_response(project) for project in list_projects()]
@@ -114,6 +134,9 @@ def get_project_detail(project_id: int) -> ProjectResponse:
 
 @router.get("/projects/{project_id}/tree", response_model=TreeNode)
 def get_tree(project_id: int) -> TreeNode:
+    project = get_project(project_id)
+    if project is not None and project.project_type == "learning_plan":
+        return TreeNode(name=project.name, path="", type="directory", children=[], is_key_file=False)
     return scan_tree(_project_root(project_id))
 
 
@@ -124,6 +147,14 @@ def get_course_files(project_id: int):
 
 @router.post("/projects/{project_id}/regenerate", response_model=ProjectActionResponse)
 def regenerate_course(project_id: int) -> ProjectActionResponse:
+    project = get_project(project_id)
+    if project is not None and project.project_type == "learning_plan":
+        return ProjectActionResponse(
+            id=project_id,
+            status=project.status,
+            message="Learning plan has no default course files",
+            course_files=[],
+        )
     repo_root = _project_root(project_id)
     course_files = generate_rule_course(project_id, repo_root)
     update_project_status(project_id, "scanned")

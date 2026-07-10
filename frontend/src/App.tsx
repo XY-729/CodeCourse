@@ -3,6 +3,7 @@ import type { DragEvent, MouseEvent } from "react";
 import { Save, Star, X } from "lucide-react";
 import {
   askQuestion,
+  createLearningPlan,
   createHighlight,
   deleteProject,
   generateFileLesson,
@@ -36,11 +37,12 @@ import type {
   QARecord,
   TreeNode,
 } from "./api/client";
-import CodeViewer, { ViewerSelection } from "./components/CodeViewer";
+import CodeViewer, { ViewerRange, ViewerSelection } from "./components/CodeViewer";
 import ContextMenu from "./components/ContextMenu";
 import ExplainPanel, { SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
+import PromptEditor from "./components/PromptEditor";
 import RepositoryForm from "./components/RepositoryForm";
 import Sidebar from "./components/Sidebar";
 import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
@@ -97,6 +99,10 @@ type DropPayload = {
   path?: string;
   filename?: string;
   qaId?: number;
+};
+
+type SelectionAnchor = SelectionSummary & {
+  range?: ViewerRange;
 };
 
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
@@ -293,9 +299,11 @@ export default function App() {
   const [busyProjectId, setBusyProjectId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [llmSettings, setLLMSettings] = useState<LLMSettings | null>(null);
   const [scopeType, setScopeType] = useState<ScopeType>("full_project");
   const [scopePathsText, setScopePathsText] = useState("");
+  const [selectedScopeFiles, setSelectedScopeFiles] = useState<string[]>([]);
   const [generationInstructions, setGenerationInstructions] = useState("");
   const [activeTask, setActiveTask] = useState<GenerationTask | null>(null);
   const [taskMessage, setTaskMessage] = useState("");
@@ -320,12 +328,20 @@ export default function App() {
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sourcePath: string; selectedText: string; existingStyle: AnnotationStyle } | null>(null);
-  const [tempSelectedText, setTempSelectedText] = useState<string | null>(null);
+  const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    sourceType: "file" | "course" | "selection";
+    sourcePath: string;
+    selectedText: string;
+    existingStyle: AnnotationStyle;
+  } | null>(null);
   const [editingCourseItemId, setEditingCourseItemId] = useState<string | null>(null);
 
   const idCounter = useRef(1);
   const canGenerateFileLesson = Boolean(project && fileContent);
+  const isLearningPlanProject = project?.project_type === "learning_plan";
   const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
   const showBusy = loading || isTaskRunning || qaLoading;
 
@@ -413,21 +429,13 @@ export default function App() {
   }
 
   function buildScope(): LearningScope {
+    if (isLearningPlanProject || scopeType === "learning_plan") {
+      return { type: "learning_plan", paths: [] };
+    }
     if (scopeType === "full_project") {
       return { type: "full_project", paths: [] };
     }
-    const typedPaths = parseScopePaths(scopePathsText);
-    if (typedPaths.length > 0) {
-      return { type: scopeType, paths: typedPaths };
-    }
-    if (scopeType === "files" && fileContent?.path) {
-      return { type: scopeType, paths: [fileContent.path] };
-    }
-    if (scopeType === "directories" && fileContent?.path) {
-      const dir = parentDir(fileContent.path);
-      return { type: scopeType, paths: dir ? [dir] : [] };
-    }
-    return { type: scopeType, paths: [] };
+    return { type: "files", paths: selectedScopeFiles };
   }
 
   async function loadProjects() {
@@ -599,11 +607,6 @@ export default function App() {
     const content = await getProjectFile(projectId, path);
     setFileContent(content);
     setSelectedCourse(null);
-    if (scopeType === "files") {
-      setScopePathsText(path);
-    } else if (scopeType === "directories") {
-      setScopePathsText(parentDir(path));
-    }
     openItemInGroup(activeGroupId, {
       id: `file:${path}`,
       type: "file",
@@ -703,6 +706,9 @@ export default function App() {
       setLLMSettings(settings);
       setActiveTask(tasks[0] ?? null);
       setTaskMessage(tasks[0] ? `最近任务：${taskLabel(tasks[0])}` : "待生成");
+      setScopeType(freshProject.project_type === "learning_plan" ? "learning_plan" : "full_project");
+      setSelectedScopeFiles([]);
+      setScopePathsText("");
       setFileContent(null);
       setSelectedCourse(null);
       setSelection(null);
@@ -711,7 +717,8 @@ export default function App() {
       setQAPanelError("");
       setHighlights([]);
       setAnnotations([]);
-      setTempSelectedText(null);
+      setSelectionAnchor(null);
+      setContextMenu(null);
       setLayout(initialLayout);
       setActiveGroupId(ROOT_GROUP_ID);
       await refreshQAHistory(freshProject.id);
@@ -754,7 +761,42 @@ export default function App() {
     }
   }
 
+  async function handleCreateLearningPlan() {
+    const name = window.prompt("学习计划名称", "新的学习计划");
+    if (name === null || !name.trim()) {
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const created = await createLearningPlan(name.trim());
+      await loadProjects();
+      await openProject(created);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "创建学习计划失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleSelectFile(path: string) {
+    if (!project) {
+      return;
+    }
+    if (scopeType === "files") {
+      setSelectedScopeFiles((items) => (items.includes(path) ? items.filter((item) => item !== path) : [...items, path]));
+      setScopePathsText("");
+      return;
+    }
+    setError("");
+    try {
+      await openFileInActiveGroup(project.id, path);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "读取文件失败");
+    }
+  }
+
+  async function handleOpenFile(path: string) {
     if (!project) {
       return;
     }
@@ -813,6 +855,14 @@ export default function App() {
 
   async function handleGenerateOutline() {
     if (!project) {
+      return;
+    }
+    if ((isLearningPlanProject || scopeType === "learning_plan") && !generationInstructions.trim()) {
+      setError("请先在生成要求中写明学习目标或知识点。");
+      return;
+    }
+    if (!isLearningPlanProject && scopeType === "files" && selectedScopeFiles.length === 0) {
+      setError("请先在文件树中选择至少一个文件。");
       return;
     }
     const ok = window.confirm("将调用模型 API 生成项目总纲，可能消耗 token。是否继续？");
@@ -881,6 +931,9 @@ export default function App() {
         setLayout(createInitialLayout());
         setActiveGroupId(ROOT_GROUP_ID);
         setSelection(null);
+        setSelectedScopeFiles([]);
+        setSelectionAnchor(null);
+        setContextMenu(null);
         setQAHistory([]);
         setHighlights([]);
         setTaskMessage("");
@@ -896,17 +949,20 @@ export default function App() {
   }
 
   function handleSelection(nextSelection: ViewerSelection) {
+    const nextText = nextSelection.selectedText.slice(0, 20000);
     setSelection({
       sourceType: nextSelection.sourceType,
       sourcePath: nextSelection.sourcePath,
-      selectedText: nextSelection.selectedText.slice(0, 20000),
+      selectedText: nextText,
       language: nextSelection.language,
     });
-    if (nextSelection.sourceType === "course" && nextSelection.selectedText.trim()) {
-      setTempSelectedText(nextSelection.selectedText.slice(0, 20000));
-    } else {
-      setTempSelectedText(null);
-    }
+    setSelectionAnchor({
+      sourceType: nextSelection.sourceType,
+      sourcePath: nextSelection.sourcePath,
+      selectedText: nextText,
+      language: nextSelection.language,
+      range: nextSelection.range,
+    });
   }
 
   async function handleAsk() {
@@ -952,6 +1008,12 @@ export default function App() {
     handleSelectionTextChange("");
   }
 
+  function handleDismissSelection() {
+    setSelection(null);
+    setSelectionAnchor(null);
+    setContextMenu(null);
+  }
+
   async function handleRenameQA(record: QARecord) {
     if (!project) {
       return;
@@ -993,20 +1055,65 @@ export default function App() {
     return annotations.find((ann) => ann.courseFile === courseFile && ann.selectedText === selectedText);
   }
 
-  function handleContextMenuOpen(event: MouseEvent, sourcePath: string, selectedText: string) {
-    event.preventDefault();
-    event.stopPropagation();
-    const existing = findAnnotation(sourcePath, selectedText);
+  function handleContextMenuOpen(
+    sourceType: "file" | "course" | "selection",
+    x: number,
+    y: number,
+    sourcePath: string | null,
+    selectedText: string,
+  ) {
+    const path = sourcePath ?? "";
+    const text = selectedText.slice(0, 20000);
+    setSelection({
+      sourceType,
+      sourcePath: path || null,
+      selectedText: text,
+    });
+    setSelectionAnchor({
+      sourceType,
+      sourcePath: path || null,
+      selectedText: text,
+      range: selectionAnchor?.sourcePath === path ? selectionAnchor.range : undefined,
+    });
+    const existing = sourceType === "file" ? undefined : findAnnotation(path, text);
     setContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      sourcePath,
-      selectedText,
+      x,
+      y,
+      sourceType,
+      sourcePath: path,
+      selectedText: text,
       existingStyle: existing?.style ?? {},
     });
   }
 
+  function handleMarkdownContextMenuOpen(event: MouseEvent, sourcePath: string, selectedText: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    handleContextMenuOpen("course", event.clientX, event.clientY, sourcePath, selectedText);
+  }
+
   function handleContextMenuClose() {
+    setContextMenu(null);
+  }
+
+  function handleContextAsk() {
+    setQAQuestion("");
+    setContextMenu(null);
+  }
+
+  function handleContextExplain() {
+    const text = selection?.selectedText || contextMenu?.selectedText || "";
+    if (text.trim()) {
+      setQAQuestion(`请解释这段内容：\n\n${text}`);
+    }
+    setContextMenu(null);
+  }
+
+  async function handleContextCopy() {
+    const text = selection?.selectedText || contextMenu?.selectedText || "";
+    if (text.trim()) {
+      await navigator.clipboard?.writeText(text);
+    }
     setContextMenu(null);
   }
 
@@ -1242,7 +1349,13 @@ export default function App() {
               path={activeItem.path}
               language={activeItem.language ?? "plaintext"}
               content={activeItem.content}
+              selectedRange={
+                selectionAnchor?.sourceType === "file" && selectionAnchor.sourcePath === activeItem.path
+                  ? selectionAnchor.range ?? null
+                  : null
+              }
               onSelectionChange={handleSelection}
+              onContextMenu={(payload) => handleContextMenuOpen("file", payload.clientX, payload.clientY, payload.sourcePath, payload.selectedText)}
             />
           ) : null}
           {activeItem?.type === "course" ? (
@@ -1312,9 +1425,13 @@ export default function App() {
                 content={activeItem.content}
                 highlights={highlights.filter((highlight) => highlight.source_type === "course" && highlight.source_path === activeItem.path)}
                 annotations={annotations.filter((ann) => ann.courseFile === activeItem.path)}
-                tempSelectedText={tempSelectedText}
+                tempSelectedText={
+                  selectionAnchor?.sourceType === "course" && selectionAnchor.sourcePath === activeItem.path
+                    ? selectionAnchor.selectedText
+                    : null
+                }
                 onSelectionChange={handleSelection}
-                onContextMenu={(event, text, sourcePath) => handleContextMenuOpen(event, sourcePath, text)}
+                onContextMenu={(event, text, sourcePath) => handleMarkdownContextMenuOpen(event, sourcePath, text)}
                 headerActions={(activeItem.qaRecordId || activeItem.path.startsWith("selection_answers/") || activeItem.path.startsWith("qa/")) ? (
                   <button
                     className="secondary-button compact"
@@ -1359,12 +1476,24 @@ export default function App() {
                   const text = target.value.slice(target.selectionStart, target.selectionEnd).trim();
                   if (text) {
                     setQAHighlightDraft({ sourcePath: activeItem.path, selectedText: text });
-                    setSelection({
+                    const nextSelection = {
                       sourceType: "selection",
                       sourcePath: activeItem.path,
                       selectedText: text,
-                    });
+                    } as SelectionSummary;
+                    setSelection(nextSelection);
+                    setSelectionAnchor(nextSelection);
                   }
+                }}
+                onContextMenu={(event) => {
+                  const target = event.currentTarget;
+                  const text = target.value.slice(target.selectionStart, target.selectionEnd).trim() || qaHighlightDraft?.selectedText || "";
+                  if (!text) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  handleContextMenuOpen("selection", event.clientX, event.clientY, activeItem.path, text);
                 }}
               />
               {activeQAHighlights.length ? (
@@ -1454,16 +1583,21 @@ export default function App() {
           tree={tree}
           courses={courses}
           selectedPath={fileContent?.path ?? null}
+          selectedScopePaths={selectedScopeFiles}
           selectedCourse={selectedCourse}
+          projectType={project?.project_type ?? "repository"}
+          fileSelectionMode={!isLearningPlanProject && scopeType === "files"}
           busyProjectId={busyProjectId}
           projectHeight={sidebarProjectHeight}
           courseHeight={sidebarCourseHeight}
           onResizeProjectStart={(event) => setDragState({ kind: "sidebar-project", startY: event.clientY, startHeight: sidebarProjectHeight })}
           onResizeCourseStart={(event) => setDragState({ kind: "sidebar-course", startY: event.clientY, startHeight: sidebarCourseHeight })}
           onSelectProject={openProject}
+          onCreateLearningPlan={handleCreateLearningPlan}
           onRegenerateProject={handleRegenerate}
           onDeleteProject={handleDelete}
           onSelectFile={handleSelectFile}
+          onOpenFile={handleOpenFile}
           onSelectCourse={handleSelectCourse}
           onDeleteCourse={handleDeleteCourse}
         />
@@ -1475,19 +1609,35 @@ export default function App() {
         <section className="center-pane">
           <div className="generation-bar">
             <div className="scope-controls">
-              <select value={scopeType} onChange={(event) => setScopeType(event.target.value as ScopeType)} disabled={!project || isTaskRunning}>
+              <select
+                value={isLearningPlanProject ? "learning_plan" : scopeType}
+                onChange={(event) => {
+                  const nextScope = event.target.value as ScopeType;
+                  setScopeType(nextScope);
+                  if (nextScope !== "files") {
+                    setSelectedScopeFiles([]);
+                  }
+                }}
+                disabled={!project || isTaskRunning || isLearningPlanProject}
+              >
                 <option value="full_project">全项目</option>
-                <option value="directories">指定目录</option>
                 <option value="files">指定文件</option>
+                <option value="learning_plan">学习计划</option>
               </select>
-              <input
-                value={scopePathsText}
-                onChange={(event) => setScopePathsText(event.target.value)}
-                placeholder="目录或文件路径"
-                disabled={!project || scopeType === "full_project" || isTaskRunning}
-              />
+              <div className="scope-file-summary">
+                {isLearningPlanProject || scopeType === "learning_plan"
+                  ? "根据生成要求生成学习计划"
+                  : scopeType === "files"
+                    ? selectedScopeFiles.length
+                      ? `已选 ${selectedScopeFiles.length} 个：${selectedScopeFiles.map((path) => path.split("/").pop() ?? path).join("、")}`
+                      : "请在文件树中选择文件"
+                    : "使用整个项目生成总纲"}
+              </div>
               <button onClick={handleGenerateOutline} disabled={!project || isTaskRunning}>
                 生成 AI 总纲
+              </button>
+              <button className="secondary-button" onClick={() => setPromptEditorOpen(true)}>
+                提示词
               </button>
             </div>
             <textarea
@@ -1531,6 +1681,7 @@ export default function App() {
           onQuestionChange={setQAQuestion}
           onSelectionTextChange={handleSelectionTextChange}
           onClearSelection={handleClearSelection}
+          onDismissSelection={handleDismissSelection}
           onAsk={handleAsk}
           onHistoryQueryChange={setQAHistoryQuery}
           onFavoriteOnlyChange={setQAFavoriteOnly}
@@ -1553,12 +1704,20 @@ export default function App() {
           loadLLMSettings();
         }}
       />
+      {promptEditorOpen ? (
+        <PromptEditor onClose={() => setPromptEditorOpen(false)} />
+      ) : null}
       {contextMenu ? (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          sourceType={contextMenu.sourceType}
           currentStyle={contextMenu.existingStyle}
           onClose={handleContextMenuClose}
+          onAskSelection={handleContextAsk}
+          onExplainSelection={handleContextExplain}
+          onCopySelection={handleContextCopy}
+          onClearSelection={handleDismissSelection}
           onSetColor={handleSetColor}
           onToggleBold={handleToggleBold}
           onToggleUnderline={handleToggleUnderline}

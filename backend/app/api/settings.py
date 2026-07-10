@@ -60,3 +60,20 @@ def test_llm_settings() -> LLMTestResponse:
     except RuntimeError as exc:
         return LLMTestResponse(ok=False, provider=settings["provider"], message=str(exc))
     return LLMTestResponse(ok=True, provider=settings["provider"], message=content[:200])
+
+
+@router.get("/prompts")
+def read_prompts():
+    from app.services.generation_service import PROMPT_DEFAULTS, load_prompt
+    result = {}
+    for key in sorted(PROMPT_DEFAULTS.keys()):
+        result[key] = load_prompt(key)
+    return result
+
+
+@router.put("/prompts")
+def write_prompts(payload: dict[str, str]):
+    from app.services.generation_service import save_prompt
+    for key, value in payload.items():
+        save_prompt(key, value)
+    return {"ok": True}

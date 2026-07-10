@@ -6,6 +6,7 @@ export type Project = {
   url: string;
   local_path: string;
   status: string;
+  project_type: "repository" | "learning_plan";
   course_files: string[];
   created_at?: string;
   updated_at?: string;
@@ -109,7 +110,7 @@ export type LLMTestResponse = {
 };
 
 export type LearningScope = {
-  type: "full_project" | "directories" | "files";
+  type: "full_project" | "files" | "learning_plan";
   paths: string[];
 };
 
@@ -157,6 +158,13 @@ export function importProject(url: string): Promise<Project> {
   return request<Project>("/projects/import", {
     method: "POST",
     body: JSON.stringify({ url }),
+  });
+}
+
+export function createLearningPlan(name: string): Promise<Project> {
+  return request<Project>("/projects/learning-plan", {
+    method: "POST",
+    body: JSON.stringify({ name }),
   });
 }
 
@@ -315,6 +323,17 @@ export function createHighlight(
 ): Promise<HighlightRecord> {
   return request<HighlightRecord>(`/projects/${projectId}/highlights`, {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getPrompts(): Promise<Record<string, string>> {
+  return request<Record<string, string>>(`/settings/prompts`);
+}
+
+export function savePrompts(payload: Record<string, string>): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/settings/prompts`, {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }
