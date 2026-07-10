@@ -1101,14 +1101,6 @@ export default function App() {
     setContextMenu(null);
   }
 
-  function handleContextExplain() {
-    const text = selection?.selectedText || contextMenu?.selectedText || "";
-    if (text.trim()) {
-      setQAQuestion(`请解释这段内容：\n\n${text}`);
-    }
-    setContextMenu(null);
-  }
-
   async function handleContextCopy() {
     const text = selection?.selectedText || contextMenu?.selectedText || "";
     if (text.trim()) {
@@ -1681,7 +1673,6 @@ export default function App() {
           onQuestionChange={setQAQuestion}
           onSelectionTextChange={handleSelectionTextChange}
           onClearSelection={handleClearSelection}
-          onDismissSelection={handleDismissSelection}
           onAsk={handleAsk}
           onHistoryQueryChange={setQAHistoryQuery}
           onFavoriteOnlyChange={setQAFavoriteOnly}
@@ -1691,10 +1682,6 @@ export default function App() {
           onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
           onOpenSettings={() => setSettingsOpen(true)}
-          onExplain={() => {
-            if (!selection?.selectedText?.trim()) return;
-            setQAQuestion(`请解释这段内容：\n\n${selection.selectedText}`);
-          }}
         />
       </main>
       <LLMSettingsDialog
@@ -1715,7 +1702,6 @@ export default function App() {
           currentStyle={contextMenu.existingStyle}
           onClose={handleContextMenuClose}
           onAskSelection={handleContextAsk}
-          onExplainSelection={handleContextExplain}
           onCopySelection={handleContextCopy}
           onClearSelection={handleDismissSelection}
           onSetColor={handleSetColor}

@@ -5,11 +5,11 @@ import unittest
 from app.models.schemas import LearningScopeRequest
 from app.services.course_generator import generate_course
 from app.services.generation_service import (
-    PROMPT_INJECTION_SYSTEM_PROMPT,
     build_outline_input,
     extract_file_signals,
     hash_inputs,
 )
+from app.services.prompt_store import PROMPT_INJECTION_SYSTEM_PROMPT
 
 
 class CourseGeneratorTests(unittest.TestCase):
@@ -58,8 +58,8 @@ class Runner {}
         self.assertNotEqual(hash_inputs("a", "b"), hash_inputs("b", "a"))
 
     def test_prompt_injection_guard_is_in_system_prompt(self):
-        self.assertIn("不可信输入", PROMPT_INJECTION_SYSTEM_PROMPT)
-        self.assertIn("禁止泄露", PROMPT_INJECTION_SYSTEM_PROMPT)
+        self.assertIn("待分析材料", PROMPT_INJECTION_SYSTEM_PROMPT)
+        self.assertIn("不泄露", PROMPT_INJECTION_SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":

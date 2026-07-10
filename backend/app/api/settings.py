@@ -64,7 +64,7 @@ def test_llm_settings() -> LLMTestResponse:
 
 @router.get("/prompts")
 def read_prompts():
-    from app.services.generation_service import PROMPT_DEFAULTS, load_prompt
+    from app.services.prompt_store import PROMPT_DEFAULTS, load_prompt
     result = {}
     for key in sorted(PROMPT_DEFAULTS.keys()):
         result[key] = load_prompt(key)
@@ -73,7 +73,7 @@ def read_prompts():
 
 @router.put("/prompts")
 def write_prompts(payload: dict[str, str]):
-    from app.services.generation_service import save_prompt
+    from app.services.prompt_store import save_prompt
     for key, value in payload.items():
         save_prompt(key, value)
     return {"ok": True}

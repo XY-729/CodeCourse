@@ -32,11 +32,6 @@ export type FileContent = {
   content: string;
 };
 
-export type ExplainResponse = {
-  provider: string;
-  explanation: string;
-};
-
 export type SourceType = "file" | "course" | "selection";
 
 export type QARecord = {
@@ -244,18 +239,6 @@ export function listGenerationTasks(projectId: number): Promise<GenerationTask[]
 
 export function getGenerationTask(projectId: number, taskId: number): Promise<GenerationTask> {
   return request<GenerationTask>(`/projects/${projectId}/tasks/${taskId}`);
-}
-
-export function explainCurrent(
-  projectId: number,
-  path: string | null,
-  mode: "file" | "course" | "selection",
-  selection?: string,
-): Promise<ExplainResponse> {
-  return request<ExplainResponse>("/explain", {
-    method: "POST",
-    body: JSON.stringify({ project_id: projectId, path, mode, selection }),
-  });
 }
 
 export function askQuestion(projectId: number, payload: QAAskPayload): Promise<QARecord> {

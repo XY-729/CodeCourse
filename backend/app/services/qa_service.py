@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Optional
 
 from app.models.schemas import QAAskRequest
-from app.services.generation_service import PROMPT_INJECTION_SYSTEM_PROMPT, project_course_dir
+from app.services.generation_service import project_course_dir
+from app.services.prompt_store import load_prompt
 from app.services.llm_client import call_openai_compatible_chat
 from app.services.storage import (
     QARecord,
@@ -148,7 +149,7 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
         settings["api_key"],
         settings["model"],
         [
-            {"role": "system", "content": PROMPT_INJECTION_SYSTEM_PROMPT},
+            {"role": "system", "content": load_prompt("prompt.system")},
             {"role": "user", "content": prompt},
         ],
         timeout=90,

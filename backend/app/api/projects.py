@@ -6,8 +6,6 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from app.models.schemas import (
     CreateLearningPlanRequest,
-    ExplainRequest,
-    ExplainResponse,
     GenerateFileLessonRequest,
     GenerateOutlineRequest,
     GenerationTaskResponse,
@@ -16,7 +14,6 @@ from app.models.schemas import (
     ProjectResponse,
     TreeNode,
 )
-from app.services.explainer import explain
 from app.services.generation_service import (
     create_or_reuse_file_lesson_task,
     create_or_reuse_outline_task,
@@ -222,8 +219,3 @@ def remove_project(project_id: int) -> ProjectActionResponse:
     return ProjectActionResponse(id=project_id, status="deleted", message="Project deleted", course_files=[])
 
 
-@router.post("/explain", response_model=ExplainResponse)
-def explain_selection(payload: ExplainRequest) -> ExplainResponse:
-    repo_root = _project_root(payload.project_id)
-    provider, explanation = explain(repo_root, payload.path, payload.selection, payload.mode)
-    return ExplainResponse(provider=provider, explanation=explanation)

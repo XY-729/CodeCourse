@@ -24,7 +24,6 @@ type Props = {
   onQuestionChange: (value: string) => void;
   onSelectionTextChange: (value: string) => void;
   onClearSelection: () => void;
-  onDismissSelection: () => void;
   onAsk: () => void;
   onHistoryQueryChange: (value: string) => void;
   onFavoriteOnlyChange: (value: boolean) => void;
@@ -34,7 +33,6 @@ type Props = {
   onRenameRecord: (record: QARecord) => void;
   onToggleFavorite: (record: QARecord) => void;
   onOpenSettings: () => void;
-  onExplain?: () => void;
 };
 
 function sourceLabel(type: SourceType) {
@@ -69,7 +67,6 @@ export default function ExplainPanel({
   onQuestionChange,
   onSelectionTextChange,
   onClearSelection,
-  onDismissSelection,
   onAsk,
   onHistoryQueryChange,
   onFavoriteOnlyChange,
@@ -79,17 +76,9 @@ export default function ExplainPanel({
   onRenameRecord,
   onToggleFavorite,
   onOpenSettings,
-  onExplain,
 }: Props) {
   const selectedLength = selection?.selectedText.length ?? 0;
   const modelReady = Boolean(settings?.enabled && settings.has_api_key);
-
-  function handleExplainClick() {
-    if (!window.confirm("将调用模型 API 解释这段内容，可能消耗 token。是否继续？")) {
-      return;
-    }
-    onExplain?.();
-  }
 
   return (
     <aside className="explain-panel qa-panel" style={{ gridTemplateRows: `minmax(0, 1fr) 6px ${askHeight}px` }}>
@@ -182,18 +171,7 @@ export default function ExplainPanel({
                   <Trash2 size={14} />
                   清空文本
                 </button>
-                <button type="button" className="secondary-button compact" onClick={onDismissSelection} disabled={loading}>
-                  取消选区
-                </button>
               </div>
-
-              {selection.selectedText.trim() ? (
-                <div className="explain-action-row">
-                  <button type="button" className="explain-action-btn" onClick={handleExplainClick}>
-                    解释当前选中内容
-                  </button>
-                </div>
-              ) : null}
             </>
           ) : (
             <div className="empty small">尚未选中文本</div>

@@ -1,4 +1,4 @@
-import { Copy, MessageSquare, Search, X } from "lucide-react";
+import { Copy, MessageSquare, X } from "lucide-react";
 import { useEffect } from "react";
 import type { AnnotationColor, AnnotationStyle } from "../types";
 import { ALL_COLORS, COLOR_LABELS, COLOR_VALUES } from "../types";
@@ -10,7 +10,6 @@ type Props = {
   currentStyle: AnnotationStyle;
   onClose: () => void;
   onAskSelection: () => void;
-  onExplainSelection: () => void;
   onCopySelection: () => void;
   onClearSelection: () => void;
   onSetColor: (color: AnnotationColor | null) => void;
@@ -25,7 +24,6 @@ export default function ContextMenu({
   currentStyle,
   onClose,
   onAskSelection,
-  onExplainSelection,
   onCopySelection,
   onClearSelection,
   onSetColor,
@@ -62,10 +60,6 @@ export default function ContextMenu({
           <button className="toolbar-action-btn" onClick={onAskSelection}>
             <MessageSquare size={14} />
             提问
-          </button>
-          <button className="toolbar-action-btn" onClick={onExplainSelection}>
-            <Search size={14} />
-            解释
           </button>
           <button className="toolbar-action-btn" onClick={onCopySelection}>
             <Copy size={14} />

@@ -82,18 +82,6 @@ class GenerationTaskResponse(BaseModel):
     updated_at: str
 
 
-class ExplainRequest(BaseModel):
-    project_id: int
-    path: Optional[str] = None
-    selection: Optional[str] = None
-    mode: Literal["file", "course", "selection"] = "file"
-
-
-class ExplainResponse(BaseModel):
-    provider: str
-    explanation: str
-
-
 class QAAskRequest(BaseModel):
     source_type: Literal["file", "course", "selection"]
     source_path: Optional[str] = Field(default=None, max_length=1000)
