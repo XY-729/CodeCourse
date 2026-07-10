@@ -35,11 +35,13 @@ import type {
   TreeNode,
 } from "./api/client";
 import CodeViewer, { ViewerSelection } from "./components/CodeViewer";
+import ContextMenu from "./components/ContextMenu";
 import ExplainPanel, { SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import RepositoryForm from "./components/RepositoryForm";
 import Sidebar from "./components/Sidebar";
+import type { Annotation, AnnotationType } from "./types";
 
 type ScopeType = LearningScope["type"];
 type OpenItemType = "file" | "course" | "qa";
@@ -315,6 +317,9 @@ export default function App() {
   const [qaPanelError, setQAPanelError] = useState("");
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sourcePath: string; selectedText: string } | null>(null);
+  const [tempSelectedText, setTempSelectedText] = useState<string | null>(null);
 
   const idCounter = useRef(1);
   const canGenerateFileLesson = Boolean(project && fileContent);
@@ -644,6 +649,8 @@ export default function App() {
       setSelectedQA(null);
       setQAPanelError("");
       setHighlights([]);
+      setAnnotations([]);
+      setTempSelectedText(null);
       setLayout(initialLayout);
       setActiveGroupId(ROOT_GROUP_ID);
       await refreshQAHistory(freshProject.id);
@@ -834,6 +841,11 @@ export default function App() {
       selectedText: nextSelection.selectedText.slice(0, 20000),
       language: nextSelection.language,
     });
+    if (nextSelection.sourceType === "course" && nextSelection.selectedText.trim()) {
+      setTempSelectedText(nextSelection.selectedText.slice(0, 20000));
+    } else {
+      setTempSelectedText(null);
+    }
   }
 
   async function handleAsk() {
@@ -913,6 +925,49 @@ export default function App() {
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "标记失败");
     }
+  }
+
+  function handleContextMenuOpen(event: MouseEvent, sourcePath: string, selectedText: string) {
+    setContextMenu({ x: event.clientX, y: event.clientY, sourcePath, selectedText });
+  }
+
+  function handleContextMenuClose() {
+    setContextMenu(null);
+  }
+
+  function handleCreateAnnotation(type: AnnotationType) {
+    if (!contextMenu) {
+      return;
+    }
+    const ann: Annotation = {
+      id: nextId("annot"),
+      courseFile: contextMenu.sourcePath,
+      selectedText: contextMenu.selectedText,
+      type,
+      createdAt: new Date().toISOString(),
+    };
+    setAnnotations((prev) => [...prev, ann]);
+    setContextMenu(null);
+  }
+
+  function handleDeleteAnnotation(id: string) {
+    setAnnotations((prev) => prev.filter((ann) => ann.id !== id));
+  }
+
+  function handleExplainFromContextMenu() {
+    if (!contextMenu) {
+      return;
+    }
+    const ok = window.confirm("将调用模型 API 解释这段内容，可能消耗 token。是否继续？");
+    if (!ok) {
+      return;
+    }
+    setSelection({
+      sourceType: "course",
+      sourcePath: contextMenu.sourcePath,
+      selectedText: contextMenu.selectedText,
+    });
+    setContextMenu(null);
   }
 
   async function handleSaveQAItem(groupId: string, item: OpenItem) {
@@ -995,6 +1050,8 @@ export default function App() {
   function renderGroup(group: EditorGroup) {
     const activeItem = group.items.find((item) => item.id === group.activeItemId) ?? null;
     const previewZone = dropPreview?.groupId === group.id ? dropPreview.zone : null;
+    const activeQAHighlights =
+      activeItem?.type === "qa" ? highlights.filter((highlight) => highlight.source_type === "qa" && highlight.source_path === activeItem.path) : [];
 
     return (
       <section
@@ -1048,8 +1105,10 @@ export default function App() {
               sourcePath={activeItem.path}
               content={activeItem.content}
               highlights={highlights.filter((highlight) => highlight.source_type === "course" && highlight.source_path === activeItem.path)}
+              annotations={annotations.filter((ann) => ann.courseFile === activeItem.path)}
+              tempSelectedText={tempSelectedText}
               onSelectionChange={handleSelection}
-              onCreateHighlight={(text) => handleCreateHighlight("course", activeItem.path, text)}
+              onContextMenu={(event, text, sourcePath) => handleContextMenuOpen(event, sourcePath, text)}
             />
           ) : null}
           {activeItem?.type === "qa" ? (
@@ -1090,6 +1149,15 @@ export default function App() {
                   }
                 }}
               />
+              {activeQAHighlights.length ? (
+                <div className="qa-highlight-list">
+                  {activeQAHighlights.map((highlight) => (
+                    <mark key={highlight.id} className="reader-highlight" style={{ backgroundColor: highlight.color }}>
+                      {highlight.selected_text}
+                    </mark>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
           {!activeItem ? <div className="empty-state">点击或拖拽文件/课件到这里阅读</div> : null}
@@ -1240,6 +1308,10 @@ export default function App() {
           settings={llmSettings}
           panelError={qaPanelError}
           askHeight={qaAskHeight}
+          annotations={annotations.filter((ann) => {
+            if (!selection || selection.sourceType !== "course" || !selection.sourcePath) return false;
+            return ann.courseFile === selection.sourcePath;
+          })}
           onAskResizeStart={(event: MouseEvent<HTMLDivElement>) => setDragState({ kind: "qa-ask", startY: event.clientY, startHeight: qaAskHeight })}
           onQuestionChange={setQAQuestion}
           onSelectionTextChange={handleSelectionTextChange}
@@ -1252,6 +1324,22 @@ export default function App() {
           onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
           onOpenSettings={() => setSettingsOpen(true)}
+          onCreateAnnotation={(type) => {
+            if (!selection?.selectedText?.trim() || !selection?.sourcePath) return;
+            const ann: Annotation = {
+              id: nextId("annot"),
+              courseFile: selection.sourcePath,
+              selectedText: selection.selectedText.trim(),
+              type,
+              createdAt: new Date().toISOString(),
+            };
+            setAnnotations((prev) => [...prev, ann]);
+          }}
+          onExplain={() => {
+            if (!selection?.selectedText?.trim()) return;
+            setQAQuestion(`请解释这段内容：\n\n${selection.selectedText}`);
+          }}
+          onDeleteAnnotation={handleDeleteAnnotation}
         />
       </main>
       <LLMSettingsDialog
@@ -1261,6 +1349,15 @@ export default function App() {
           loadLLMSettings();
         }}
       />
+      {contextMenu ? (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={handleContextMenuClose}
+          onAnnotation={handleCreateAnnotation}
+          onExplain={handleExplainFromContextMenu}
+        />
+      ) : null}
     </div>
   );
 }

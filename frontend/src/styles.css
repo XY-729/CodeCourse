@@ -1055,3 +1055,120 @@ button:disabled,
   background: #f3f6f8;
   font-size: 13px;
 }
+
+/* ---- Annotation type colors ---- */
+.annotation-highlight { background: #fff59d; }
+.annotation-important { background: #ffcdd2; }
+.annotation-question  { background: #b3e5fc; }
+.annotation-concept   { background: #c8e6c9; }
+.annotation-code      { background: #e1bee7; }
+
+.temp-selection {
+  background: rgba(253, 224, 71, 0.45);
+  border-radius: 3px;
+}
+
+/* ---- Context menu ---- */
+.context-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.context-menu {
+  position: fixed;
+  z-index: 21;
+  min-width: 184px;
+  background: #ffffff;
+  border: 1px solid #c8d0da;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  padding: 6px;
+}
+
+.context-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+  color: #263444;
+}
+
+.context-menu-item:hover {
+  background: #eef2f6;
+}
+
+.context-menu-separator {
+  height: 1px;
+  background: #e5e9ee;
+  margin: 4px 6px;
+}
+
+/* ---- Annotation badge ---- */
+.annotation-badge {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+/* ---- Quick action buttons in ExplainPanel ---- */
+.annotation-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.annotation-quick-btn {
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid #c8d0da;
+  border-radius: 5px;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #263444;
+}
+
+.annotation-quick-btn:hover {
+  background: #eef2f6;
+}
+
+/* ---- Annotation list in ExplainPanel ---- */
+.annotation-list {
+  max-height: 160px;
+  overflow: auto;
+}
+
+.annotation-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  margin-bottom: 3px;
+  background: #fbfcfd;
+  border: 1px solid #e5e9ee;
+}
+
+.annotation-item-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
