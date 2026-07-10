@@ -3,6 +3,7 @@ import type { DragEvent, MouseEvent } from "react";
 import { Save, Star, X } from "lucide-react";
 import {
   askQuestion,
+  createHighlight,
   deleteProject,
   generateFileLesson,
   generateOutline,
@@ -15,6 +16,7 @@ import {
   getTree,
   importProject,
   listGenerationTasks,
+  listHighlights,
   listProjects,
   listQARecords,
   regenerateProject,
@@ -28,6 +30,7 @@ import type {
   LearningScope,
   LLMSettings,
   Project,
+  HighlightRecord,
   QARecord,
   TreeNode,
 } from "./api/client";
@@ -118,6 +121,10 @@ function taskLabel(task: GenerationTask): string {
   return `${type} / ${task.status}`;
 }
 
+function qaTitle(record: QARecord): string {
+  return record.display_title?.trim() || `回答 #${record.id}`;
+}
+
 function createGroup(id: string): GroupNode {
   return { type: "group", group: { id, items: [], activeItemId: null } };
 }
@@ -138,6 +145,17 @@ function findGroup(node: LayoutNode, groupId: string): EditorGroup | null {
     return node.group.id === groupId ? node.group : null;
   }
   return findGroup(node.first, groupId) ?? findGroup(node.second, groupId);
+}
+
+function hasGroup(node: LayoutNode, groupId: string): boolean {
+  return Boolean(findGroup(node, groupId));
+}
+
+function firstGroupId(node: LayoutNode): string {
+  if (node.type === "group") {
+    return node.group.id;
+  }
+  return firstGroupId(node.first);
 }
 
 function updateGroup(node: LayoutNode, groupId: string, updater: (group: EditorGroup) => EditorGroup): LayoutNode {
@@ -167,12 +185,26 @@ function updateSplitRatio(node: LayoutNode, splitId: string, ratio: number): Lay
     return node;
   }
   if (node.id === splitId) {
-    return { ...node, ratio: clamp(ratio, 0.15, 0.85) };
+    return { ...node, ratio: clamp(ratio, 0.03, 0.97) };
   }
   return {
     ...node,
     first: updateSplitRatio(node.first, splitId, ratio),
     second: updateSplitRatio(node.second, splitId, ratio),
+  };
+}
+
+function collapseSplit(node: LayoutNode, splitId: string, removeSide: "first" | "second"): LayoutNode {
+  if (node.type === "group") {
+    return node;
+  }
+  if (node.id === splitId) {
+    return removeSide === "first" ? node.second : node.first;
+  }
+  return {
+    ...node,
+    first: collapseSplit(node.first, splitId, removeSide),
+    second: collapseSplit(node.second, splitId, removeSide),
   };
 }
 
@@ -281,6 +313,8 @@ export default function App() {
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
+  const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
+  const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
 
   const idCounter = useRef(1);
   const canGenerateFileLesson = Boolean(project && fileContent);
@@ -314,7 +348,14 @@ export default function App() {
         setLayout((prev) => updateSplitRatio(prev, currentDrag.splitId, nextRatio));
       }
     }
-    function onMouseUp() {
+    function onMouseUp(event: globalThis.MouseEvent) {
+      if (currentDrag.kind === "split") {
+        const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
+        const finalRatio = currentDrag.startRatio + delta / Math.max(1, currentDrag.size);
+        if (finalRatio < 0.08 || finalRatio > 0.92) {
+          collapseSplitById(currentDrag.splitId, finalRatio < 0.08 ? "first" : "second");
+        }
+      }
       setDragState(null);
     }
     window.addEventListener("mousemove", onMouseMove);
@@ -340,6 +381,19 @@ export default function App() {
   function nextId(prefix: string) {
     idCounter.current += 1;
     return `${prefix}-${idCounter.current}`;
+  }
+
+  function collapseSplitById(splitId: string, removeSide: "first" | "second") {
+    setLayout((prev) => {
+      if (countGroups(prev) <= 1) {
+        return prev;
+      }
+      const next = collapseSplit(prev, splitId, removeSide);
+      if (!hasGroup(next, activeGroupId)) {
+        setActiveGroupId(firstGroupId(next));
+      }
+      return next;
+    });
   }
 
   async function loadLLMSettings() {
@@ -402,6 +456,18 @@ export default function App() {
     }
   }
 
+  async function refreshHighlights(projectId = project?.id) {
+    if (!projectId) {
+      setHighlights([]);
+      return;
+    }
+    try {
+      setHighlights(await listHighlights(projectId));
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "加载标记失败");
+    }
+  }
+
   function applyActiveItem(item: OpenItem) {
     if (item.type === "file") {
       setFileContent({ path: item.path, content: item.content, language: item.language ?? "plaintext" });
@@ -456,7 +522,9 @@ export default function App() {
     setLayout((prev) =>
       updateEveryGroup(prev, (group) => ({
         ...group,
-        items: group.items.map((item) => (item.qaRecordId === record.id ? { ...item, favorite: record.favorite } : item)),
+        items: group.items.map((item) =>
+          item.qaRecordId === record.id ? { ...item, title: qaTitle(record), favorite: record.favorite } : item,
+        ),
       })),
     );
   }
@@ -495,7 +563,7 @@ export default function App() {
         id: `qa:${record.id}`,
         type: "qa",
         path: record.output_path ?? `qa/${record.id}`,
-        title: `回答 #${record.id}`,
+        title: qaTitle(record),
         content: record.answer_md,
         qaRecordId: record.id,
         favorite: record.favorite,
@@ -543,7 +611,7 @@ export default function App() {
       id: `qa:${record.id}`,
       type: "qa",
       path: record.output_path ?? `qa/${record.id}`,
-      title: `回答 #${record.id}`,
+      title: qaTitle(record),
       content: record.answer_md,
       qaRecordId: record.id,
       favorite: record.favorite,
@@ -575,9 +643,11 @@ export default function App() {
       setQAQuestion("");
       setSelectedQA(null);
       setQAPanelError("");
+      setHighlights([]);
       setLayout(initialLayout);
       setActiveGroupId(ROOT_GROUP_ID);
       await refreshQAHistory(freshProject.id);
+      await refreshHighlights(freshProject.id);
       const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
       if (firstCourse) {
         const content = await getCourseContent(freshProject.id, firstCourse.filename);
@@ -744,6 +814,7 @@ export default function App() {
         setActiveGroupId(ROOT_GROUP_ID);
         setSelection(null);
         setQAHistory([]);
+        setHighlights([]);
         setTaskMessage("");
         if (remaining.length > 0) {
           await openProject(remaining[0]);
@@ -766,7 +837,7 @@ export default function App() {
   }
 
   async function handleAsk() {
-    if (!project || !selection || !qaQuestion.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) {
+    if (!project || !qaQuestion.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) {
       return;
     }
     const ok = window.confirm(`将调用模型 API 使用 ${llmSettings.model} 回答当前选区问题，可能消耗 token。是否继续？`);
@@ -777,9 +848,9 @@ export default function App() {
     setQAPanelError("");
     try {
       const record = await askQuestion(project.id, {
-        source_type: selection.sourceType,
-        source_path: selection.sourcePath,
-        selected_text: selection.selectedText,
+        source_type: selection?.sourceType ?? "selection",
+        source_path: selection?.sourcePath ?? null,
+        selected_text: selection?.selectedText ?? "",
         question: qaQuestion,
         provider: llmSettings.provider,
         base_url: llmSettings.base_url,
@@ -792,6 +863,55 @@ export default function App() {
       setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
     } finally {
       setQALoading(false);
+    }
+  }
+
+  function handleSelectionTextChange(value: string) {
+    setSelection((current) => ({
+      sourceType: current?.sourceType ?? "selection",
+      sourcePath: current?.sourcePath ?? null,
+      selectedText: value,
+      language: current?.language,
+    }));
+  }
+
+  function handleClearSelection() {
+    handleSelectionTextChange("");
+  }
+
+  async function handleRenameQA(record: QARecord) {
+    if (!project) {
+      return;
+    }
+    const nextTitle = window.prompt("重命名历史记录", record.display_title || record.question);
+    if (nextTitle === null) {
+      return;
+    }
+    try {
+      const updated = await updateQARecord(project.id, record.id, { display_title: nextTitle.trim() });
+      setSelectedQA(updated);
+      setQAHistory((items) => items.map((entry) => (entry.id === updated.id ? updated : entry)));
+      updateOpenQARecord(updated);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "重命名失败");
+    }
+  }
+
+  async function handleCreateHighlight(sourceType: "course" | "qa", sourcePath: string, selectedText: string) {
+    if (!project || !selectedText.trim()) {
+      return;
+    }
+    try {
+      const record = await createHighlight(project.id, {
+        source_type: sourceType,
+        source_path: sourcePath,
+        selected_text: selectedText.trim(),
+        color: "#fff59d",
+      });
+      setHighlights((items) => [...items, record]);
+      setQAPanelError("");
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "标记失败");
     }
   }
 
@@ -927,7 +1047,9 @@ export default function App() {
               title={activeItem.title}
               sourcePath={activeItem.path}
               content={activeItem.content}
+              highlights={highlights.filter((highlight) => highlight.source_type === "course" && highlight.source_path === activeItem.path)}
               onSelectionChange={handleSelection}
+              onCreateHighlight={(text) => handleCreateHighlight("course", activeItem.path, text)}
             />
           ) : null}
           {activeItem?.type === "qa" ? (
@@ -937,6 +1059,13 @@ export default function App() {
                 <div className="viewer-actions">
                   <button className="icon-button" onClick={() => handleToggleFavorite(activeItem)} title="收藏/取消收藏">
                     <Star size={14} className={activeItem.favorite ? "starred" : ""} />
+                  </button>
+                  <button
+                    className="secondary-button compact"
+                    onClick={() => qaHighlightDraft && handleCreateHighlight("qa", qaHighlightDraft.sourcePath, qaHighlightDraft.selectedText)}
+                    disabled={!qaHighlightDraft || qaHighlightDraft.sourcePath !== activeItem.path}
+                  >
+                    标记
                   </button>
                   <button className="secondary-button compact" onClick={() => handleSaveQAItem(group.id, activeItem)} disabled={!activeItem.dirty}>
                     <Save size={14} />
@@ -948,6 +1077,18 @@ export default function App() {
                 className="qa-workspace-editor"
                 value={activeItem.content}
                 onChange={(event) => updateQAItemContent(group.id, activeItem.id, event.target.value)}
+                onSelect={(event) => {
+                  const target = event.currentTarget;
+                  const text = target.value.slice(target.selectionStart, target.selectionEnd).trim();
+                  if (text) {
+                    setQAHighlightDraft({ sourcePath: activeItem.path, selectedText: text });
+                    setSelection({
+                      sourceType: "selection",
+                      sourcePath: activeItem.path,
+                      selectedText: text,
+                    });
+                  }
+                }}
               />
             </div>
           ) : null}
@@ -969,6 +1110,7 @@ export default function App() {
         </div>
         <div
           className={`split-resizer ${node.direction}`}
+          onDoubleClick={() => collapseSplitById(node.id, node.ratio < 0.5 ? "first" : "second")}
           onMouseDown={(event) => {
             const rect = event.currentTarget.parentElement?.getBoundingClientRect();
             if (!rect) {
@@ -1100,11 +1242,14 @@ export default function App() {
           askHeight={qaAskHeight}
           onAskResizeStart={(event: MouseEvent<HTMLDivElement>) => setDragState({ kind: "qa-ask", startY: event.clientY, startHeight: qaAskHeight })}
           onQuestionChange={setQAQuestion}
+          onSelectionTextChange={handleSelectionTextChange}
+          onClearSelection={handleClearSelection}
           onAsk={handleAsk}
           onHistoryQueryChange={setQAHistoryQuery}
           onFavoriteOnlyChange={setQAFavoriteOnly}
           onSelectRecord={setSelectedQA}
           onOpenRecord={(record) => openQAInActiveGroup(record)}
+          onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
           onOpenSettings={() => setSettingsOpen(true)}
         />

@@ -42,6 +42,7 @@ export type QARecord = {
   project_id: number;
   source_type: SourceType;
   source_path?: string | null;
+  display_title?: string | null;
   selected_text: string;
   question: string;
   answer_md: string;
@@ -49,6 +50,18 @@ export type QARecord = {
   model: string;
   output_path?: string | null;
   favorite: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HighlightRecord = {
+  id: number;
+  project_id: number;
+  source_type: "course" | "qa";
+  source_path: string;
+  selected_text: string;
+  color: string;
+  note?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -254,7 +267,7 @@ export function getQARecord(projectId: number, qaId: number): Promise<QARecord> 
 export function updateQARecord(
   projectId: number,
   qaId: number,
-  payload: { question?: string; answer_md?: string },
+  payload: { question?: string; answer_md?: string; display_title?: string },
 ): Promise<QARecord> {
   return request<QARecord>(`/projects/${projectId}/qa/${qaId}`, {
     method: "PUT",
@@ -266,5 +279,33 @@ export function setQAFavorite(projectId: number, qaId: number, favorite: boolean
   return request<QARecord>(`/projects/${projectId}/qa/${qaId}/favorite`, {
     method: "POST",
     body: JSON.stringify({ favorite }),
+  });
+}
+
+export function listHighlights(projectId: number, sourceType?: "course" | "qa", sourcePath?: string): Promise<HighlightRecord[]> {
+  const params = new URLSearchParams();
+  if (sourceType) {
+    params.set("source_type", sourceType);
+  }
+  if (sourcePath) {
+    params.set("source_path", sourcePath);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<HighlightRecord[]>(`/projects/${projectId}/highlights${suffix}`);
+}
+
+export function createHighlight(
+  projectId: number,
+  payload: { source_type: "course" | "qa"; source_path: string; selected_text: string; color?: string; note?: string | null },
+): Promise<HighlightRecord> {
+  return request<HighlightRecord>(`/projects/${projectId}/highlights`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteHighlight(projectId: number, highlightId: number): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/projects/${projectId}/highlights/${highlightId}`, {
+    method: "DELETE",
   });
 }

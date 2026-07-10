@@ -91,7 +91,7 @@ class ExplainResponse(BaseModel):
 class QAAskRequest(BaseModel):
     source_type: Literal["file", "course", "selection"]
     source_path: Optional[str] = Field(default=None, max_length=1000)
-    selected_text: str = Field(min_length=1, max_length=20000)
+    selected_text: str = Field(default="", max_length=20000)
     question: str = Field(min_length=1, max_length=4000)
     provider: str = Field(default="deepseek", max_length=80)
     base_url: str = Field(default="https://api.deepseek.com", max_length=500)
@@ -103,6 +103,7 @@ class QARecordResponse(BaseModel):
     project_id: int
     source_type: str
     source_path: Optional[str] = None
+    display_title: Optional[str] = None
     selected_text: str
     question: str
     answer_md: str
@@ -117,10 +118,31 @@ class QARecordResponse(BaseModel):
 class QAUpdateRequest(BaseModel):
     question: Optional[str] = Field(default=None, min_length=1, max_length=4000)
     answer_md: Optional[str] = Field(default=None, min_length=1, max_length=100000)
+    display_title: Optional[str] = Field(default=None, max_length=200)
 
 
 class QAFavoriteRequest(BaseModel):
     favorite: bool
+
+
+class HighlightCreateRequest(BaseModel):
+    source_type: Literal["course", "qa"]
+    source_path: str = Field(min_length=1, max_length=1000)
+    selected_text: str = Field(min_length=1, max_length=8000)
+    color: str = Field(default="#fff59d", max_length=32)
+    note: Optional[str] = Field(default=None, max_length=1000)
+
+
+class HighlightResponse(BaseModel):
+    id: int
+    project_id: int
+    source_type: str
+    source_path: str
+    selected_text: str
+    color: str
+    note: Optional[str] = None
+    created_at: str
+    updated_at: str
 
 
 class ProjectActionResponse(BaseModel):

@@ -1,4 +1,4 @@
-import { Loader2, Search, Send, Star } from "lucide-react";
+import { Edit3, Loader2, Search, Send, Star, Trash2 } from "lucide-react";
 import type { MouseEvent } from "react";
 import type { LLMSettings, QARecord, SourceType } from "../api/client";
 
@@ -22,11 +22,14 @@ type Props = {
   askHeight: number;
   onAskResizeStart: (event: MouseEvent<HTMLDivElement>) => void;
   onQuestionChange: (value: string) => void;
+  onSelectionTextChange: (value: string) => void;
+  onClearSelection: () => void;
   onAsk: () => void;
   onHistoryQueryChange: (value: string) => void;
   onFavoriteOnlyChange: (value: boolean) => void;
   onSelectRecord: (record: QARecord) => void;
   onOpenRecord: (record: QARecord) => void;
+  onRenameRecord: (record: QARecord) => void;
   onToggleFavorite: (record: QARecord) => void;
   onOpenSettings: () => void;
 };
@@ -61,11 +64,14 @@ export default function ExplainPanel({
   askHeight,
   onAskResizeStart,
   onQuestionChange,
+  onSelectionTextChange,
+  onClearSelection,
   onAsk,
   onHistoryQueryChange,
   onFavoriteOnlyChange,
   onSelectRecord,
   onOpenRecord,
+  onRenameRecord,
   onToggleFavorite,
   onOpenSettings,
 }: Props) {
@@ -89,10 +95,19 @@ export default function ExplainPanel({
                 <span>{selectedLength} 字符</span>
               </div>
               <div className="selection-path">{selection.sourcePath ?? "未命名来源"}</div>
-              <pre className="selection-preview">{selection.selectedText}</pre>
+              <textarea
+                className="selection-editor"
+                value={selection.selectedText}
+                onChange={(event) => onSelectionTextChange(event.target.value)}
+                disabled={loading}
+              />
+              <button type="button" className="secondary-button compact" onClick={onClearSelection} disabled={loading}>
+                <Trash2 size={14} />
+                清空
+              </button>
             </>
           ) : (
-            <div className="empty small">暂无选区</div>
+            <div className="empty small">暂无选区，可以直接输入问题</div>
           )}
         </div>
 
@@ -114,7 +129,7 @@ export default function ExplainPanel({
             ) : null}
           </div>
           {panelError ? <div className="qa-local-error">{panelError}</div> : null}
-          <button className="primary-button" onClick={onAsk} disabled={loading || !modelReady || !selection || !question.trim()}>
+          <button className="primary-button" onClick={onAsk} disabled={loading || !modelReady || !question.trim()}>
             {loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}
             {loading ? "生成中..." : "询问"}
           </button>
@@ -150,8 +165,16 @@ export default function ExplainPanel({
                 }}
                 title="双击在工作区编辑"
               >
-                <span>{record.question}</span>
+                <span>{record.display_title || record.question}</span>
                 <small>{record.model}</small>
+                <Edit3
+                  size={14}
+                  className="history-rename"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRenameRecord(record);
+                  }}
+                />
                 <Star
                   size={14}
                   className={record.favorite ? "history-star starred" : "history-star"}

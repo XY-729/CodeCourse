@@ -134,6 +134,79 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(history.status_code, 200)
         self.assertEqual(history.json(), [])
 
+    def test_empty_selection_is_allowed_and_written_as_placeholder(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="Answer without a selection."):
+            resp = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "selection",
+                    "source_path": None,
+                    "selected_text": "",
+                    "question": "How should I start?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["selected_text"], "")
+        output_path = Path(data["output_path"])
+        self.assertIn("无选区内容", output_path.read_text(encoding="utf-8"))
+
+    def test_rename_history_updates_display_title_only(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="Answer."):
+            created = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "scope",
+                    "question": "Original question",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            ).json()
+
+        renamed = self.client.put(
+            f"/api/projects/{self.project.id}/qa/{created['id']}",
+            json={"display_title": "Renamed history item"},
+        )
+
+        self.assertEqual(renamed.status_code, 200)
+        data = renamed.json()
+        self.assertEqual(data["display_title"], "Renamed history item")
+        self.assertEqual(data["question"], "Original question")
+        self.assertIn("Renamed history item", Path(data["output_path"]).read_text(encoding="utf-8"))
+
+    def test_highlight_create_list_and_delete(self):
+        created = self.client.post(
+            f"/api/projects/{self.project.id}/highlights",
+            json={
+                "source_type": "course",
+                "source_path": "outline.md",
+                "selected_text": "Important concept",
+                "color": "#fff59d",
+            },
+        )
+
+        self.assertEqual(created.status_code, 200)
+        highlight = created.json()
+        self.assertEqual(highlight["selected_text"], "Important concept")
+
+        listed = self.client.get(f"/api/projects/{self.project.id}/highlights?source_type=course&source_path=outline.md")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(len(listed.json()), 1)
+
+        deleted = self.client.delete(f"/api/projects/{self.project.id}/highlights/{highlight['id']}")
+        self.assertEqual(deleted.status_code, 200)
+
+        listed_again = self.client.get(f"/api/projects/{self.project.id}/highlights?source_type=course&source_path=outline.md")
+        self.assertEqual(listed_again.status_code, 200)
+        self.assertEqual(listed_again.json(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

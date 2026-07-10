@@ -45,6 +45,7 @@ class QARecord:
     project_id: int
     source_type: str
     source_path: Optional[str]
+    display_title: Optional[str]
     selected_text: str
     question: str
     answer_md: str
@@ -52,6 +53,19 @@ class QARecord:
     model: str
     output_path: Optional[str]
     favorite: bool
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class HighlightRecord:
+    id: int
+    project_id: int
+    source_type: str
+    source_path: str
+    selected_text: str
+    color: str
+    note: Optional[str]
     created_at: str
     updated_at: str
 
@@ -123,6 +137,7 @@ def init_storage() -> None:
                 project_id INTEGER NOT NULL,
                 source_type TEXT NOT NULL,
                 source_path TEXT,
+                display_title TEXT,
                 selected_text TEXT NOT NULL,
                 question TEXT NOT NULL,
                 answer_md TEXT NOT NULL,
@@ -130,6 +145,25 @@ def init_storage() -> None:
                 model TEXT NOT NULL,
                 output_path TEXT,
                 favorite INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            )
+            """
+        )
+        qa_cols = [row[1] for row in conn.execute("PRAGMA table_info(qa_records)").fetchall()]
+        if "display_title" not in qa_cols:
+            conn.execute("ALTER TABLE qa_records ADD COLUMN display_title TEXT")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS highlights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                source_type TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                selected_text TEXT NOT NULL,
+                color TEXT NOT NULL,
+                note TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id)
@@ -176,6 +210,7 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
         project_id=row["project_id"],
         source_type=row["source_type"],
         source_path=row["source_path"],
+        display_title=row["display_title"],
         selected_text=row["selected_text"],
         question=row["question"],
         answer_md=row["answer_md"],
@@ -183,6 +218,20 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
         model=row["model"],
         output_path=row["output_path"],
         favorite=bool(row["favorite"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_highlight(row: sqlite3.Row) -> HighlightRecord:
+    return HighlightRecord(
+        id=row["id"],
+        project_id=row["project_id"],
+        source_type=row["source_type"],
+        source_path=row["source_path"],
+        selected_text=row["selected_text"],
+        color=row["color"],
+        note=row["note"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -265,6 +314,7 @@ def delete_project(project_id: int) -> bool:
     with _connect() as conn:
         conn.execute("DELETE FROM generation_tasks WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM qa_records WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM highlights WHERE project_id = ?", (project_id,))
         cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         return cursor.rowcount > 0
@@ -389,21 +439,23 @@ def create_qa_record(
     provider: str,
     model: str,
     output_path: Optional[Path] = None,
+    display_title: Optional[str] = None,
 ) -> QARecord:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO qa_records (
-                project_id, source_type, source_path, selected_text, question,
+                project_id, source_type, source_path, display_title, selected_text, question,
                 answer_md, provider, model, output_path, favorite, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
             """,
             (
                 project_id,
                 source_type,
                 source_path,
+                display_title,
                 selected_text,
                 question,
                 answer_md,
@@ -435,9 +487,9 @@ def list_qa_records(project_id: int, query: str = "", favorite: Optional[bool] =
     clauses = ["project_id = ?"]
     params: list[object] = [project_id]
     if query.strip():
-        clauses.append("(question LIKE ? OR selected_text LIKE ? OR answer_md LIKE ? OR source_path LIKE ?)")
+        clauses.append("(display_title LIKE ? OR question LIKE ? OR selected_text LIKE ? OR answer_md LIKE ? OR source_path LIKE ?)")
         like = f"%{query.strip()}%"
-        params.extend([like, like, like, like])
+        params.extend([like, like, like, like, like])
     if favorite is not None:
         clauses.append("favorite = ?")
         params.append(1 if favorite else 0)
@@ -453,6 +505,7 @@ def update_qa_record(
     question: Optional[str] = None,
     answer_md: Optional[str] = None,
     output_path: Optional[Path] = None,
+    display_title: Optional[str] = None,
 ) -> Optional[QARecord]:
     existing = get_qa_record(project_id, record_id)
     if existing is None:
@@ -462,13 +515,15 @@ def update_qa_record(
         conn.execute(
             """
             UPDATE qa_records
-            SET question = ?,
+            SET display_title = ?,
+                question = ?,
                 answer_md = ?,
                 output_path = COALESCE(?, output_path),
                 updated_at = ?
             WHERE project_id = ? AND id = ?
             """,
             (
+                display_title if display_title is not None else existing.display_title,
                 question if question is not None else existing.question,
                 answer_md if answer_md is not None else existing.answer_md,
                 str(output_path) if output_path else None,
@@ -479,6 +534,71 @@ def update_qa_record(
         )
         conn.commit()
     return get_qa_record(project_id, record_id)
+
+
+def create_highlight(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    selected_text: str,
+    color: str = "#fff59d",
+    note: Optional[str] = None,
+) -> HighlightRecord:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO highlights (
+                project_id, source_type, source_path, selected_text, color, note, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (project_id, source_type, source_path, selected_text, color, note, now, now),
+        )
+        conn.commit()
+        highlight_id = int(cursor.lastrowid)
+    record = get_highlight(project_id, highlight_id)
+    if record is None:
+        raise RuntimeError("highlight was not persisted")
+    return record
+
+
+def get_highlight(project_id: int, highlight_id: int) -> Optional[HighlightRecord]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM highlights WHERE project_id = ? AND id = ?",
+            (project_id, highlight_id),
+        ).fetchone()
+        return _row_to_highlight(row) if row else None
+
+
+def list_highlights(
+    project_id: int,
+    source_type: Optional[str] = None,
+    source_path: Optional[str] = None,
+) -> list[HighlightRecord]:
+    clauses = ["project_id = ?"]
+    params: list[object] = [project_id]
+    if source_type:
+        clauses.append("source_type = ?")
+        params.append(source_type)
+    if source_path:
+        clauses.append("source_path = ?")
+        params.append(source_path)
+    sql = f"SELECT * FROM highlights WHERE {' AND '.join(clauses)} ORDER BY created_at ASC, id ASC"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_row_to_highlight(row) for row in rows]
+
+
+def delete_highlight(project_id: int, highlight_id: int) -> bool:
+    with _connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM highlights WHERE project_id = ? AND id = ?",
+            (project_id, highlight_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 def set_qa_favorite(project_id: int, record_id: int, favorite: bool) -> Optional[QARecord]:

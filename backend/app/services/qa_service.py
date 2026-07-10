@@ -28,10 +28,13 @@ def _record_path(project_id: int, record_id: int) -> Path:
 def _format_record_markdown(record: QARecord) -> str:
     source_path = record.source_path or "(无路径)"
     favorite = "true" if record.favorite else "false"
-    return f"""# 选区问答 #{record.id}
+    title = record.display_title or f"选区问答 #{record.id}"
+    selected_text = record.selected_text or "无选区内容"
+    return f"""# {title}
 
 > 来源类型：{record.source_type}
 > 来源路径：{source_path}
+> 显示标题：{title}
 > 模型：{record.model}
 > 收藏：{favorite}
 > 创建时间：{record.created_at}
@@ -44,7 +47,7 @@ def _format_record_markdown(record: QARecord) -> str:
 ## 选中内容
 
 ```text
-{record.selected_text}
+{selected_text}
 ```
 
 ## 回答
@@ -79,10 +82,9 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
     settings = _settings_for_request(payload)
     selected_text = payload.selected_text.strip()
     question = payload.question.strip()
-    if not selected_text:
-        raise RuntimeError("选区为空，无法提问。")
     if not question:
         raise RuntimeError("问题为空，无法提问。")
+    selected_text_for_prompt = selected_text or "无选区内容。请优先回答用户问题，并说明由于没有选区，只能基于问题本身给出通用学习建议。"
 
     prompt = f"""请基于用户选中的代码或课件片段回答问题。目标是教学，不是泛泛解释。
 
@@ -93,7 +95,7 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
 
 选中内容：
 ```text
-{selected_text}
+{selected_text_for_prompt}
 ```
 
 输出要求：
@@ -137,8 +139,14 @@ def read_record(project_id: int, record_id: int) -> Optional[QARecord]:
     return get_qa_record(project_id, record_id)
 
 
-def edit_record(project_id: int, record_id: int, question: Optional[str], answer_md: Optional[str]) -> Optional[QARecord]:
-    record = update_qa_record(project_id, record_id, question=question, answer_md=answer_md)
+def edit_record(
+    project_id: int,
+    record_id: int,
+    question: Optional[str],
+    answer_md: Optional[str],
+    display_title: Optional[str] = None,
+) -> Optional[QARecord]:
+    record = update_qa_record(project_id, record_id, question=question, answer_md=answer_md, display_title=display_title)
     if record is None:
         return None
     return _write_record_markdown(record)

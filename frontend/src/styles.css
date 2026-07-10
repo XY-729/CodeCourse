@@ -762,6 +762,20 @@ button:disabled,
   font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
 }
 
+.selection-editor {
+  width: 100%;
+  min-height: 94px;
+  max-height: 150px;
+  resize: vertical;
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid #c8d0da;
+  border-radius: 6px;
+  color: #263444;
+  background: #eef2f6;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
 .ask-box {
   display: flex;
   flex-direction: column;
@@ -836,7 +850,7 @@ button:disabled,
   width: 100%;
   border: 0;
   border-radius: 6px;
-  padding: 7px 28px 7px 8px;
+  padding: 7px 52px 7px 8px;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -865,6 +879,23 @@ button:disabled,
   right: 8px;
   top: 9px;
   color: #9aa4b2;
+}
+
+.history-rename {
+  position: absolute;
+  right: 30px;
+  top: 9px;
+  color: #9aa4b2;
+}
+
+.history-rename:hover,
+.history-star:hover {
+  color: #155d54;
+}
+
+.reader-highlight {
+  border-radius: 3px;
+  padding: 0 2px;
 }
 
 .spin {

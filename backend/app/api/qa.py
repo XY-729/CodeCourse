@@ -26,6 +26,7 @@ def _to_response(record: QARecord) -> QARecordResponse:
         project_id=record.project_id,
         source_type=record.source_type,
         source_path=record.source_path,
+        display_title=record.display_title,
         selected_text=record.selected_text,
         question=record.question,
         answer_md=record.answer_md,
@@ -70,7 +71,7 @@ def get_history_item(project_id: int, qa_id: int) -> QARecordResponse:
 @router.put("/{project_id}/qa/{qa_id}", response_model=QARecordResponse)
 def update_history_item(project_id: int, qa_id: int, payload: QAUpdateRequest) -> QARecordResponse:
     _require_project(project_id)
-    record = edit_record(project_id, qa_id, payload.question, payload.answer_md)
+    record = edit_record(project_id, qa_id, payload.question, payload.answer_md, payload.display_title)
     if record is None:
         raise HTTPException(status_code=404, detail="QA record not found")
     return _to_response(record)
