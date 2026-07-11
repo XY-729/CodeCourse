@@ -24,6 +24,7 @@ from app.services.generation_service import (
     run_outline_generation_task,
 )
 from app.services.git_service import clone_or_reuse, repo_name_from_url, validate_git_url
+from app.services.index_service import build_project_index
 from app.services.scanner import scan_tree
 from app.core.config import REPOS_ROOT
 from app.services.storage import (
@@ -88,12 +89,21 @@ def _to_task_response(task: GenerationTask) -> GenerationTaskResponse:
     )
 
 
+def _run_index_build(project_id: int) -> None:
+    try:
+        build_project_index(project_id)
+    except Exception:
+        # build_project_index persists failure status; import should stay successful
+        pass
+
+
 @router.post("/projects/import", response_model=ProjectResponse)
-def import_project(payload: ImportProjectRequest) -> ProjectResponse:
+def import_project(payload: ImportProjectRequest, background_tasks: BackgroundTasks) -> ProjectResponse:
     url = validate_git_url(payload.url)
     repo_root = clone_or_reuse(url)
     project = upsert_project(repo_name_from_url(url), url, repo_root, "scanned")
     course_files = generate_rule_course(project.id, repo_root)
+    background_tasks.add_task(_run_index_build, project.id)
     response = _to_project_response(project)
     response.course_files = [item.filename for item in course_files]
     return response

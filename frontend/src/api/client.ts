@@ -37,6 +37,7 @@ export type SourceType = "file" | "course" | "selection";
 export type QARecord = {
   id: number;
   project_id: number;
+  session_id?: number | null;
   source_type: SourceType;
   source_path?: string | null;
   display_title?: string | null;
@@ -46,6 +47,7 @@ export type QARecord = {
   provider: string;
   model: string;
   output_path?: string | null;
+  retrieval_trace?: string | null;
   favorite: boolean;
   created_at: string;
   updated_at: string;
@@ -71,6 +73,32 @@ export type QAAskPayload = {
   provider: string;
   base_url: string;
   model: string;
+  session_id?: number | null;
+  selection_range?: {
+    start_line: number;
+    start_column: number;
+    end_line: number;
+    end_column: number;
+  } | null;
+};
+
+export type ProjectIndexStatus = {
+  project_id: number;
+  status: string;
+  chunk_count: number;
+  updated_at?: string | null;
+  error_message?: string | null;
+};
+
+export type ProjectSearchResult = {
+  path: string;
+  language: string;
+  start_line: number;
+  end_line: number;
+  chunk_type: string;
+  symbol_name?: string | null;
+  content: string;
+  score: number;
 };
 
 export type ProjectActionResponse = {
@@ -239,6 +267,23 @@ export function listGenerationTasks(projectId: number): Promise<GenerationTask[]
 
 export function getGenerationTask(projectId: number, taskId: number): Promise<GenerationTask> {
   return request<GenerationTask>(`/projects/${projectId}/tasks/${taskId}`);
+}
+
+export function buildProjectIndex(projectId: number): Promise<ProjectIndexStatus> {
+  return request<ProjectIndexStatus>(`/projects/${projectId}/index/build`, {
+    method: "POST",
+  });
+}
+
+export function getProjectIndexStatus(projectId: number): Promise<ProjectIndexStatus> {
+  return request<ProjectIndexStatus>(`/projects/${projectId}/index/status`);
+}
+
+export function searchProject(projectId: number, query: string, sourcePath?: string | null, limit = 8): Promise<ProjectSearchResult[]> {
+  return request<ProjectSearchResult[]>(`/projects/${projectId}/search`, {
+    method: "POST",
+    body: JSON.stringify({ query, source_path: sourcePath ?? null, limit }),
+  });
 }
 
 export function askQuestion(projectId: number, payload: QAAskPayload): Promise<QARecord> {

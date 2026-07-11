@@ -24,6 +24,7 @@ def _to_response(record: QARecord) -> QARecordResponse:
     return QARecordResponse(
         id=record.id,
         project_id=record.project_id,
+        session_id=record.session_id,
         source_type=record.source_type,
         source_path=record.source_path,
         display_title=record.display_title,
@@ -33,6 +34,7 @@ def _to_response(record: QARecord) -> QARecordResponse:
         provider=record.provider,
         model=record.model,
         output_path=record.output_path,
+        retrieval_trace=record.retrieval_trace,
         favorite=record.favorite,
         created_at=record.created_at,
         updated_at=record.updated_at,

@@ -3,6 +3,7 @@ import type { DragEvent, MouseEvent } from "react";
 import { Save, Star, X } from "lucide-react";
 import {
   askQuestion,
+  buildProjectIndex,
   createLearningPlan,
   createHighlight,
   deleteProject,
@@ -14,6 +15,7 @@ import {
   getLLMSettings,
   getProject,
   getProjectFile,
+  getProjectIndexStatus,
   getTree,
   importProject,
   listGenerationTasks,
@@ -34,6 +36,7 @@ import type {
   LLMSettings,
   Project,
   HighlightRecord,
+  ProjectIndexStatus,
   QARecord,
   TreeNode,
 } from "./api/client";
@@ -306,6 +309,8 @@ export default function App() {
   const [selectedScopeFiles, setSelectedScopeFiles] = useState<string[]>([]);
   const [generationInstructions, setGenerationInstructions] = useState("");
   const [activeTask, setActiveTask] = useState<GenerationTask | null>(null);
+  const [indexStatus, setIndexStatus] = useState<ProjectIndexStatus | null>(null);
+  const [indexBuilding, setIndexBuilding] = useState(false);
   const [taskMessage, setTaskMessage] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(300);
   const [explainWidth, setExplainWidth] = useState(360);
@@ -324,6 +329,7 @@ export default function App() {
   const [qaHistoryQuery, setQAHistoryQuery] = useState("");
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
+  const [qaSessionId, setQASessionId] = useState<number | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
@@ -481,6 +487,18 @@ export default function App() {
       setHighlights(await listHighlights(projectId));
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "加载标记失败");
+    }
+  }
+
+  async function refreshIndexStatus(projectId = project?.id) {
+    if (!projectId) {
+      setIndexStatus(null);
+      return;
+    }
+    try {
+      setIndexStatus(await getProjectIndexStatus(projectId));
+    } catch {
+      setIndexStatus(null);
     }
   }
 
@@ -773,17 +791,20 @@ export default function App() {
     try {
       const freshProject = await getProject(nextProject.id);
       setProject(freshProject);
-      const [nextTree, nextCourses, tasks, settings] = await Promise.all([
+      const [nextTree, nextCourses, tasks, settings, nextIndexStatus] = await Promise.all([
         getTree(freshProject.id),
         getCourseFiles(freshProject.id),
         listGenerationTasks(freshProject.id),
         getLLMSettings().catch(() => null),
+        getProjectIndexStatus(freshProject.id).catch(() => null),
       ]);
       const initialLayout = createInitialLayout();
       setTree(nextTree);
       setCourses(nextCourses);
       setLLMSettings(settings);
       setActiveTask(tasks[0] ?? null);
+      setIndexStatus(nextIndexStatus);
+      setIndexBuilding(nextIndexStatus?.status === "building");
       setTaskMessage(tasks[0] ? `最近任务：${taskLabel(tasks[0])}` : "待生成");
       setScopeType(freshProject.project_type === "learning_plan" ? "learning_plan" : "full_project");
       setSelectedScopeFiles([]);
@@ -793,6 +814,7 @@ export default function App() {
       setSelection(null);
       setQAQuestion("");
       setSelectedQA(null);
+      setQASessionId(null);
       setQAPanelError("");
       setHighlights([]);
       setAnnotations([]);
@@ -975,6 +997,23 @@ export default function App() {
     }
   }
 
+  async function handleBuildIndex() {
+    if (!project || project.project_type === "learning_plan") {
+      return;
+    }
+    setIndexBuilding(true);
+    setError("");
+    try {
+      const status = await buildProjectIndex(project.id);
+      setIndexStatus(status);
+      window.setTimeout(() => refreshIndexStatus(project.id), 800);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "构建索引失败");
+    } finally {
+      setIndexBuilding(false);
+    }
+  }
+
   async function handleRegenerate(nextProject: Project) {
     setBusyProjectId(nextProject.id);
     setError("");
@@ -1010,6 +1049,8 @@ export default function App() {
         setLayout(createInitialLayout());
         setActiveGroupId(ROOT_GROUP_ID);
         setSelection(null);
+        setQASessionId(null);
+        setIndexStatus(null);
         setSelectedScopeFiles([]);
         setSelectionAnchor(null);
         setContextMenu(null);
@@ -1064,8 +1105,18 @@ export default function App() {
         provider: llmSettings.provider,
         base_url: llmSettings.base_url,
         model: llmSettings.model,
+        session_id: qaSessionId,
+        selection_range: selectionAnchor?.range
+          ? {
+              start_line: selectionAnchor.range.startLineNumber,
+              start_column: selectionAnchor.range.startColumn,
+              end_line: selectionAnchor.range.endLineNumber,
+              end_column: selectionAnchor.range.endColumn,
+            }
+          : null,
       });
       setSelectedQA(record);
+      setQASessionId(record.session_id ?? qaSessionId);
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
       setQAQuestion("");
     } catch (caught) {
@@ -1076,12 +1127,33 @@ export default function App() {
   }
 
   function handleSelectionTextChange(value: string) {
+    const nextText = value.slice(0, 20000);
+    if (!nextText.trim()) {
+      handleDismissSelection();
+      return;
+    }
+    const fallback = selectionAnchor ?? selection;
     setSelection((current) => ({
-      sourceType: current?.sourceType ?? "selection",
-      sourcePath: current?.sourcePath ?? null,
-      selectedText: value,
-      language: current?.language,
+      sourceType: current?.sourceType ?? fallback?.sourceType ?? "selection",
+      sourcePath: current?.sourcePath ?? fallback?.sourcePath ?? null,
+      selectedText: nextText,
+      language: current?.language ?? fallback?.language,
     }));
+    setSelectionAnchor((current) => {
+      const base = current ?? fallback;
+      if (!base) {
+        return {
+          sourceType: "selection",
+          sourcePath: null,
+          selectedText: nextText,
+        };
+      }
+      return {
+        ...base,
+        selectedText: nextText,
+      };
+    });
+    setContextMenu((current) => (current ? { ...current, selectedText: nextText } : current));
   }
 
   function handleClearSelection() {
@@ -1092,6 +1164,7 @@ export default function App() {
     setSelection(null);
     setSelectionAnchor(null);
     setContextMenu(null);
+    window.getSelection()?.removeAllRanges();
   }
 
   async function handleRenameQA(record: QARecord) {
@@ -1711,6 +1784,13 @@ export default function App() {
               <button className="secondary-button" onClick={() => setPromptEditorOpen(true)}>
                 提示词
               </button>
+              <button
+                className="secondary-button"
+                onClick={handleBuildIndex}
+                disabled={!project || isLearningPlanProject || indexBuilding}
+              >
+                {indexBuilding || indexStatus?.status === "building" ? "索引中..." : "构建索引"}
+              </button>
             </div>
             <textarea
               className="generation-instructions"
@@ -1729,6 +1809,7 @@ export default function App() {
             </div>
             <div className={`task-status ${activeTask?.status === "failed" ? "failed" : ""}`}>
               {taskMessage || "待生成"}
+              {project && !isLearningPlanProject ? ` · 索引：${indexStatus?.status ?? "未构建"} (${indexStatus?.chunk_count ?? 0})` : ""}
             </div>
           </div>
           <div className="reader-workspace">{renderLayoutNode(layout)}</div>

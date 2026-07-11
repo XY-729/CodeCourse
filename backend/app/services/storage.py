@@ -44,6 +44,7 @@ class GenerationTask:
 class QARecord:
     id: int
     project_id: int
+    session_id: Optional[int]
     source_type: str
     source_path: Optional[str]
     display_title: Optional[str]
@@ -53,9 +54,36 @@ class QARecord:
     provider: str
     model: str
     output_path: Optional[str]
+    retrieval_trace: Optional[str]
     favorite: bool
     created_at: str
     updated_at: str
+
+
+@dataclass
+class QASession:
+    id: int
+    project_id: int
+    title: str
+    memory_summary: str
+    active_source_path: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class CodeChunk:
+    id: int
+    project_id: int
+    path: str
+    language: str
+    start_line: int
+    end_line: int
+    chunk_type: str
+    symbol_name: Optional[str]
+    content: str
+    content_hash: str
+    created_at: str
 
 
 @dataclass
@@ -158,6 +186,10 @@ def init_storage() -> None:
         qa_cols = [row[1] for row in conn.execute("PRAGMA table_info(qa_records)").fetchall()]
         if "display_title" not in qa_cols:
             conn.execute("ALTER TABLE qa_records ADD COLUMN display_title TEXT")
+        if "session_id" not in qa_cols:
+            conn.execute("ALTER TABLE qa_records ADD COLUMN session_id INTEGER")
+        if "retrieval_trace" not in qa_cols:
+            conn.execute("ALTER TABLE qa_records ADD COLUMN retrieval_trace TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS highlights (
@@ -169,6 +201,61 @@ def init_storage() -> None:
                 color TEXT NOT NULL,
                 note TEXT,
                 created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS qa_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                memory_summary TEXT NOT NULL DEFAULT '',
+                active_source_path TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS code_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                language TEXT NOT NULL,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                chunk_type TEXT NOT NULL,
+                symbol_name TEXT,
+                content TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS code_chunks_fts USING fts5(
+                chunk_id UNINDEXED,
+                project_id UNINDEXED,
+                path,
+                symbol_name,
+                content
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS project_indexes (
+                project_id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL,
+                chunk_count INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id)
             )
@@ -213,6 +300,7 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
     return QARecord(
         id=row["id"],
         project_id=row["project_id"],
+        session_id=row["session_id"] if "session_id" in row.keys() else None,
         source_type=row["source_type"],
         source_path=row["source_path"],
         display_title=row["display_title"],
@@ -222,9 +310,38 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
         provider=row["provider"],
         model=row["model"],
         output_path=row["output_path"],
+        retrieval_trace=row["retrieval_trace"] if "retrieval_trace" in row.keys() else None,
         favorite=bool(row["favorite"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _row_to_qa_session(row: sqlite3.Row) -> QASession:
+    return QASession(
+        id=row["id"],
+        project_id=row["project_id"],
+        title=row["title"],
+        memory_summary=row["memory_summary"],
+        active_source_path=row["active_source_path"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_code_chunk(row: sqlite3.Row) -> CodeChunk:
+    return CodeChunk(
+        id=row["id"],
+        project_id=row["project_id"],
+        path=row["path"],
+        language=row["language"],
+        start_line=row["start_line"],
+        end_line=row["end_line"],
+        chunk_type=row["chunk_type"],
+        symbol_name=row["symbol_name"],
+        content=row["content"],
+        content_hash=row["content_hash"],
+        created_at=row["created_at"],
     )
 
 
@@ -338,7 +455,11 @@ def delete_project(project_id: int) -> bool:
     with _connect() as conn:
         conn.execute("DELETE FROM generation_tasks WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM qa_records WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM qa_sessions WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM highlights WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM code_chunks WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM code_chunks_fts WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM project_indexes WHERE project_id = ?", (project_id,))
         cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         return cursor.rowcount > 0
@@ -464,19 +585,22 @@ def create_qa_record(
     model: str,
     output_path: Optional[Path] = None,
     display_title: Optional[str] = None,
+    session_id: Optional[int] = None,
+    retrieval_trace: Optional[str] = None,
 ) -> QARecord:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO qa_records (
-                project_id, source_type, source_path, display_title, selected_text, question,
-                answer_md, provider, model, output_path, favorite, created_at, updated_at
+                project_id, session_id, source_type, source_path, display_title, selected_text, question,
+                answer_md, provider, model, output_path, retrieval_trace, favorite, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
             """,
             (
                 project_id,
+                session_id,
                 source_type,
                 source_path,
                 display_title,
@@ -486,6 +610,7 @@ def create_qa_record(
                 provider,
                 model,
                 str(output_path) if output_path else None,
+                retrieval_trace,
                 now,
                 now,
             ),
@@ -558,6 +683,196 @@ def update_qa_record(
         )
         conn.commit()
     return get_qa_record(project_id, record_id)
+
+
+def get_or_create_qa_session(project_id: int, session_id: Optional[int] = None, title: str = "AI 助手") -> QASession:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        if session_id is not None:
+            row = conn.execute(
+                "SELECT * FROM qa_sessions WHERE project_id = ? AND id = ?",
+                (project_id, session_id),
+            ).fetchone()
+            if row:
+                return _row_to_qa_session(row)
+        cursor = conn.execute(
+            """
+            INSERT INTO qa_sessions (project_id, title, memory_summary, active_source_path, created_at, updated_at)
+            VALUES (?, ?, '', NULL, ?, ?)
+            """,
+            (project_id, title, now, now),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM qa_sessions WHERE id = ?", (int(cursor.lastrowid),)).fetchone()
+        if row is None:
+            raise RuntimeError("qa session was not persisted")
+        return _row_to_qa_session(row)
+
+
+def get_qa_session(project_id: int, session_id: int) -> Optional[QASession]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM qa_sessions WHERE project_id = ? AND id = ?",
+            (project_id, session_id),
+        ).fetchone()
+        return _row_to_qa_session(row) if row else None
+
+
+def update_qa_session_memory(project_id: int, session_id: int, memory_summary: str, active_source_path: Optional[str] = None) -> Optional[QASession]:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE qa_sessions
+            SET memory_summary = ?, active_source_path = COALESCE(?, active_source_path), updated_at = ?
+            WHERE project_id = ? AND id = ?
+            """,
+            (memory_summary[:8000], active_source_path, now, project_id, session_id),
+        )
+        conn.commit()
+    return get_qa_session(project_id, session_id)
+
+
+def list_recent_qa_records(project_id: int, session_id: int, limit: int = 6) -> list[QARecord]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM qa_records
+            WHERE project_id = ? AND session_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (project_id, session_id, limit),
+        ).fetchall()
+        return [_row_to_qa_record(row) for row in rows]
+
+
+def set_project_index_status(project_id: int, status: str, chunk_count: int = 0, error_message: Optional[str] = None) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO project_indexes (project_id, status, chunk_count, error_message, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(project_id) DO UPDATE SET
+                status = excluded.status,
+                chunk_count = excluded.chunk_count,
+                error_message = excluded.error_message,
+                updated_at = excluded.updated_at
+            """,
+            (project_id, status, chunk_count, error_message, now),
+        )
+        conn.commit()
+
+
+def get_project_index_status(project_id: int) -> dict[str, object]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM project_indexes WHERE project_id = ?", (project_id,)).fetchone()
+        if not row:
+            return {"project_id": project_id, "status": "not_built", "chunk_count": 0, "error_message": None, "updated_at": None}
+        return {
+            "project_id": project_id,
+            "status": row["status"],
+            "chunk_count": row["chunk_count"],
+            "error_message": row["error_message"],
+            "updated_at": row["updated_at"],
+        }
+
+
+def replace_code_chunks(project_id: int, chunks: list[dict[str, object]]) -> int:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute("DELETE FROM code_chunks WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM code_chunks_fts WHERE project_id = ?", (project_id,))
+        for chunk in chunks:
+            cursor = conn.execute(
+                """
+                INSERT INTO code_chunks (
+                    project_id, path, language, start_line, end_line, chunk_type,
+                    symbol_name, content, content_hash, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    project_id,
+                    str(chunk["path"]),
+                    str(chunk["language"]),
+                    int(chunk["start_line"]),
+                    int(chunk["end_line"]),
+                    str(chunk["chunk_type"]),
+                    chunk.get("symbol_name"),
+                    str(chunk["content"]),
+                    str(chunk["content_hash"]),
+                    now,
+                ),
+            )
+            chunk_id = int(cursor.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO code_chunks_fts (chunk_id, project_id, path, symbol_name, content)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (chunk_id, project_id, str(chunk["path"]), chunk.get("symbol_name"), str(chunk["content"])),
+            )
+        conn.commit()
+    set_project_index_status(project_id, "completed", len(chunks), None)
+    return len(chunks)
+
+
+def list_code_chunks(project_id: int, path: Optional[str] = None, limit: int = 20) -> list[CodeChunk]:
+    clauses = ["project_id = ?"]
+    params: list[object] = [project_id]
+    if path:
+        clauses.append("path = ?")
+        params.append(path)
+    sql = f"SELECT * FROM code_chunks WHERE {' AND '.join(clauses)} ORDER BY path ASC, start_line ASC LIMIT ?"
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_row_to_code_chunk(row) for row in rows]
+
+
+def search_code_chunks(project_id: int, query: str, source_path: Optional[str] = None, limit: int = 8) -> list[CodeChunk]:
+    terms = [item.strip() for item in re_split_search_terms(query) if item.strip()]
+    if not terms:
+        return list_code_chunks(project_id, source_path, limit)
+    fts_query = " OR ".join(terms[:12])
+    with _connect() as conn:
+        try:
+            rows = conn.execute(
+                """
+                SELECT c.*, bm25(code_chunks_fts) AS rank
+                FROM code_chunks_fts
+                JOIN code_chunks c ON c.id = code_chunks_fts.chunk_id
+                WHERE code_chunks_fts MATCH ? AND c.project_id = ?
+                ORDER BY
+                    CASE WHEN c.path = ? THEN 0 ELSE 1 END,
+                    rank,
+                    c.path,
+                    c.start_line
+                LIMIT ?
+                """,
+                (fts_query, project_id, source_path or "", limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            like = f"%{terms[0]}%"
+            rows = conn.execute(
+                """
+                SELECT * FROM code_chunks
+                WHERE project_id = ? AND (content LIKE ? OR path LIKE ? OR COALESCE(symbol_name, '') LIKE ?)
+                ORDER BY CASE WHEN path = ? THEN 0 ELSE 1 END, path, start_line
+                LIMIT ?
+                """,
+                (project_id, like, like, like, source_path or "", limit),
+            ).fetchall()
+        return [_row_to_code_chunk(row) for row in rows]
+
+
+def re_split_search_terms(query: str) -> list[str]:
+    import re
+
+    cleaned = re.sub(r"[^\w\u4e00-\u9fff./:-]+", " ", query)
+    return [item for item in cleaned.split() if len(item) >= 2][:20]
 
 
 def create_highlight(

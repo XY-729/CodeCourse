@@ -87,6 +87,7 @@ class QARecordEndpointTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
+        self.assertIsNotNone(data["session_id"])
         self.assertEqual(data["source_path"], "src/main.py")
         self.assertEqual(data["display_title"], "def main")
         self.assertNotIn("TITLE:", data["answer_md"])
@@ -193,6 +194,61 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(data["selected_text"], "")
         output_path = _generated_file(self.generated, self.project.id, data["output_path"])
         self.assertIn("无附带上下文", output_path.read_text(encoding="utf-8"))
+
+    def test_index_build_and_search_find_code_symbols(self):
+        built = self.client.post(f"/api/projects/{self.project.id}/index/build")
+        self.assertEqual(built.status_code, 200)
+
+        status = self.client.get(f"/api/projects/{self.project.id}/index/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertIn(status.json()["status"], {"building", "completed"})
+
+        found = self.client.post(
+            f"/api/projects/{self.project.id}/search",
+            json={"query": "FastAPI health", "source_path": "src/main.py", "limit": 5},
+        )
+        self.assertEqual(found.status_code, 200)
+        results = found.json()
+        self.assertTrue(any(item["path"] == "src/main.py" for item in results))
+
+    def test_same_session_injects_recent_memory(self):
+        prompts: list[str] = []
+
+        def fake_chat(_base_url, _api_key, _model, messages, timeout=90):
+            prompts.append(messages[1]["content"])
+            return "TITLE: main.py\n\n回答内容。"
+
+        with patch("app.services.qa_service.call_openai_compatible_chat", side_effect=fake_chat):
+            first = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "",
+                    "question": "这个文件是干什么的？",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            ).json()
+            second = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "session_id": first["session_id"],
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "",
+                    "question": "那它的入口在哪里？",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["session_id"], first["session_id"])
+        self.assertIn("这个文件是干什么的", prompts[-1])
+        self.assertIn("当前会话记忆", prompts[-1])
 
     def test_file_context_without_selection_uses_file_summary(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: main.py\n\n这个文件提供健康检查接口。") as mocked:

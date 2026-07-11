@@ -82,6 +82,13 @@ class GenerationTaskResponse(BaseModel):
     updated_at: str
 
 
+class SelectionRange(BaseModel):
+    start_line: int = Field(ge=1)
+    start_column: int = Field(default=1, ge=1)
+    end_line: int = Field(ge=1)
+    end_column: int = Field(default=1, ge=1)
+
+
 class QAAskRequest(BaseModel):
     source_type: Literal["file", "course", "selection"]
     source_path: Optional[str] = Field(default=None, max_length=1000)
@@ -90,11 +97,14 @@ class QAAskRequest(BaseModel):
     provider: str = Field(default="deepseek", max_length=80)
     base_url: str = Field(default="https://api.deepseek.com", max_length=500)
     model: str = Field(default="deepseek-v4-flash", max_length=160)
+    session_id: Optional[int] = None
+    selection_range: Optional[SelectionRange] = None
 
 
 class QARecordResponse(BaseModel):
     id: int
     project_id: int
+    session_id: Optional[int] = None
     source_type: str
     source_path: Optional[str] = None
     display_title: Optional[str] = None
@@ -104,6 +114,7 @@ class QARecordResponse(BaseModel):
     provider: str
     model: str
     output_path: Optional[str] = None
+    retrieval_trace: Optional[str] = None
     favorite: bool
     created_at: str
     updated_at: str
@@ -135,6 +146,41 @@ class HighlightResponse(BaseModel):
     selected_text: str
     color: str
     note: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class ProjectIndexStatusResponse(BaseModel):
+    project_id: int
+    status: str
+    chunk_count: int = 0
+    updated_at: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class ProjectSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    source_path: Optional[str] = Field(default=None, max_length=1000)
+    limit: int = Field(default=8, ge=1, le=20)
+
+
+class ProjectSearchResult(BaseModel):
+    path: str
+    language: str
+    start_line: int
+    end_line: int
+    chunk_type: str
+    symbol_name: Optional[str] = None
+    content: str
+    score: float = 0
+
+
+class QASessionResponse(BaseModel):
+    id: int
+    project_id: int
+    title: str
+    memory_summary: str
+    active_source_path: Optional[str] = None
     created_at: str
     updated_at: str
 

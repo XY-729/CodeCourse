@@ -15,11 +15,15 @@ from app.services.storage import (
     QARecord,
     create_qa_record,
     delete_qa_record,
+    get_or_create_qa_session,
     get_project,
     get_llm_settings,
     get_qa_record,
+    list_recent_qa_records,
     list_qa_records,
+    search_code_chunks,
     set_qa_favorite,
+    update_qa_session_memory,
     update_qa_record,
 )
 
@@ -214,9 +218,101 @@ def _course_context(project_id: int, source_path: Optional[str]) -> str:
 ```"""
 
 
+def _range_context(project_id: int, source_path: Optional[str], selection_range) -> str:
+    if not source_path or selection_range is None:
+        return ""
+    root = _project_root(project_id)
+    if root is None:
+        return ""
+    try:
+        content, language = read_text_file(root, source_path)
+    except HTTPException:
+        return ""
+    lines = content.splitlines()
+    start = max(1, min(selection_range.start_line, len(lines) or 1))
+    end = max(start, min(selection_range.end_line, len(lines) or start))
+    window_start = max(1, start - 40)
+    window_end = min(len(lines), end + 40)
+    numbered = "\n".join(f"{idx}: {lines[idx - 1]}" for idx in range(window_start, window_end + 1))
+    imports, symbols = extract_file_signals(content)
+    return f"""选区所在文件上下文：
+文件路径：{source_path}
+语言：{language}
+选区行号：{start}-{end}
+上下文窗口：{window_start}-{window_end}
+
+同文件 import/include：
+{chr(10).join(imports[:20]) or "无明显 import/include"}
+
+同文件符号线索：
+{", ".join(symbols[:50]) or "未提取到明显符号"}
+
+选区前后文：
+```text
+{numbered}
+```"""
+
+
+def _retrieval_query(payload: QAAskRequest, question: str, selected_text: str) -> str:
+    parts = [question, selected_text, payload.source_path or ""]
+    return "\n".join(part for part in parts if part.strip())
+
+
+def _retrieval_context(project_id: int, payload: QAAskRequest, question: str, selected_text: str) -> tuple[str, str]:
+    query = _retrieval_query(payload, question, selected_text)
+    if not query.strip():
+        return "", ""
+    chunks = search_code_chunks(project_id, query, source_path=payload.source_path, limit=8)
+    if not chunks:
+        return "", ""
+    blocks: list[str] = []
+    trace_lines: list[str] = []
+    for index, chunk in enumerate(chunks, start=1):
+        header = f"[{index}] {chunk.path}:{chunk.start_line}-{chunk.end_line}"
+        if chunk.symbol_name:
+            header += f" symbol={chunk.symbol_name}"
+        header += f" type={chunk.chunk_type}"
+        text = chunk.content[:2200]
+        blocks.append(f"{header}\n```text\n{text}\n```")
+        trace_lines.append(header)
+    return "RAG 检索参考片段：\n" + "\n\n".join(blocks), "\n".join(trace_lines)
+
+
+def _session_context(project_id: int, session_id: int) -> str:
+    session_records = list_recent_qa_records(project_id, session_id, limit=5)
+    session = get_or_create_qa_session(project_id, session_id)
+    parts = [f"当前会话记忆：\n{session.memory_summary or '暂无历史记忆。'}"]
+    if session.active_source_path:
+        parts.append(f"当前负责解释的文件/课件：{session.active_source_path}")
+    if session_records:
+        recent = []
+        for record in reversed(session_records):
+            recent.append(f"- Q: {record.question}\n  A: {_shorten(record.answer_md, 400)}")
+        parts.append("最近几轮问答：\n" + "\n".join(recent))
+    return "\n\n".join(parts)
+
+
+def _refresh_session_memory(project_id: int, session_id: int, active_source_path: Optional[str]) -> None:
+    project = get_project(project_id)
+    records = list_recent_qa_records(project_id, session_id, limit=6)
+    lines = [
+        f"项目：{project.name if project else project_id}",
+        f"项目类型：{project.project_type if project else 'unknown'}",
+    ]
+    if active_source_path:
+        lines.append(f"当前负责解释：{active_source_path}")
+    for record in reversed(records):
+        lines.append(f"用户问：{record.question}")
+        lines.append(f"回答要点：{_shorten(record.answer_md, 220)}")
+    update_qa_session_memory(project_id, session_id, "\n".join(lines), active_source_path)
+
+
 def _build_assistant_context(project_id: int, payload: QAAskRequest, selected_text: str) -> str:
+    question = payload.question.strip()
+    base_context = ""
+    range_context = _range_context(project_id, payload.source_path, payload.selection_range)
     if selected_text:
-        return f"""上下文类型：用户附带上下文
+        base_context = f"""上下文类型：用户附带上下文
 来源类型：{payload.source_type}
 来源路径：{payload.source_path or "(无路径)"}
 
@@ -224,11 +320,14 @@ def _build_assistant_context(project_id: int, payload: QAAskRequest, selected_te
 ```text
 {selected_text}
 ```"""
-    if payload.source_type == "file":
-        return _file_context(project_id, payload.source_path)
-    if payload.source_type == "course":
-        return _course_context(project_id, payload.source_path)
-    return _project_context(project_id)
+    elif payload.source_type == "file":
+        base_context = _file_context(project_id, payload.source_path)
+    elif payload.source_type == "course":
+        base_context = _course_context(project_id, payload.source_path)
+    else:
+        base_context = _project_context(project_id)
+    retrieval_context, _ = _retrieval_context(project_id, payload, question, selected_text)
+    return "\n\n".join(part for part in [base_context, range_context, retrieval_context] if part.strip())
 
 
 def _format_record_markdown(record: QARecord) -> str:
@@ -236,6 +335,14 @@ def _format_record_markdown(record: QARecord) -> str:
     favorite = "true" if record.favorite else "false"
     title = record.display_title or f"问答记录 #{record.id}"
     context_text = record.selected_text or "无附带上下文，回答基于当前文件、课件或项目摘要。"
+    reference_block = ""
+    if record.retrieval_trace:
+        reference_block = f"""## 参考片段
+
+```text
+{record.retrieval_trace}
+```
+"""
     return f"""# {title}
 
 ## 问题
@@ -251,6 +358,8 @@ def _format_record_markdown(record: QARecord) -> str:
 ## 回答
 
 {record.answer_md}
+
+{reference_block}
 
 ---
 
@@ -300,7 +409,12 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
     question = payload.question.strip()
     if not question:
         raise RuntimeError("问题为空，无法提问。")
+    session = get_or_create_qa_session(project_id, payload.session_id)
     context_text = _build_assistant_context(project_id, payload, selected_text)
+    retrieval_context, retrieval_trace = _retrieval_context(project_id, payload, question, selected_text)
+    session_context = _session_context(project_id, session.id)
+    if retrieval_context and retrieval_context not in context_text:
+        context_text = f"{context_text}\n\n{retrieval_context}"
 
     prompt = _render_prompt_template(
         load_prompt("prompt.qa.answer"),
@@ -310,6 +424,7 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
             "question": question,
             "selected_text": selected_text,
             "context_text": context_text,
+            "session_context": session_context,
         },
     )
     raw_answer = call_openai_compatible_chat(
@@ -336,6 +451,8 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
         provider=settings["provider"],
         model=settings["model"],
         display_title=title,
+        session_id=session.id,
+        retrieval_trace=retrieval_trace,
     )
 
     safe_name = _safe_filename(title, record.id)
@@ -344,7 +461,9 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
     if record_with_path is None:
         raise RuntimeError("QA record disappeared during path update")
 
-    return _write_record_markdown(record_with_path)
+    written = _write_record_markdown(record_with_path)
+    _refresh_session_memory(project_id, session.id, payload.source_path)
+    return written
 
 
 def search_records(project_id: int, query: str = "", favorite: Optional[bool] = None) -> list[QARecord]:
