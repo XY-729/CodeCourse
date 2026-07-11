@@ -150,6 +150,79 @@ class HighlightResponse(BaseModel):
     updated_at: str
 
 
+class KnowledgeNodeCreateRequest(BaseModel):
+    node_type: Literal["term", "qa", "course", "file", "manual"] = "manual"
+    title: str = Field(min_length=1, max_length=200)
+    ref_type: Optional[str] = Field(default=None, max_length=40)
+    ref_id: Optional[int] = None
+    ref_path: Optional[str] = Field(default=None, max_length=1000)
+    summary: Optional[str] = Field(default=None, max_length=4000)
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+class KnowledgeNodeUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    summary: Optional[str] = Field(default=None, max_length=4000)
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+class KnowledgeNodeResponse(BaseModel):
+    id: int
+    project_id: int
+    node_type: str
+    title: str
+    ref_type: Optional[str] = None
+    ref_id: Optional[int] = None
+    ref_path: Optional[str] = None
+    summary: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    created_at: str
+    updated_at: str
+
+
+class KnowledgeEdgeCreateRequest(BaseModel):
+    source_node_id: int
+    target_node_id: int
+    relation_type: Literal["explains", "parent_of", "related_to", "references"] = "related_to"
+    label: Optional[str] = Field(default=None, max_length=120)
+
+
+class KnowledgeEdgeUpdateRequest(BaseModel):
+    relation_type: Optional[Literal["explains", "parent_of", "related_to", "references"]] = None
+    label: Optional[str] = Field(default=None, max_length=120)
+
+
+class KnowledgeEdgeResponse(BaseModel):
+    id: int
+    project_id: int
+    source_node_id: int
+    target_node_id: int
+    relation_type: str
+    label: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class KnowledgeGraphResponse(BaseModel):
+    nodes: list[KnowledgeNodeResponse] = Field(default_factory=list)
+    edges: list[KnowledgeEdgeResponse] = Field(default_factory=list)
+
+
+class KnowledgeLinkResponse(BaseModel):
+    id: int
+    project_id: int
+    source_type: str
+    source_path: str
+    term_text: str
+    qa_record_id: int
+    node_id: int
+    created_at: str
+    updated_at: str
+
+
 class ProjectIndexStatusResponse(BaseModel):
     project_id: int
     status: str

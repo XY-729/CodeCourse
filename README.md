@@ -1,68 +1,136 @@
-# GitHub 项目学习器 MVP
+# GitHub 项目学习器 CodeCourse
 
-这是一个面向学习的 GitHub 项目阅读与课程生成工具。第一阶段只做项目导入、结构扫描、Markdown 课程生成、代码阅读和课程阅读，不运行代码，不调试，不做多人协作。
+CodeCourse 是一个面向学习的 GitHub 项目阅读与课程生成工具。它不是 IDE，不运行代码，不调试代码，而是帮助用户把一个项目拆成“结构说明、学习总纲、文件课件、上下文问答和学习记录”。
 
-## 当前规则
+用户可以导入 GitHub 仓库，也可以创建一个不绑定仓库的学习计划。系统会把项目文件、课程 Markdown、AI 问答历史、本地检索索引都保存在本机 workspace 中，适合用来阅读陌生项目、整理源码学习路线、针对某段代码或某份课件持续提问。
 
-- 导入仓库只执行 clone、扫描和创建项目记录，不调用模型 API。
-- 导入后默认生成的 `project_map.md` 和 `outline.md` 都是“待生成”占位内容。
-- 所有会调用模型 API 的动作都必须由用户点击按钮并确认。
-- 选中文件后，可以按需生成“粗略介绍”或“详细分析”。
-- 已生成内容可以通过填写新的补充要求后重新生成。
-- 模型返回空内容或格式异常时，不覆盖旧课件。
-- 新生成内容统一写入 `workspace/generated/<project_id>/`，避免污染被克隆仓库。
+## 核心能力
 
-## 功能
+### 项目导入与学习计划
 
-- 输入 GitHub 仓库 URL，后端使用 `git clone --depth 1` 克隆到 `workspace/repos/`。
-- 扫描目录树并忽略 `.git`、`node_modules`、`build`、`dist`、`target`、`__pycache__` 等目录。
-- 识别 README、package.json、pyproject.toml、Cargo.toml、go.mod、Dockerfile 等关键文件。
-- 前端提供三栏布局：文件树和课程目录、只读 Monaco 代码阅读器或 Markdown 阅读器、解释面板。
-- 左栏和右栏支持拖拽调整宽度。
-- 前端支持配置 DeepSeek / OpenAI Compatible 模型 API，并提供 DeepSeek API Key 跳转按钮。
-- 支持按学习范围生成 AI 总纲：全项目、指定目录、指定文件。
-- 支持用户补充生成要求，例如“面向 C++ 初学者”“重点讲判题核心”“输出自测题”。
-- 同一输入、同一要求、同一模式和同一 prompt 版本会复用已完成任务，避免重复消耗 token。
+- 支持输入 GitHub SSH / HTTPS 地址导入公开仓库或当前机器可访问的仓库。
+- 后端使用 `git clone --depth 1` 下载项目到 `workspace/repos/`。
+- 自动扫描项目目录树，并忽略 `.git`、`node_modules`、`build`、`dist`、`target`、`__pycache__`、`.venv`、`venv`、`.next`、`coverage` 等目录。
+- 自动识别关键文件，例如 `README.md`、`package.json`、`pyproject.toml`、`requirements.txt`、`CMakeLists.txt`、`Cargo.toml`、`go.mod`、`Dockerfile`、`docker-compose.yml`。
+- 支持创建“学习计划”项目，用于自定义知识点学习，不需要绑定 GitHub 仓库。
+- 仓库项目导入后会生成规则占位课程；学习计划项目不会创建默认课程，只有用户点击生成后才创建总纲。
 
-## GitHub URL 建议
+### 课程生成
 
-当前 VM 到 GitHub HTTPS `443` 可能不稳定，优先使用 SSH 地址：
+- 所有模型调用都需要用户主动点击并确认，不会在导入项目时自动调用 AI。
+- 支持三类生成范围：
+  - `全项目`：根据 README、目录树、关键文件和项目索引生成学习总纲。
+  - `指定文件`：从文件树选择文件后，只围绕这些文件生成内容。
+  - `学习计划`：根据用户输入的生成要求生成自定义学习总纲。
+- 支持按需生成文件课件：
+  - `粗略介绍`：低 token 消耗，适合快速理解文件职责和阅读顺序。
+  - `详细分析`：更深入解释关键结构、数据流、修改风险和练习任务。
+- 生成失败时不会覆盖旧内容。
+- 生成内容统一写入 `workspace/generated/<project_id>/`，避免污染被克隆项目。
 
-```text
-git@github.com:owner/repo.git
-```
+### 代码与课件阅读
 
-## 模型 API 设置
+- 前端是三栏布局：左侧项目与目录，中间工作区，右侧 AI 助手。
+- 代码阅读器使用 Monaco Editor，只读展示和语法高亮，不提供运行、调试或补全入口。
+- Markdown 阅读器支持标题、代码块、表格，后续可继续扩展 Mermaid。
+- 中间工作区采用类似 VS / VS Code 的递归拆分编辑组：
+  - 默认一个全屏工作区。
+  - 拖拽文件、课件或回答到工作区边缘，可自动拆出新的工作区。
+  - 支持横向、纵向、嵌套拆分。
+  - 分隔线可拖动调整大小，拖到很小或双击分隔线可折叠一侧工作区。
+  - 每个工作区有独立标签页，可同时阅读代码、课件和 AI 回答。
 
-点击页面右上角 `模型 API`：
+### AI 助手
 
-- Provider 默认 `DeepSeek`
-- Base URL 默认 `https://api.deepseek.com`
-- Model 默认 `deepseek-v4-flash`
-- 网页填写的 API Key 只保存在本机 SQLite：`workspace/app.db`
-- API 不会回显完整 Key，只返回是否已配置和掩码后的 Key
-- 可通过面板里的 `DeepSeek API Key` 按钮跳转到 `https://platform.deepseek.com/api_keys`
-- 连通性测试会先弹出确认，再调用模型 API
+右侧面板已经从“选区提问”升级为“AI 助手”。它不是只能回答选中文本，而是可以围绕项目、当前文件、当前课件、当前回答或用户选区进行上下文问答。
 
-读取优先级：
+- 没有选区时，可以直接问：
+  - “这个项目入口在哪？”
+  - “这个文件是干什么用的？”
+  - “我只想学判题核心，该先看哪些文件？”
+  - “这份课件应该怎么学？”
+- 有选区时，会把选区作为附带上下文发送给模型。
+- 选区文本可以在右侧编辑，也可以清空；清空后源页面蓝色临时选区会同步消失。
+- Markdown 课件和 AI 回答支持选中文本后打标记，例如荧光、高亮、加粗、下划线。
+- 问答记录会保存到历史中，支持搜索、收藏、重命名。
+- 双击历史记录可在中间工作区打开为 Markdown，可继续编辑并保存。
+- 每条回答会落盘为 Markdown，便于复习和归档。
+
+### 本地 RAG 与对话记忆
+
+CodeCourse 内置第一版本地 RAG 预处理，不依赖外部 embedding API。
+
+- 可以为项目构建本地索引。
+- 索引基于 SQLite FTS5 和规则符号提取。
+- 索引内容包括文件路径、语言、行号范围、函数名、类名、配置片段、import/include、文本块。
+- AI 助手提问时会根据问题、选区、当前文件和当前路径检索相关代码片段。
+- 回答会带上项目上下文、当前负责解释的文件或课件、最近对话摘要和检索片段。
+- 同一个对话会保留记忆，后续追问会知道当前项目、当前文件或当前课件的语境。
+- 后续可以加入 embedding、向量检索和 Tree-sitter，提高复杂代码关系分析能力。
+
+## 模型 API
+
+点击页面右上角 `模型 API` 配置模型。当前设计支持 DeepSeek / OpenAI Compatible 风格接口。
+
+默认配置示例：
+
+- Provider: `deepseek`
+- Base URL: `https://api.deepseek.com`
+- Model: `deepseek-v4-flash`
+
+API Key 读取优先级：
 
 1. 环境变量 `DEEPSEEK_API_KEY` 或 `GPL_LLM_API_KEY`
 2. 项目根目录 `.env`
-3. SQLite 设置
+3. 本地 SQLite 设置
 
-`.env` 与 `workspace/app.db` 已加入 `.gitignore`。
+安全约束：
 
-## 启动后端
+- API 不会回显完整 Key，只返回是否已配置和掩码后的 Key。
+- Key 不会写入日志。
+- `.env`、`workspace/app.db`、`workspace/repos/`、`workspace/generated/` 不应提交到 Git。
+- 所有调用模型 API 的动作都需要用户确认。
+- 项目源码、README 和课件内容会被当作不可信材料处理，提示词中会要求模型不要执行仓库文本里的指令，也不要泄露 Key、环境变量或本地敏感路径。
+
+## 数据存储
+
+```text
+github-project-learner/
+  backend/
+  frontend/
+  workspace/
+    app.db                  # SQLite 本地数据库
+    repos/                  # 克隆下来的仓库
+    generated/<project_id>/ # 课程、回答、生成内容
+```
+
+主要数据：
+
+- `workspace/repos/`：GitHub 仓库克隆结果。
+- `workspace/generated/<project_id>/`：项目地图、学习总纲、文件课件、AI 回答 Markdown。
+- `workspace/app.db`：项目记录、生成任务、模型设置、QA 历史、高亮标记、RAG 索引、对话记忆。
+
+## 技术栈
+
+- 前端：React、TypeScript、Vite、Monaco Editor、react-markdown、remark-gfm、lucide-react
+- 后端：Python、FastAPI、Pydantic、Uvicorn
+- 存储：SQLite、本地文件系统
+- 项目分析：文件扫描、规则识别、正则符号提取、SQLite FTS5
+- AI 接入：DeepSeek / OpenAI Compatible API
+
+## 本地运行
+
+### 后端
 
 ```bash
 cd /home/xiyuan729/github-project-learner/backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+PYTHONPATH=. uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## 启动前端
+### 前端
 
 ```bash
 cd /home/xiyuan729/github-project-learner/frontend
@@ -70,39 +138,88 @@ npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-浏览器访问 `http://<vm-ip>:5173`。如果通过 SSH 隧道访问 Windows 本机，转发 `5173` 和 `8000` 后打开 `http://localhost:5173`。
+### Windows 通过 SSH 隧道访问 VM
 
-## API 概览
+如果服务跑在 VM 上，可以在 Windows 本机执行：
 
-- `POST /api/projects/import`
-- `GET /api/projects`
-- `GET /api/projects/{project_id}`
-- `POST /api/projects/{project_id}/regenerate`
-- `DELETE /api/projects/{project_id}`
-- `GET /api/projects/{project_id}/tree`
-- `GET /api/projects/{project_id}/file?path=...`
-- `GET /api/projects/{project_id}/course`
-- `GET /api/projects/{project_id}/course/{filename}`
-- `POST /api/projects/{project_id}/outline/generate`
-- `POST /api/projects/{project_id}/lessons/file`
-- `GET /api/projects/{project_id}/tasks`
-- `GET /api/projects/{project_id}/tasks/{task_id}`
-- `POST /api/explain`
-- `GET /api/settings/llm`
-- `PUT /api/settings/llm`
-- `POST /api/settings/llm/test`
+```bash
+ssh -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 linux-vm
+```
 
-## MVP 边界
+然后打开：
 
-第一阶段不执行被导入项目代码，不提供运行、调试、补全或协作功能。项目分析使用规则扫描和正则信号提取，不生成完整 AST 或调用图。
+```text
+http://localhost:5173
+```
 
-## 检查
+## 常用 API
+
+### 项目
+
+- `POST /api/projects/import`：导入 GitHub 仓库。
+- `POST /api/projects/learning-plan`：创建学习计划项目。
+- `GET /api/projects`：项目列表。
+- `GET /api/projects/{project_id}`：项目详情。
+- `DELETE /api/projects/{project_id}`：删除项目记录和本地数据。
+- `GET /api/projects/{project_id}/tree`：读取项目文件树。
+- `GET /api/projects/{project_id}/file?path=...`：读取安全范围内的文本文件。
+
+### 课程
+
+- `GET /api/projects/{project_id}/course`：课程文件列表。
+- `GET /api/projects/{project_id}/course/{filename}`：读取课程 Markdown。
+- `POST /api/projects/{project_id}/outline/generate`：生成 AI 总纲。
+- `POST /api/projects/{project_id}/lessons/file`：生成指定文件课件。
+- `GET /api/projects/{project_id}/tasks`：生成任务列表。
+- `GET /api/projects/{project_id}/tasks/{task_id}`：任务详情。
+
+### AI 助手
+
+- `POST /api/projects/{project_id}/qa/ask`：发起上下文问答。
+- `GET /api/projects/{project_id}/qa`：问答历史。
+- `GET /api/projects/{project_id}/qa/{qa_id}`：问答详情。
+- `PUT /api/projects/{project_id}/qa/{qa_id}`：编辑问答标题或 Markdown。
+- `POST /api/projects/{project_id}/qa/{qa_id}/favorite`：收藏或取消收藏。
+
+### 高亮与索引
+
+- `POST /api/projects/{project_id}/highlights`：创建高亮标记。
+- `GET /api/projects/{project_id}/highlights`：读取高亮标记。
+- `DELETE /api/projects/{project_id}/highlights/{highlight_id}`：删除高亮标记。
+- `POST /api/projects/{project_id}/index/build`：构建本地 RAG 索引。
+- `GET /api/projects/{project_id}/index/status`：查看索引状态。
+- `POST /api/projects/{project_id}/search`：搜索本地索引。
+
+### 设置
+
+- `GET /api/settings/llm`：读取模型配置状态。
+- `PUT /api/settings/llm`：保存模型配置。
+- `POST /api/settings/llm/test`：测试模型连通性。
+- `GET /api/settings/prompts`：读取提示词配置。
+- `PUT /api/settings/prompts/{key}`：保存指定提示词。
+- `POST /api/settings/prompts/{key}/reset`：重置指定提示词。
+
+## 验证命令
+
+后端测试：
 
 ```bash
 cd /home/xiyuan729/github-project-learner/backend
-source .venv/bin/activate
-PYTHONPATH=. python3 -m unittest discover -s tests -v
+PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
+```
 
+前端构建：
+
+```bash
 cd /home/xiyuan729/github-project-learner/frontend
 npm run build
 ```
+
+## 当前边界
+
+- 不运行被导入项目的代码。
+- 不提供调试、断点、终端运行或自动补全。
+- 不做多人协作。
+- 不追求完整 AST 或完整调用图。
+- RAG 第一版使用 SQLite FTS5 和规则符号提取，不使用 embedding。
+- Tree-sitter、向量检索、桌面端封装可以作为后续阶段增强。

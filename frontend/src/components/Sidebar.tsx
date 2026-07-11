@@ -21,6 +21,7 @@ type Props = {
   onResizeCourseStart: (event: MouseEvent<HTMLDivElement>) => void;
   onSelectProject: (project: Project) => void;
   onCreateLearningPlan: () => void;
+  onOpenKnowledgeGraph: () => void;
   onRegenerateProject: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
   onSelectFile: (path: string) => void;
@@ -46,6 +47,7 @@ export default function Sidebar({
   onResizeCourseStart,
   onSelectProject,
   onCreateLearningPlan,
+  onOpenKnowledgeGraph,
   onRegenerateProject,
   onDeleteProject,
   onSelectFile,
@@ -66,6 +68,11 @@ export default function Sidebar({
             学习计划
           </button>
         </h2>
+        <div className="sidebar-actions">
+          <button className="secondary-button compact full" onClick={onOpenKnowledgeGraph} disabled={!currentProjectId}>
+            知识网络
+          </button>
+        </div>
         <div className="sidebar-scroll compact">
           {projects.length ? (
             projects.map((project) => (

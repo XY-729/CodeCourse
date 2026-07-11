@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from app.models.schemas import QAAskRequest
 from app.services.generation_service import extract_file_signals, project_course_dir
+from app.services.knowledge_service import attach_qa_record
 from app.services.prompt_store import load_prompt
 from app.services.llm_client import call_openai_compatible_chat
 from app.services.scanner import read_text_file
@@ -462,6 +463,7 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
         raise RuntimeError("QA record disappeared during path update")
 
     written = _write_record_markdown(record_with_path)
+    attach_qa_record(written)
     _refresh_session_memory(project_id, session.id, payload.source_path)
     return written
 

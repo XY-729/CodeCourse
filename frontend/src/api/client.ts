@@ -65,6 +65,49 @@ export type HighlightRecord = {
   updated_at: string;
 };
 
+export type KnowledgeNode = {
+  id: number;
+  project_id: number;
+  node_type: "term" | "qa" | "course" | "file" | "manual" | string;
+  title: string;
+  ref_type?: string | null;
+  ref_id?: number | null;
+  ref_path?: string | null;
+  summary?: string | null;
+  x?: number | null;
+  y?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeEdge = {
+  id: number;
+  project_id: number;
+  source_node_id: number;
+  target_node_id: number;
+  relation_type: "explains" | "parent_of" | "related_to" | "references" | string;
+  label?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeGraph = {
+  nodes: KnowledgeNode[];
+  edges: KnowledgeEdge[];
+};
+
+export type KnowledgeLink = {
+  id: number;
+  project_id: number;
+  source_type: string;
+  source_path: string;
+  term_text: string;
+  qa_record_id: number;
+  node_id: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type QAAskPayload = {
   source_type: SourceType;
   source_path?: string | null;
@@ -370,4 +413,83 @@ export function deleteHighlight(projectId: number, highlightId: number): Promise
   return request<{ deleted: boolean }>(`/projects/${projectId}/highlights/${highlightId}`, {
     method: "DELETE",
   });
+}
+
+export function getKnowledgeGraph(projectId: number): Promise<KnowledgeGraph> {
+  return request<KnowledgeGraph>(`/projects/${projectId}/knowledge/graph`);
+}
+
+export function createKnowledgeNode(
+  projectId: number,
+  payload: {
+    node_type?: "term" | "qa" | "course" | "file" | "manual";
+    title: string;
+    ref_type?: string | null;
+    ref_id?: number | null;
+    ref_path?: string | null;
+    summary?: string | null;
+    x?: number | null;
+    y?: number | null;
+  },
+): Promise<KnowledgeNode> {
+  return request<KnowledgeNode>(`/projects/${projectId}/knowledge/nodes`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateKnowledgeNode(
+  projectId: number,
+  nodeId: number,
+  payload: { title?: string; summary?: string | null; x?: number | null; y?: number | null },
+): Promise<KnowledgeNode> {
+  return request<KnowledgeNode>(`/projects/${projectId}/knowledge/nodes/${nodeId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteKnowledgeNode(projectId: number, nodeId: number): Promise<{ deleted: boolean; id: number }> {
+  return request<{ deleted: boolean; id: number }>(`/projects/${projectId}/knowledge/nodes/${nodeId}`, {
+    method: "DELETE",
+  });
+}
+
+export function createKnowledgeEdge(
+  projectId: number,
+  payload: { source_node_id: number; target_node_id: number; relation_type: "explains" | "parent_of" | "related_to" | "references"; label?: string | null },
+): Promise<KnowledgeEdge> {
+  return request<KnowledgeEdge>(`/projects/${projectId}/knowledge/edges`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateKnowledgeEdge(
+  projectId: number,
+  edgeId: number,
+  payload: { relation_type?: "explains" | "parent_of" | "related_to" | "references"; label?: string | null },
+): Promise<KnowledgeEdge> {
+  return request<KnowledgeEdge>(`/projects/${projectId}/knowledge/edges/${edgeId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteKnowledgeEdge(projectId: number, edgeId: number): Promise<{ deleted: boolean; id: number }> {
+  return request<{ deleted: boolean; id: number }>(`/projects/${projectId}/knowledge/edges/${edgeId}`, {
+    method: "DELETE",
+  });
+}
+
+export function listKnowledgeLinks(projectId: number, sourceType?: string, sourcePath?: string): Promise<KnowledgeLink[]> {
+  const params = new URLSearchParams();
+  if (sourceType) {
+    params.set("source_type", sourceType);
+  }
+  if (sourcePath) {
+    params.set("source_path", sourcePath);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<KnowledgeLink[]>(`/projects/${projectId}/knowledge/links${suffix}`);
 }

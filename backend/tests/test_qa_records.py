@@ -123,6 +123,54 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(data["display_title"], "FastAPI")
         self.assertNotEqual(data["display_title"], "这是什么说明")
 
+    def test_qa_creates_knowledge_graph_nodes_edges_and_links(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: FastAPI\n\nIt is the API framework."):
+            first = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "FastAPI",
+                    "question": "What is this?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+            second = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "FastAPI",
+                    "question": "How should I read it?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph")
+        self.assertEqual(graph.status_code, 200)
+        nodes = graph.json()["nodes"]
+        edges = graph.json()["edges"]
+        term_nodes = [node for node in nodes if node["node_type"] == "term" and node["title"] == "FastAPI"]
+        qa_nodes = [node for node in nodes if node["node_type"] == "qa"]
+        self.assertEqual(len(term_nodes), 1)
+        self.assertEqual(len(qa_nodes), 2)
+        self.assertTrue(any(edge["relation_type"] == "explains" for edge in edges))
+        self.assertTrue(any(edge["relation_type"] == "references" for edge in edges))
+
+        links = self.client.get(
+            f"/api/projects/{self.project.id}/knowledge/links?source_type=course&source_path=outline.md"
+        )
+        self.assertEqual(links.status_code, 200)
+        self.assertEqual(len(links.json()), 2)
+        self.assertTrue(all(link["term_text"] == "FastAPI" for link in links.json()))
+
     def test_search_favorite_and_edit_update_markdown(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="初始回答"):
             created = self.client.post(

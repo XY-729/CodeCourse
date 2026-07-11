@@ -99,6 +99,47 @@ class HighlightRecord:
     updated_at: str
 
 
+@dataclass
+class KnowledgeNode:
+    id: int
+    project_id: int
+    node_type: str
+    title: str
+    ref_type: Optional[str]
+    ref_id: Optional[int]
+    ref_path: Optional[str]
+    summary: Optional[str]
+    x: Optional[float]
+    y: Optional[float]
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class KnowledgeEdge:
+    id: int
+    project_id: int
+    source_node_id: int
+    target_node_id: int
+    relation_type: str
+    label: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class KnowledgeLink:
+    id: int
+    project_id: int
+    source_type: str
+    source_path: str
+    term_text: str
+    qa_record_id: int
+    node_id: int
+    created_at: str
+    updated_at: str
+
+
 def init_storage() -> None:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     REPOS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -261,6 +302,78 @@ def init_storage() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_nodes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                node_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                ref_type TEXT,
+                ref_id INTEGER,
+                ref_path TEXT,
+                summary TEXT,
+                x REAL,
+                y REAL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_knowledge_nodes_project_ref
+            ON knowledge_nodes(project_id, node_type, ref_type, ref_id, ref_path, title)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_edges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                source_node_id INTEGER NOT NULL,
+                target_node_id INTEGER NOT NULL,
+                relation_type TEXT NOT NULL,
+                label TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(source_node_id) REFERENCES knowledge_nodes(id),
+                FOREIGN KEY(target_node_id) REFERENCES knowledge_nodes(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_knowledge_edges_project_nodes
+            ON knowledge_edges(project_id, source_node_id, target_node_id, relation_type)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                source_type TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                term_text TEXT NOT NULL,
+                qa_record_id INTEGER NOT NULL,
+                node_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(qa_record_id) REFERENCES qa_records(id),
+                FOREIGN KEY(node_id) REFERENCES knowledge_nodes(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_knowledge_links_source
+            ON knowledge_links(project_id, source_type, source_path, term_text)
+            """
+        )
         conn.commit()
 
 
@@ -354,6 +467,50 @@ def _row_to_highlight(row: sqlite3.Row) -> HighlightRecord:
         selected_text=row["selected_text"],
         color=row["color"],
         note=row["note"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_knowledge_node(row: sqlite3.Row) -> KnowledgeNode:
+    return KnowledgeNode(
+        id=row["id"],
+        project_id=row["project_id"],
+        node_type=row["node_type"],
+        title=row["title"],
+        ref_type=row["ref_type"],
+        ref_id=row["ref_id"],
+        ref_path=row["ref_path"],
+        summary=row["summary"],
+        x=row["x"],
+        y=row["y"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_knowledge_edge(row: sqlite3.Row) -> KnowledgeEdge:
+    return KnowledgeEdge(
+        id=row["id"],
+        project_id=row["project_id"],
+        source_node_id=row["source_node_id"],
+        target_node_id=row["target_node_id"],
+        relation_type=row["relation_type"],
+        label=row["label"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_knowledge_link(row: sqlite3.Row) -> KnowledgeLink:
+    return KnowledgeLink(
+        id=row["id"],
+        project_id=row["project_id"],
+        source_type=row["source_type"],
+        source_path=row["source_path"],
+        term_text=row["term_text"],
+        qa_record_id=row["qa_record_id"],
+        node_id=row["node_id"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -453,6 +610,9 @@ def update_project_status(project_id: int, status: str) -> Optional[ProjectRecor
 
 def delete_project(project_id: int) -> bool:
     with _connect() as conn:
+        conn.execute("DELETE FROM knowledge_links WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM knowledge_edges WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM knowledge_nodes WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM generation_tasks WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM qa_records WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM qa_sessions WHERE project_id = ?", (project_id,))
@@ -955,12 +1115,320 @@ def set_qa_favorite(project_id: int, record_id: int, favorite: bool) -> Optional
 
 def delete_qa_record(project_id: int, record_id: int) -> bool:
     with _connect() as conn:
+        qa_nodes = [
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM knowledge_nodes WHERE project_id = ? AND ref_type = 'qa' AND ref_id = ?",
+                (project_id, record_id),
+            ).fetchall()
+        ]
+        conn.execute("DELETE FROM knowledge_links WHERE project_id = ? AND qa_record_id = ?", (project_id, record_id))
+        for node_id in qa_nodes:
+            conn.execute(
+                "DELETE FROM knowledge_edges WHERE project_id = ? AND (source_node_id = ? OR target_node_id = ?)",
+                (project_id, node_id, node_id),
+            )
+        conn.execute("DELETE FROM knowledge_nodes WHERE project_id = ? AND ref_type = 'qa' AND ref_id = ?", (project_id, record_id))
         cursor = conn.execute(
             "DELETE FROM qa_records WHERE project_id = ? AND id = ?",
             (project_id, record_id),
         )
         conn.commit()
         return cursor.rowcount > 0
+
+
+def create_knowledge_node(
+    project_id: int,
+    node_type: str,
+    title: str,
+    ref_type: Optional[str] = None,
+    ref_id: Optional[int] = None,
+    ref_path: Optional[str] = None,
+    summary: Optional[str] = None,
+    x: Optional[float] = None,
+    y: Optional[float] = None,
+) -> KnowledgeNode:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO knowledge_nodes (
+                project_id, node_type, title, ref_type, ref_id, ref_path, summary, x, y, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (project_id, node_type, title, ref_type, ref_id, ref_path, summary, x, y, now, now),
+        )
+        conn.commit()
+        node_id = int(cursor.lastrowid)
+    node = get_knowledge_node(project_id, node_id)
+    if node is None:
+        raise RuntimeError("knowledge node was not persisted")
+    return node
+
+
+def get_knowledge_node(project_id: int, node_id: int) -> Optional[KnowledgeNode]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM knowledge_nodes WHERE project_id = ? AND id = ?",
+            (project_id, node_id),
+        ).fetchone()
+        return _row_to_knowledge_node(row) if row else None
+
+
+def find_knowledge_node(
+    project_id: int,
+    node_type: str,
+    title: Optional[str] = None,
+    ref_type: Optional[str] = None,
+    ref_id: Optional[int] = None,
+    ref_path: Optional[str] = None,
+) -> Optional[KnowledgeNode]:
+    clauses = ["project_id = ?", "node_type = ?"]
+    params: list[object] = [project_id, node_type]
+    if title is not None:
+        clauses.append("title = ?")
+        params.append(title)
+    if ref_type is not None:
+        clauses.append("ref_type = ?")
+        params.append(ref_type)
+    if ref_id is not None:
+        clauses.append("ref_id = ?")
+        params.append(ref_id)
+    if ref_path is not None:
+        clauses.append("ref_path = ?")
+        params.append(ref_path)
+    sql = f"SELECT * FROM knowledge_nodes WHERE {' AND '.join(clauses)} ORDER BY id ASC LIMIT 1"
+    with _connect() as conn:
+        row = conn.execute(sql, params).fetchone()
+        return _row_to_knowledge_node(row) if row else None
+
+
+def list_knowledge_nodes(project_id: int) -> list[KnowledgeNode]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM knowledge_nodes WHERE project_id = ? ORDER BY node_type, title, id",
+            (project_id,),
+        ).fetchall()
+        return [_row_to_knowledge_node(row) for row in rows]
+
+
+def update_knowledge_node(
+    project_id: int,
+    node_id: int,
+    title: Optional[str] = None,
+    summary: Optional[str] = None,
+    x: Optional[float] = None,
+    y: Optional[float] = None,
+) -> Optional[KnowledgeNode]:
+    existing = get_knowledge_node(project_id, node_id)
+    if existing is None:
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE knowledge_nodes
+            SET title = ?, summary = ?, x = ?, y = ?, updated_at = ?
+            WHERE project_id = ? AND id = ?
+            """,
+            (
+                title if title is not None else existing.title,
+                summary if summary is not None else existing.summary,
+                x if x is not None else existing.x,
+                y if y is not None else existing.y,
+                now,
+                project_id,
+                node_id,
+            ),
+        )
+        conn.commit()
+    return get_knowledge_node(project_id, node_id)
+
+
+def delete_knowledge_node(project_id: int, node_id: int) -> bool:
+    with _connect() as conn:
+        conn.execute("DELETE FROM knowledge_links WHERE project_id = ? AND node_id = ?", (project_id, node_id))
+        conn.execute(
+            "DELETE FROM knowledge_edges WHERE project_id = ? AND (source_node_id = ? OR target_node_id = ?)",
+            (project_id, node_id, node_id),
+        )
+        cursor = conn.execute("DELETE FROM knowledge_nodes WHERE project_id = ? AND id = ?", (project_id, node_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def create_knowledge_edge(
+    project_id: int,
+    source_node_id: int,
+    target_node_id: int,
+    relation_type: str,
+    label: Optional[str] = None,
+) -> KnowledgeEdge:
+    existing = find_knowledge_edge(project_id, source_node_id, target_node_id, relation_type)
+    if existing:
+        return existing
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO knowledge_edges (
+                project_id, source_node_id, target_node_id, relation_type, label, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (project_id, source_node_id, target_node_id, relation_type, label, now, now),
+        )
+        conn.commit()
+        edge_id = int(cursor.lastrowid)
+    edge = get_knowledge_edge(project_id, edge_id)
+    if edge is None:
+        raise RuntimeError("knowledge edge was not persisted")
+    return edge
+
+
+def get_knowledge_edge(project_id: int, edge_id: int) -> Optional[KnowledgeEdge]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM knowledge_edges WHERE project_id = ? AND id = ?",
+            (project_id, edge_id),
+        ).fetchone()
+        return _row_to_knowledge_edge(row) if row else None
+
+
+def find_knowledge_edge(project_id: int, source_node_id: int, target_node_id: int, relation_type: str) -> Optional[KnowledgeEdge]:
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM knowledge_edges
+            WHERE project_id = ? AND source_node_id = ? AND target_node_id = ? AND relation_type = ?
+            LIMIT 1
+            """,
+            (project_id, source_node_id, target_node_id, relation_type),
+        ).fetchone()
+        return _row_to_knowledge_edge(row) if row else None
+
+
+def list_knowledge_edges(project_id: int) -> list[KnowledgeEdge]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM knowledge_edges WHERE project_id = ? ORDER BY id",
+            (project_id,),
+        ).fetchall()
+        return [_row_to_knowledge_edge(row) for row in rows]
+
+
+def update_knowledge_edge(
+    project_id: int,
+    edge_id: int,
+    relation_type: Optional[str] = None,
+    label: Optional[str] = None,
+) -> Optional[KnowledgeEdge]:
+    existing = get_knowledge_edge(project_id, edge_id)
+    if existing is None:
+        return None
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE knowledge_edges
+            SET relation_type = ?, label = ?, updated_at = ?
+            WHERE project_id = ? AND id = ?
+            """,
+            (
+                relation_type if relation_type is not None else existing.relation_type,
+                label if label is not None else existing.label,
+                now,
+                project_id,
+                edge_id,
+            ),
+        )
+        conn.commit()
+    return get_knowledge_edge(project_id, edge_id)
+
+
+def delete_knowledge_edge(project_id: int, edge_id: int) -> bool:
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM knowledge_edges WHERE project_id = ? AND id = ?", (project_id, edge_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def create_knowledge_link(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    term_text: str,
+    qa_record_id: int,
+    node_id: int,
+) -> KnowledgeLink:
+    existing = find_knowledge_link(project_id, source_type, source_path, term_text, qa_record_id)
+    if existing:
+        return existing
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO knowledge_links (
+                project_id, source_type, source_path, term_text, qa_record_id, node_id, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (project_id, source_type, source_path, term_text, qa_record_id, node_id, now, now),
+        )
+        conn.commit()
+        link_id = int(cursor.lastrowid)
+    link = get_knowledge_link(project_id, link_id)
+    if link is None:
+        raise RuntimeError("knowledge link was not persisted")
+    return link
+
+
+def get_knowledge_link(project_id: int, link_id: int) -> Optional[KnowledgeLink]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM knowledge_links WHERE project_id = ? AND id = ?",
+            (project_id, link_id),
+        ).fetchone()
+        return _row_to_knowledge_link(row) if row else None
+
+
+def find_knowledge_link(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    term_text: str,
+    qa_record_id: int,
+) -> Optional[KnowledgeLink]:
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM knowledge_links
+            WHERE project_id = ? AND source_type = ? AND source_path = ? AND term_text = ? AND qa_record_id = ?
+            LIMIT 1
+            """,
+            (project_id, source_type, source_path, term_text, qa_record_id),
+        ).fetchone()
+        return _row_to_knowledge_link(row) if row else None
+
+
+def list_knowledge_links(
+    project_id: int,
+    source_type: Optional[str] = None,
+    source_path: Optional[str] = None,
+) -> list[KnowledgeLink]:
+    clauses = ["project_id = ?"]
+    params: list[object] = [project_id]
+    if source_type:
+        clauses.append("source_type = ?")
+        params.append(source_type)
+    if source_path:
+        clauses.append("source_path = ?")
+        params.append(source_path)
+    sql = f"SELECT * FROM knowledge_links WHERE {' AND '.join(clauses)} ORDER BY LENGTH(term_text) DESC, id ASC"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_row_to_knowledge_link(row) for row in rows]
 
 
 def get_setting(key: str) -> Optional[str]:

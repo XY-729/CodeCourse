@@ -17,7 +17,8 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
-    "lucide-react": "^0.468.0"
+    "lucide-react": "^0.468.0",
+    "cytoscape": "^3.30.4"
   },
   "devDependencies": {
     "@types/react": "^19.0.2",

@@ -6,6 +6,7 @@ import {
   buildProjectIndex,
   createLearningPlan,
   createHighlight,
+  getQARecord,
   deleteProject,
   generateFileLesson,
   generateOutline,
@@ -20,6 +21,7 @@ import {
   importProject,
   listGenerationTasks,
   listHighlights,
+  listKnowledgeLinks,
   listProjects,
   listQARecords,
   regenerateProject,
@@ -36,6 +38,7 @@ import type {
   LLMSettings,
   Project,
   HighlightRecord,
+  KnowledgeLink,
   ProjectIndexStatus,
   QARecord,
   TreeNode,
@@ -43,6 +46,7 @@ import type {
 import CodeViewer, { ViewerRange, ViewerSelection } from "./components/CodeViewer";
 import ContextMenu from "./components/ContextMenu";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
+import KnowledgeGraphViewer from "./components/KnowledgeGraphViewer";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
@@ -51,7 +55,7 @@ import Sidebar from "./components/Sidebar";
 import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
 
 type ScopeType = LearningScope["type"];
-type OpenItemType = "file" | "course" | "qa";
+type OpenItemType = "file" | "course" | "qa" | "knowledge_graph";
 type SplitDirection = "row" | "column";
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
 
@@ -332,6 +336,8 @@ export default function App() {
   const [qaSessionId, setQASessionId] = useState<number | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
+  const [knowledgeLinks, setKnowledgeLinks] = useState<KnowledgeLink[]>([]);
+  const [knowledgeRefreshKey, setKnowledgeRefreshKey] = useState(0);
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
@@ -490,6 +496,18 @@ export default function App() {
     }
   }
 
+  async function refreshKnowledgeLinks(projectId = project?.id) {
+    if (!projectId) {
+      setKnowledgeLinks([]);
+      return;
+    }
+    try {
+      setKnowledgeLinks(await listKnowledgeLinks(projectId));
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "加载知识链接失败");
+    }
+  }
+
   async function refreshIndexStatus(projectId = project?.id) {
     if (!projectId) {
       setIndexStatus(null);
@@ -509,6 +527,9 @@ export default function App() {
     } else if (item.type === "course") {
       setSelectedCourse(item.path);
       setFileContent(null);
+    } else if (item.type === "knowledge_graph") {
+      setFileContent(null);
+      setSelectedCourse(null);
     } else {
       setFileContent(null);
       setSelectedCourse(null);
@@ -551,6 +572,14 @@ export default function App() {
         sourceType: "selection",
         sourcePath: activeItem.path,
         preview: `将使用回答内容摘要作为上下文：${activeItem.title}`,
+      };
+    }
+    if (activeItem.type === "knowledge_graph") {
+      return {
+        label: "项目",
+        sourceType: "selection",
+        sourcePath: project.name,
+        preview: "当前正在查看知识网络，将使用项目结构说明和学习总纲作为上下文。",
       };
     }
     return {
@@ -785,6 +814,46 @@ export default function App() {
     }
   }
 
+  function openKnowledgeGraphInActiveGroup() {
+    if (!project) {
+      return;
+    }
+    openItemInGroup(activeGroupId, {
+      id: "knowledge:graph",
+      type: "knowledge_graph",
+      path: "knowledge://graph",
+      title: "知识网络",
+      content: "",
+    });
+  }
+
+  async function openQAById(qaId: number) {
+    if (!project) {
+      return;
+    }
+    const record = qaHistory.find((entry) => entry.id === qaId) ?? await getQARecord(project.id, qaId);
+    await openQAInActiveGroup(record);
+  }
+
+  async function handleOpenKnowledgeLink(term: string, links: KnowledgeLink[]) {
+    if (!links.length) {
+      return;
+    }
+    let selected = links[0];
+    if (links.length > 1) {
+      const choice = window.prompt(
+        `${term} 有多个回答，请输入序号：\n${links.map((link, index) => `${index + 1}. 回答 #${link.qa_record_id}`).join("\n")}`,
+        "1",
+      );
+      const index = Number(choice) - 1;
+      if (!Number.isInteger(index) || index < 0 || index >= links.length) {
+        return;
+      }
+      selected = links[index];
+    }
+    await openQAById(selected.qa_record_id);
+  }
+
   async function openProject(nextProject: Project) {
     setError("");
     setLoading(true);
@@ -817,6 +886,7 @@ export default function App() {
       setQASessionId(null);
       setQAPanelError("");
       setHighlights([]);
+      setKnowledgeLinks([]);
       setAnnotations([]);
       setSelectionAnchor(null);
       setContextMenu(null);
@@ -824,6 +894,7 @@ export default function App() {
       setActiveGroupId(ROOT_GROUP_ID);
       await refreshQAHistory(freshProject.id);
       await refreshHighlights(freshProject.id);
+      await refreshKnowledgeLinks(freshProject.id);
       const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
       if (firstCourse) {
         const content = await getCourseContent(freshProject.id, firstCourse.filename);
@@ -1056,6 +1127,8 @@ export default function App() {
         setContextMenu(null);
         setQAHistory([]);
         setHighlights([]);
+        setKnowledgeLinks([]);
+        setKnowledgeRefreshKey((value) => value + 1);
         setTaskMessage("");
         if (remaining.length > 0) {
           await openProject(remaining[0]);
@@ -1119,6 +1192,8 @@ export default function App() {
       setQASessionId(record.session_id ?? qaSessionId);
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
       setQAQuestion("");
+      await refreshKnowledgeLinks(project.id);
+      setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
     } finally {
@@ -1325,6 +1400,8 @@ export default function App() {
         })),
       );
       await refreshCourses(project.id);
+      await refreshKnowledgeLinks(project.id);
+      setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "删除失败");
     }
@@ -1569,6 +1646,7 @@ export default function App() {
                 sourcePath={activeItem.path}
                 content={activeItem.content}
                 highlights={highlights.filter((highlight) => highlight.source_type === "course" && highlight.source_path === activeItem.path)}
+                knowledgeLinks={knowledgeLinks.filter((link) => link.source_type === "course" && link.source_path === activeItem.path)}
                 annotations={annotations.filter((ann) => ann.courseFile === activeItem.path)}
                 tempSelectedText={
                   selectionAnchor?.sourceType === "course" && selectionAnchor.sourcePath === activeItem.path
@@ -1577,6 +1655,7 @@ export default function App() {
                 }
                 onSelectionChange={handleSelection}
                 onContextMenu={(event, text, sourcePath) => handleMarkdownContextMenuOpen(event, sourcePath, text)}
+                onOpenKnowledgeLink={handleOpenKnowledgeLink}
                 headerActions={(activeItem.qaRecordId || activeItem.path.startsWith("selection_answers/") || activeItem.path.startsWith("qa/")) ? (
                   <button
                     className="secondary-button compact"
@@ -1653,6 +1732,21 @@ export default function App() {
             </div>
           ) : null}
           {!activeItem ? <div className="empty-state">点击或拖拽文件/课件到这里阅读</div> : null}
+          {activeItem?.type === "knowledge_graph" && project ? (
+            <KnowledgeGraphViewer
+              projectId={project.id}
+              refreshKey={knowledgeRefreshKey}
+              onOpenQA={(qaId) => {
+                openQAById(qaId).catch((caught) => setError(caught instanceof Error ? caught.message : "打开回答失败"));
+              }}
+              onOpenCourse={(path) => {
+                openCourseInActiveGroup(project.id, path).catch((caught) => setError(caught instanceof Error ? caught.message : "打开课件失败"));
+              }}
+              onOpenFile={(path) => {
+                openFileInActiveGroup(project.id, path).catch((caught) => setError(caught instanceof Error ? caught.message : "打开文件失败"));
+              }}
+            />
+          ) : null}
         </div>
         {previewZone ? <div className={`drop-preview ${previewZone}`} /> : null}
       </section>
@@ -1739,6 +1833,7 @@ export default function App() {
           onResizeCourseStart={(event) => setDragState({ kind: "sidebar-course", startY: event.clientY, startHeight: sidebarCourseHeight })}
           onSelectProject={openProject}
           onCreateLearningPlan={handleCreateLearningPlan}
+          onOpenKnowledgeGraph={openKnowledgeGraphInActiveGroup}
           onRegenerateProject={handleRegenerate}
           onDeleteProject={handleDelete}
           onSelectFile={handleSelectFile}
