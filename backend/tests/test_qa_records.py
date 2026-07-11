@@ -123,7 +123,7 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(data["display_title"], "FastAPI")
         self.assertNotEqual(data["display_title"], "这是什么说明")
 
-    def test_qa_creates_knowledge_graph_nodes_edges_and_links(self):
+    def test_qa_creates_direct_knowledge_edges_and_links(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: FastAPI\n\nIt is the API framework."):
             first = self.client.post(
                 f"/api/projects/{self.project.id}/qa/ask",
@@ -149,20 +149,55 @@ class QARecordEndpointTests(unittest.TestCase):
                     "model": "deepseek-test",
                 },
             )
+            child = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "selection",
+                    "source_path": first.json()["output_path"],
+                    "selected_text": "API framework",
+                    "question": "Explain this part",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 200)
+        self.assertEqual(child.status_code, 200)
 
         graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph")
         self.assertEqual(graph.status_code, 200)
         nodes = graph.json()["nodes"]
         edges = graph.json()["edges"]
-        term_nodes = [node for node in nodes if node["node_type"] == "term" and node["title"] == "FastAPI"]
+        term_nodes = [node for node in nodes if node["node_type"] == "term"]
         qa_nodes = [node for node in nodes if node["node_type"] == "qa"]
-        self.assertEqual(len(term_nodes), 1)
-        self.assertEqual(len(qa_nodes), 2)
-        self.assertTrue(any(edge["relation_type"] == "explains" for edge in edges))
-        self.assertTrue(any(edge["relation_type"] == "references" for edge in edges))
+        course_nodes = [node for node in nodes if node["node_type"] == "course" and node["ref_path"] == "outline.md"]
+        self.assertEqual(term_nodes, [])
+        self.assertEqual(len(qa_nodes), 3)
+        self.assertEqual(len(course_nodes), 1)
+
+        qa_by_ref = {node["ref_id"]: node for node in qa_nodes}
+        course_node = course_nodes[0]
+        self.assertTrue(any(
+            edge["source_node_id"] == course_node["id"]
+            and edge["target_node_id"] == qa_by_ref[first.json()["id"]]["id"]
+            and edge["relation_type"] == "explains"
+            for edge in edges
+        ))
+        self.assertTrue(any(
+            edge["source_node_id"] == course_node["id"]
+            and edge["target_node_id"] == qa_by_ref[second.json()["id"]]["id"]
+            and edge["relation_type"] == "explains"
+            for edge in edges
+        ))
+        self.assertTrue(any(
+            edge["source_node_id"] == qa_by_ref[first.json()["id"]]["id"]
+            and edge["target_node_id"] == qa_by_ref[child.json()["id"]]["id"]
+            and edge["relation_type"] == "explains"
+            for edge in edges
+        ))
+        self.assertFalse(any(edge["relation_type"] == "references" for edge in edges))
 
         links = self.client.get(
             f"/api/projects/{self.project.id}/knowledge/links?source_type=course&source_path=outline.md"
@@ -170,6 +205,37 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(links.status_code, 200)
         self.assertEqual(len(links.json()), 2)
         self.assertTrue(all(link["term_text"] == "FastAPI" for link in links.json()))
+        linked_node_ids = {link["node_id"] for link in links.json()}
+        self.assertEqual(linked_node_ids, {qa_by_ref[first.json()["id"]]["id"], qa_by_ref[second.json()["id"]]["id"]})
+
+    def test_knowledge_graph_collapses_old_term_bridge(self):
+        from app.services.storage import create_knowledge_edge, create_knowledge_link, create_knowledge_node
+
+        source = create_knowledge_node(self.project.id, "course", "outline.md", ref_type="course", ref_path="outline.md")
+        term = create_knowledge_node(self.project.id, "term", "FastAPI", ref_type="term")
+        qa = create_knowledge_node(self.project.id, "qa", "FastAPI", ref_type="qa", ref_id=999, ref_path="selection_answers/old.md")
+        create_knowledge_edge(self.project.id, source.id, term.id, "references", "引用")
+        create_knowledge_edge(self.project.id, term.id, qa.id, "explains", "解释")
+        create_knowledge_link(self.project.id, "course", "outline.md", "FastAPI", 999, term.id)
+
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph")
+        self.assertEqual(graph.status_code, 200)
+        nodes = graph.json()["nodes"]
+        edges = graph.json()["edges"]
+        self.assertFalse(any(node["node_type"] == "term" for node in nodes))
+        self.assertTrue(any(
+            edge["source_node_id"] == source.id
+            and edge["target_node_id"] == qa.id
+            and edge["relation_type"] == "explains"
+            for edge in edges
+        ))
+        self.assertFalse(any(edge["relation_type"] == "references" for edge in edges))
+
+        links = self.client.get(
+            f"/api/projects/{self.project.id}/knowledge/links?source_type=course&source_path=outline.md"
+        )
+        self.assertEqual(links.status_code, 200)
+        self.assertEqual(links.json()[0]["node_id"], qa.id)
 
     def test_search_favorite_and_edit_update_markdown(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="初始回答"):

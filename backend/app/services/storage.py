@@ -792,6 +792,20 @@ def get_qa_record(project_id: int, record_id: int) -> Optional[QARecord]:
         return _row_to_qa_record(row) if row else None
 
 
+def get_qa_record_by_output_path(project_id: int, output_path: str) -> Optional[QARecord]:
+    normalized = str(Path(output_path))
+    alternatives = {normalized, normalized.replace("\\", "/")}
+    with _connect() as conn:
+        for candidate in alternatives:
+            row = conn.execute(
+                "SELECT * FROM qa_records WHERE project_id = ? AND output_path = ? LIMIT 1",
+                (project_id, candidate),
+            ).fetchone()
+            if row:
+                return _row_to_qa_record(row)
+    return None
+
+
 def list_qa_records(project_id: int, query: str = "", favorite: Optional[bool] = None) -> list[QARecord]:
     clauses = ["project_id = ?"]
     params: list[object] = [project_id]
@@ -1429,6 +1443,102 @@ def list_knowledge_links(
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
         return [_row_to_knowledge_link(row) for row in rows]
+
+
+def update_knowledge_link_node(project_id: int, link_id: int, node_id: int) -> Optional[KnowledgeLink]:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            UPDATE knowledge_links
+            SET node_id = ?, updated_at = ?
+            WHERE project_id = ? AND id = ?
+            """,
+            (node_id, now, project_id, link_id),
+        )
+        conn.commit()
+    return get_knowledge_link(project_id, link_id)
+
+
+def collapse_knowledge_term_bridges(project_id: int) -> int:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                ref.id AS ref_edge_id,
+                exp.id AS exp_edge_id,
+                ref.source_node_id AS source_id,
+                ref.target_node_id AS term_id,
+                exp.target_node_id AS qa_id
+            FROM knowledge_edges ref
+            JOIN knowledge_nodes term ON term.project_id = ref.project_id AND term.id = ref.target_node_id
+            JOIN knowledge_edges exp ON exp.project_id = ref.project_id AND exp.source_node_id = term.id
+            JOIN knowledge_nodes qa ON qa.project_id = exp.project_id AND qa.id = exp.target_node_id
+            WHERE ref.project_id = ?
+              AND ref.relation_type = 'references'
+              AND exp.relation_type = 'explains'
+              AND term.node_type = 'term'
+              AND term.ref_type = 'term'
+              AND qa.node_type = 'qa'
+            """,
+            (project_id,),
+        ).fetchall()
+        if not rows:
+            return 0
+
+        changed = 0
+        now = datetime.now(timezone.utc).isoformat()
+        bridge_edge_ids: set[int] = set()
+        term_ids: set[int] = set()
+        for row in rows:
+            exists = conn.execute(
+                """
+                SELECT 1 FROM knowledge_edges
+                WHERE project_id = ? AND source_node_id = ? AND target_node_id = ? AND relation_type = 'explains'
+                LIMIT 1
+                """,
+                (project_id, row["source_id"], row["qa_id"]),
+            ).fetchone()
+            if not exists:
+                conn.execute(
+                    """
+                    INSERT INTO knowledge_edges (project_id, source_node_id, target_node_id, relation_type, label, created_at, updated_at)
+                    VALUES (?, ?, ?, 'explains', '解释', ?, ?)
+                    """,
+                    (project_id, row["source_id"], row["qa_id"], now, now),
+                )
+                changed += 1
+            conn.execute(
+                "UPDATE knowledge_links SET node_id = ?, updated_at = ? WHERE project_id = ? AND node_id = ?",
+                (row["qa_id"], now, project_id, row["term_id"]),
+            )
+            bridge_edge_ids.add(int(row["ref_edge_id"]))
+            bridge_edge_ids.add(int(row["exp_edge_id"]))
+            term_ids.add(int(row["term_id"]))
+
+        if bridge_edge_ids:
+            placeholders = ",".join("?" for _ in bridge_edge_ids)
+            conn.execute(
+                f"DELETE FROM knowledge_edges WHERE project_id = ? AND id IN ({placeholders})",
+                [project_id, *bridge_edge_ids],
+            )
+
+        for term_id in term_ids:
+            conn.execute(
+                """
+                DELETE FROM knowledge_nodes
+                WHERE project_id = ?
+                  AND id = ?
+                  AND node_type = 'term'
+                  AND ref_type = 'term'
+                  AND id NOT IN (SELECT source_node_id FROM knowledge_edges WHERE project_id = ?)
+                  AND id NOT IN (SELECT target_node_id FROM knowledge_edges WHERE project_id = ?)
+                  AND id NOT IN (SELECT node_id FROM knowledge_links WHERE project_id = ?)
+                """,
+                (project_id, term_id, project_id, project_id, project_id),
+            )
+        conn.commit()
+        return changed
 
 
 def get_setting(key: str) -> Optional[str]:

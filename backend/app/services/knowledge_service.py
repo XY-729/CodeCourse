@@ -7,6 +7,7 @@ from app.services.storage import (
     KnowledgeLink,
     KnowledgeNode,
     QARecord,
+    collapse_knowledge_term_bridges,
     create_knowledge_edge,
     create_knowledge_link,
     create_knowledge_node,
@@ -15,6 +16,7 @@ from app.services.storage import (
     find_knowledge_node,
     get_knowledge_edge,
     get_knowledge_node,
+    get_qa_record_by_output_path,
     list_knowledge_edges,
     list_knowledge_links,
     list_knowledge_nodes,
@@ -40,6 +42,10 @@ def _source_node_title(source_type: str, source_path: Optional[str]) -> str:
     if not source_path:
         return "项目上下文"
     return source_path.split("/")[-1] or source_path
+
+
+def _qa_node_title(record: QARecord) -> str:
+    return record.display_title or f"回答 #{record.id}"
 
 
 def get_or_create_node(
@@ -87,6 +93,7 @@ def create_manual_node(
 
 
 def list_graph(project_id: int) -> tuple[list[KnowledgeNode], list[KnowledgeEdge]]:
+    collapse_knowledge_term_bridges(project_id)
     return list_knowledge_nodes(project_id), list_knowledge_edges(project_id)
 
 
@@ -118,32 +125,26 @@ def links_for_source(project_id: int, source_type: Optional[str], source_path: O
     return list_knowledge_links(project_id, source_type=source_type, source_path=source_path)
 
 
-def attach_qa_record(record: QARecord) -> None:
-    term_text = _clean_term(record.selected_text)
-    if not term_text:
-        return
-
-    term_node = get_or_create_node(
-        record.project_id,
-        node_type="term",
-        title=term_text,
-        ref_type="term",
-        ref_path=None,
-        summary=f"来自 {record.source_path or '项目上下文'} 的提问名词或片段",
-    )
-    qa_node = get_or_create_node(
+def _qa_node(record: QARecord) -> KnowledgeNode:
+    return get_or_create_node(
         record.project_id,
         node_type="qa",
-        title=record.display_title or f"回答 #{record.id}",
+        title=_qa_node_title(record),
         ref_type="qa",
         ref_id=record.id,
         ref_path=record.output_path,
         summary=record.answer_md[:500],
     )
-    create_knowledge_edge(record.project_id, term_node.id, qa_node.id, "explains", "解释")
+
+
+def _resolve_source_node(record: QARecord) -> KnowledgeNode:
+    if record.source_path:
+        source_qa = get_qa_record_by_output_path(record.project_id, record.source_path)
+        if source_qa and source_qa.id != record.id:
+            return _qa_node(source_qa)
 
     if record.source_path and record.source_type in SOURCE_TYPE_TO_NODE_TYPE:
-        source_node = get_or_create_node(
+        return get_or_create_node(
             record.project_id,
             node_type=SOURCE_TYPE_TO_NODE_TYPE[record.source_type],
             title=_source_node_title(record.source_type, record.source_path),
@@ -151,13 +152,31 @@ def attach_qa_record(record: QARecord) -> None:
             ref_path=record.source_path,
             summary=record.source_path,
         )
-        create_knowledge_edge(record.project_id, source_node.id, term_node.id, "references", "引用")
-        if record.source_type == "course":
-            create_knowledge_link(
-                project_id=record.project_id,
-                source_type="course",
-                source_path=record.source_path,
-                term_text=term_text,
-                qa_record_id=record.id,
-                node_id=term_node.id,
-            )
+
+    return get_or_create_node(
+        record.project_id,
+        node_type="manual",
+        title="项目上下文",
+        ref_type="project_context",
+        ref_path=None,
+        summary="没有明确来源文件或课件的 AI 助手回答",
+    )
+
+
+def attach_qa_record(record: QARecord) -> None:
+    collapse_knowledge_term_bridges(record.project_id)
+    qa_node = _qa_node(record)
+    source_node = _resolve_source_node(record)
+    if source_node.id != qa_node.id:
+        create_knowledge_edge(record.project_id, source_node.id, qa_node.id, "explains", "解释")
+
+    term_text = _clean_term(record.selected_text)
+    if term_text and record.source_type == "course" and record.source_path:
+        create_knowledge_link(
+            project_id=record.project_id,
+            source_type="course",
+            source_path=record.source_path,
+            term_text=term_text,
+            qa_record_id=record.id,
+            node_id=qa_node.id,
+        )

@@ -511,13 +511,31 @@ export default function App() {
   async function refreshIndexStatus(projectId = project?.id) {
     if (!projectId) {
       setIndexStatus(null);
+      setIndexBuilding(false);
       return;
     }
     try {
-      setIndexStatus(await getProjectIndexStatus(projectId));
+      const status = await getProjectIndexStatus(projectId);
+      setIndexStatus(status);
+      setIndexBuilding(status.status === "building");
     } catch {
       setIndexStatus(null);
+      setIndexBuilding(false);
     }
+  }
+
+  async function trackIndexBuild(projectId: number) {
+    setIndexBuilding(true);
+    for (let attempt = 0; attempt < 180; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1200));
+      const status = await getProjectIndexStatus(projectId);
+      setIndexStatus(status);
+      if (status.status !== "building") {
+        setIndexBuilding(false);
+        return;
+      }
+    }
+    setIndexBuilding(false);
   }
 
   function applyActiveItem(item: OpenItem) {
@@ -1077,10 +1095,9 @@ export default function App() {
     try {
       const status = await buildProjectIndex(project.id);
       setIndexStatus(status);
-      window.setTimeout(() => refreshIndexStatus(project.id), 800);
+      await trackIndexBuild(project.id);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "构建索引失败");
-    } finally {
       setIndexBuilding(false);
     }
   }
