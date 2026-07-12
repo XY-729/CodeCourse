@@ -26,9 +26,21 @@ const MIN_OVERVIEW_SIZE = 24;
 const MAX_OVERVIEW_SIZE = 48;
 const MIN_LABEL_SIZE = 10;
 const MAX_LABEL_SIZE = 13;
-const FOCUS_ROOT_SIZE = 56;
-const FOCUS_PARENT_SIZE = 38;
-const FOCUS_CHILD_SIZE = 24;
+function focusSizes(container: HTMLElement | null) {
+  const w = container?.clientWidth ?? 800;
+  const h = container?.clientHeight ?? 600;
+  const dim = Math.min(w, h);
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  return {
+    root:      Math.round(clamp(dim * 0.09, 40, 72)),
+    parent:    Math.round(clamp(dim * 0.06, 28, 50)),
+    child:     Math.round(clamp(dim * 0.04, 18, 30)),
+    rootFont:  Math.round(clamp(dim * 0.025, 14, 20)),
+    parentFont: Math.round(clamp(dim * 0.018, 12, 16)),
+    childFont:  Math.round(clamp(dim * 0.013, 10, 13)),
+  };
+}
+
 const LAYOUT_PADDING = 110;
 const FOCUS_PADDING = 190;
 const ANIMATION_MS = 360;
@@ -270,16 +282,20 @@ function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focused
         parentIds.add(edge.source_node_id);
       }
     }
+    const sizes = focusSizes(cy.container());
     cy.nodes().forEach((node) => {
       const nodeId = Number(node.data("nodeId"));
       if (!nodeIds.has(nodeId)) {
         node.addClass("graph-hidden");
       } else if (nodeId === focusedNodeId) {
         node.addClass("focus-root");
+        node.style({ width: sizes.root, height: sizes.root, "font-size": sizes.rootFont });
       } else if (parentIds.has(nodeId)) {
         node.addClass("focus-parent");
+        node.style({ width: sizes.parent, height: sizes.parent, "font-size": sizes.parentFont });
       } else {
         node.addClass("focus-child");
+        node.style({ width: sizes.child, height: sizes.child, "font-size": sizes.childFont });
       }
     });
     cy.edges().forEach((edge) => {
@@ -414,9 +430,6 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
         {
           selector: "node.focus-root",
           style: {
-            width: FOCUS_ROOT_SIZE,
-            height: FOCUS_ROOT_SIZE,
-            "font-size": 16,
             "text-max-width": "140px",
             "border-color": "#174c43",
             "border-width": 5,
@@ -426,9 +439,6 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
         {
           selector: "node.focus-parent",
           style: {
-            width: FOCUS_PARENT_SIZE,
-            height: FOCUS_PARENT_SIZE,
-            "font-size": 13,
             "text-max-width": "120px",
             "text-margin-y": 12,
             "border-color": "#75998e",
@@ -439,9 +449,6 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
         {
           selector: "node.focus-child",
           style: {
-            width: FOCUS_CHILD_SIZE,
-            height: FOCUS_CHILD_SIZE,
-            "font-size": 11,
             "text-max-width": "102px",
             "text-margin-y": 10,
             opacity: 0.88,
