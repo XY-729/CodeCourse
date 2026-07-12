@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -25,8 +24,6 @@ def _require_project(project_id: int) -> None:
     project = get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    if not Path(project.local_path).exists():
-        raise HTTPException(status_code=404, detail="Project directory not found")
 
 
 def _node_response(node: KnowledgeNode) -> KnowledgeNodeResponse:
