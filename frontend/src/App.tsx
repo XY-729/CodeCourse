@@ -4,7 +4,7 @@ import { Save, Star, X } from "lucide-react";
 import {
   askQuestion,
   buildProjectIndex,
-  createCourseFile,
+  createEmptyCourseFile,
   createLearningPlan,
   createHighlight,
   getQARecord,
@@ -1122,7 +1122,7 @@ export default function App() {
     }
     setError("");
     try {
-      const created = await createCourseFile(project.id, title.trim());
+      const created = await createEmptyCourseFile(project.id, title.trim());
       await refreshCourses(project.id);
       await openCourseInActiveGroup(project.id, created.filename);
     } catch (caught) {

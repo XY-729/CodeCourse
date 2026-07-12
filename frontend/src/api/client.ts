@@ -1,6 +1,6 @@
 declare global {
   interface Window {
-    codecourseDesktop?: { apiBase?: string };
+    codecourseDesktop?: { apiBase?: string; openExternal?: (url: string) => void };
     __CODECOURSE_API_BASE__?: string;
   }
 }
