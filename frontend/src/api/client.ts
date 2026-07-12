@@ -8,7 +8,7 @@ declare global {
 const configuredApiBase =
   (typeof window !== "undefined" && (window.codecourseDesktop?.apiBase || window.__CODECOURSE_API_BASE__)) ||
   import.meta.env.VITE_API_BASE_URL ||
-  "http://localhost:8000/api";
+  "/api";
 const API_BASE = configuredApiBase.replace(/\/$/, "");
 
 export type Project = {
