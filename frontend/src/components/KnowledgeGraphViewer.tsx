@@ -22,10 +22,10 @@ type Props = {
 type RelationType = "explains" | "parent_of" | "related_to" | "references";
 type ViewMode = "overview" | "focus";
 
-const MIN_OVERVIEW_SIZE = 24;
-const MAX_OVERVIEW_SIZE = 48;
-const MIN_LABEL_SIZE = 10;
-const MAX_LABEL_SIZE = 13;
+const MIN_OVERVIEW_SIZE = 32;
+const MAX_OVERVIEW_SIZE = 56;
+const MIN_LABEL_SIZE = 11;
+const MAX_LABEL_SIZE = 14;
 function focusSizes(container: HTMLElement | null) {
   const w = container?.clientWidth ?? 800;
   const h = container?.clientHeight ?? 600;
@@ -540,6 +540,8 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
       ],
       layout: { name: "preset", fit: false },
       wheelSensitivity: 0.2,
+      minZoom: 0.15,
+      maxZoom: 3,
     });
     cyRef.current = cy;
 
