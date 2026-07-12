@@ -1479,6 +1479,7 @@ button:disabled,
 }
 
 .knowledge-viewer {
+  flex: 1;
   height: 100%;
   min-height: 0;
   display: flex;
