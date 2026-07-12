@@ -16,6 +16,7 @@ from app.services.course_generator import (
 from app.services.llm_client import call_openai_compatible_chat
 from app.services.scanner import list_key_files, read_text_file, safe_join, scan_tree
 from app.services.storage import (
+    create_knowledge_node,
     GenerationTask,
     cleanup_course_artifacts,
     create_generation_task,
@@ -68,6 +69,25 @@ def delete_project_course_file(project_id: int, filename: str) -> None:
             parent.rmdir()
     except OSError:
         pass
+def create_empty_course_document(project_id: int, title: str) -> CourseFile:
+    """Create an empty markdown course document and a corresponding knowledge node."""
+    safe = re.sub(r'[\\/]', '_', title.strip())
+    filename = f'{safe}.md'
+    course_dir = project_course_dir(project_id)
+    course_dir.mkdir(parents=True, exist_ok=True)
+    filepath = course_dir / filename
+    if filepath.exists():
+        raise FileExistsError(f'Document already exists: {filename}')
+    _atomic_write(filepath, f'# {title.strip()}\n')
+    create_knowledge_node(
+        project_id=project_id,
+        node_type='course',
+        title=title.strip(),
+        ref_type='course',
+        ref_path=filename,
+    )
+    return CourseFile(filename=filename, title=title.strip(), group='')
+
 
 
 def generate_rule_course(project_id: int, repo_root: Path, scope: str = "full_project") -> list[CourseFile]:

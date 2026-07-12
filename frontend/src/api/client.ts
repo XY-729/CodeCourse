@@ -290,6 +290,13 @@ export function getCourseFiles(projectId: number): Promise<CourseFile[]> {
   return request<CourseFile[]>(`/projects/${projectId}/course`);
 }
 
+export function createEmptyCourseFile(projectId: number, title: string): Promise<CourseFile> {
+  return request<CourseFile>(`/projects/${projectId}/course/empty`, {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
 export function getCourseContent(projectId: number, filename: string): Promise<{ filename: string; content: string }> {
   return request<{ filename: string; content: string }>(`/projects/${projectId}/course/${filename.split("/").map(encodeURIComponent).join("/")}`);
 }

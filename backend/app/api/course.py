@@ -3,9 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from app.models.schemas import CourseContentResponse
-from app.services.generation_service import delete_project_course_file, read_project_course_file
+from app.models.schemas import CourseContentResponse, CourseFile
+from app.services.generation_service import (
+    create_empty_course_document,
+    delete_project_course_file,
+    read_project_course_file,
+)
 from app.services.storage import get_project
 
 router = APIRouter(prefix="/api/projects", tags=["course"])
@@ -16,6 +21,19 @@ def _project_root(project_id: int) -> Path:
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return Path(project.local_path).resolve()
+
+
+class CreateEmptyCourseRequest(BaseModel):
+    title: str
+
+
+@router.post("/{project_id}/course/empty", response_model=CourseFile)
+def create_empty_course(project_id: int, payload: CreateEmptyCourseRequest):
+    _project_root(project_id)
+    try:
+        return create_empty_course_document(project_id, payload.title)
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @router.get("/{project_id}/course/{filename:path}", response_model=CourseContentResponse)

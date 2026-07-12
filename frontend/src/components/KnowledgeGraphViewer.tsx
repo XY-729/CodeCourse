@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import cytoscape from "cytoscape";
 import type { Core, ElementDefinition, NodeSingular } from "cytoscape";
 import {
+  createEmptyCourseFile,
   createKnowledgeEdge,
   createKnowledgeNode,
   deleteKnowledgeEdge,
@@ -665,6 +666,18 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
     await reload();
   }
 
+  async function handleCreateDocument() {
+    const title = window.prompt("文档名称", "");
+    if (!title?.trim()) return;
+    try {
+      await createEmptyCourseFile(projectId, title.trim());
+      await reload();
+      setMessage(`已创建文档：${title.trim()}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "创建文档失败");
+    }
+  }
+
   async function handleRenameNode() {
     if (!selectedNode) return;
     const title = window.prompt("节点名称", selectedNode.title);
@@ -709,6 +722,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
           <button className={`secondary-button compact ${viewMode === "overview" ? "active" : ""}`} onClick={handleOverview}>全览</button>
           <button className="secondary-button compact" onClick={() => reload()}>刷新</button>
           <button className="secondary-button compact" onClick={handleCreateNode}>新建节点</button>
+          <button className="secondary-button compact" onClick={handleCreateDocument}>新建文档</button>
           <select className="compact-select" value={relationType} onChange={(event) => setRelationType(event.target.value as RelationType)}>
             <option value="explains">解释</option>
             <option value="parent_of">父子</option>
