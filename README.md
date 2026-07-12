@@ -152,6 +152,72 @@ ssh -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 linux-vm
 http://localhost:5173
 ```
 
+## 桌面软件运行
+
+当前项目已加入 Electron 桌面壳，可以把 Web 前端和本地 FastAPI 后端一起作为桌面软件启动。第一版仍依赖本机 Python 环境，后续可以再用 PyInstaller 把后端打成独立可执行文件。
+
+### 桌面开发模式
+
+先确保后端依赖和前端依赖已经安装：
+
+```bash
+cd /home/xiyuan729/github-project-learner/backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cd /home/xiyuan729/github-project-learner/frontend
+npm install
+
+cd /home/xiyuan729/github-project-learner
+npm install
+```
+
+如果 VM 访问 GitHub 下载 Electron 二进制失败，可以临时使用镜像安装，不修改全局配置：
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install
+```
+
+启动桌面开发版：
+
+```bash
+npm run desktop:dev
+```
+
+这个命令会启动 Vite 前端开发服务，然后 Electron 主进程会自动寻找空闲端口并启动 FastAPI 后端。
+
+### 桌面打包
+
+生成未压缩的本机桌面目录：
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run desktop:pack
+```
+
+生成安装包或 AppImage：
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run desktop:build
+```
+
+Linux 未压缩产物默认在：
+
+```text
+dist-desktop/linux-unpacked/
+```
+
+### 桌面数据目录
+
+桌面版不会把用户数据写进安装目录，而是写入系统用户数据目录：
+
+- Windows：`%APPDATA%/CodeCourse`
+- Linux：`~/.config/CodeCourse`
+
+其中仍保持原有结构：`app.db`、`repos/`、`generated/`、后端日志等都在这个目录下。
+
+Web 开发模式仍然保留，可以继续使用后端 `8000` 和前端 `5173` 的启动方式。
+
 ## 常用 API
 
 ### 项目

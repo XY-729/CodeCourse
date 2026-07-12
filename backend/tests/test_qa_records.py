@@ -237,6 +237,59 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(links.status_code, 200)
         self.assertEqual(links.json()[0]["node_id"], qa.id)
 
+    def test_delete_qa_knowledge_node_removes_record_and_markdown(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: FastAPI\n\nIt is the API framework."):
+            created = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "FastAPI",
+                    "question": "What is this?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            ).json()
+
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        qa_node = next(node for node in graph["nodes"] if node["ref_type"] == "qa" and node["ref_id"] == created["id"])
+        output_path = _generated_file(self.generated, self.project.id, created["output_path"])
+        self.assertTrue(output_path.exists())
+
+        deleted = self.client.delete(f"/api/projects/{self.project.id}/knowledge/nodes/{qa_node['id']}")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse(output_path.exists())
+        self.assertEqual(self.client.get(f"/api/projects/{self.project.id}/qa/{created['id']}").status_code, 404)
+
+        graph_after = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        self.assertFalse(any(node["ref_type"] == "qa" and node["ref_id"] == created["id"] for node in graph_after["nodes"]))
+
+    def test_delete_course_file_removes_course_graph_artifacts(self):
+        from app.services.storage import create_highlight, create_knowledge_link, create_knowledge_node
+
+        course_dir = self.generated / str(self.project.id)
+        course_dir.mkdir(parents=True)
+        course_file = course_dir / "outline.md"
+        course_file.write_text("# Outline\nFastAPI\n", encoding="utf-8")
+        course_node = create_knowledge_node(self.project.id, "course", "outline.md", ref_type="course", ref_path="outline.md")
+        qa_node = create_knowledge_node(self.project.id, "qa", "FastAPI", ref_type="qa", ref_id=999, ref_path="selection_answers/fake.md")
+        create_knowledge_link(self.project.id, "course", "outline.md", "FastAPI", 999, qa_node.id)
+        create_highlight(self.project.id, "course", "outline.md", "FastAPI", "yellow")
+
+        deleted = self.client.delete(f"/api/projects/{self.project.id}/course/outline.md")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse(course_file.exists())
+
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        self.assertFalse(any(node["id"] == course_node.id for node in graph["nodes"]))
+        links = self.client.get(f"/api/projects/{self.project.id}/knowledge/links?source_type=course&source_path=outline.md")
+        self.assertEqual(links.status_code, 200)
+        self.assertEqual(links.json(), [])
+        highlights = self.client.get(f"/api/projects/{self.project.id}/highlights?source_type=course&source_path=outline.md")
+        self.assertEqual(highlights.status_code, 200)
+        self.assertEqual(highlights.json(), [])
+
     def test_search_favorite_and_edit_update_markdown(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="初始回答"):
             created = self.client.post(

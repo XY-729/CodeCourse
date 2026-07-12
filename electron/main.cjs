@@ -22,24 +22,6 @@ function frontendIndex() {
   return path.join(projectRoot(), "frontend", "dist", "index.html");
 }
 
-function packagedBackendExe() {
-  return path.join(process.resourcesPath, "backend", process.platform === "win32" ? "backend.exe" : "backend");
-}
-
-function bundledGitRoot() {
-  return app.isPackaged ? path.join(process.resourcesPath, "git") : path.join(projectRoot(), "resources", "git");
-}
-
-function gitPathEntries() {
-  const root = bundledGitRoot();
-  return [
-    path.join(root, "cmd"),
-    path.join(root, "bin"),
-    path.join(root, "mingw64", "bin"),
-    path.join(root, "usr", "bin"),
-  ].filter((entry) => fs.existsSync(entry));
-}
-
 function pythonCandidates() {
   const configured = process.env.CODECOURSE_PYTHON;
   const candidates = [];
@@ -70,16 +52,9 @@ function getFreePort() {
 function waitForHealth(port, child, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
-    const retry = () => {
-      if (Date.now() > deadline) {
-        reject(new Error("Backend startup timed out. Check backend.log for details."));
-        return;
-      }
-      setTimeout(tick, 350);
-    };
     const tick = () => {
       if (child.exitCode !== null) {
-        reject(new Error("Backend process exited before it became healthy. Check backend.log for details."));
+        reject(new Error("后端进程已退出，请确认 Python 依赖已安装：pip install -r backend/requirements.txt"));
         return;
       }
       const request = http.get(`http://127.0.0.1:${port}/api/health`, (response) => {
@@ -96,56 +71,30 @@ function waitForHealth(port, child, timeoutMs = 20000) {
         retry();
       });
     };
+    const retry = () => {
+      if (Date.now() > deadline) {
+        reject(new Error("后端启动超时，请确认 Python、uvicorn 和 FastAPI 可用。"));
+        return;
+      }
+      setTimeout(tick, 350);
+    };
     tick();
   });
 }
 
-function spawnBackend(command, args, cwd, env, logStream) {
-  const child = spawn(command, args, {
-    cwd,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-  child.stdout.pipe(logStream, { end: false });
-  child.stderr.pipe(logStream, { end: false });
-  return child;
-}
-
 async function startBackend() {
   const port = await getFreePort();
+  const cwd = backendDir();
   const userData = app.getPath("userData");
   fs.mkdirSync(userData, { recursive: true });
   const logPath = path.join(userData, "backend.log");
   const logStream = fs.createWriteStream(logPath, { flags: "a" });
-  const gitPaths = gitPathEntries();
   const env = {
     ...process.env,
     GPL_WORKSPACE_ROOT: userData,
-    PATH: [...gitPaths, process.env.PATH || ""].filter(Boolean).join(path.delimiter),
+    PYTHONPATH: cwd,
   };
 
-  if (app.isPackaged) {
-    const executable = packagedBackendExe();
-    if (!fs.existsSync(executable)) {
-      throw new Error(`Packaged backend was not found: ${executable}`);
-    }
-    const child = spawnBackend(
-      executable,
-      ["--host", "127.0.0.1", "--port", String(port), "--workspace", userData],
-      path.dirname(executable),
-      env,
-      logStream,
-    );
-    await waitForHealth(port, child);
-    backendProcess = child;
-    apiBase = `http://127.0.0.1:${port}/api`;
-    process.env.CODECOURSE_API_BASE = apiBase;
-    return;
-  }
-
-  const cwd = backendDir();
-  const devEnv = { ...env, PYTHONPATH: cwd };
   let lastError = null;
   for (const candidate of pythonCandidates()) {
     const args = [
@@ -158,7 +107,9 @@ async function startBackend() {
       "--port",
       String(port),
     ];
-    const child = spawnBackend(candidate.command, args, cwd, devEnv, logStream);
+    const child = spawn(candidate.command, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    child.stdout.pipe(logStream, { end: false });
+    child.stderr.pipe(logStream, { end: false });
     try {
       await new Promise((resolve, reject) => {
         child.once("error", reject);
@@ -174,7 +125,7 @@ async function startBackend() {
       if (!child.killed) child.kill();
     }
   }
-  throw lastError || new Error(`Could not start Python backend. Install backend requirements or check ${logPath}`);
+  throw lastError || new Error("无法启动 Python 后端。请安装 Python 3 和 backend/requirements.txt。日志：" + logPath);
 }
 
 function createWindow() {
@@ -198,7 +149,7 @@ function createWindow() {
   } else {
     const indexPath = frontendIndex();
     if (!fs.existsSync(indexPath)) {
-      dialog.showErrorBox("Frontend not built", "frontend/dist/index.html was not found.");
+      dialog.showErrorBox("前端未构建", "未找到 frontend/dist/index.html，请先运行 npm --prefix frontend run build。");
       app.quit();
       return;
     }
@@ -218,7 +169,7 @@ app.whenReady().then(async () => {
     await startBackend();
     createWindow();
   } catch (error) {
-    dialog.showErrorBox("CodeCourse startup failed", error instanceof Error ? error.message : String(error));
+    dialog.showErrorBox("CodeCourse 启动失败", error instanceof Error ? error.message : String(error));
     app.quit();
   }
 });

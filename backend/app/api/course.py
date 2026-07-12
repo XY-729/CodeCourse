@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from app.models.schemas import CourseContentResponse
-from app.services.generation_service import project_course_dir, read_project_course_file
+from app.services.generation_service import delete_project_course_file, read_project_course_file
 from app.services.storage import get_project
 
 router = APIRouter(prefix="/api/projects", tags=["course"])
@@ -30,11 +30,10 @@ def get_course_content(project_id: int, filename: str) -> CourseContentResponse:
 @router.delete("/{project_id}/course/{filename:path}")
 def delete_course_file(project_id: int, filename: str):
     _project_root(project_id)
-    root = project_course_dir(project_id).resolve()
-    target = (root / filename).resolve()
-    if target != root and root not in target.parents:
+    try:
+        delete_project_course_file(project_id, filename)
+    except ValueError:
         raise HTTPException(status_code=400, detail="Invalid file path")
-    if not target.exists() or not target.is_file():
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Course file not found")
-    target.unlink()
     return {"deleted": True, "filename": filename}

@@ -1272,6 +1272,47 @@ def delete_knowledge_node(project_id: int, node_id: int) -> bool:
         return cursor.rowcount > 0
 
 
+def cleanup_course_artifacts(project_id: int, source_path: str) -> None:
+    with _connect() as conn:
+        node_ids = [
+            row["id"]
+            for row in conn.execute(
+                """
+                SELECT id FROM knowledge_nodes
+                WHERE project_id = ? AND ref_type = 'course' AND ref_path = ?
+                """,
+                (project_id, source_path),
+            ).fetchall()
+        ]
+        conn.execute(
+            "DELETE FROM highlights WHERE project_id = ? AND source_type = 'course' AND source_path = ?",
+            (project_id, source_path),
+        )
+        conn.execute(
+            "DELETE FROM knowledge_links WHERE project_id = ? AND source_type = 'course' AND source_path = ?",
+            (project_id, source_path),
+        )
+        if node_ids:
+            placeholders = ",".join("?" for _ in node_ids)
+            conn.execute(
+                f"DELETE FROM knowledge_links WHERE project_id = ? AND node_id IN ({placeholders})",
+                [project_id, *node_ids],
+            )
+            conn.execute(
+                f"""
+                DELETE FROM knowledge_edges
+                WHERE project_id = ?
+                  AND (source_node_id IN ({placeholders}) OR target_node_id IN ({placeholders}))
+                """,
+                [project_id, *node_ids, *node_ids],
+            )
+            conn.execute(
+                f"DELETE FROM knowledge_nodes WHERE project_id = ? AND id IN ({placeholders})",
+                [project_id, *node_ids],
+            )
+        conn.commit()
+
+
 def create_knowledge_edge(
     project_id: int,
     source_node_id: int,

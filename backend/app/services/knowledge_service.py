@@ -7,6 +7,7 @@ from app.services.storage import (
     KnowledgeLink,
     KnowledgeNode,
     QARecord,
+    cleanup_course_artifacts,
     collapse_knowledge_term_bridges,
     create_knowledge_edge,
     create_knowledge_link,
@@ -102,6 +103,23 @@ def edit_node(project_id: int, node_id: int, title: Optional[str], summary: Opti
 
 
 def remove_node(project_id: int, node_id: int) -> bool:
+    node = get_knowledge_node(project_id, node_id)
+    if node is None:
+        return False
+    if node.ref_type == "qa" and node.ref_id is not None:
+        from app.services.qa_service import delete_record
+
+        return delete_record(project_id, node.ref_id)
+    if node.ref_type == "course" and node.ref_path:
+        from app.services.generation_service import delete_project_course_file
+
+        try:
+            delete_project_course_file(project_id, node.ref_path)
+        except FileNotFoundError:
+            cleanup_course_artifacts(project_id, node.ref_path)
+        except ValueError:
+            return False
+        return True
     return delete_knowledge_node(project_id, node_id)
 
 

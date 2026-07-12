@@ -17,6 +17,7 @@ from app.services.llm_client import call_openai_compatible_chat
 from app.services.scanner import list_key_files, read_text_file, safe_join, scan_tree
 from app.services.storage import (
     GenerationTask,
+    cleanup_course_artifacts,
     create_generation_task,
     find_completed_task,
     get_llm_settings,
@@ -44,6 +45,29 @@ def list_project_course_files(repo_root: Path, project_id: int) -> list[CourseFi
 
 def read_project_course_file(repo_root: Path, project_id: int, filename: str) -> str:
     return read_course_file(repo_root, filename, project_course_dir(project_id))
+
+
+def resolve_project_course_file(project_id: int, filename: str) -> Path:
+    root = project_course_dir(project_id).resolve()
+    target = (root / filename).resolve()
+    if target == root or root not in target.parents:
+        raise ValueError("Invalid file path")
+    return target
+
+
+def delete_project_course_file(project_id: int, filename: str) -> None:
+    target = resolve_project_course_file(project_id, filename)
+    if not target.exists() or not target.is_file():
+        raise FileNotFoundError(filename)
+    target.unlink()
+    cleanup_course_artifacts(project_id, filename)
+    try:
+        parent = target.parent
+        root = project_course_dir(project_id).resolve()
+        if parent != root and parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+    except OSError:
+        pass
 
 
 def generate_rule_course(project_id: int, repo_root: Path, scope: str = "full_project") -> list[CourseFile]:
