@@ -21,12 +21,12 @@ type Props = {
   onResizeCourseStart: (event: MouseEvent<HTMLDivElement>) => void;
   onSelectProject: (project: Project) => void;
   onCreateLearningPlan: () => void;
-  onOpenKnowledgeGraph: () => void;
   onRegenerateProject: (project: Project) => void;
   onDeleteProject: (project: Project) => void;
   onSelectFile: (path: string) => void;
   onOpenFile: (path: string) => void;
   onSelectCourse: (filename: string) => void;
+  onCreateCourse?: () => void;
   onDeleteCourse?: (file: CourseFile) => void;
 };
 
@@ -47,12 +47,12 @@ export default function Sidebar({
   onResizeCourseStart,
   onSelectProject,
   onCreateLearningPlan,
-  onOpenKnowledgeGraph,
   onRegenerateProject,
   onDeleteProject,
   onSelectFile,
   onOpenFile,
   onSelectCourse,
+  onCreateCourse,
   onDeleteCourse,
 }: Props) {
   return (
@@ -68,11 +68,6 @@ export default function Sidebar({
             学习计划
           </button>
         </h2>
-        <div className="sidebar-actions">
-          <button className="secondary-button compact full" onClick={onOpenKnowledgeGraph} disabled={!currentProjectId}>
-            知识网络
-          </button>
-        </div>
         <div className="sidebar-scroll compact">
           {projects.length ? (
             projects.map((project) => (
@@ -130,7 +125,15 @@ export default function Sidebar({
       </section>
       <div className="resize-handle-y" onMouseDown={onResizeCourseStart} title="上下拖动调整课程目录高度" />
       <section className="sidebar-section">
-        <h2>课程目录</h2>
+        <h2>
+          <span>课程目录</span>
+          {onCreateCourse ? (
+            <button className="sidebar-title-button" onClick={onCreateCourse} disabled={!currentProjectId} title="新建文档">
+              <Plus size={13} />
+              新建文档
+            </button>
+          ) : null}
+        </h2>
         <div className="sidebar-scroll compact">
           <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDelete={onDeleteCourse} />
         </div>

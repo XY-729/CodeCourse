@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -172,6 +172,14 @@ app.whenReady().then(async () => {
     dialog.showErrorBox("CodeCourse 启动失败", error instanceof Error ? error.message : String(error));
     app.quit();
   }
+});
+
+ipcMain.handle("codecourse:open-external", async (_event, url) => {
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+    return false;
+  }
+  await shell.openExternal(url);
+  return true;
 });
 
 app.on("window-all-closed", () => {

@@ -4,6 +4,7 @@ import { Save, Star, X } from "lucide-react";
 import {
   askQuestion,
   buildProjectIndex,
+  createCourseFile,
   createLearningPlan,
   createHighlight,
   getQARecord,
@@ -43,6 +44,8 @@ import type {
   QARecord,
   TreeNode,
 } from "./api/client";
+import AppDialog from "./components/AppDialog";
+import type { AppDialogState, ChoiceDialogOption } from "./components/AppDialog";
 import CodeViewer, { ViewerRange, ViewerSelection } from "./components/CodeViewer";
 import ContextMenu from "./components/ContextMenu";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
@@ -111,6 +114,8 @@ type DropPayload = {
 type SelectionAnchor = SelectionSummary & {
   range?: ViewerRange;
 };
+
+type DialogResolver = (value: string | boolean | null) => void;
 
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
 const MAX_GROUPS = 9;
@@ -332,6 +337,7 @@ export default function App() {
   const [qaHistory, setQAHistory] = useState<QARecord[]>([]);
   const [qaHistoryQuery, setQAHistoryQuery] = useState("");
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
+  const [qaUpperTab, setQAUpperTab] = useState<"history" | "knowledge">("history");
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
   const [qaSessionId, setQASessionId] = useState<number | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
@@ -350,8 +356,11 @@ export default function App() {
     existingStyle: AnnotationStyle;
   } | null>(null);
   const [editingCourseItemId, setEditingCourseItemId] = useState<string | null>(null);
+  const [appDialog, setAppDialog] = useState<AppDialogState | null>(null);
+  const [appDialogValue, setAppDialogValue] = useState("");
 
   const idCounter = useRef(1);
+  const dialogResolverRef = useRef<DialogResolver | null>(null);
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
   const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
@@ -417,6 +426,81 @@ export default function App() {
   function nextId(prefix: string) {
     idCounter.current += 1;
     return `${prefix}-${idCounter.current}`;
+  }
+
+  function openAppDialog(state: AppDialogState): Promise<string | boolean | null> {
+    setAppDialog(state);
+    setAppDialogValue(
+      state.kind === "input"
+        ? state.initialValue ?? ""
+        : state.kind === "choice"
+          ? state.initialValue ?? state.options[0]?.value ?? ""
+          : "",
+    );
+    return new Promise((resolve) => {
+      dialogResolverRef.current = resolve;
+    });
+  }
+
+  async function confirmAction(title: string, message: string, options?: { confirmText?: string; danger?: boolean }) {
+    const result = await openAppDialog({
+      kind: "confirm",
+      title,
+      message,
+      confirmText: options?.confirmText,
+      danger: options?.danger,
+    });
+    return result === true;
+  }
+
+  async function requestText(options: {
+    title: string;
+    message?: string;
+    label?: string;
+    initialValue?: string;
+    placeholder?: string;
+    confirmText?: string;
+  }) {
+    const result = await openAppDialog({ kind: "input", ...options });
+    return typeof result === "string" ? result : null;
+  }
+
+  async function requestChoice(title: string, message: string, options: ChoiceDialogOption[]) {
+    const result = await openAppDialog({
+      kind: "choice",
+      title,
+      message,
+      options,
+      initialValue: options[0]?.value,
+    });
+    return typeof result === "string" ? result : null;
+  }
+
+  function closeAppDialog(value: string | boolean | null) {
+    const resolver = dialogResolverRef.current;
+    dialogResolverRef.current = null;
+    setAppDialog(null);
+    setAppDialogValue("");
+    resolver?.(value);
+  }
+
+  function handleAppDialogConfirm() {
+    if (!appDialog) {
+      return;
+    }
+    if (appDialog.kind === "confirm") {
+      closeAppDialog(true);
+      return;
+    }
+    closeAppDialog(appDialogValue.trim());
+  }
+
+  function openExternal(url: string) {
+    if (typeof window !== "undefined" && window.codecourseDesktop?.openExternal) {
+      window.codecourseDesktop.openExternal(url);
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   function collapseSplitById(splitId: string, removeSide: "first" | "second") {
@@ -859,11 +943,19 @@ export default function App() {
     }
     let selected = links[0];
     if (links.length > 1) {
-      const choice = window.prompt(
-        `${term} 有多个回答，请输入序号：\n${links.map((link, index) => `${index + 1}. 回答 #${link.qa_record_id}`).join("\n")}`,
-        "1",
+      const choice = await requestChoice(
+        term,
+        "这个词条有多个回答，请选择要打开的回答。",
+        links.map((link, index) => ({
+          value: String(index),
+          label: `回答 #${link.qa_record_id}`,
+          description: `关联记录 ${link.qa_record_id}`,
+        })),
       );
-      const index = Number(choice) - 1;
+      if (choice === null) {
+        return;
+      }
+      const index = Number(choice);
       if (!Number.isInteger(index) || index < 0 || index >= links.length) {
         return;
       }
@@ -952,8 +1044,13 @@ export default function App() {
   }
 
   async function handleCreateLearningPlan() {
-    const name = window.prompt("学习计划名称", "新的学习计划");
-    if (name === null || !name.trim()) {
+    const name = await requestText({
+      title: "新建学习计划",
+      label: "学习计划名称",
+      placeholder: "新的学习计划",
+      confirmText: "创建",
+    });
+    if (!name?.trim()) {
       return;
     }
     setLoading(true);
@@ -1010,6 +1107,29 @@ export default function App() {
     }
   }
 
+  async function handleCreateCourse() {
+    if (!project) {
+      return;
+    }
+    const title = await requestText({
+      title: "新建文档",
+      label: "文档标题",
+      placeholder: "输入文档标题",
+      confirmText: "创建",
+    });
+    if (!title?.trim()) {
+      return;
+    }
+    setError("");
+    try {
+      const created = await createCourseFile(project.id, title.trim());
+      await refreshCourses(project.id);
+      await openCourseInActiveGroup(project.id, created.filename);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "创建文档失败");
+    }
+  }
+
   async function trackTask(initialTask: GenerationTask) {
     if (!project) {
       return;
@@ -1055,7 +1175,9 @@ export default function App() {
       setError("请先在文件树中选择至少一个文件。");
       return;
     }
-    const ok = window.confirm("将调用模型 API 生成项目总纲，可能消耗 token。是否继续？");
+    const ok = await confirmAction("生成 AI 总纲", "将调用模型 API 生成项目总纲，可能消耗 token。是否继续？", {
+      confirmText: "生成",
+    });
     if (!ok) {
       return;
     }
@@ -1073,7 +1195,9 @@ export default function App() {
       return;
     }
     const label = nextMode === "brief" ? "粗略介绍" : "详细分析";
-    const ok = window.confirm(`将调用模型 API 为 ${fileContent.path} 生成${label}，可能消耗 token。是否继续？`);
+    const ok = await confirmAction(`生成${label}`, `将调用模型 API 为 ${fileContent.path} 生成${label}，可能消耗 token。是否继续？`, {
+      confirmText: "生成",
+    });
     if (!ok) {
       return;
     }
@@ -1119,7 +1243,11 @@ export default function App() {
   }
 
   async function handleDelete(nextProject: Project) {
-    if (!window.confirm(`删除本地导入项目 ${nextProject.name}？`)) {
+    const ok = await confirmAction("删除项目", `删除本地导入项目 ${nextProject.name}？`, {
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) {
       return;
     }
     setBusyProjectId(nextProject.id);
@@ -1179,7 +1307,9 @@ export default function App() {
     if (!project || !qaQuestion.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) {
       return;
     }
-    const ok = window.confirm(`将调用模型 API 使用 ${llmSettings.model} 回答当前问题，可能消耗 token。是否继续？`);
+    const ok = await confirmAction("AI 助手询问", `将调用模型 API 使用 ${llmSettings.model} 回答当前问题，可能消耗 token。是否继续？`, {
+      confirmText: "询问",
+    });
     if (!ok) {
       return;
     }
@@ -1263,7 +1393,12 @@ export default function App() {
     if (!project) {
       return;
     }
-    const nextTitle = window.prompt("重命名历史记录", record.display_title || record.question);
+    const nextTitle = await requestText({
+      title: "重命名历史记录",
+      label: "标题",
+      initialValue: record.display_title || record.question,
+      confirmText: "保存",
+    });
     if (nextTitle === null) {
       return;
     }
@@ -1398,7 +1533,11 @@ export default function App() {
     if (!project) {
       return;
     }
-    if (!window.confirm(`删除问答记录 "${qaTitle(record)}"？此操作不可撤销。`)) {
+    const ok = await confirmAction("删除问答记录", `删除问答记录 "${qaTitle(record)}"？此操作不可撤销。`, {
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) {
       return;
     }
     try {
@@ -1428,7 +1567,11 @@ export default function App() {
     if (!project) {
       return;
     }
-    if (!window.confirm(`删除课件 "${file.title}"？此操作不可撤销。`)) {
+    const ok = await confirmAction("删除课件", `删除课件 "${file.title}"？此操作不可撤销。`, {
+      confirmText: "删除",
+      danger: true,
+    });
+    if (!ok) {
       return;
     }
     try {
@@ -1753,6 +1896,8 @@ export default function App() {
             <KnowledgeGraphViewer
               projectId={project.id}
               refreshKey={knowledgeRefreshKey}
+              onRequestText={requestText}
+              onConfirm={confirmAction}
               onOpenQA={(qaId) => {
                 openQAById(qaId).catch((caught) => setError(caught instanceof Error ? caught.message : "打开回答失败"));
               }}
@@ -1850,12 +1995,12 @@ export default function App() {
           onResizeCourseStart={(event) => setDragState({ kind: "sidebar-course", startY: event.clientY, startHeight: sidebarCourseHeight })}
           onSelectProject={openProject}
           onCreateLearningPlan={handleCreateLearningPlan}
-          onOpenKnowledgeGraph={openKnowledgeGraphInActiveGroup}
           onRegenerateProject={handleRegenerate}
           onDeleteProject={handleDelete}
           onSelectFile={handleSelectFile}
           onOpenFile={handleOpenFile}
           onSelectCourse={handleSelectCourse}
+          onCreateCourse={handleCreateCourse}
           onDeleteCourse={handleDeleteCourse}
         />
         <div
@@ -1943,6 +2088,27 @@ export default function App() {
           settings={llmSettings}
           panelError={qaPanelError}
           askHeight={qaAskHeight}
+          upperTab={qaUpperTab}
+          onUpperTabChange={setQAUpperTab}
+          knowledgeDisabled={!project}
+          knowledgeContent={project ? (
+            <KnowledgeGraphViewer
+              projectId={project.id}
+              refreshKey={knowledgeRefreshKey}
+              compact
+              onRequestText={requestText}
+              onConfirm={confirmAction}
+              onOpenQA={(qaId) => {
+                openQAById(qaId).catch((caught) => setError(caught instanceof Error ? caught.message : "打开回答失败"));
+              }}
+              onOpenCourse={(path) => {
+                openCourseInActiveGroup(project.id, path).catch((caught) => setError(caught instanceof Error ? caught.message : "打开课件失败"));
+              }}
+              onOpenFile={(path) => {
+                openFileInActiveGroup(project.id, path).catch((caught) => setError(caught instanceof Error ? caught.message : "打开文件失败"));
+              }}
+            />
+          ) : null}
           onAskResizeStart={(event: MouseEvent<HTMLDivElement>) => setDragState({ kind: "qa-ask", startY: event.clientY, startHeight: qaAskHeight })}
           onQuestionChange={setQAQuestion}
           onSelectionTextChange={handleSelectionTextChange}
@@ -1960,6 +2126,8 @@ export default function App() {
       </main>
       <LLMSettingsDialog
         open={settingsOpen}
+        onConfirm={confirmAction}
+        onOpenExternal={openExternal}
         onClose={() => {
           setSettingsOpen(false);
           loadLLMSettings();
@@ -1983,6 +2151,13 @@ export default function App() {
           onToggleUnderline={handleToggleUnderline}
         />
       ) : null}
+      <AppDialog
+        state={appDialog}
+        value={appDialogValue}
+        onValueChange={setAppDialogValue}
+        onCancel={() => closeAppDialog(null)}
+        onConfirm={handleAppDialogConfirm}
+      />
     </div>
   );
 }

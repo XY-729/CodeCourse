@@ -50,6 +50,10 @@ class CourseContentResponse(BaseModel):
     content: str
 
 
+class CourseCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+
+
 class LearningScopeRequest(BaseModel):
     type: Literal["full_project", "files", "learning_plan"] = "full_project"
     paths: list[str] = Field(default_factory=list)

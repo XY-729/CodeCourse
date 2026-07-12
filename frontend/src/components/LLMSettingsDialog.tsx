@@ -7,9 +7,11 @@ const DEEPSEEK_API_KEY_URL = "https://platform.deepseek.com/api_keys";
 type Props = {
   open: boolean;
   onClose: () => void;
+  onConfirm: (title: string, message: string, options?: { confirmText?: string; danger?: boolean }) => Promise<boolean>;
+  onOpenExternal: (url: string) => void;
 };
 
-export default function LLMSettingsDialog({ open, onClose }: Props) {
+export default function LLMSettingsDialog({ open, onClose, onConfirm, onOpenExternal }: Props) {
   const [settings, setSettings] = useState<LLMSettings | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [clearApiKey, setClearApiKey] = useState(false);
@@ -61,7 +63,9 @@ export default function LLMSettingsDialog({ open, onClose }: Props) {
   }
 
   async function runTest() {
-    const ok = window.confirm("将调用模型 API 做连通性测试，可能消耗少量 token。是否继续？");
+    const ok = await onConfirm("测试模型 API", "将调用模型 API 做连通性测试，可能消耗少量 token。是否继续？", {
+      confirmText: "测试",
+    });
     if (!ok) {
       return;
     }
@@ -141,10 +145,10 @@ export default function LLMSettingsDialog({ open, onClose }: Props) {
           <div className="empty">读取中...</div>
         )}
         <div className="settings-actions">
-          <a className="link-button" href={DEEPSEEK_API_KEY_URL} target="_blank" rel="noreferrer">
+          <button type="button" className="link-button" onClick={() => onOpenExternal(DEEPSEEK_API_KEY_URL)}>
             <ExternalLink size={15} />
             DeepSeek API Key
-          </a>
+          </button>
           <button type="button" className="secondary-button" onClick={runTest} disabled={testing || saving}>
             <TestTube2 size={15} />
             {testing ? "测试中..." : "测试"}

@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import cytoscape from "cytoscape";
 import type { Core, ElementDefinition, NodeSingular } from "cytoscape";
 import {
-  createEmptyCourseFile,
   createKnowledgeEdge,
-  createKnowledgeNode,
   deleteKnowledgeEdge,
   deleteKnowledgeNode,
   getKnowledgeGraph,
@@ -18,6 +16,9 @@ type Props = {
   onOpenQA: (qaId: number) => void;
   onOpenCourse: (path: string) => void;
   onOpenFile: (path: string) => void;
+  compact?: boolean;
+  onRequestText?: (options: { title: string; label?: string; initialValue?: string; placeholder?: string; confirmText?: string }) => Promise<string | null>;
+  onConfirm?: (title: string, message: string, options?: { confirmText?: string; danger?: boolean }) => Promise<boolean>;
 };
 
 type RelationType = "explains" | "parent_of" | "related_to" | "references";
@@ -314,16 +315,48 @@ function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focused
   scheduleLabelSafeFit(cy, graph, mode, focusedNodeId);
 }
 
-function viewportCenter(cy: Core | null) {
-  if (!cy) return { x: 0, y: 0 };
-  const extent = cy.extent();
-  return {
-    x: (extent.x1 + extent.x2) / 2,
-    y: (extent.y1 + extent.y2) / 2,
-  };
+function createCompactOverviewLayout(cy: Core, graph: KnowledgeGraph) {
+  const nodeCount = graph.nodes.length;
+
+  if (nodeCount <= 12) {
+    return cy.layout({
+      name: "concentric",
+      fit: false,
+      animate: true,
+      animationDuration: 450,
+      animationEasing: "ease-in-out-cubic",
+      avoidOverlap: true,
+      nodeDimensionsIncludeLabels: true,
+      minNodeSpacing: 70,
+      spacingFactor: 1.1,
+      startAngle: -Math.PI / 2,
+      clockwise: true,
+      concentric: (node: NodeSingular) => node.degree(),
+      levelWidth: (nodes: { maxDegree: () => number }) => Math.max(1, nodes.maxDegree() / 3),
+    });
+  }
+
+  return cy.layout({
+    name: "cose",
+    fit: false,
+    animate: true,
+    animationDuration: 550,
+    randomize: true,
+    nodeRepulsion: 6000,
+    idealEdgeLength: 85,
+    edgeElasticity: 100,
+    gravity: 0.35,
+    componentSpacing: 150,
+    nestingFactor: 1.1,
+    numIter: 1000,
+    initialTemp: 180,
+    coolingFactor: 0.95,
+    minTemp: 1,
+  });
 }
 
-export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpenQA, onOpenCourse, onOpenFile }: Props) {
+
+export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compact = false, onRequestText, onConfirm, onOpenQA, onOpenCourse, onOpenFile }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const lastTapRef = useRef<{ id: string; at: number } | null>(null);
@@ -478,20 +511,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
             "target-arrow-color": "#9aa7b8",
             "target-arrow-shape": "triangle",
             "curve-style": "bezier",
-            label: "data(label)",
-            "font-size": "10px",
-            "text-rotation": "autorotate",
-            "text-margin-y": -12,
-            color: "#607086",
-            "text-background-color": "#ffffff",
-            "text-background-opacity": 0.92,
-            "text-background-padding": "4px",
-            "text-background-shape": "roundrectangle",
-            "text-border-color": "#d5dbe3",
-            "text-border-width": 1,
-            "text-border-opacity": 0.85,
-            "text-outline-color": "#ffffff",
-            "text-outline-width": 2,
+            label: "",
             "z-index": 8,
             opacity: 0.92,
             "transition-property": "opacity width line-color target-arrow-color font-size text-background-padding text-margin-y color",
@@ -505,12 +525,6 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
             "line-color": "#25766c",
             "target-arrow-color": "#25766c",
             width: 3,
-            "font-size": "14px",
-            "text-margin-y": -18,
-            color: "#174c43",
-            "text-background-opacity": 0.96,
-            "text-background-padding": "5px",
-            "text-border-color": "#b7d7d1",
             "z-index": 12,
             opacity: 1,
           },
@@ -529,12 +543,6 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
             "line-color": "#25766c",
             "target-arrow-color": "#25766c",
             width: 3,
-            "font-size": "14px",
-            "text-margin-y": -18,
-            color: "#174c43",
-            "text-background-opacity": 0.96,
-            "text-background-padding": "5px",
-            "text-border-color": "#b7d7d1",
             "z-index": 12,
           },
         },
@@ -546,8 +554,8 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
     });
     cyRef.current = cy;
 
-    const hasAnyPosition = graph.nodes.some((node) => node.x != null && node.y != null);
-    if (!hasAnyPosition && graph.nodes.length > 1) {
+    const allNodesHavePosition = graph.nodes.length > 0 && graph.nodes.every((node) => node.x != null && node.y != null);
+    if (!allNodesHavePosition && graph.nodes.length > 1) {
       cy.layout({
         name: "cose",
         fit: false,
@@ -649,38 +657,14 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
     applyGraphView(cy, graph, viewMode, focusedNodeId, true);
   }, [graph, viewMode, focusedNodeId]);
 
-  async function handleCreateNode() {
-    const title = window.prompt("节点名称", "");
-    if (!title?.trim()) return;
-    const center = viewportCenter(cyRef.current);
-    const angle = graph.nodes.length * 2.399963229728653;
-    const radius = 70 + (graph.nodes.length % 4) * 18;
-    await createKnowledgeNode(projectId, {
-      node_type: "manual",
-      title: title.trim(),
-      x: center.x + Math.cos(angle) * radius,
-      y: center.y + Math.sin(angle) * radius,
-    });
-    setViewMode("overview");
-    setFocusedNodeId(null);
-    await reload();
-  }
-
-  async function handleCreateDocument() {
-    const title = window.prompt("文档名称", "");
-    if (!title?.trim()) return;
-    try {
-      await createEmptyCourseFile(projectId, title.trim());
-      await reload();
-      setMessage(`已创建文档：${title.trim()}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "创建文档失败");
-    }
-  }
-
   async function handleRenameNode() {
     if (!selectedNode) return;
-    const title = window.prompt("节点名称", selectedNode.title);
+    const title = await onRequestText?.({
+      title: "重命名节点",
+      label: "节点名称",
+      initialValue: selectedNode.title,
+      confirmText: "保存",
+    });
     if (!title?.trim()) return;
     const updated = await updateKnowledgeNode(projectId, selectedNode.id, { title: title.trim() });
     setSelectedNode(updated);
@@ -689,6 +673,10 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
 
   async function handleDeleteSelected() {
     if (selectedNode) {
+      if (onConfirm) {
+        const ok = await onConfirm("删除节点", `删除节点 "${selectedNode.title}"？`, { confirmText: "删除", danger: true });
+        if (!ok) return;
+      }
       await deleteKnowledgeNode(projectId, selectedNode.id);
       if (focusedNodeId === selectedNode.id) {
         setViewMode("overview");
@@ -699,6 +687,10 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
       return;
     }
     if (selectedEdge) {
+      if (onConfirm) {
+        const ok = await onConfirm("删除关系", "删除当前选中的关系？", { confirmText: "删除", danger: true });
+        if (!ok) return;
+      }
       await deleteKnowledgeEdge(projectId, selectedEdge.id);
       setSelectedEdge(null);
       await reload();
@@ -712,26 +704,46 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
     setMessage("已切换到全览");
   }
 
-  const focusedNode = focusedNodeId ? graph.nodes.find((node) => node.id === focusedNodeId) : null;
+  function handleArrangeOverview() {
+    const cy = cyRef.current;
+    setViewMode("overview");
+    setFocusedNodeId(null);
+    setSelectedEdge(null);
+
+    if (!cy || graphRef.current.nodes.length === 0) {
+      return;
+    }
+
+    cy.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge");
+    const layout = createCompactOverviewLayout(cy, graphRef.current);
+    layout.one("layoutstop", () => {
+      if (cy.destroyed()) return;
+      fitVisible(cy, graphRef.current, "overview", null, true);
+      const updates: Promise<unknown>[] = [];
+      cy.nodes().forEach((node) => {
+        const nodeId = Number(node.data("nodeId"));
+        const position = node.position();
+        updates.push(updateKnowledgeNode(projectId, nodeId, { x: position.x, y: position.y }));
+      });
+      void Promise.allSettled(updates).then((results) => {
+        const failedCount = results.filter((result) => result.status === "rejected").length;
+        setMessage(failedCount > 0 ? `布局已整理，但有 ${failedCount} 个节点的位置保存失败` : "已整理并保存全览布局");
+      });
+    });
+    layout.run();
+  }
 
   return (
-    <div className="knowledge-viewer">
+    <div className={`knowledge-viewer ${compact ? "compact" : ""}`}>
       <div className="viewer-header">
         <span>知识网络</span>
         <div className="viewer-actions">
           <button className={`secondary-button compact ${viewMode === "overview" ? "active" : ""}`} onClick={handleOverview}>全览</button>
-          <button className="secondary-button compact" onClick={() => reload()}>刷新</button>
-          <button className="secondary-button compact" onClick={handleCreateNode}>新建节点</button>
-          <button className="secondary-button compact" onClick={handleCreateDocument}>新建文档</button>
-          <select className="compact-select" value={relationType} onChange={(event) => setRelationType(event.target.value as RelationType)}>
-            <option value="explains">解释</option>
-            <option value="parent_of">父子</option>
-            <option value="related_to">相关</option>
-            <option value="references">引用</option>
-          </select>
+          <button className="secondary-button compact" onClick={handleArrangeOverview} disabled={graph.nodes.length < 2} title="重新计算紧凑布局并保存节点位置">整理</button>
           <button
             className={`secondary-button compact ${connectMode ? "active" : ""}`}
             onClick={() => {
+              setRelationType("explains");
               setConnectMode((value) => !value);
               setConnectSourceId(null);
               setMessage(connectMode ? "" : "请选择源节点");
@@ -741,7 +753,6 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, onOpen
           </button>
           <button className="secondary-button compact" onClick={handleRenameNode} disabled={!selectedNode}>重命名</button>
           <button className="secondary-button compact danger" onClick={handleDeleteSelected} disabled={!selectedNode && !selectedEdge}>删除</button>
-          <span className="knowledge-mode-pill">{viewMode === "focus" && focusedNode ? `聚焦：${focusedNode.title}` : "全览模式"}</span>
         </div>
       </div>
       <div className="knowledge-body">

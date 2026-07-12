@@ -1,5 +1,6 @@
 import { Edit3, Loader2, Search, Send, Star, Trash2 } from "lucide-react";
 import type { MouseEvent } from "react";
+import type { ReactNode } from "react";
 import type { LLMSettings, QARecord, SourceType } from "../api/client";
 
 export type SelectionSummary = {
@@ -28,6 +29,10 @@ type Props = {
   settings: LLMSettings | null;
   panelError: string;
   askHeight: number;
+  upperTab: "history" | "knowledge";
+  onUpperTabChange: (value: "history" | "knowledge") => void;
+  knowledgeContent?: ReactNode;
+  knowledgeDisabled?: boolean;
   onAskResizeStart: (event: MouseEvent<HTMLDivElement>) => void;
   onQuestionChange: (value: string) => void;
   onSelectionTextChange: (value: string) => void;
@@ -72,6 +77,10 @@ export default function ExplainPanel({
   settings,
   panelError,
   askHeight,
+  upperTab,
+  onUpperTabChange,
+  knowledgeContent,
+  knowledgeDisabled,
   onAskResizeStart,
   onQuestionChange,
   onSelectionTextChange,
@@ -92,6 +101,24 @@ export default function ExplainPanel({
   return (
     <aside className="explain-panel qa-panel" style={{ gridTemplateRows: `minmax(0, 1fr) 6px ${askHeight}px` }}>
       <section className="qa-history-section">
+        <div className="qa-panel-tabs">
+          <button className={upperTab === "history" ? "active" : ""} onClick={() => onUpperTabChange("history")}>
+            问答历史
+          </button>
+          <button
+            className={upperTab === "knowledge" ? "active" : ""}
+            onClick={() => onUpperTabChange("knowledge")}
+            disabled={knowledgeDisabled}
+          >
+            知识网络
+          </button>
+        </div>
+        {upperTab === "knowledge" ? (
+          <div className="qa-knowledge-slot">
+            {knowledgeContent ?? <div className="empty small">请选择项目后查看知识网络</div>}
+          </div>
+        ) : (
+          <>
         <div className="qa-section history-tools">
           <div className="search-row">
             <Search size={14} />
@@ -150,6 +177,8 @@ export default function ExplainPanel({
             <div className="empty small">暂无问答历史</div>
           )}
         </div>
+          </>
+        )}
       </section>
 
       <div className="resize-handle-y" onMouseDown={onAskResizeStart} title="上下拖动调整提问区高度" />
