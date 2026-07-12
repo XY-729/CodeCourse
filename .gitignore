@@ -7,3 +7,13 @@ frontend/tsconfig.tsbuildinfo
 __pycache__/
 *.pyc
 *.log
+node_modules/
+build/
+dist/
+dist-backend/
+dist-desktop/
+electron/backend.log
+npm-debug.log*
+resources/git/
+.cache/
+*.spec.bak

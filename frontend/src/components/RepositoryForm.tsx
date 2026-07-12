@@ -7,7 +7,7 @@ type Props = {
 };
 
 export default function RepositoryForm({ loading, onSubmit }: Props) {
-  const [url, setUrl] = useState("git@github.com:XY-729/CPPJUDGE.git");
+  const [url, setUrl] = useState("");
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

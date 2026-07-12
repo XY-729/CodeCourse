@@ -1,4 +1,15 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api";
+declare global {
+  interface Window {
+    codecourseDesktop?: { apiBase?: string };
+    __CODECOURSE_API_BASE__?: string;
+  }
+}
+
+const configuredApiBase =
+  (typeof window !== "undefined" && (window.codecourseDesktop?.apiBase || window.__CODECOURSE_API_BASE__)) ||
+  import.meta.env.VITE_API_BASE_URL ||
+  "http://localhost:8000/api";
+const API_BASE = configuredApiBase.replace(/\/$/, "");
 
 export type Project = {
   id: number;
@@ -32,16 +43,12 @@ export type FileContent = {
   content: string;
 };
 
-export type ExplainResponse = {
-  provider: string;
-  explanation: string;
-};
-
 export type SourceType = "file" | "course" | "selection";
 
 export type QARecord = {
   id: number;
   project_id: number;
+  session_id?: number | null;
   source_type: SourceType;
   source_path?: string | null;
   display_title?: string | null;
@@ -51,6 +58,7 @@ export type QARecord = {
   provider: string;
   model: string;
   output_path?: string | null;
+  retrieval_trace?: string | null;
   favorite: boolean;
   created_at: string;
   updated_at: string;
@@ -68,6 +76,49 @@ export type HighlightRecord = {
   updated_at: string;
 };
 
+export type KnowledgeNode = {
+  id: number;
+  project_id: number;
+  node_type: "term" | "qa" | "course" | "file" | "manual" | string;
+  title: string;
+  ref_type?: string | null;
+  ref_id?: number | null;
+  ref_path?: string | null;
+  summary?: string | null;
+  x?: number | null;
+  y?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeEdge = {
+  id: number;
+  project_id: number;
+  source_node_id: number;
+  target_node_id: number;
+  relation_type: "explains" | "parent_of" | "related_to" | "references" | string;
+  label?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type KnowledgeGraph = {
+  nodes: KnowledgeNode[];
+  edges: KnowledgeEdge[];
+};
+
+export type KnowledgeLink = {
+  id: number;
+  project_id: number;
+  source_type: string;
+  source_path: string;
+  term_text: string;
+  qa_record_id: number;
+  node_id: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type QAAskPayload = {
   source_type: SourceType;
   source_path?: string | null;
@@ -76,6 +127,32 @@ export type QAAskPayload = {
   provider: string;
   base_url: string;
   model: string;
+  session_id?: number | null;
+  selection_range?: {
+    start_line: number;
+    start_column: number;
+    end_line: number;
+    end_column: number;
+  } | null;
+};
+
+export type ProjectIndexStatus = {
+  project_id: number;
+  status: string;
+  chunk_count: number;
+  updated_at?: string | null;
+  error_message?: string | null;
+};
+
+export type ProjectSearchResult = {
+  path: string;
+  language: string;
+  start_line: number;
+  end_line: number;
+  chunk_type: string;
+  symbol_name?: string | null;
+  content: string;
+  score: number;
 };
 
 export type ProjectActionResponse = {
@@ -246,15 +323,20 @@ export function getGenerationTask(projectId: number, taskId: number): Promise<Ge
   return request<GenerationTask>(`/projects/${projectId}/tasks/${taskId}`);
 }
 
-export function explainCurrent(
-  projectId: number,
-  path: string | null,
-  mode: "file" | "course" | "selection",
-  selection?: string,
-): Promise<ExplainResponse> {
-  return request<ExplainResponse>("/explain", {
+export function buildProjectIndex(projectId: number): Promise<ProjectIndexStatus> {
+  return request<ProjectIndexStatus>(`/projects/${projectId}/index/build`, {
     method: "POST",
-    body: JSON.stringify({ project_id: projectId, path, mode, selection }),
+  });
+}
+
+export function getProjectIndexStatus(projectId: number): Promise<ProjectIndexStatus> {
+  return request<ProjectIndexStatus>(`/projects/${projectId}/index/status`);
+}
+
+export function searchProject(projectId: number, query: string, sourcePath?: string | null, limit = 8): Promise<ProjectSearchResult[]> {
+  return request<ProjectSearchResult[]>(`/projects/${projectId}/search`, {
+    method: "POST",
+    body: JSON.stringify({ query, source_path: sourcePath ?? null, limit }),
   });
 }
 
@@ -342,4 +424,83 @@ export function deleteHighlight(projectId: number, highlightId: number): Promise
   return request<{ deleted: boolean }>(`/projects/${projectId}/highlights/${highlightId}`, {
     method: "DELETE",
   });
+}
+
+export function getKnowledgeGraph(projectId: number): Promise<KnowledgeGraph> {
+  return request<KnowledgeGraph>(`/projects/${projectId}/knowledge/graph`);
+}
+
+export function createKnowledgeNode(
+  projectId: number,
+  payload: {
+    node_type?: "term" | "qa" | "course" | "file" | "manual";
+    title: string;
+    ref_type?: string | null;
+    ref_id?: number | null;
+    ref_path?: string | null;
+    summary?: string | null;
+    x?: number | null;
+    y?: number | null;
+  },
+): Promise<KnowledgeNode> {
+  return request<KnowledgeNode>(`/projects/${projectId}/knowledge/nodes`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateKnowledgeNode(
+  projectId: number,
+  nodeId: number,
+  payload: { title?: string; summary?: string | null; x?: number | null; y?: number | null },
+): Promise<KnowledgeNode> {
+  return request<KnowledgeNode>(`/projects/${projectId}/knowledge/nodes/${nodeId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteKnowledgeNode(projectId: number, nodeId: number): Promise<{ deleted: boolean; id: number }> {
+  return request<{ deleted: boolean; id: number }>(`/projects/${projectId}/knowledge/nodes/${nodeId}`, {
+    method: "DELETE",
+  });
+}
+
+export function createKnowledgeEdge(
+  projectId: number,
+  payload: { source_node_id: number; target_node_id: number; relation_type: "explains" | "parent_of" | "related_to" | "references"; label?: string | null },
+): Promise<KnowledgeEdge> {
+  return request<KnowledgeEdge>(`/projects/${projectId}/knowledge/edges`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateKnowledgeEdge(
+  projectId: number,
+  edgeId: number,
+  payload: { relation_type?: "explains" | "parent_of" | "related_to" | "references"; label?: string | null },
+): Promise<KnowledgeEdge> {
+  return request<KnowledgeEdge>(`/projects/${projectId}/knowledge/edges/${edgeId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteKnowledgeEdge(projectId: number, edgeId: number): Promise<{ deleted: boolean; id: number }> {
+  return request<{ deleted: boolean; id: number }>(`/projects/${projectId}/knowledge/edges/${edgeId}`, {
+    method: "DELETE",
+  });
+}
+
+export function listKnowledgeLinks(projectId: number, sourceType?: string, sourcePath?: string): Promise<KnowledgeLink[]> {
+  const params = new URLSearchParams();
+  if (sourceType) {
+    params.set("source_type", sourceType);
+  }
+  if (sourcePath) {
+    params.set("source_path", sourcePath);
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return request<KnowledgeLink[]>(`/projects/${projectId}/knowledge/links${suffix}`);
 }

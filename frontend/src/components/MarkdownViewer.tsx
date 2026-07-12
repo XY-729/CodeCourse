@@ -2,7 +2,7 @@ import { Children, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { HighlightRecord } from "../api/client";
+import type { HighlightRecord, KnowledgeLink } from "../api/client";
 import type { Annotation } from "../types";
 import { COLOR_VALUES } from "../types";
 import type { ViewerSelection } from "./CodeViewer";
@@ -12,11 +12,13 @@ type Props = {
   sourcePath?: string | null;
   content: string;
   highlights?: HighlightRecord[];
+  knowledgeLinks?: KnowledgeLink[];
   annotations?: Annotation[];
   tempSelectedText?: string | null;
   onSelectionChange?: (selection: ViewerSelection) => void;
   onCreateHighlight?: (text: string) => void;
   onContextMenu?: (event: React.MouseEvent, text: string, sourcePath: string) => void;
+  onOpenKnowledgeLink?: (term: string, links: KnowledgeLink[]) => void;
   headerActions?: ReactNode;
 };
 
@@ -107,13 +109,68 @@ function applyTempSelection(text: string, tempText: string, keyPrefix: string): 
   });
 }
 
-/* ---- Combined rendering (highlights -> annotations -> temp, temp wins visually) ---- */
+function groupKnowledgeLinks(links: KnowledgeLink[]): Map<string, KnowledgeLink[]> {
+  const grouped = new Map<string, KnowledgeLink[]>();
+  for (const link of links) {
+    const term = link.term_text.trim();
+    if (!term) {
+      continue;
+    }
+    grouped.set(term, [...(grouped.get(term) ?? []), link]);
+  }
+  return grouped;
+}
+
+function applyKnowledgeLinksToText(
+  text: string,
+  groupedLinks: Map<string, KnowledgeLink[]>,
+  onOpenKnowledgeLink: ((term: string, links: KnowledgeLink[]) => void) | undefined,
+  keyPrefix: string,
+): ReactNode[] {
+  if (!onOpenKnowledgeLink || groupedLinks.size === 0) {
+    return [text];
+  }
+  const terms = [...groupedLinks.keys()].sort((a, b) => b.length - a.length);
+  const result: ReactNode[] = [];
+  let index = 0;
+  while (index < text.length) {
+    const term = terms.find((candidate) => text.startsWith(candidate, index));
+    if (!term) {
+      result.push(text[index]);
+      index += 1;
+      continue;
+    }
+    const links = groupedLinks.get(term) ?? [];
+    result.push(
+      <button
+        key={`${keyPrefix}-knowledge-${index}`}
+        className="knowledge-inline-link"
+        type="button"
+        title={`打开 ${term} 的回答`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onOpenKnowledgeLink(term, links);
+        }}
+      >
+        {term}
+      </button>,
+    );
+    index += term.length;
+  }
+  return result;
+}
+
+/* ---- Combined rendering (highlights -> annotations -> temp -> knowledge links) ---- */
 function highlightChildren(
   children: ReactNode,
   highlights: HighlightRecord[],
+  knowledgeLinks: KnowledgeLink[],
   annotations: Annotation[],
   tempText: string | null,
+  onOpenKnowledgeLink?: (term: string, links: KnowledgeLink[]) => void,
 ): ReactNode {
+  const groupedLinks = groupKnowledgeLinks(knowledgeLinks);
   return Children.map(children, (child) => {
     if (typeof child !== "string") {
       return child;
@@ -137,6 +194,9 @@ function highlightChildren(
         typeof p === "string" ? applyTempSelection(p, tempText, `tmp-${i}`) : [p],
       );
     }
+    parts = parts.flatMap((p, i) =>
+      typeof p === "string" ? applyKnowledgeLinksToText(p, groupedLinks, onOpenKnowledgeLink, `kl-${i}`) : [p],
+    );
     return parts;
   });
 }
@@ -146,11 +206,13 @@ export default function MarkdownViewer({
   sourcePath,
   content,
   highlights = [],
+  knowledgeLinks = [],
   annotations = [],
   tempSelectedText,
   onSelectionChange,
   onCreateHighlight: _onCreateHighlight,
   onContextMenu,
+  onOpenKnowledgeLink,
   headerActions,
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
@@ -211,34 +273,34 @@ export default function MarkdownViewer({
 
   const highlightedComponents = {
     p: ({ children }: { children?: ReactNode }) => (
-      <p>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</p>
+      <p>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</p>
     ),
     li: ({ children }: { children?: ReactNode }) => (
-      <li>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</li>
+      <li>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</li>
     ),
     td: ({ children }: { children?: ReactNode }) => (
-      <td>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</td>
+      <td>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</td>
     ),
     th: ({ children }: { children?: ReactNode }) => (
-      <th>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</th>
+      <th>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</th>
     ),
     h1: ({ children }: { children?: ReactNode }) => (
-      <h1>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</h1>
+      <h1>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</h1>
     ),
     h2: ({ children }: { children?: ReactNode }) => (
-      <h2>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</h2>
+      <h2>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</h2>
     ),
     h3: ({ children }: { children?: ReactNode }) => (
-      <h3>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</h3>
+      <h3>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</h3>
     ),
     h4: ({ children }: { children?: ReactNode }) => (
-      <h4>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</h4>
+      <h4>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</h4>
     ),
     strong: ({ children }: { children?: ReactNode }) => (
-      <strong>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</strong>
+      <strong>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</strong>
     ),
     em: ({ children }: { children?: ReactNode }) => (
-      <em>{highlightChildren(children, highlights, annotations, tempSelectedText ?? null)}</em>
+      <em>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</em>
     ),
   };
 

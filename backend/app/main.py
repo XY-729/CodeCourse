@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import course, files, highlights, projects, qa, settings
+from app.api import course, files, highlights, index, knowledge, projects, qa, settings
 from app.services.storage import init_storage
 
 
@@ -19,7 +19,7 @@ app = FastAPI(title="GitHub Project Learner", version="0.1.0", lifespan=lifespan
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://0.0.0.0:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://0.0.0.0:5173", "null"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -30,6 +30,8 @@ app.include_router(files.router)
 app.include_router(course.router)
 app.include_router(qa.router)
 app.include_router(highlights.router)
+app.include_router(index.router)
+app.include_router(knowledge.router)
 app.include_router(settings.router)
 
 

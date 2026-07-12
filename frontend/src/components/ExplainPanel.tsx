@@ -9,8 +9,16 @@ export type SelectionSummary = {
   language?: string;
 };
 
+export type AssistantContextSummary = {
+  label: string;
+  sourceType: SourceType;
+  sourcePath: string | null;
+  preview: string;
+};
+
 type Props = {
   selection: SelectionSummary | null;
+  contextSummary: AssistantContextSummary | null;
   question: string;
   loading: boolean;
   history: QARecord[];
@@ -24,7 +32,6 @@ type Props = {
   onQuestionChange: (value: string) => void;
   onSelectionTextChange: (value: string) => void;
   onClearSelection: () => void;
-  onDismissSelection: () => void;
   onAsk: () => void;
   onHistoryQueryChange: (value: string) => void;
   onFavoriteOnlyChange: (value: boolean) => void;
@@ -34,7 +41,6 @@ type Props = {
   onRenameRecord: (record: QARecord) => void;
   onToggleFavorite: (record: QARecord) => void;
   onOpenSettings: () => void;
-  onExplain?: () => void;
 };
 
 function sourceLabel(type: SourceType) {
@@ -56,6 +62,7 @@ function configuredModelLabel(settings: LLMSettings | null) {
 
 export default function ExplainPanel({
   selection,
+  contextSummary,
   question,
   loading,
   history,
@@ -69,7 +76,6 @@ export default function ExplainPanel({
   onQuestionChange,
   onSelectionTextChange,
   onClearSelection,
-  onDismissSelection,
   onAsk,
   onHistoryQueryChange,
   onFavoriteOnlyChange,
@@ -79,17 +85,9 @@ export default function ExplainPanel({
   onRenameRecord,
   onToggleFavorite,
   onOpenSettings,
-  onExplain,
 }: Props) {
   const selectedLength = selection?.selectedText.length ?? 0;
   const modelReady = Boolean(settings?.enabled && settings.has_api_key);
-
-  function handleExplainClick() {
-    if (!window.confirm("将调用模型 API 解释这段内容，可能消耗 token。是否继续？")) {
-      return;
-    }
-    onExplain?.();
-  }
 
   return (
     <aside className="explain-panel qa-panel" style={{ gridTemplateRows: `minmax(0, 1fr) 6px ${askHeight}px` }}>
@@ -158,12 +156,12 @@ export default function ExplainPanel({
 
       <section className="qa-ask-section">
         <div className="panel-title">
-          <span>选区提问</span>
+          <span>AI 助手</span>
           {loading ? <Loader2 size={16} className="spin" /> : null}
         </div>
 
         <div className="qa-section selection-card">
-          <div className="qa-section-title">当前选区</div>
+          <div className="qa-section-title">附带上下文</div>
           {selection ? (
             <>
               <div className="selection-meta">
@@ -182,21 +180,18 @@ export default function ExplainPanel({
                   <Trash2 size={14} />
                   清空文本
                 </button>
-                <button type="button" className="secondary-button compact" onClick={onDismissSelection} disabled={loading}>
-                  取消选区
-                </button>
               </div>
-
-              {selection.selectedText.trim() ? (
-                <div className="explain-action-row">
-                  <button type="button" className="explain-action-btn" onClick={handleExplainClick}>
-                    解释当前选中内容
-                  </button>
-                </div>
-              ) : null}
+            </>
+          ) : contextSummary ? (
+            <>
+              <div className="selection-meta">
+                <span>{contextSummary.label}</span>
+              </div>
+              <div className="selection-path">{contextSummary.sourcePath ?? "项目上下文"}</div>
+              <div className="context-preview">{contextSummary.preview}</div>
             </>
           ) : (
-            <div className="empty small">尚未选中文本</div>
+            <div className="context-preview">将根据当前项目和已生成课程回答。</div>
           )}
         </div>
 
@@ -204,7 +199,7 @@ export default function ExplainPanel({
           <textarea
             value={question}
             onChange={(event) => onQuestionChange(event.target.value)}
-            placeholder="输入问题"
+            placeholder="问项目、文件、课件或选中内容"
             disabled={loading}
           />
           <div className="model-row">

@@ -57,6 +57,11 @@ class QARecordEndpointTests(unittest.TestCase):
         repo_dir = self.workspace / "repos" / "repo"
         repo_dir.mkdir(parents=True)
         (repo_dir / "README.md").write_text("# Test\n", encoding="utf-8")
+        (repo_dir / "src").mkdir()
+        (repo_dir / "src" / "main.py").write_text(
+            "from fastapi import FastAPI\n\napp = FastAPI()\n\n@app.get('/')\ndef health():\n    return {'ok': True}\n",
+            encoding="utf-8",
+        )
         self.project = upsert_project("repo", "https://github.com/test/repo.git", repo_dir, "scanned")
         set_setting("llm.enabled", "true")
         set_setting("llm.api_key", "fake-key")
@@ -65,7 +70,8 @@ class QARecordEndpointTests(unittest.TestCase):
         self._tmpdir.cleanup()
 
     def test_ask_creates_record_and_markdown_file(self):
-        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="## Answer\nUse the selected function."):
+        model_answer = "TITLE: main 函数返回值说明\n\n## 结论\nUse the selected function."
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value=model_answer):
             resp = self.client.post(
                 f"/api/projects/{self.project.id}/qa/ask",
                 json={
@@ -81,14 +87,89 @@ class QARecordEndpointTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
+        self.assertIsNotNone(data["session_id"])
         self.assertEqual(data["source_path"], "src/main.py")
-        self.assertIn("Answer", data["answer_md"])
+        self.assertEqual(data["display_title"], "def main")
+        self.assertNotIn("TITLE:", data["answer_md"])
+        self.assertIn("Use the selected function.", data["answer_md"])
 
         output_path = _generated_file(self.generated, self.project.id, data["output_path"])
         self.assertTrue(output_path.is_file())
         text = output_path.read_text(encoding="utf-8")
+        self.assertIn("# def main", text)
         self.assertIn("这段代码负责什么？", text)
         self.assertIn("Use the selected function.", text)
+        self.assertIn("## 附带上下文", text)
+        self.assertGreater(text.find("## 记录信息"), text.find("## 回答"))
+        self.assertGreater(text.find("来源类型"), text.find("## 记录信息"))
+
+    def test_generic_question_uses_selection_and_source_for_fallback_title(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="## 结论\n这是后端框架线索。"):
+            resp = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "project_map.md",
+                    "selected_text": "FastAPI",
+                    "question": "这是什么",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["display_title"], "FastAPI")
+        self.assertNotEqual(data["display_title"], "这是什么说明")
+
+    def test_qa_creates_knowledge_graph_nodes_edges_and_links(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: FastAPI\n\nIt is the API framework."):
+            first = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "FastAPI",
+                    "question": "What is this?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+            second = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "FastAPI",
+                    "question": "How should I read it?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph")
+        self.assertEqual(graph.status_code, 200)
+        nodes = graph.json()["nodes"]
+        edges = graph.json()["edges"]
+        term_nodes = [node for node in nodes if node["node_type"] == "term" and node["title"] == "FastAPI"]
+        qa_nodes = [node for node in nodes if node["node_type"] == "qa"]
+        self.assertEqual(len(term_nodes), 1)
+        self.assertEqual(len(qa_nodes), 2)
+        self.assertTrue(any(edge["relation_type"] == "explains" for edge in edges))
+        self.assertTrue(any(edge["relation_type"] == "references" for edge in edges))
+
+        links = self.client.get(
+            f"/api/projects/{self.project.id}/knowledge/links?source_type=course&source_path=outline.md"
+        )
+        self.assertEqual(links.status_code, 200)
+        self.assertEqual(len(links.json()), 2)
+        self.assertTrue(all(link["term_text"] == "FastAPI" for link in links.json()))
 
     def test_search_favorite_and_edit_update_markdown(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="初始回答"):
@@ -160,7 +241,111 @@ class QARecordEndpointTests(unittest.TestCase):
         data = resp.json()
         self.assertEqual(data["selected_text"], "")
         output_path = _generated_file(self.generated, self.project.id, data["output_path"])
-        self.assertIn("无选区内容", output_path.read_text(encoding="utf-8"))
+        self.assertIn("无附带上下文", output_path.read_text(encoding="utf-8"))
+
+    def test_index_build_and_search_find_code_symbols(self):
+        built = self.client.post(f"/api/projects/{self.project.id}/index/build")
+        self.assertEqual(built.status_code, 200)
+
+        status = self.client.get(f"/api/projects/{self.project.id}/index/status")
+        self.assertEqual(status.status_code, 200)
+        self.assertIn(status.json()["status"], {"building", "completed"})
+
+        found = self.client.post(
+            f"/api/projects/{self.project.id}/search",
+            json={"query": "FastAPI health", "source_path": "src/main.py", "limit": 5},
+        )
+        self.assertEqual(found.status_code, 200)
+        results = found.json()
+        self.assertTrue(any(item["path"] == "src/main.py" for item in results))
+
+    def test_same_session_injects_recent_memory(self):
+        prompts: list[str] = []
+
+        def fake_chat(_base_url, _api_key, _model, messages, timeout=90):
+            prompts.append(messages[1]["content"])
+            return "TITLE: main.py\n\n回答内容。"
+
+        with patch("app.services.qa_service.call_openai_compatible_chat", side_effect=fake_chat):
+            first = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "",
+                    "question": "这个文件是干什么的？",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            ).json()
+            second = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "session_id": first["session_id"],
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "",
+                    "question": "那它的入口在哪里？",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["session_id"], first["session_id"])
+        self.assertIn("这个文件是干什么的", prompts[-1])
+        self.assertIn("当前会话记忆", prompts[-1])
+
+    def test_file_context_without_selection_uses_file_summary(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: main.py\n\n这个文件提供健康检查接口。") as mocked:
+            resp = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "",
+                    "question": "这个文件是干什么用的？",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        messages = mocked.call_args.args[3]
+        prompt = messages[1]["content"]
+        self.assertIn("上下文类型：当前代码文件", prompt)
+        self.assertIn("src/main.py", prompt)
+        self.assertIn("FastAPI", prompt)
+        self.assertIn("health", prompt)
+
+    def test_course_context_without_selection_uses_course_summary(self):
+        course_dir = self.generated / str(self.project.id)
+        course_dir.mkdir(parents=True, exist_ok=True)
+        (course_dir / "outline.md").write_text("# 项目学习总纲\n\n从 FastAPI 路由开始读。", encoding="utf-8")
+
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: outline.md\n\n先按总纲读入口。") as mocked:
+            resp = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "",
+                    "question": "这个课件怎么学？",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        messages = mocked.call_args.args[3]
+        prompt = messages[1]["content"]
+        self.assertIn("上下文类型：当前课件", prompt)
+        self.assertIn("outline.md", prompt)
+        self.assertIn("从 FastAPI 路由开始读", prompt)
 
     def test_rename_history_updates_display_title_only(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="Answer."):
@@ -214,6 +399,29 @@ class QARecordEndpointTests(unittest.TestCase):
         listed_again = self.client.get(f"/api/projects/{self.project.id}/highlights?source_type=course&source_path=outline.md")
         self.assertEqual(listed_again.status_code, 200)
         self.assertEqual(listed_again.json(), [])
+
+    def test_prompt_api_exposes_qa_answer_prompt(self):
+        resp = self.client.get("/api/settings/prompts")
+
+        self.assertEqual(resp.status_code, 200)
+        prompts = resp.json()
+        self.assertEqual(
+            list(prompts.keys()),
+            [
+                "prompt.system",
+                "prompt.file_lesson.detailed_expected",
+                "prompt.file_lesson.brief_expected",
+                "prompt.qa.answer",
+            ],
+        )
+        self.assertNotIn("prompt.outline", prompts)
+        self.assertNotIn("prompt.file_lesson.template", prompts)
+        self.assertIn("prompt.qa.answer", prompts)
+        self.assertIn("TITLE:", prompts["prompt.qa.answer"])
+        self.assertIn("刚开始读这个项目的小白开发者", prompts["prompt.qa.answer"])
+        self.assertIn("上下文材料", prompts["prompt.qa.answer"])
+        self.assertIn("项目内置的 AI 助手", prompts["prompt.qa.answer"])
+        self.assertIn("只写核心名词或最短主题", prompts["prompt.qa.answer"])
 
 
 if __name__ == "__main__":

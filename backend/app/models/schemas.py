@@ -82,16 +82,11 @@ class GenerationTaskResponse(BaseModel):
     updated_at: str
 
 
-class ExplainRequest(BaseModel):
-    project_id: int
-    path: Optional[str] = None
-    selection: Optional[str] = None
-    mode: Literal["file", "course", "selection"] = "file"
-
-
-class ExplainResponse(BaseModel):
-    provider: str
-    explanation: str
+class SelectionRange(BaseModel):
+    start_line: int = Field(ge=1)
+    start_column: int = Field(default=1, ge=1)
+    end_line: int = Field(ge=1)
+    end_column: int = Field(default=1, ge=1)
 
 
 class QAAskRequest(BaseModel):
@@ -102,11 +97,14 @@ class QAAskRequest(BaseModel):
     provider: str = Field(default="deepseek", max_length=80)
     base_url: str = Field(default="https://api.deepseek.com", max_length=500)
     model: str = Field(default="deepseek-v4-flash", max_length=160)
+    session_id: Optional[int] = None
+    selection_range: Optional[SelectionRange] = None
 
 
 class QARecordResponse(BaseModel):
     id: int
     project_id: int
+    session_id: Optional[int] = None
     source_type: str
     source_path: Optional[str] = None
     display_title: Optional[str] = None
@@ -116,6 +114,7 @@ class QARecordResponse(BaseModel):
     provider: str
     model: str
     output_path: Optional[str] = None
+    retrieval_trace: Optional[str] = None
     favorite: bool
     created_at: str
     updated_at: str
@@ -147,6 +146,114 @@ class HighlightResponse(BaseModel):
     selected_text: str
     color: str
     note: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class KnowledgeNodeCreateRequest(BaseModel):
+    node_type: Literal["term", "qa", "course", "file", "manual"] = "manual"
+    title: str = Field(min_length=1, max_length=200)
+    ref_type: Optional[str] = Field(default=None, max_length=40)
+    ref_id: Optional[int] = None
+    ref_path: Optional[str] = Field(default=None, max_length=1000)
+    summary: Optional[str] = Field(default=None, max_length=4000)
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+class KnowledgeNodeUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    summary: Optional[str] = Field(default=None, max_length=4000)
+    x: Optional[float] = None
+    y: Optional[float] = None
+
+
+class KnowledgeNodeResponse(BaseModel):
+    id: int
+    project_id: int
+    node_type: str
+    title: str
+    ref_type: Optional[str] = None
+    ref_id: Optional[int] = None
+    ref_path: Optional[str] = None
+    summary: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    created_at: str
+    updated_at: str
+
+
+class KnowledgeEdgeCreateRequest(BaseModel):
+    source_node_id: int
+    target_node_id: int
+    relation_type: Literal["explains", "parent_of", "related_to", "references"] = "related_to"
+    label: Optional[str] = Field(default=None, max_length=120)
+
+
+class KnowledgeEdgeUpdateRequest(BaseModel):
+    relation_type: Optional[Literal["explains", "parent_of", "related_to", "references"]] = None
+    label: Optional[str] = Field(default=None, max_length=120)
+
+
+class KnowledgeEdgeResponse(BaseModel):
+    id: int
+    project_id: int
+    source_node_id: int
+    target_node_id: int
+    relation_type: str
+    label: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class KnowledgeGraphResponse(BaseModel):
+    nodes: list[KnowledgeNodeResponse] = Field(default_factory=list)
+    edges: list[KnowledgeEdgeResponse] = Field(default_factory=list)
+
+
+class KnowledgeLinkResponse(BaseModel):
+    id: int
+    project_id: int
+    source_type: str
+    source_path: str
+    term_text: str
+    qa_record_id: int
+    node_id: int
+    created_at: str
+    updated_at: str
+
+
+class ProjectIndexStatusResponse(BaseModel):
+    project_id: int
+    status: str
+    chunk_count: int = 0
+    updated_at: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class ProjectSearchRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=1000)
+    source_path: Optional[str] = Field(default=None, max_length=1000)
+    limit: int = Field(default=8, ge=1, le=20)
+
+
+class ProjectSearchResult(BaseModel):
+    path: str
+    language: str
+    start_line: int
+    end_line: int
+    chunk_type: str
+    symbol_name: Optional[str] = None
+    content: str
+    score: float = 0
+
+
+class QASessionResponse(BaseModel):
+    id: int
+    project_id: int
+    title: str
+    memory_summary: str
+    active_source_path: Optional[str] = None
     created_at: str
     updated_at: str
 

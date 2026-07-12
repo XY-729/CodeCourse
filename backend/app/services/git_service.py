@@ -59,6 +59,13 @@ def repo_name_from_url(url: str) -> str:
 
 
 def clone_or_reuse(url: str) -> Path:
+    git_executable = shutil.which("git")
+    if not git_executable:
+        raise HTTPException(
+            status_code=500,
+            detail="Git runtime was not found. The desktop build should include bundled Git, or install Git and restart CodeCourse.",
+        )
+
     REPOS_ROOT.mkdir(parents=True, exist_ok=True)
     dest = (REPOS_ROOT / repo_name_from_url(url)).resolve()
     if dest.exists() and (dest / ".git").exists():
@@ -67,26 +74,26 @@ def clone_or_reuse(url: str) -> Path:
         shutil.rmtree(dest)
     try:
         result = subprocess.run(
-            ["git", "clone", "--depth", "1", url, str(dest)],
+            [git_executable, "clone", "--depth", "1", url, str(dest)],
             text=True,
             capture_output=True,
             timeout=180,
         )
     except subprocess.TimeoutExpired:
         suggestion = https_to_ssh_url(url)
-        hint = f" 当前 VM 到 GitHub HTTPS 可能不通，建议改用 SSH 地址：{suggestion}" if suggestion else ""
+        hint = f" Try SSH instead: {suggestion}" if suggestion else ""
         raise HTTPException(status_code=504, detail=f"git clone timed out.{hint}")
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         lower = detail.lower()
         suggestion = https_to_ssh_url(url)
         if "failed to connect" in lower or "connection timed out" in lower or "connection refused" in lower:
-            hint = f" 当前 VM 到 GitHub HTTPS 不稳定，建议改用 SSH 地址：{suggestion}" if suggestion else " 请检查 VM 网络或 Git 远端地址。"
+            hint = f" Try SSH instead: {suggestion}" if suggestion else " Check network access and repository URL."
             message = f"git clone failed: network error. {detail}{hint}"
         elif "permission denied" in lower or "publickey" in lower or "authentication failed" in lower:
-            message = f"git clone failed: authentication error. 请确认 VM 上的 GitHub SSH key 或仓库权限。{detail}"
+            message = f"git clone failed: authentication error. Check your GitHub SSH key or repository permission. {detail}"
         elif "repository not found" in lower or "not found" in lower:
-            message = f"git clone failed: repository not found. 请确认仓库地址、大小写和访问权限。{detail}"
+            message = f"git clone failed: repository not found. Check repository URL, casing, and permission. {detail}"
         else:
             message = f"git clone failed: {detail}"
         raise HTTPException(status_code=502, detail=message)
