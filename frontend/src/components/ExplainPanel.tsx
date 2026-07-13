@@ -109,6 +109,12 @@ export default function ExplainPanel({
             className={upperTab === "knowledge" ? "active" : ""}
             onClick={() => onUpperTabChange("knowledge")}
             disabled={knowledgeDisabled}
+            draggable={!knowledgeDisabled}
+            onDragStart={(event) => {
+              event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "knowledge_graph" }));
+              event.dataTransfer.effectAllowed = "copy";
+            }}
+            title="可拖拽到中间工作区打开"
           >
             知识网络
           </button>

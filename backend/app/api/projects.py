@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from app.models.schemas import (
     CreateLearningPlanRequest,
     GenerateFileLessonRequest,
+    GenerateOutlineLessonRequest,
     GenerateOutlineRequest,
     GenerationTaskResponse,
     ImportProjectRequest,
@@ -16,11 +17,13 @@ from app.models.schemas import (
 )
 from app.services.generation_service import (
     create_or_reuse_file_lesson_task,
+    create_or_reuse_outline_lesson_task,
     create_or_reuse_outline_task,
     generate_rule_course,
     list_project_course_files,
     project_course_dir,
     run_file_lesson_task,
+    run_outline_lesson_task,
     run_outline_generation_task,
 )
 from app.services.git_service import clone_or_reuse, repo_name_from_url, validate_git_url
@@ -193,6 +196,30 @@ def generate_file_lesson(project_id: int, payload: GenerateFileLessonRequest, ba
     return _to_task_response(task)
 
 
+@router.post("/projects/{project_id}/lessons/outline", response_model=GenerationTaskResponse)
+def generate_outline_lesson(project_id: int, payload: GenerateOutlineLessonRequest, background_tasks: BackgroundTasks) -> GenerationTaskResponse:
+    repo_root = _project_root(project_id)
+    settings = get_llm_settings()
+    task, reused = create_or_reuse_outline_lesson_task(
+        project_id,
+        repo_root,
+        payload.lesson_number,
+        payload.title,
+        settings.get("model"),
+        payload.instructions,
+    )
+    if not reused:
+        background_tasks.add_task(
+            run_outline_lesson_task,
+            project_id,
+            task.id,
+            payload.lesson_number,
+            payload.title,
+            payload.instructions,
+        )
+    return _to_task_response(task)
+
+
 @router.get("/projects/{project_id}/tasks", response_model=list[GenerationTaskResponse])
 def get_tasks(project_id: int) -> list[GenerationTaskResponse]:
     _project_root(project_id)
@@ -227,5 +254,4 @@ def remove_project(project_id: int) -> ProjectActionResponse:
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found")
     return ProjectActionResponse(id=project_id, status="deleted", message="Project deleted", course_files=[])
-
 

@@ -24,27 +24,64 @@ type Props = {
 type RelationType = "explains" | "parent_of" | "related_to" | "references";
 type ViewMode = "overview" | "focus";
 
-const MIN_OVERVIEW_SIZE = 32;
-const MAX_OVERVIEW_SIZE = 56;
-const MIN_LABEL_SIZE = 11;
-const MAX_LABEL_SIZE = 14;
+type NodeVisual = { size: number; fontSize: number; color: string; borderColor: string };
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function nodeVisuals(graph: KnowledgeGraph, container: HTMLElement | null): Map<number, NodeVisual> {
+  const metrics = new Map<number, { incoming: number; outgoing: number }>();
+  for (const node of graph.nodes) {
+    metrics.set(node.id, { incoming: 0, outgoing: 0 });
+  }
+  for (const edge of graph.edges) {
+    metrics.get(edge.source_node_id)!.outgoing += 1;
+    metrics.get(edge.target_node_id)!.incoming += 1;
+  }
+
+  const minDimension = Math.min(container?.clientWidth ?? 900, container?.clientHeight ?? 680);
+  const density = clamp(Math.sqrt(12 / Math.max(1, graph.nodes.length)), 0.7, 1.18);
+  // 目标尺寸按当前容器计算；紧凑侧栏也保留足够大的最低节点尺寸。
+  const baseSize = clamp(minDimension * 0.06 * density, 52, 76);
+  const sizeSteps = [1, 1.28, 1.62, 2, 2.4, 2.82];
+  const colorSteps = [
+    { color: "#ffffff", borderColor: "#98a5b5" },
+    { color: "#3aa76d", borderColor: "#238653" },
+    { color: "#3b82e6", borderColor: "#2563c9" },
+    { color: "#8b5cf6", borderColor: "#7041d0" },
+    { color: "#f59e0b", borderColor: "#c67b00" },
+    { color: "#e54b4b", borderColor: "#b92d35" },
+  ];
+
+  return new Map(
+    graph.nodes.map((node) => {
+      const metric = metrics.get(node.id)!;
+      const degree = metric.incoming + metric.outgoing;
+      const level = Math.min(5, degree);
+      const size = Math.round(baseSize * sizeSteps[level]);
+      const color = colorSteps[level];
+      // 标签的字号不随节点或全览缩放而缩小，保证名称始终可读。
+      return [node.id, { size, fontSize: 15, ...color }];
+    }),
+  );
+}
+
 function focusSizes(container: HTMLElement | null) {
   const w = container?.clientWidth ?? 800;
   const h = container?.clientHeight ?? 600;
   const dim = Math.min(w, h);
-  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
   return {
-    root:      Math.round(clamp(dim * 0.09, 40, 72)),
-    parent:    Math.round(clamp(dim * 0.06, 28, 50)),
-    child:     Math.round(clamp(dim * 0.04, 18, 30)),
-    rootFont:  Math.round(clamp(dim * 0.025, 14, 20)),
-    parentFont: Math.round(clamp(dim * 0.018, 12, 16)),
-    childFont:  Math.round(clamp(dim * 0.013, 10, 13)),
+    root: Math.round(clamp(dim * 0.105, 76, 110)),
+    parent: Math.round(clamp(dim * 0.065, 44, 68)),
+    child: Math.round(clamp(dim * 0.055, 38, 58)),
+    rootFont: Math.round(clamp(dim * 0.026, 16, 22)),
+    parentFont: Math.round(clamp(dim * 0.019, 13, 17)),
+    childFont: Math.round(clamp(dim * 0.017, 12, 15)),
   };
 }
 
-const LAYOUT_PADDING = 110;
-const FOCUS_PADDING = 190;
+const LAYOUT_PADDING = 58;
 const ANIMATION_MS = 360;
 const FOCUS_SECONDARY_FIT_DELAY_MS = 180;
 
@@ -54,14 +91,6 @@ const RELATION_LABELS: Record<string, string> = {
   related_to: "相关",
   references: "引用",
 };
-
-function nodeColor(type: string): string {
-  if (type === "term") return "#2f7d73";
-  if (type === "qa") return "#4f6fb5";
-  if (type === "course") return "#8a6f2a";
-  if (type === "file") return "#7c5aa6";
-  return "#5b6678";
-}
 
 function fallbackPosition(index: number, total: number, anchor: { x: number; y: number }) {
   const ring = Math.floor(index / 10);
@@ -102,25 +131,8 @@ function detectComponents(graph: KnowledgeGraph): number[][] {
   return components;
 }
 
-function toElements(graph: KnowledgeGraph): ElementDefinition[] {
-  const degree = new Map<number, number>();
-  for (const node of graph.nodes) degree.set(node.id, 0);
-  for (const edge of graph.edges) {
-    degree.set(edge.source_node_id, (degree.get(edge.source_node_id) || 0) + 1);
-    degree.set(edge.target_node_id, (degree.get(edge.target_node_id) || 0) + 1);
-  }
-  const degVals = [...degree.values()];
-  const maxDeg = Math.max(1, ...degVals);
-  const minDeg = Math.min(...degVals);
-  const degRange = maxDeg - minDeg || 1;
-  function nodeSize(id: number): number {
-    const t = (Math.log(1 + (degree.get(id) || 0) - minDeg)) / Math.log(1 + degRange);
-    return Math.round(MIN_OVERVIEW_SIZE + t * (MAX_OVERVIEW_SIZE - MIN_OVERVIEW_SIZE));
-  }
-  function nodeFontSize(id: number): number {
-    const t = (Math.log(1 + (degree.get(id) || 0) - minDeg)) / Math.log(1 + degRange);
-    return Math.round(MIN_LABEL_SIZE + t * (MAX_LABEL_SIZE - MIN_LABEL_SIZE));
-  }
+function toElements(graph: KnowledgeGraph, container: HTMLElement | null): ElementDefinition[] {
+  const visuals = nodeVisuals(graph, container);
 
   const positioned = graph.nodes.filter((node) => node.x != null && node.y != null);
   const components = detectComponents(graph);
@@ -155,6 +167,7 @@ function toElements(graph: KnowledgeGraph): ElementDefinition[] {
 
   return [
     ...graph.nodes.map((node) => {
+      const visual = visuals.get(node.id)!;
       const hasPosition = node.x != null && node.y != null;
       let position: { x: number; y: number };
       if (hasPosition) {
@@ -178,9 +191,10 @@ function toElements(graph: KnowledgeGraph): ElementDefinition[] {
           refId: node.ref_id,
           refPath: node.ref_path,
           summary: node.summary,
-          color: nodeColor(node.node_type),
-          size: nodeSize(node.id),
-          fontSize: nodeFontSize(node.id),
+          color: visual.color,
+          borderColor: visual.borderColor,
+          size: visual.size,
+          fontSize: visual.fontSize,
         },
         position,
       };
@@ -211,7 +225,7 @@ function directNeighborhood(graph: KnowledgeGraph, focusedNodeId: number) {
   return { nodeIds, edgeIds };
 }
 
-function spreadFocusNeighbors(cy: Core, graph: KnowledgeGraph, focusedNodeId: number) {
+function arrangeFocusNeighborhood(cy: Core, graph: KnowledgeGraph, focusedNodeId: number, animate: boolean) {
   const { nodeIds } = directNeighborhood(graph, focusedNodeId);
   const centerNode = cy.getElementById(`n${focusedNodeId}`);
   if (centerNode.empty()) return;
@@ -219,36 +233,69 @@ function spreadFocusNeighbors(cy: Core, graph: KnowledgeGraph, focusedNodeId: nu
     .filter((id) => id !== focusedNodeId)
     .map((id) => cy.getElementById(`n${id}`))
     .filter((node) => !node.empty());
-  if (neighbors.length === 0) return;
-
-  const center = centerNode.position();
-  const radius = Math.max(170, 122 + neighbors.length * 22);
+  const center = { x: 0, y: 0 };
+  if (neighbors.length === 0) {
+    centerNode.position(center);
+    return 0;
+  }
+  const radius = Math.max(240, 176 + neighbors.length * 34);
   const startAngle = neighbors.length === 1 ? -0.1 : -Math.PI / 2;
+  const moveNode = (node: NodeSingular, position: { x: number; y: number }) => {
+    node.stop();
+    if (animate) {
+      node.animate({ position }, { duration: ANIMATION_MS, easing: "ease-in-out-cubic" });
+    } else {
+      node.position(position);
+    }
+  };
+  moveNode(centerNode, center);
   neighbors.forEach((node, index) => {
     const angle = startAngle + (Math.PI * 2 * index) / neighbors.length;
-    node.stop();
-    node.animate(
-      {
-        position: {
-          x: center.x + Math.cos(angle) * radius,
-          y: center.y + Math.sin(angle) * radius,
-        },
-      },
-      { duration: ANIMATION_MS, easing: "ease-in-out-cubic" },
-    );
+    moveNode(node, {
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+    });
   });
+  return radius;
 }
 
-function scheduleLabelSafeFit(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null) {
+function focusViewport(cy: Core, focusedNodeId: number, radius: number, animate: boolean) {
+  const container = cy.container();
+  const width = container?.clientWidth ?? 900;
+  const height = container?.clientHeight ?? 680;
+  const labelMargin = 148;
+  const usableWidth = Math.max(160, width - labelMargin * 2);
+  const usableHeight = Math.max(160, height - labelMargin * 2);
+  const zoom = clamp(Math.min(usableWidth / (radius * 2), usableHeight / (radius * 2)), 0.25, 1.5);
+  const root = cy.getElementById(`n${focusedNodeId}`);
+  if (root.empty()) return;
+  const position = root.position();
+  const pan = { x: width / 2 - position.x * zoom, y: height / 2 - position.y * zoom };
+  cy.stop();
+  if (animate) {
+    cy.animate({ zoom, pan }, { duration: ANIMATION_MS, easing: "ease-in-out-cubic" });
+    window.setTimeout(() => !cy.destroyed() && syncFixedLabelScale(cy), ANIMATION_MS + 24);
+  } else {
+    cy.zoom(zoom);
+    cy.pan(pan);
+    syncFixedLabelScale(cy);
+  }
+}
+
+function scheduleViewport(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, focusRadius?: number) {
   window.setTimeout(() => {
     if (cy.destroyed()) return;
     cy.resize();
-    fitVisible(cy, graph, mode, focusedNodeId, true);
+    if (mode === "focus" && focusedNodeId && focusRadius) {
+      focusViewport(cy, focusedNodeId, focusRadius, true);
+    } else {
+      fitVisible(cy, graph, mode, focusedNodeId, true);
+    }
   }, FOCUS_SECONDARY_FIT_DELAY_MS);
 }
 
 function fitVisible(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, animate: boolean) {
-  let fitElements = cy.elements();
+  let fitElements = cy.elements().filter((element) => !element.hasClass("graph-hidden"));
   let padding = LAYOUT_PADDING;
   if (mode === "focus" && focusedNodeId) {
     const { nodeIds, edgeIds } = directNeighborhood(graph, focusedNodeId);
@@ -259,19 +306,49 @@ function fitVisible(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNode
     for (const id of edgeIds) {
       fitElements = fitElements.union(cy.getElementById(`e${id}`));
     }
-    padding = FOCUS_PADDING;
+    padding = Math.max(86, Math.min(cy.width(), cy.height()) * 0.14);
   }
   if (fitElements.length === 0) return;
   cy.stop();
   if (animate) {
     cy.animate({ fit: { eles: fitElements, padding } }, { duration: ANIMATION_MS, easing: "ease-in-out-cubic" });
+    // `fit` 动画最后一帧会写回默认缩放样式；动画结束后再次补偿，避免
+    // 节点先变大、随后又缩回去。
+    window.setTimeout(() => !cy.destroyed() && syncFixedLabelScale(cy), ANIMATION_MS + 24);
   } else {
     cy.fit(fitElements, padding);
+    syncFixedLabelScale(cy);
   }
+}
+
+// Cytoscape 的标签会和画布一起缩放。反向补偿字号和标签宽度后，文字在
+// 屏幕上保持稳定可读，而不是在全览时缩成几个像素。
+function syncFixedLabelScale(cy: Core) {
+  const zoom = Math.max(cy.zoom(), 0.05);
+  cy.nodes().forEach((node) => {
+    const screenFont = node.hasClass("focus-root") ? 18 : node.hasClass("focus-parent") ? 16 : 15;
+    const screenSize = Number(node.data("displaySize") ?? node.data("size") ?? 40);
+    node.style({
+      width: screenSize / zoom,
+      height: screenSize / zoom,
+      "font-size": screenFont / zoom,
+      "text-max-width": 124 / zoom,
+      "text-margin-y": 10 / zoom,
+      "text-background-padding": 2 / zoom,
+    });
+  });
 }
 
 function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, animate = true) {
   cy.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge");
+  const overview = nodeVisuals(graph, cy.container());
+  cy.nodes().forEach((node) => {
+    const visual = overview.get(Number(node.data("nodeId")));
+    if (visual) {
+      node.data("displaySize", visual.size);
+      node.style({ width: visual.size, height: visual.size, "font-size": visual.fontSize });
+    }
+  });
 
   if (mode === "focus" && focusedNodeId) {
     const { nodeIds, edgeIds } = directNeighborhood(graph, focusedNodeId);
@@ -291,12 +368,15 @@ function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focused
         node.addClass("graph-hidden");
       } else if (nodeId === focusedNodeId) {
         node.addClass("focus-root");
+        node.data("displaySize", sizes.root);
         node.style({ width: sizes.root, height: sizes.root, "font-size": sizes.rootFont });
       } else if (parentIds.has(nodeId)) {
         node.addClass("focus-parent");
+        node.data("displaySize", sizes.parent);
         node.style({ width: sizes.parent, height: sizes.parent, "font-size": sizes.parentFont });
       } else {
         node.addClass("focus-child");
+        node.data("displaySize", sizes.child);
         node.style({ width: sizes.child, height: sizes.child, "font-size": sizes.childFont });
       }
     });
@@ -308,31 +388,183 @@ function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focused
         edge.addClass("graph-hidden");
       }
     });
-    spreadFocusNeighbors(cy, graph, focusedNodeId);
+    const focusRadius = arrangeFocusNeighborhood(cy, graph, focusedNodeId, animate);
+    syncFixedLabelScale(cy);
+    if (focusRadius != null) {
+      window.setTimeout(() => focusViewport(cy, focusedNodeId, focusRadius, true), animate ? ANIMATION_MS : 0);
+      scheduleViewport(cy, graph, mode, focusedNodeId, focusRadius);
+    }
+    return;
   }
 
+  syncFixedLabelScale(cy);
   fitVisible(cy, graph, mode, focusedNodeId, animate);
-  scheduleLabelSafeFit(cy, graph, mode, focusedNodeId);
+  scheduleViewport(cy, graph, mode, focusedNodeId);
+}
+
+function placeAlongArc(count: number, middle: number, spread: number) {
+  if (count <= 1) return [middle];
+  return Array.from({ length: count }, (_, index) => middle - spread / 2 + (spread * index) / (count - 1));
+}
+
+function resolvePositionCollisions(graph: KnowledgeGraph, positions: Map<number, { x: number; y: number }>) {
+  const degree = new Map<number, number>();
+  for (const node of graph.nodes) degree.set(node.id, 0);
+  for (const edge of graph.edges) {
+    degree.set(edge.source_node_id, (degree.get(edge.source_node_id) ?? 0) + 1);
+    degree.set(edge.target_node_id, (degree.get(edge.target_node_id) ?? 0) + 1);
+  }
+
+  // 保持高连接节点更稳定，迭代推离所有过近的节点，给圆点和标题都留下空间。
+  for (let iteration = 0; iteration < 90; iteration += 1) {
+    let moved = false;
+    for (let first = 0; first < graph.nodes.length; first += 1) {
+      for (let second = first + 1; second < graph.nodes.length; second += 1) {
+        const a = graph.nodes[first];
+        const b = graph.nodes[second];
+        const positionA = positions.get(a.id);
+        const positionB = positions.get(b.id);
+        if (!positionA || !positionB) continue;
+        let dx = positionB.x - positionA.x;
+        let dy = positionB.y - positionA.y;
+        let distance = Math.hypot(dx, dy);
+        const requiredDistance = 118 + Math.min(70, ((degree.get(a.id) ?? 0) + (degree.get(b.id) ?? 0)) * 10);
+        if (distance >= requiredDistance) continue;
+        if (distance < 0.001) {
+          const angle = ((a.id * 37 + b.id * 17) % 360) * (Math.PI / 180);
+          dx = Math.cos(angle);
+          dy = Math.sin(angle);
+          distance = 1;
+        }
+        const push = (requiredDistance - distance) / 2;
+        const massA = 1 + (degree.get(a.id) ?? 0) * 0.75;
+        const massB = 1 + (degree.get(b.id) ?? 0) * 0.75;
+        const unitX = dx / distance;
+        const unitY = dy / distance;
+        positionA.x -= unitX * push * (massB / (massA + massB));
+        positionA.y -= unitY * push * (massB / (massA + massB));
+        positionB.x += unitX * push * (massA / (massA + massB));
+        positionB.y += unitY * push * (massA / (massA + massB));
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  return positions;
+}
+
+function createHubBranchPositions(graph: KnowledgeGraph, isComponent = false) {
+  const degree = new Map<number, number>();
+  const adjacency = new Map<number, Set<number>>();
+  const outgoing = new Map<number, number[]>();
+  const incoming = new Map<number, number[]>();
+  for (const node of graph.nodes) {
+    degree.set(node.id, 0);
+    adjacency.set(node.id, new Set());
+    outgoing.set(node.id, []);
+    incoming.set(node.id, []);
+  }
+  for (const edge of graph.edges) {
+    degree.set(edge.source_node_id, (degree.get(edge.source_node_id) ?? 0) + 1);
+    degree.set(edge.target_node_id, (degree.get(edge.target_node_id) ?? 0) + 1);
+    adjacency.get(edge.source_node_id)?.add(edge.target_node_id);
+    adjacency.get(edge.target_node_id)?.add(edge.source_node_id);
+    outgoing.get(edge.source_node_id)?.push(edge.target_node_id);
+    incoming.get(edge.target_node_id)?.push(edge.source_node_id);
+  }
+  if (!graph.nodes.length) return new Map<number, { x: number; y: number }>();
+
+  if (!isComponent) {
+    const components = detectComponents(graph).sort((a, b) => b.length - a.length || a[0] - b[0]);
+    if (components.length > 1) {
+      const combined = new Map<number, { x: number; y: number }>();
+      let cursorX = 0;
+      components.forEach((component, index) => {
+        const ids = new Set(component);
+        const part: KnowledgeGraph = {
+          nodes: graph.nodes.filter((node) => ids.has(node.id)),
+          edges: graph.edges.filter((edge) => ids.has(edge.source_node_id) && ids.has(edge.target_node_id)),
+        };
+        const local = createHubBranchPositions(part, true);
+        const points = [...local.values()];
+        const minX = Math.min(...points.map((point) => point.x));
+        const maxX = Math.max(...points.map((point) => point.x));
+        const minY = Math.min(...points.map((point) => point.y));
+        const maxY = Math.max(...points.map((point) => point.y));
+        const width = maxX - minX;
+        const offsetY = index % 2 === 0 ? 0 : Math.max(280, maxY - minY + 180);
+        local.forEach((point, nodeId) => combined.set(nodeId, { x: point.x + cursorX - minX, y: point.y + offsetY }));
+        cursorX += width + 440;
+      });
+      return resolvePositionCollisions(graph, combined);
+    }
+  }
+
+  const root = [...graph.nodes].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0) || a.id - b.id)[0];
+  const positions = new Map<number, { x: number; y: number }>([[root.id, { x: 0, y: 0 }]]);
+  const angles = new Map<number, number>([[root.id, 0]]);
+  const levels = new Map<number, number>([[root.id, 0]]);
+  const queue = [root.id];
+  const rootOutgoing = [...new Set(outgoing.get(root.id) ?? [])].sort((a, b) => a - b);
+  const rootIncoming = [...new Set(incoming.get(root.id) ?? [])]
+    .filter((id) => !rootOutgoing.includes(id))
+    .sort((a, b) => a - b);
+  const rootNeighbors = [...(adjacency.get(root.id) ?? [])].filter((id) => !rootOutgoing.includes(id) && !rootIncoming.includes(id));
+  const rootAngles = new Map<number, number>();
+
+  // 出边在上、右、下展开；入边在左侧展开。这样关键节点居中，知识来源和延伸分支自然分开。
+  rootOutgoing.forEach((id, index) => rootAngles.set(id, placeAlongArc(rootOutgoing.length, 0, Math.PI)[index] - Math.PI / 2));
+  rootIncoming.forEach((id, index) => rootAngles.set(id, placeAlongArc(rootIncoming.length, Math.PI, Math.PI / 2)[index]));
+  rootNeighbors.forEach((id, index) => rootAngles.set(id, placeAlongArc(rootNeighbors.length, Math.PI * 0.75, Math.PI / 3)[index]));
+
+  const rootRadius = Math.max(260, 186 + rootAngles.size * 26);
+  for (const [id, angle] of rootAngles) {
+    positions.set(id, { x: Math.cos(angle) * rootRadius, y: Math.sin(angle) * rootRadius });
+    angles.set(id, angle);
+    levels.set(id, 1);
+    queue.push(id);
+  }
+
+  while (queue.length) {
+    const parentId = queue.shift()!;
+    const parentLevel = levels.get(parentId) ?? 0;
+    const children = [...(adjacency.get(parentId) ?? [])]
+      .filter((id) => !positions.has(id))
+      .sort((a, b) => (degree.get(b) ?? 0) - (degree.get(a) ?? 0) || a - b);
+    if (!children.length) continue;
+    const parentAngle = angles.get(parentId) ?? 0;
+    const childAngles = placeAlongArc(children.length, parentAngle, Math.min(Math.PI / 2, Math.PI / (parentLevel + 1)));
+    const radius = rootRadius * (parentLevel + 1);
+    children.forEach((id, index) => {
+      const angle = childAngles[index];
+      positions.set(id, { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+      angles.set(id, angle);
+      levels.set(id, parentLevel + 1);
+      queue.push(id);
+    });
+  }
+
+  return resolvePositionCollisions(graph, positions);
 }
 
 function createCompactOverviewLayout(cy: Core, graph: KnowledgeGraph) {
-  const nodeCount = graph.nodes.length;
-
-  if (nodeCount <= 12) {
+  const positions = createHubBranchPositions(graph);
+  if (positions.size === graph.nodes.length && graph.nodes.length > 1) {
+    // `preset` 的函数回调在不同 Cytoscape 版本中传入的 ID 形式不完全一致。
+    // 使用显式坐标表并同时保留元素 ID/业务 ID，避免回退到 (0, 0) 导致节点重叠。
+    const positionMap: Record<string, { x: number; y: number }> = {};
+    for (const [nodeId, position] of positions) {
+      positionMap[`n${nodeId}`] = position;
+      positionMap[String(nodeId)] = position;
+    }
     return cy.layout({
-      name: "concentric",
+      name: "preset",
       fit: false,
       animate: true,
-      animationDuration: 450,
+      animationDuration: 500,
       animationEasing: "ease-in-out-cubic",
-      avoidOverlap: true,
-      nodeDimensionsIncludeLabels: true,
-      minNodeSpacing: 70,
-      spacingFactor: 1.1,
-      startAngle: -Math.PI / 2,
-      clockwise: true,
-      concentric: (node: NodeSingular) => node.degree(),
-      levelWidth: (nodes: { maxDegree: () => number }) => Math.max(1, nodes.maxDegree() / 3),
+      positions: positionMap,
+      padding: LAYOUT_PADDING,
     });
   }
 
@@ -431,7 +663,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     cyRef.current?.destroy();
     const cy = cytoscape({
       container,
-      elements: toElements(graph),
+      elements: toElements(graph, container),
       style: [
         {
           selector: "node",
@@ -441,7 +673,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
             color: "#1f2937",
             "font-size": "data(fontSize)",
             "text-wrap": "wrap",
-            "text-max-width": "96px",
+            "text-max-width": "116px",
             "text-valign": "bottom",
             "text-halign": "center",
             "text-margin-y": 10,
@@ -452,7 +684,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
             "text-outline-color": "#f8fafb",
             "text-outline-width": 2,
             "border-width": 2,
-            "border-color": "#ffffff",
+            "border-color": "data(borderColor)",
             width: "data(size)",
             height: "data(size)",
             opacity: 1,
@@ -549,10 +781,12 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       ],
       layout: { name: "preset", fit: false },
       wheelSensitivity: 0.2,
-      minZoom: 0.15,
+      // 侧栏图谱不允许 fit 动画把节点和标签缩到不可阅读的大小。
+      minZoom: compact ? 0.9 : 0.55,
       maxZoom: 3,
     });
     cyRef.current = cy;
+    cy.on("zoom", () => syncFixedLabelScale(cy));
 
     const allNodesHavePosition = graph.nodes.length > 0 && graph.nodes.every((node) => node.x != null && node.y != null);
     if (!allNodesHavePosition && graph.nodes.length > 1) {

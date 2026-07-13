@@ -4,6 +4,7 @@ import hashlib
 import re
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from app.core.config import GENERATED_ROOT, PROMPT_VERSION
 from app.services.prompt_store import load_prompt, save_prompt
@@ -20,6 +21,7 @@ from app.services.storage import (
     GenerationTask,
     cleanup_course_artifacts,
     create_generation_task,
+    find_knowledge_node,
     find_completed_task,
     get_llm_settings,
     get_project,
@@ -45,7 +47,14 @@ def list_project_course_files(repo_root: Path, project_id: int) -> list[CourseFi
 
 
 def read_project_course_file(repo_root: Path, project_id: int, filename: str) -> str:
-    return read_course_file(repo_root, filename, project_course_dir(project_id))
+    content = read_course_file(repo_root, filename, project_course_dir(project_id))
+    # 兼容此前已生成的总纲：不需要再次调用模型，也能补回按课生成入口。
+    if filename == "outline.md":
+        decorated = add_outline_lesson_links(content)
+        if decorated != content:
+            _atomic_write(project_course_dir(project_id) / filename, decorated)
+        return decorated
+    return content
 
 
 def resolve_project_course_file(project_id: int, filename: str) -> Path:
@@ -236,6 +245,104 @@ def _parse_outline_files(content: str) -> tuple[str, str]:
     return sections["project_map.md"], sections["outline.md"]
 
 
+LESSON_LINKS_START = "<!-- CODECOURSE_LESSON_LINKS_START -->"
+LESSON_LINKS_END = "<!-- CODECOURSE_LESSON_LINKS_END -->"
+LESSON_HEADING_PATTERN = re.compile(r"^###\s*第\s*(\d+)\s*课\s*[：:]\s*(.+?)\s*$", re.MULTILINE)
+LESSON_TABLE_PATTERN = re.compile(r"^\|\s*(\d+)\s*\|\s*([^|]+?)\s*\|", re.MULTILINE)
+
+
+def extract_outline_lessons(outline: str) -> list[tuple[int, str]]:
+    lessons = [(int(match.group(1)), match.group(2).strip()) for match in LESSON_HEADING_PATTERN.finditer(outline)]
+    if not lessons:
+        for match in LESSON_TABLE_PATTERN.finditer(outline):
+            title = match.group(2).strip()
+            if title and title not in {"课程名称", "课程"}:
+                lessons.append((int(match.group(1)), title))
+    seen: set[int] = set()
+    return [(number, title) for number, title in lessons if not (number in seen or seen.add(number))][:12]
+
+
+def add_outline_lesson_links(outline: str) -> str:
+    cleaned = re.sub(
+        rf"\n?{re.escape(LESSON_LINKS_START)}.*?{re.escape(LESSON_LINKS_END)}\n?",
+        "\n",
+        outline,
+        flags=re.DOTALL,
+    ).rstrip()
+    lessons = extract_outline_lessons(cleaned)
+    if not lessons:
+        return cleaned + "\n"
+    lines = [
+        LESSON_LINKS_START,
+        "## 按课生成课件",
+        "> 课件按需生成。点击一节课后会请求模型，并优先使用项目索引中的相关代码片段。",
+        "",
+    ]
+    for number, title in lessons:
+        lines.append(f"- [生成第 {number} 课：{title}](https://codecourse.local/generate-lesson/{number}?title={quote(title, safe='')})")
+    lines.extend([LESSON_LINKS_END, ""])
+    return cleaned + "\n\n" + "\n".join(lines)
+
+
+def _lesson_outline_section(outline: str, lesson_number: int, fallback_title: str) -> tuple[str, str]:
+    matches = list(LESSON_HEADING_PATTERN.finditer(outline))
+    for index, match in enumerate(matches):
+        if int(match.group(1)) == lesson_number:
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(outline)
+            return match.group(2).strip(), outline[match.start():end].strip()
+    return fallback_title.strip(), f"### 第 {lesson_number} 课：{fallback_title.strip()}"
+
+
+def _outline_lesson_filename(lesson_number: int) -> str:
+    return f"lessons/lesson_{lesson_number:02d}.md"
+
+
+def build_outline_lesson_input(
+    project_id: int,
+    repo_root: Path,
+    lesson_number: int,
+    requested_title: str,
+    instructions: str = "",
+) -> tuple[str, str, str]:
+    outline_path = project_course_dir(project_id) / "outline.md"
+    if not outline_path.is_file():
+        raise RuntimeError("请先生成项目学习总纲，再生成课件。")
+    outline = outline_path.read_text(encoding="utf-8")
+    lesson_title, lesson_section = _lesson_outline_section(outline, lesson_number, requested_title)
+    search_query = f"{lesson_title} {lesson_section[:1200]}".strip()
+    rag_context = "索引中没有匹配片段。"
+    try:
+        # 延迟导入以避开 index_service 与本模块之间的循环依赖。
+        from app.services.index_service import search_project
+
+        results = search_project(project_id, search_query, limit=10)
+        if results:
+            rag_context = "\n\n".join(
+                f"### {item.path}:{item.start_line}-{item.end_line}\n```{item.language}\n{item.content[:3600]}\n```"
+                for item in results
+            )
+    except Exception:
+        pass
+    user_instructions = _clean_instructions(instructions)
+    lesson_input = "\n\n".join(
+        [
+            "项目总纲摘要：\n```markdown\n" + outline[:7000] + "\n```",
+            "本课计划：\n```markdown\n" + lesson_section + "\n```",
+            "RAG 索引检索片段：\n" + rag_context,
+        ]
+    )
+    input_hash = hash_inputs(
+        PROMPT_VERSION,
+        "outline_lesson",
+        str(lesson_number),
+        lesson_title,
+        user_instructions,
+        outline,
+        rag_context,
+    )
+    return lesson_title, lesson_input, input_hash
+
+
 def run_outline_generation_task(project_id: int, task_id: int, scope: LearningScopeRequest, instructions: str = "") -> None:
     project = get_project(project_id)
     if project is None:
@@ -273,7 +380,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
             content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
             outline = _require_markdown(content)
             output_dir = project_course_dir(project_id)
-            _atomic_write(output_dir / "outline.md", outline)
+            _atomic_write(output_dir / "outline.md", add_outline_lesson_links(outline))
             update_generation_task(task_id, "completed", output_path=output_dir)
             update_project_status(project_id, "outline_ready")
             return
@@ -299,7 +406,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
         project_map, outline = _parse_outline_files(content)
         output_dir = project_course_dir(project_id)
         _atomic_write(output_dir / "project_map.md", project_map)
-        _atomic_write(output_dir / "outline.md", outline)
+        _atomic_write(output_dir / "outline.md", add_outline_lesson_links(outline))
         update_generation_task(task_id, "completed", output_path=output_dir)
         update_project_status(project_id, "outline_ready")
     except Exception as exc:  # noqa: BLE001
@@ -425,6 +532,100 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
         update_generation_task(task_id, "completed", output_path=output_path)
     except Exception as exc:  # noqa: BLE001
         update_generation_task(task_id, "failed", error_message=str(exc))
+
+
+def run_outline_lesson_task(
+    project_id: int,
+    task_id: int,
+    lesson_number: int,
+    requested_title: str,
+    instructions: str = "",
+) -> None:
+    project = get_project(project_id)
+    if project is None:
+        update_generation_task(task_id, "failed", error_message="Project not found")
+        return
+    repo_root = Path(project.local_path).resolve()
+    try:
+        settings = _llm_settings_or_error()
+        update_generation_task(task_id, "running")
+        lesson_title, lesson_input, _ = build_outline_lesson_input(
+            project_id,
+            repo_root,
+            lesson_number,
+            requested_title,
+            instructions,
+        )
+        prompt = load_prompt("prompt.outline_lesson").format(
+            lesson_number=lesson_number,
+            lesson_title=lesson_title,
+            user_instructions=_clean_instructions(instructions) or "无",
+            lesson_input=lesson_input,
+        )
+        content = call_openai_compatible_chat(
+            settings["base_url"],
+            settings["api_key"],
+            settings["model"],
+            [
+                {"role": "system", "content": load_prompt("prompt.system")},
+                {"role": "user", "content": prompt},
+            ],
+            timeout=120,
+        )
+        lesson = _require_markdown(content)
+        if not lesson.lstrip().startswith("#"):
+            lesson = f"# 第 {lesson_number} 课：{lesson_title}\n\n{lesson}"
+        relative_path = _outline_lesson_filename(lesson_number)
+        output_path = project_course_dir(project_id) / relative_path
+        _atomic_write(output_path, lesson)
+        node_title = f"第{lesson_number}课"
+        existing = find_knowledge_node(
+            project_id,
+            node_type="course",
+            title=node_title,
+            ref_type="course",
+            ref_path=relative_path,
+        )
+        if existing is None:
+            create_knowledge_node(
+                project_id=project_id,
+                node_type="course",
+                title=node_title,
+                ref_type="course",
+                ref_path=relative_path,
+                summary=lesson_title,
+            )
+        update_generation_task(task_id, "completed", output_path=output_path)
+    except Exception as exc:  # noqa: BLE001
+        update_generation_task(task_id, "failed", error_message=str(exc))
+
+
+def create_or_reuse_outline_lesson_task(
+    project_id: int,
+    repo_root: Path,
+    lesson_number: int,
+    title: str,
+    model: Optional[str],
+    instructions: str = "",
+) -> tuple[GenerationTask, bool]:
+    _, _, input_hash = build_outline_lesson_input(project_id, repo_root, lesson_number, title, instructions)
+    prompt_hash = hash_inputs(input_hash, load_prompt("prompt.outline_lesson"), load_prompt("prompt.system"))
+    mode = f"lesson-{lesson_number:02d}"
+    cached = find_completed_task(project_id, "outline_lesson", prompt_hash, PROMPT_VERSION, source_path="outline.md", mode=mode)
+    if cached and cached.output_path and Path(cached.output_path).exists():
+        return cached, True
+    output_path = project_course_dir(project_id) / _outline_lesson_filename(lesson_number)
+    task = create_generation_task(
+        project_id=project_id,
+        task_type="outline_lesson",
+        input_hash=prompt_hash,
+        prompt_version=PROMPT_VERSION,
+        source_path="outline.md",
+        mode=mode,
+        model=model,
+        output_path=output_path,
+    )
+    return task, False
 
 
 def create_or_reuse_outline_task(

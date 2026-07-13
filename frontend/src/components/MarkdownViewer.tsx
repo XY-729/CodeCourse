@@ -19,6 +19,7 @@ type Props = {
   onCreateHighlight?: (text: string) => void;
   onContextMenu?: (event: React.MouseEvent, text: string, sourcePath: string) => void;
   onOpenKnowledgeLink?: (term: string, links: KnowledgeLink[]) => void;
+  onGenerateLesson?: (lessonNumber: number, title: string) => void;
   headerActions?: ReactNode;
 };
 
@@ -213,6 +214,7 @@ export default function MarkdownViewer({
   onCreateHighlight: _onCreateHighlight,
   onContextMenu,
   onOpenKnowledgeLink,
+  onGenerateLesson,
   headerActions,
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
@@ -272,6 +274,21 @@ export default function MarkdownViewer({
   }
 
   const highlightedComponents = {
+    a: ({ href, children }: { href?: string; children?: ReactNode }) => {
+      const match = href?.match(/^https:\/\/codecourse\.local\/generate-lesson\/(\d+)\?title=(.*)$/);
+      if (match && onGenerateLesson) {
+        return (
+          <button
+            type="button"
+            className="lesson-generate-link"
+            onClick={() => onGenerateLesson(Number(match[1]), decodeURIComponent(match[2] || "课件"))}
+          >
+            {children}
+          </button>
+        );
+      }
+      return <a href={href}>{children}</a>;
+    },
     p: ({ children }: { children?: ReactNode }) => (
       <p>{highlightChildren(children, highlights, knowledgeLinks, annotations, tempSelectedText ?? null, onOpenKnowledgeLink)}</p>
     ),

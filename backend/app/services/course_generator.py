@@ -14,6 +14,7 @@ PREFERRED_COURSE_FILES = [
 
 GROUP_LABELS = {
     "": "项目总纲",
+    "lessons": "项目课件",
     "files": "文件课件",
     "selection_answers": "选区问答",
 }

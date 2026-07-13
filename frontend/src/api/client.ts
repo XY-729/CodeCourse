@@ -219,10 +219,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }));
     const detail = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string }) => item.msg).join("; ") : body.detail;
-    if (detail === "Not Found" || response.status === 404) {
+    if (detail === "Not Found") {
       throw new Error("接口未找到，请重启后端服务后重试。");
     }
-    throw new Error(detail ?? response.statusText);
+    throw new Error(detail ?? (response.status === 404 ? "请求的资源不存在或已被删除。" : response.statusText));
   }
   return response.json() as Promise<T>;
 }
@@ -319,6 +319,13 @@ export function generateFileLesson(projectId: number, path: string, mode: "brief
   return request<GenerationTask>(`/projects/${projectId}/lessons/file`, {
     method: "POST",
     body: JSON.stringify({ path, mode, instructions }),
+  });
+}
+
+export function generateOutlineLesson(projectId: number, lessonNumber: number, title: string, instructions: string): Promise<GenerationTask> {
+  return request<GenerationTask>(`/projects/${projectId}/lessons/outline`, {
+    method: "POST",
+    body: JSON.stringify({ lesson_number: lessonNumber, title, instructions }),
   });
 }
 

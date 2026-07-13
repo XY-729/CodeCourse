@@ -18,6 +18,22 @@ function backendDir() {
   return app.isPackaged ? path.join(process.resourcesPath, "backend") : path.join(projectRoot(), "backend");
 }
 
+function packagedBackendExecutable() {
+  return path.join(backendDir(), "backend.exe");
+}
+
+function addBundledGitToPath(env) {
+  if (!app.isPackaged || process.platform !== "win32") {
+    return env;
+  }
+  const gitRoot = path.join(process.resourcesPath, "git");
+  const bundledPaths = [path.join(gitRoot, "cmd"), path.join(gitRoot, "bin")].filter(fs.existsSync);
+  if (bundledPaths.length === 0) {
+    return env;
+  }
+  return { ...env, PATH: [...bundledPaths, env.PATH || ""].join(path.delimiter) };
+}
+
 function frontendIndex() {
   return path.join(projectRoot(), "frontend", "dist", "index.html");
 }
@@ -54,7 +70,7 @@ function waitForHealth(port, child, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
     const tick = () => {
       if (child.exitCode !== null) {
-        reject(new Error("后端进程已退出，请确认 Python 依赖已安装：pip install -r backend/requirements.txt"));
+        reject(new Error("后端进程已退出。请查看应用数据目录中的 backend.log。"));
         return;
       }
       const request = http.get(`http://127.0.0.1:${port}/api/health`, (response) => {
@@ -73,7 +89,7 @@ function waitForHealth(port, child, timeoutMs = 20000) {
     };
     const retry = () => {
       if (Date.now() > deadline) {
-        reject(new Error("后端启动超时，请确认 Python、uvicorn 和 FastAPI 可用。"));
+        reject(new Error("后端启动超时。请查看应用数据目录中的 backend.log。"));
         return;
       }
       setTimeout(tick, 350);
@@ -89,11 +105,32 @@ async function startBackend() {
   fs.mkdirSync(userData, { recursive: true });
   const logPath = path.join(userData, "backend.log");
   const logStream = fs.createWriteStream(logPath, { flags: "a" });
-  const env = {
+  const baseEnv = {
     ...process.env,
     GPL_WORKSPACE_ROOT: userData,
     PYTHONPATH: cwd,
   };
+  const env = addBundledGitToPath(baseEnv);
+
+  if (app.isPackaged && process.platform === "win32") {
+    const executable = packagedBackendExecutable();
+    if (!fs.existsSync(executable)) {
+      throw new Error(`未找到内置后端：${executable}`);
+    }
+    const child = spawn(executable, ["--host", "127.0.0.1", "--port", String(port), "--workspace", userData], {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    child.stdout.pipe(logStream, { end: false });
+    child.stderr.pipe(logStream, { end: false });
+    await waitForHealth(port, child);
+    backendProcess = child;
+    apiBase = `http://127.0.0.1:${port}/api`;
+    process.env.CODECOURSE_API_BASE = apiBase;
+    return;
+  }
 
   let lastError = null;
   for (const candidate of pythonCandidates()) {

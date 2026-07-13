@@ -1,13 +1,15 @@
 {
   "name": "codecourse-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "CodeCourse desktop shell for the GitHub project learner.",
   "main": "electron/main.cjs",
   "scripts": {
     "desktop:dev": "node electron/dev-runner.cjs",
-    "desktop:build": "npm --prefix frontend run build && electron-builder",
-    "desktop:pack": "npm --prefix frontend run build && electron-builder --dir",
+    "backend:build": "pyinstaller --noconfirm --clean --distpath dist-backend --workpath build/pyinstaller backend/backend.spec",
+    "desktop:build": "npm run frontend:build && npm run backend:build && electron-builder",
+    "desktop:pack": "npm run frontend:build && npm run backend:build && electron-builder --dir",
+    "desktop:portable": "npm run frontend:build && npm run backend:build && electron-builder --win portable",
     "frontend:build": "npm --prefix frontend run build",
     "backend:test": "cd backend && PYTHONPATH=.. .venv/bin/python -m unittest discover -s tests -v"
   },
@@ -26,20 +28,21 @@
       "frontend/dist/**/*",
       "package.json"
     ],
-    "extraResources": [
-      {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "app/**/*",
-          "requirements.txt"
-        ]
-      }
-    ],
     "win": {
+      "artifactName": "${productName}-${version}-${os}-${arch}-${target}.${ext}",
       "target": [
         "nsis",
         "portable"
+      ],
+      "extraResources": [
+        {
+          "from": "dist-backend/backend.exe",
+          "to": "backend/backend.exe"
+        },
+        {
+          "from": "resources/git",
+          "to": "git"
+        }
       ]
     },
     "linux": {
@@ -47,7 +50,17 @@
         "AppImage",
         "dir"
       ],
-      "category": "Development"
+      "category": "Development",
+      "extraResources": [
+        {
+          "from": "backend",
+          "to": "backend",
+          "filter": [
+            "app/**/*",
+            "requirements.txt"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,

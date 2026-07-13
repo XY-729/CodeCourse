@@ -530,12 +530,14 @@ class QARecordEndpointTests(unittest.TestCase):
                 "prompt.system",
                 "prompt.file_lesson.detailed_expected",
                 "prompt.file_lesson.brief_expected",
+                "prompt.outline_lesson",
                 "prompt.qa.answer",
             ],
         )
         self.assertNotIn("prompt.outline", prompts)
         self.assertNotIn("prompt.file_lesson.template", prompts)
         self.assertIn("prompt.qa.answer", prompts)
+        self.assertIn("prompt.outline_lesson", prompts)
         self.assertIn("TITLE:", prompts["prompt.qa.answer"])
         self.assertIn("刚开始读这个项目的小白开发者", prompts["prompt.qa.answer"])
         self.assertIn("上下文材料", prompts["prompt.qa.answer"])

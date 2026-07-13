@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from app.services.storage import (
@@ -160,6 +161,31 @@ def _resolve_source_node(record: QARecord) -> KnowledgeNode:
         source_qa = get_qa_record_by_output_path(record.project_id, record.source_path)
         if source_qa and source_qa.id != record.id:
             return _qa_node(source_qa)
+
+        # 总纲按需生成的课件有固定知识节点名“第X课”。追问时必须复用
+        # 这个节点，而不是按物理文件名 lesson_XX.md 再创建一个父节点。
+        lesson_match = re.fullmatch(r"lessons/lesson_(\d+)\.md", record.source_path)
+        if lesson_match:
+            lesson_title = f"第{int(lesson_match.group(1))}课"
+            for candidate_title in (lesson_title, f"第 {int(lesson_match.group(1))} 课"):
+                lesson_node = find_knowledge_node(
+                    record.project_id,
+                    node_type="course",
+                    title=candidate_title,
+                    ref_type="course",
+                    ref_path=record.source_path,
+                )
+                if lesson_node:
+                    return lesson_node
+
+        existing_course = find_knowledge_node(
+            record.project_id,
+            node_type="course",
+            ref_type="course",
+            ref_path=record.source_path,
+        )
+        if existing_course:
+            return existing_course
 
     if record.source_path and record.source_type in SOURCE_TYPE_TO_NODE_TYPE:
         return get_or_create_node(

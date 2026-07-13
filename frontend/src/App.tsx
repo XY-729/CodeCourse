@@ -10,6 +10,7 @@ import {
   getQARecord,
   deleteProject,
   generateFileLesson,
+  generateOutlineLesson,
   generateOutline,
   getCourseContent,
   getCourseFiles,
@@ -139,7 +140,7 @@ function parentDir(path: string): string {
 }
 
 function taskLabel(task: GenerationTask): string {
-  const type = task.task_type === "file_lesson" ? "文件课件" : "项目总纲";
+  const type = task.task_type === "file_lesson" ? "文件课件" : task.task_type === "outline_lesson" ? "项目课件" : "项目总纲";
   return `${type} / ${task.status}`;
 }
 
@@ -828,6 +829,15 @@ export default function App() {
         };
       }
     }
+    if (payload.kind === "knowledge_graph") {
+      return {
+        id: "knowledge:graph",
+        type: "knowledge_graph",
+        path: "knowledge://graph",
+        title: "知识网络",
+        content: "",
+      };
+    }
     return null;
   }
 
@@ -1152,7 +1162,7 @@ export default function App() {
     setProjects((items) => items.map((item) => (item.id === freshProject.id ? freshProject : item)));
     if (nextTask.status === "completed") {
       setTaskMessage("生成完成");
-      const preferred = nextTask.task_type === "file_lesson"
+      const preferred = nextTask.task_type === "file_lesson" || nextTask.task_type === "outline_lesson"
         ? nextCourses.find((item) => item.filename === nextTask.output_path?.split("/").slice(-2).join("/"))
         : nextCourses.find((item) => item.filename === "outline.md");
       if (preferred) {
@@ -1207,6 +1217,28 @@ export default function App() {
       await trackTask(task);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建文件课件任务失败");
+    }
+  }
+
+  async function handleGenerateOutlineLesson(lessonNumber: number, title: string) {
+    if (!project || isTaskRunning) {
+      return;
+    }
+    const ok = await confirmAction(
+      `生成第 ${lessonNumber} 课`,
+      `将调用模型 API 生成“${title}”的详细课件，并使用已构建的项目索引作为代码上下文，可能消耗较多 token。是否继续？`,
+      { confirmText: "生成" },
+    );
+    if (!ok) {
+      return;
+    }
+    setError("");
+    try {
+      const task = await generateOutlineLesson(project.id, lessonNumber, title, generationInstructions);
+      await trackTask(task);
+      setKnowledgeRefreshKey((value) => value + 1);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "创建课件任务失败");
     }
   }
 
@@ -1339,7 +1371,11 @@ export default function App() {
       setQASessionId(record.session_id ?? qaSessionId);
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
       setQAQuestion("");
-      await refreshKnowledgeLinks(project.id);
+      await Promise.all([
+        refreshCourses(project.id),
+        refreshQAHistory(project.id),
+        refreshKnowledgeLinks(project.id),
+      ]);
       setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
@@ -1816,6 +1852,7 @@ export default function App() {
                 onSelectionChange={handleSelection}
                 onContextMenu={(event, text, sourcePath) => handleMarkdownContextMenuOpen(event, sourcePath, text)}
                 onOpenKnowledgeLink={handleOpenKnowledgeLink}
+                onGenerateLesson={activeItem.path === "outline.md" ? handleGenerateOutlineLesson : undefined}
                 headerActions={(activeItem.qaRecordId || activeItem.path.startsWith("selection_answers/") || activeItem.path.startsWith("qa/")) ? (
                   <button
                     className="secondary-button compact"

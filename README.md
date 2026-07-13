@@ -154,7 +154,7 @@ http://localhost:5173
 
 ## 桌面软件运行
 
-当前项目已加入 Electron 桌面壳，可以把 Web 前端和本地 FastAPI 后端一起作为桌面软件启动。第一版仍依赖本机 Python 环境，后续可以再用 PyInstaller 把后端打成独立可执行文件。
+当前项目已加入 Electron 桌面壳，可以把 Web 前端和本地 FastAPI 后端一起作为桌面软件启动。Windows Release 会内置 PyInstaller 打包的 `backend.exe` 与精简 Git 运行时，下载 portable `.exe` 后无需另装 Python 或 Git。
 
 ### 桌面开发模式
 
@@ -186,6 +186,12 @@ npm run desktop:dev
 ```
 
 这个命令会启动 Vite 前端开发服务，然后 Electron 主进程会自动寻找空闲端口并启动 FastAPI 后端。
+
+### Windows Portable Release
+
+GitHub Release 中的 `CodeCourse-<version>-portable.exe` 可直接双击运行。首次启动会在 `%APPDATA%/CodeCourse` 建立本地 workspace；模型 API Key、SQLite、导入仓库和生成课件都只保存在这个目录，不包含在安装包中。
+
+源码发布时推送 `v*` 标签会在 GitHub Actions 的 Windows runner 上自动构建并上传 portable exe 到对应 Release。
 
 ### 桌面打包
 

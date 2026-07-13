@@ -70,6 +70,12 @@ class GenerateFileLessonRequest(BaseModel):
     instructions: str = Field(default="", max_length=4000)
 
 
+class GenerateOutlineLessonRequest(BaseModel):
+    lesson_number: int = Field(ge=1, le=99)
+    title: str = Field(min_length=1, max_length=200)
+    instructions: str = Field(default="", max_length=4000)
+
+
 class GenerationTaskResponse(BaseModel):
     id: int
     project_id: int
