@@ -1,6 +1,6 @@
 {
   "name": "codecourse-desktop",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "description": "CodeCourse desktop shell for the GitHub project learner.",
   "main": "electron/main.cjs",
