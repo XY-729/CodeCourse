@@ -16,6 +16,7 @@ dist-desktop-next/
 dist-desktop-fast/
 dist-release/
 dist-release-final/
+dist-release-v024/
 electron/backend.log
 npm-debug.log*
 resources/git/
