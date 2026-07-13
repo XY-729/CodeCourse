@@ -1,6 +1,6 @@
 {
   "name": "codecourse-desktop",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "private": true,
   "description": "CodeCourse desktop shell for the GitHub project learner.",
   "main": "electron/main.cjs",
@@ -29,7 +29,7 @@
       "package.json"
     ],
     "win": {
-      "artifactName": "${productName}-${version}-${os}-${arch}-${target}.${ext}",
+      "artifactName": "${productName}-${version}-${os}-${arch}-portable.${ext}",
       "target": [
         "nsis",
         "portable"
