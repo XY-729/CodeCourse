@@ -118,6 +118,15 @@ github-project-learner/
 - 项目分析：文件扫描、规则识别、正则符号提取、SQLite FTS5
 - AI 接入：DeepSeek / OpenAI Compatible API
 
+## Windows 桌面版
+
+从 [GitHub Releases](https://github.com/XY-729/CodeCourse/releases) 下载 Windows 版本：
+
+- 推荐：`CodeCourse-<version>-setup.exe`。安装一次后，后续可从开始菜单或桌面快捷方式直接启动；内置 Python 后端和 Git，不需要额外安装 Python 或 Git。
+- 备选：`CodeCourse-<version>-portable.exe`。免安装，但每次启动需要先解压到临时目录，启动速度会比安装版慢。
+
+首次运行时 Windows 可能显示 SmartScreen 提示，这是未签名个人软件的正常提示。确认下载来源为本仓库后，选择“更多信息”并运行即可。
+
 ## 本地运行
 
 ### 后端

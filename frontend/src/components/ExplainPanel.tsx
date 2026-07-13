@@ -1,4 +1,4 @@
-import { Edit3, Loader2, Search, Send, Star, Trash2 } from "lucide-react";
+import { Edit3, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
 import type { MouseEvent } from "react";
 import type { ReactNode } from "react";
 import type { LLMSettings, QARecord, SourceType } from "../api/client";
@@ -46,6 +46,7 @@ type Props = {
   onRenameRecord: (record: QARecord) => void;
   onToggleFavorite: (record: QARecord) => void;
   onOpenSettings: () => void;
+  onClose?: () => void;
 };
 
 function sourceLabel(type: SourceType) {
@@ -94,6 +95,7 @@ export default function ExplainPanel({
   onRenameRecord,
   onToggleFavorite,
   onOpenSettings,
+  onClose,
 }: Props) {
   const selectedLength = selection?.selectedText.length ?? 0;
   const modelReady = Boolean(settings?.enabled && settings.has_api_key);
@@ -192,7 +194,10 @@ export default function ExplainPanel({
       <section className="qa-ask-section">
         <div className="panel-title">
           <span>AI 助手</span>
-          {loading ? <Loader2 size={16} className="spin" /> : null}
+          <span className="panel-title-actions">
+            {loading ? <Loader2 size={16} className="spin" /> : null}
+            {onClose ? <button className="icon-button" onClick={onClose} title="关闭 AI 助手"><X size={16} /></button> : null}
+          </span>
         </div>
 
         <div className="qa-section selection-card">

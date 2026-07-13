@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
-import { Save, Star, X } from "lucide-react";
+import { BookOpen, Bot, ChevronDown, Download, FolderTree, MoreHorizontal, PanelLeft, Save, Sparkles, Star, X } from "lucide-react";
 import {
   askQuestion,
   buildProjectIndex,
@@ -54,8 +54,7 @@ import KnowledgeGraphViewer from "./components/KnowledgeGraphViewer";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
-import RepositoryForm from "./components/RepositoryForm";
-import Sidebar from "./components/Sidebar";
+import Sidebar, { type NavigationView } from "./components/Sidebar";
 import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
 
 type ScopeType = LearningScope["type"];
@@ -313,6 +312,11 @@ export default function App() {
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [navigationView, setNavigationView] = useState<NavigationView>("courses");
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [generationOpen, setGenerationOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [llmSettings, setLLMSettings] = useState<LLMSettings | null>(null);
   const [scopeType, setScopeType] = useState<ScopeType>("full_project");
   const [scopePathsText, setScopePathsText] = useState("");
@@ -371,6 +375,23 @@ export default function App() {
     loadProjects();
     loadLLMSettings();
   }, []);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+      if (appDialog) {
+        closeAppDialog(null);
+        return;
+      }
+      setMoreMenuOpen(false);
+      setGenerationOpen(false);
+      setAssistantOpen(false);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [appDialog]);
 
   useEffect(() => {
     if (!dragState) {
@@ -829,7 +850,7 @@ export default function App() {
         };
       }
     }
-    if (payload.kind === "knowledge_graph") {
+    if (payload.kind === "knowledge_graph" || payload.kind === "knowledge") {
       return {
         id: "knowledge:graph",
         type: "knowledge_graph",
@@ -1117,6 +1138,19 @@ export default function App() {
     }
   }
 
+  async function handleImportRequest() {
+    const url = await requestText({
+      title: "导入 GitHub 项目",
+      message: "输入公开仓库的 HTTPS 或 SSH 地址。",
+      label: "仓库地址",
+      placeholder: "git@github.com:owner/repository.git",
+      confirmText: "导入",
+    });
+    if (url?.trim()) {
+      await handleImport(url.trim());
+    }
+  }
+
   async function handleCreateCourse() {
     if (!project) {
       return;
@@ -1320,6 +1354,9 @@ export default function App() {
 
   function handleSelection(nextSelection: ViewerSelection) {
     const nextText = nextSelection.selectedText.slice(0, 20000);
+    if (nextText.trim()) {
+      setAssistantOpen(true);
+    }
     setSelection({
       sourceType: nextSelection.sourceType,
       sourcePath: nextSelection.sourcePath,
@@ -1480,6 +1517,7 @@ export default function App() {
   ) {
     const path = sourcePath ?? "";
     const text = selectedText.slice(0, 20000);
+    setAssistantOpen(true);
     setSelection({
       sourceType,
       sourcePath: path || null,
@@ -2004,49 +2042,97 @@ export default function App() {
             <span>{project ? project.name : "MVP"}</span>
           </div>
         </div>
-        <RepositoryForm loading={loading} onSubmit={handleImport} />
-        <button className="topbar-action" onClick={() => setSettingsOpen(true)} title="配置模型 API">
-          模型 API
-        </button>
+        <div className="topbar-workspace-actions">
+          <button
+            className="project-switch"
+            onClick={() => {
+              setNavigationView("projects");
+              setNavigationOpen(true);
+            }}
+            title="切换项目"
+          >
+            <span>{project?.name ?? "选择项目"}</span>
+            <ChevronDown size={15} />
+          </button>
+          <button className="primary-button topbar-import" onClick={handleImportRequest} disabled={loading}>
+            <Download size={15} />
+            导入仓库
+          </button>
+          <div className="more-menu-wrap">
+            <button className="icon-button header-icon-button" onClick={() => setMoreMenuOpen((open) => !open)} title="更多工具">
+              <MoreHorizontal size={18} />
+            </button>
+            {moreMenuOpen ? (
+              <div className="more-menu" role="menu">
+                <button onClick={() => { setGenerationOpen(true); setMoreMenuOpen(false); }} disabled={!project}><Sparkles size={15} />生成课程</button>
+                <button onClick={() => { setSettingsOpen(true); setMoreMenuOpen(false); }}><Bot size={15} />模型 API</button>
+                <button onClick={() => { setPromptEditorOpen(true); setMoreMenuOpen(false); }}>提示词</button>
+                <button onClick={() => { handleBuildIndex(); setMoreMenuOpen(false); }} disabled={!project || isLearningPlanProject || indexBuilding}>
+                  {indexBuilding ? "正在构建索引" : "构建项目索引"}
+                </button>
+                <button onClick={() => { openKnowledgeGraphInActiveGroup(); setMoreMenuOpen(false); }} disabled={!project}>在工作区打开知识网络</button>
+                <button onClick={() => { handleCreateLearningPlan(); setMoreMenuOpen(false); }}>新建学习计划</button>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </header>
       {error ? <div className="error-bar">{error}</div> : null}
       {showBusy ? <div className="busy-bar">{qaLoading ? "正在生成回答..." : loading ? "正在处理..." : "正在生成课程内容..."}</div> : null}
       <main
-        className="workbench"
-        style={{ gridTemplateColumns: `${sidebarWidth}px 6px minmax(0, 1fr) 6px ${explainWidth}px` }}
+        className={`workbench ${navigationOpen ? "navigation-open" : ""}`}
+        style={{ gridTemplateColumns: navigationOpen ? `48px ${sidebarWidth}px 6px minmax(0, 1fr)` : "48px minmax(0, 1fr)" }}
       >
-        <Sidebar
-          projects={projects}
-          currentProjectId={project?.id ?? null}
-          tree={tree}
-          courses={courses}
-          selectedPath={fileContent?.path ?? null}
-          selectedScopePaths={selectedScopeFiles}
-          selectedCourse={selectedCourse}
-          projectType={project?.project_type ?? "repository"}
-          fileSelectionMode={!isLearningPlanProject && scopeType === "files"}
-          busyProjectId={busyProjectId}
-          projectHeight={sidebarProjectHeight}
-          courseHeight={sidebarCourseHeight}
-          onResizeProjectStart={(event) => setDragState({ kind: "sidebar-project", startY: event.clientY, startHeight: sidebarProjectHeight })}
-          onResizeCourseStart={(event) => setDragState({ kind: "sidebar-course", startY: event.clientY, startHeight: sidebarCourseHeight })}
-          onSelectProject={openProject}
-          onCreateLearningPlan={handleCreateLearningPlan}
-          onRegenerateProject={handleRegenerate}
-          onDeleteProject={handleDelete}
-          onSelectFile={handleSelectFile}
-          onOpenFile={handleOpenFile}
-          onSelectCourse={handleSelectCourse}
-          onCreateCourse={handleCreateCourse}
-          onDeleteCourse={handleDeleteCourse}
-        />
-        <div
-          className="resize-handle"
+        <nav className="activity-rail" aria-label="学习导航">
+          <button className={navigationOpen && navigationView === "courses" ? "active" : ""} onClick={() => { setNavigationView("courses"); setNavigationOpen(navigationView !== "courses" || !navigationOpen); }} title="课程"><BookOpen size={18} /></button>
+          <button className={navigationOpen && navigationView === "files" ? "active" : ""} onClick={() => { setNavigationView("files"); setNavigationOpen(navigationView !== "files" || !navigationOpen); }} title="源码"><FolderTree size={18} /></button>
+          <button className={navigationOpen && navigationView === "projects" ? "active" : ""} onClick={() => { setNavigationView("projects"); setNavigationOpen(navigationView !== "projects" || !navigationOpen); }} title="项目"><PanelLeft size={18} /></button>
+          <span className="activity-rail-spacer" />
+          <button className={assistantOpen ? "active" : ""} onClick={() => setAssistantOpen((open) => !open)} title="AI 助手"><Bot size={18} /></button>
+        </nav>
+        {navigationOpen ? (
+          <>
+            <Sidebar
+              view={navigationView}
+              projects={projects}
+              currentProjectId={project?.id ?? null}
+              tree={tree}
+              courses={courses}
+              selectedPath={fileContent?.path ?? null}
+              selectedScopePaths={selectedScopeFiles}
+              selectedCourse={selectedCourse}
+              projectType={project?.project_type ?? "repository"}
+              fileSelectionMode={!isLearningPlanProject && scopeType === "files"}
+              busyProjectId={busyProjectId}
+              onSelectProject={openProject}
+              onCreateLearningPlan={handleCreateLearningPlan}
+              onRegenerateProject={handleRegenerate}
+              onDeleteProject={handleDelete}
+              onSelectFile={handleSelectFile}
+              onOpenFile={handleOpenFile}
+              onSelectCourse={handleSelectCourse}
+              onCreateCourse={handleCreateCourse}
+              onDeleteCourse={handleDeleteCourse}
+            />
+          </>
+        ) : null}
+        {navigationOpen ? <div
+          className="resize-handle navigation-resizer"
           onMouseDown={(event) => setDragState({ kind: "sidebar-width", startX: event.clientX, startWidth: sidebarWidth })}
           title="拖拽调整左栏宽度"
-        />
+        /> : null}
         <section className="center-pane">
-          <div className="generation-bar">
+          <div className="context-toolbar">
+            <div className="context-toolbar-title">
+              <span>{project ? (selectedCourse ? "课程阅读" : fileContent ? "源码阅读" : "学习工作台") : "开始学习"}</span>
+              {taskMessage ? <small className={activeTask?.status === "failed" ? "failed" : ""}>{taskMessage}</small> : null}
+            </div>
+            <div className="context-toolbar-actions">
+              {project ? <button className="secondary-button compact" onClick={() => setGenerationOpen(true)} disabled={isTaskRunning}><Sparkles size={14} />生成</button> : null}
+              <button className="icon-button" onClick={() => setAssistantOpen(true)} title="打开 AI 助手"><Bot size={17} /></button>
+            </div>
+          </div>
+          <div className="generation-bar legacy-generation-bar">
             <div className="scope-controls">
               <select
                 value={isLearningPlanProject ? "learning_plan" : scopeType}
@@ -2106,13 +2192,26 @@ export default function App() {
               {project && !isLearningPlanProject ? ` · 索引：${indexStatus?.status ?? "未构建"} (${indexStatus?.chunk_count ?? 0})` : ""}
             </div>
           </div>
-          <div className="reader-workspace">{renderLayoutNode(layout)}</div>
+          {project ? (
+            <div className="reader-workspace">{renderLayoutNode(layout)}</div>
+          ) : (
+            <section className="learning-empty-state">
+              <div className="learning-empty-mark"><BookOpen size={24} /></div>
+              <h1>从一个项目开始学习</h1>
+              <p>导入 GitHub 仓库，或先创建一个自定义学习计划。</p>
+              <div>
+                <button className="primary-button" onClick={handleImportRequest}><Download size={15} />导入仓库</button>
+                <button className="secondary-button" onClick={handleCreateLearningPlan}>新建学习计划</button>
+              </div>
+            </section>
+          )}
         </section>
         <div
-          className="resize-handle"
+          className="resize-handle assistant-resizer"
           onMouseDown={(event) => setDragState({ kind: "explain-width", startX: event.clientX, startWidth: explainWidth })}
           title="拖拽调整右栏宽度"
         />
+        <div className={`assistant-drawer ${assistantOpen ? "open" : ""}`} style={{ width: `${explainWidth}px` }}>
         <ExplainPanel
           selection={selection}
           contextSummary={buildAssistantContextSummary()}
@@ -2159,8 +2258,64 @@ export default function App() {
           onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
           onOpenSettings={() => setSettingsOpen(true)}
+          onClose={() => setAssistantOpen(false)}
         />
+        </div>
       </main>
+      {generationOpen ? (
+        <div className="tool-drawer-backdrop" onMouseDown={() => setGenerationOpen(false)}>
+          <section className="generation-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="生成课程">
+            <header className="drawer-header">
+              <div><strong>生成学习内容</strong><small>仅在你确认后调用模型 API</small></div>
+              <button className="icon-button" onClick={() => setGenerationOpen(false)} title="关闭"><X size={17} /></button>
+            </header>
+            <div className="generation-drawer-body">
+              <label className="field-label">
+                <span>学习范围</span>
+                <select
+                  value={isLearningPlanProject ? "learning_plan" : scopeType}
+                  onChange={(event) => {
+                    const nextScope = event.target.value as ScopeType;
+                    setScopeType(nextScope);
+                    if (nextScope !== "files") {
+                      setSelectedScopeFiles([]);
+                    } else {
+                      setNavigationView("files");
+                      setNavigationOpen(true);
+                    }
+                  }}
+                  disabled={!project || isTaskRunning || isLearningPlanProject}
+                >
+                  <option value="full_project">全项目</option>
+                  <option value="files">指定文件</option>
+                  <option value="learning_plan">学习计划</option>
+                </select>
+              </label>
+              <div className="scope-helper">
+                {isLearningPlanProject || scopeType === "learning_plan"
+                  ? "根据下面的学习要求生成总纲。"
+                  : scopeType === "files"
+                    ? selectedScopeFiles.length ? `已选择 ${selectedScopeFiles.length} 个文件。` : "请从左侧“源码”中选择文件。"
+                    : "模型将结合项目结构、README 和关键文件生成学习总纲。"}
+              </div>
+              <label className="field-label">
+                <span>生成要求</span>
+                <textarea value={generationInstructions} onChange={(event) => setGenerationInstructions(event.target.value)} placeholder="例如：面向初学者，优先解释后端请求流程" disabled={!project || isTaskRunning} />
+              </label>
+              <div className="generation-drawer-actions">
+                <button className="primary-button" onClick={handleGenerateOutline} disabled={!project || isTaskRunning}><Sparkles size={15} />生成 AI 总纲</button>
+                {fileContent ? (
+                  <>
+                    <button className="secondary-button" onClick={() => handleGenerateFileLesson("brief")} disabled={!canGenerateFileLesson || isTaskRunning}>粗略介绍</button>
+                    <button className="secondary-button" onClick={() => handleGenerateFileLesson("detailed")} disabled={!canGenerateFileLesson || isTaskRunning}>详细分析</button>
+                  </>
+                ) : null}
+              </div>
+              <div className={`drawer-task-status ${activeTask?.status === "failed" ? "failed" : ""}`}>{taskMessage || "准备好后即可生成"}</div>
+            </div>
+          </section>
+        </div>
+      ) : null}
       <LLMSettingsDialog
         open={settingsOpen}
         onConfirm={confirmAction}

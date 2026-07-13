@@ -1,10 +1,12 @@
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
-import type { MouseEvent } from "react";
 import type { CourseFile, Project, TreeNode } from "../api/client";
 import CourseList from "./CourseList";
 import FileTree from "./FileTree";
 
+export type NavigationView = "projects" | "courses" | "files";
+
 type Props = {
+  view: NavigationView;
   projects: Project[];
   currentProjectId: number | null;
   tree: TreeNode | null;
@@ -15,10 +17,6 @@ type Props = {
   projectType: Project["project_type"];
   fileSelectionMode: boolean;
   busyProjectId: number | null;
-  projectHeight: number;
-  courseHeight: number;
-  onResizeProjectStart: (event: MouseEvent<HTMLDivElement>) => void;
-  onResizeCourseStart: (event: MouseEvent<HTMLDivElement>) => void;
   onSelectProject: (project: Project) => void;
   onCreateLearningPlan: () => void;
   onRegenerateProject: (project: Project) => void;
@@ -31,6 +29,7 @@ type Props = {
 };
 
 export default function Sidebar({
+  view,
   projects,
   currentProjectId,
   tree,
@@ -41,10 +40,6 @@ export default function Sidebar({
   projectType,
   fileSelectionMode,
   busyProjectId,
-  projectHeight,
-  courseHeight,
-  onResizeProjectStart,
-  onResizeCourseStart,
   onSelectProject,
   onCreateLearningPlan,
   onRegenerateProject,
@@ -55,61 +50,48 @@ export default function Sidebar({
   onCreateCourse,
   onDeleteCourse,
 }: Props) {
-  return (
-    <aside
-      className="sidebar"
-      style={{ gridTemplateRows: `${projectHeight}px 6px minmax(120px, 1fr) 6px ${courseHeight}px` }}
-    >
-      <section className="sidebar-section">
-        <h2>
-          <span>已导入项目</span>
-          <button className="sidebar-title-button" onClick={onCreateLearningPlan} title="新建学习计划">
-            <Plus size={13} />
-            学习计划
+  if (view === "projects") {
+    return (
+      <aside className="sidebar navigation-panel">
+        <header className="navigation-panel-header">
+          <span>项目</span>
+          <button className="icon-button" onClick={onCreateLearningPlan} title="新建学习计划">
+            <Plus size={16} />
           </button>
-        </h2>
+        </header>
         <div className="sidebar-scroll compact">
           {projects.length ? (
-            projects.map((project) => (
-              <div className={`project-row ${project.id === currentProjectId ? "selected" : ""}`} key={project.id}>
-                <button className="project-main" onClick={() => onSelectProject(project)} title={project.url}>
-                  <span>{project.name}</span>
-                  <small>{project.project_type === "learning_plan" ? "学习计划" : project.status}</small>
+            projects.map((item) => (
+              <div className={`project-row ${item.id === currentProjectId ? "selected" : ""}`} key={item.id}>
+                <button className="project-main" onClick={() => onSelectProject(item)} title={item.url}>
+                  <span>{item.name}</span>
+                  <small>{item.project_type === "learning_plan" ? "学习计划" : item.status}</small>
                 </button>
-                {project.project_type === "learning_plan" ? (
-                  <span />
-                ) : (
-                  <button
-                    className="icon-button"
-                    onClick={() => onRegenerateProject(project)}
-                    disabled={busyProjectId === project.id}
-                    title="重置为待生成"
-                  >
+                {item.project_type === "learning_plan" ? <span /> : (
+                  <button className="icon-button" onClick={() => onRegenerateProject(item)} disabled={busyProjectId === item.id} title="重新生成规则课程">
                     <RefreshCw size={14} />
                   </button>
                 )}
-                <button
-                  className="icon-button danger"
-                  onClick={() => onDeleteProject(project)}
-                  disabled={busyProjectId === project.id}
-                  title="删除本地导入"
-                >
+                <button className="icon-button danger" onClick={() => onDeleteProject(item)} disabled={busyProjectId === item.id} title="删除项目">
                   <Trash2 size={14} />
                 </button>
               </div>
             ))
-          ) : (
-            <div className="empty">暂无导入</div>
-          )}
+          ) : <div className="empty">还没有项目</div>}
         </div>
-      </section>
-      <div className="resize-handle-y" onMouseDown={onResizeProjectStart} title="上下拖动调整项目区高度" />
-      <section className="sidebar-section">
-        <h2>文件树</h2>
+      </aside>
+    );
+  }
+
+  if (view === "files") {
+    return (
+      <aside className="sidebar navigation-panel">
+        <header className="navigation-panel-header">
+          <span>源码</span>
+          {fileSelectionMode ? <small>点击选择，双击打开</small> : null}
+        </header>
         <div className="sidebar-scroll">
-          {projectType === "learning_plan" ? (
-            <div className="empty">学习计划无需文件树</div>
-          ) : tree ? (
+          {projectType === "learning_plan" ? <div className="empty">学习计划不包含源码文件</div> : tree ? (
             <FileTree
               node={tree}
               selectedPath={selectedPath}
@@ -118,26 +100,27 @@ export default function Sidebar({
               onSelect={onSelectFile}
               onOpenFile={onOpenFile}
             />
-          ) : (
-            <div className="empty">暂无项目</div>
-          )}
+          ) : <div className="empty">选择项目后查看源码</div>}
         </div>
-      </section>
-      <div className="resize-handle-y" onMouseDown={onResizeCourseStart} title="上下拖动调整课程目录高度" />
-      <section className="sidebar-section">
-        <h2>
-          <span>课程目录</span>
-          {onCreateCourse ? (
-            <button className="sidebar-title-button" onClick={onCreateCourse} disabled={!currentProjectId} title="新建文档">
-              <Plus size={13} />
-              新建文档
-            </button>
-          ) : null}
-        </h2>
-        <div className="sidebar-scroll compact">
-          <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDelete={onDeleteCourse} />
-        </div>
-      </section>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="sidebar navigation-panel">
+      <header className="navigation-panel-header">
+        <span>课程</span>
+        {onCreateCourse ? (
+          <button className="icon-button" onClick={onCreateCourse} disabled={!currentProjectId} title="新建文档">
+            <Plus size={16} />
+          </button>
+        ) : null}
+      </header>
+      <div className="sidebar-scroll compact">
+        {courses.length ? <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDelete={onDeleteCourse} /> : (
+          <div className="empty">还没有课程内容</div>
+        )}
+      </div>
     </aside>
   );
 }

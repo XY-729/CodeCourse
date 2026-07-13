@@ -1,4 +1,4 @@
-name: Windows Portable Build
+name: Windows Release Build
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  build-windows-portable:
+  build-windows-release:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,23 +32,19 @@ jobs:
       - name: Install backend build dependencies
         run: python -m pip install -r backend/requirements-build.txt
 
-      - name: Bundle portable Git runtime
+      - name: Build installer and portable executable
         shell: pwsh
-        run: ./scripts/ensure-mingit.ps1
+        run: npm run desktop:release
 
-      - name: Build portable executable
-        shell: pwsh
-        run: npm run desktop:portable
-
-      - name: Upload portable executable
+      - name: Upload Windows release executables
         uses: actions/upload-artifact@v4
         with:
-          name: CodeCourse-windows-portable
-          path: dist-desktop/*portable*.exe
+          name: CodeCourse-windows
+          path: dist-desktop/*.exe
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist-desktop/*portable*.exe
+          files: dist-desktop/*.exe
