@@ -24,7 +24,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install Node dependencies
-        run: npm ci
+        run: npm install
 
       - name: Install frontend dependencies
         run: npm --prefix frontend ci
