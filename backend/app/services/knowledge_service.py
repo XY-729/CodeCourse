@@ -7,6 +7,7 @@ from app.services.storage import (
     KnowledgeEdge,
     KnowledgeLink,
     KnowledgeNode,
+    LearningAnchor,
     QARecord,
     cleanup_course_artifacts,
     collapse_knowledge_term_bridges,
@@ -15,9 +16,11 @@ from app.services.storage import (
     create_knowledge_node,
     delete_knowledge_edge,
     delete_knowledge_node,
+    delete_learning_anchor,
     find_knowledge_node,
     get_knowledge_edge,
     get_knowledge_node,
+    get_qa_record,
     get_qa_record_by_output_path,
     list_knowledge_edges,
     list_knowledge_links,
@@ -111,6 +114,9 @@ def remove_node(project_id: int, node_id: int) -> bool:
         from app.services.qa_service import delete_record
 
         return delete_record(project_id, node.ref_id)
+    if node.ref_type == "learning_anchor" and node.ref_id is not None:
+        delete_learning_anchor(project_id, node.ref_id)
+        return delete_knowledge_node(project_id, node_id)
     if node.ref_type == "course" and node.ref_path:
         from app.services.generation_service import delete_project_course_file
 
@@ -157,6 +163,10 @@ def _qa_node(record: QARecord) -> KnowledgeNode:
 
 
 def _resolve_source_node(record: QARecord) -> KnowledgeNode:
+    if record.parent_qa_id:
+        parent = get_qa_record(record.project_id, record.parent_qa_id)
+        if parent and parent.id != record.id:
+            return _qa_node(parent)
     if record.source_path:
         source_qa = get_qa_record_by_output_path(record.project_id, record.source_path)
         if source_qa and source_qa.id != record.id:
@@ -224,3 +234,30 @@ def attach_qa_record(record: QARecord) -> None:
             qa_record_id=record.id,
             node_id=qa_node.id,
         )
+
+
+def attach_learning_anchor(record: QARecord, anchor: LearningAnchor) -> None:
+    qa_node = _qa_node(record)
+    title = anchor.term_text or f"理解 #{record.id}"
+    anchor_node = get_or_create_node(
+        record.project_id,
+        node_type="anchor",
+        title=title,
+        ref_type="learning_anchor",
+        ref_id=record.id,
+        ref_path=record.output_path,
+        summary=anchor.summary,
+    )
+    update_knowledge_node(record.project_id, anchor_node.id, title=title, summary=anchor.summary)
+    create_knowledge_edge(record.project_id, qa_node.id, anchor_node.id, "summarizes", "总结")
+
+
+def remove_learning_anchor_node(project_id: int, qa_record_id: int) -> None:
+    node = find_knowledge_node(
+        project_id,
+        node_type="anchor",
+        ref_type="learning_anchor",
+        ref_id=qa_record_id,
+    )
+    if node:
+        delete_knowledge_node(project_id, node.id)

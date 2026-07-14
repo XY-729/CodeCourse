@@ -15,6 +15,7 @@ from app.services.course_generator import (
     read_course_file,
 )
 from app.services.llm_client import call_openai_compatible_chat
+from app.services.term_service import parse_term_metadata, register_document_terms, term_metadata_instruction
 from app.services.scanner import list_key_files, read_text_file, safe_join, scan_tree
 from app.services.storage import (
     create_knowledge_node,
@@ -374,13 +375,15 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
 
 用户要求：
 {user_instructions or "无"}
-""",
+""" + term_metadata_instruction(),
                 },
             ]
             content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
+            content, model_terms = parse_term_metadata(content)
             outline = _require_markdown(content)
             output_dir = project_course_dir(project_id)
             _atomic_write(output_dir / "outline.md", add_outline_lesson_links(outline))
+            register_document_terms(project_id, "course", "outline.md", outline, model_terms)
             update_generation_task(task_id, "completed", output_path=output_dir)
             update_project_status(project_id, "outline_ready")
             return
@@ -390,7 +393,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
             scope_text=scope_text,
             user_instructions=user_instructions or "无",
             prompt_input=prompt_input,
-        )
+        ) + term_metadata_instruction()
 
         messages = [
             {
@@ -403,10 +406,13 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
             },
         ]
         content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
+        content, model_terms = parse_term_metadata(content)
         project_map, outline = _parse_outline_files(content)
         output_dir = project_course_dir(project_id)
         _atomic_write(output_dir / "project_map.md", project_map)
         _atomic_write(output_dir / "outline.md", add_outline_lesson_links(outline))
+        register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
+        register_document_terms(project_id, "course", "outline.md", outline, model_terms)
         update_generation_task(task_id, "completed", output_path=output_dir)
         update_project_status(project_id, "outline_ready")
     except Exception as exc:  # noqa: BLE001
@@ -517,18 +523,20 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
             model=settings["model"],
             expected=expected,
             prompt_input=prompt_input,
-        )
+        ) + term_metadata_instruction()
         messages = [
             {"role": "system", "content": load_prompt("prompt.system")},
             {"role": "user", "content": user_prompt},
         ]
         content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
+        content, model_terms = parse_term_metadata(content)
         lesson = _require_markdown(content)
         if not lesson.lstrip().startswith("#"):
             title = "粗略介绍" if mode == "brief" else "详细分析"
             lesson = f"# {Path(relative_path).name} {title}\n\n{lesson}"
         output_path = project_course_dir(project_id) / _safe_lesson_filename(relative_path, mode)
         _atomic_write(output_path, lesson)
+        register_document_terms(project_id, "course", _safe_lesson_filename(relative_path, mode), lesson, model_terms)
         update_generation_task(task_id, "completed", output_path=output_path)
     except Exception as exc:  # noqa: BLE001
         update_generation_task(task_id, "failed", error_message=str(exc))
@@ -561,7 +569,7 @@ def run_outline_lesson_task(
             lesson_title=lesson_title,
             user_instructions=_clean_instructions(instructions) or "无",
             lesson_input=lesson_input,
-        )
+        ) + term_metadata_instruction()
         content = call_openai_compatible_chat(
             settings["base_url"],
             settings["api_key"],
@@ -572,12 +580,14 @@ def run_outline_lesson_task(
             ],
             timeout=120,
         )
+        content, model_terms = parse_term_metadata(content)
         lesson = _require_markdown(content)
         if not lesson.lstrip().startswith("#"):
             lesson = f"# 第 {lesson_number} 课：{lesson_title}\n\n{lesson}"
         relative_path = _outline_lesson_filename(lesson_number)
         output_path = project_course_dir(project_id) / relative_path
         _atomic_write(output_path, lesson)
+        register_document_terms(project_id, "course", relative_path, lesson, model_terms)
         node_title = f"第{lesson_number}课"
         existing = find_knowledge_node(
             project_id,

@@ -6,7 +6,7 @@ import { ALL_COLORS, COLOR_LABELS, COLOR_VALUES } from "../types";
 type Props = {
   x: number;
   y: number;
-  sourceType: "file" | "course" | "selection";
+  sourceType: "file" | "course" | "selection" | "qa";
   currentStyle: AnnotationStyle;
   onClose: () => void;
   onAskSelection: () => void;

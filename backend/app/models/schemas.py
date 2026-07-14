@@ -100,7 +100,7 @@ class SelectionRange(BaseModel):
 
 
 class QAAskRequest(BaseModel):
-    source_type: Literal["file", "course", "selection"]
+    source_type: Literal["file", "course", "selection", "qa"]
     source_path: Optional[str] = Field(default=None, max_length=1000)
     selected_text: str = Field(default="", max_length=20000)
     question: str = Field(min_length=1, max_length=4000)
@@ -108,6 +108,9 @@ class QAAskRequest(BaseModel):
     base_url: str = Field(default="https://api.deepseek.com", max_length=500)
     model: str = Field(default="deepseek-v4-flash", max_length=160)
     session_id: Optional[int] = None
+    parent_qa_id: Optional[int] = None
+    relation_type: Literal["follow_up", "term_explanation", "alternate"] = "follow_up"
+    term_candidate_id: Optional[int] = None
     selection_range: Optional[SelectionRange] = None
 
 
@@ -115,6 +118,8 @@ class QARecordResponse(BaseModel):
     id: int
     project_id: int
     session_id: Optional[int] = None
+    parent_qa_id: Optional[int] = None
+    relation_type: str = "follow_up"
     source_type: str
     source_path: Optional[str] = None
     display_title: Optional[str] = None
@@ -138,6 +143,35 @@ class QAUpdateRequest(BaseModel):
 
 class QAFavoriteRequest(BaseModel):
     favorite: bool
+
+
+class DocumentTermResponse(BaseModel):
+    id: int
+    project_id: int
+    source_type: str
+    source_path: str
+    term_text: str
+    detection_source: str
+    confidence: float
+    status: str
+    qa_record_id: Optional[int] = None
+    created_at: str
+    updated_at: str
+
+
+class LearningAnchorRequest(BaseModel):
+    summary: str = Field(min_length=1, max_length=4000)
+    term_text: Optional[str] = Field(default=None, max_length=80)
+
+
+class LearningAnchorResponse(BaseModel):
+    id: int
+    project_id: int
+    qa_record_id: int
+    term_text: Optional[str] = None
+    summary: str
+    created_at: str
+    updated_at: str
 
 
 class HighlightCreateRequest(BaseModel):

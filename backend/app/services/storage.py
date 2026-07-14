@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 import os
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from app.core.config import DB_PATH, GENERATED_ROOT, REPOS_ROOT, WORKSPACE_ROOT
 
@@ -45,6 +46,8 @@ class QARecord:
     id: int
     project_id: int
     session_id: Optional[int]
+    parent_qa_id: Optional[int]
+    relation_type: str
     source_type: str
     source_path: Optional[str]
     display_title: Optional[str]
@@ -140,11 +143,37 @@ class KnowledgeLink:
     updated_at: str
 
 
+@dataclass
+class DocumentTerm:
+    id: int
+    project_id: int
+    source_type: str
+    source_path: str
+    term_text: str
+    detection_source: str
+    confidence: float
+    status: str
+    qa_record_id: Optional[int]
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class LearningAnchor:
+    id: int
+    project_id: int
+    qa_record_id: int
+    term_text: Optional[str]
+    summary: str
+    created_at: str
+    updated_at: str
+
+
 def init_storage() -> None:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     REPOS_ROOT.mkdir(parents=True, exist_ok=True)
     GENERATED_ROOT.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
+    with closing(sqlite3.connect(DB_PATH)) as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS projects (
@@ -231,6 +260,10 @@ def init_storage() -> None:
             conn.execute("ALTER TABLE qa_records ADD COLUMN session_id INTEGER")
         if "retrieval_trace" not in qa_cols:
             conn.execute("ALTER TABLE qa_records ADD COLUMN retrieval_trace TEXT")
+        if "parent_qa_id" not in qa_cols:
+            conn.execute("ALTER TABLE qa_records ADD COLUMN parent_qa_id INTEGER")
+        if "relation_type" not in qa_cols:
+            conn.execute("ALTER TABLE qa_records ADD COLUMN relation_type TEXT NOT NULL DEFAULT 'follow_up'")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS highlights (
@@ -374,6 +407,57 @@ def init_storage() -> None:
             ON knowledge_links(project_id, source_type, source_path, term_text)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS document_terms (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                source_type TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                term_text TEXT NOT NULL,
+                detection_source TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0.7,
+                status TEXT NOT NULL DEFAULT 'candidate',
+                qa_record_id INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(qa_record_id) REFERENCES qa_records(id),
+                UNIQUE(project_id, source_type, source_path, term_text)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_document_terms_source
+            ON document_terms(project_id, source_type, source_path, status)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS learning_anchors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                qa_record_id INTEGER NOT NULL UNIQUE,
+                term_text TEXT,
+                summary TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(qa_record_id) REFERENCES qa_records(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS learning_anchors_fts USING fts5(
+                anchor_id UNINDEXED,
+                project_id UNINDEXED,
+                term_text,
+                summary
+            )
+            """
+        )
         conn.commit()
 
 
@@ -414,6 +498,8 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
         id=row["id"],
         project_id=row["project_id"],
         session_id=row["session_id"] if "session_id" in row.keys() else None,
+        parent_qa_id=row["parent_qa_id"] if "parent_qa_id" in row.keys() else None,
+        relation_type=(row["relation_type"] if "relation_type" in row.keys() else None) or "follow_up",
         source_type=row["source_type"],
         source_path=row["source_path"],
         display_title=row["display_title"],
@@ -425,6 +511,34 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
         output_path=row["output_path"],
         retrieval_trace=row["retrieval_trace"] if "retrieval_trace" in row.keys() else None,
         favorite=bool(row["favorite"]),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_document_term(row: sqlite3.Row) -> DocumentTerm:
+    return DocumentTerm(
+        id=row["id"],
+        project_id=row["project_id"],
+        source_type=row["source_type"],
+        source_path=row["source_path"],
+        term_text=row["term_text"],
+        detection_source=row["detection_source"],
+        confidence=float(row["confidence"]),
+        status=row["status"],
+        qa_record_id=row["qa_record_id"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_learning_anchor(row: sqlite3.Row) -> LearningAnchor:
+    return LearningAnchor(
+        id=row["id"],
+        project_id=row["project_id"],
+        qa_record_id=row["qa_record_id"],
+        term_text=row["term_text"],
+        summary=row["summary"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -516,10 +630,14 @@ def _row_to_knowledge_link(row: sqlite3.Row) -> KnowledgeLink:
     )
 
 
-def _connect() -> sqlite3.Connection:
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def get_project(project_id: int) -> Optional[ProjectRecord]:
@@ -610,6 +728,11 @@ def update_project_status(project_id: int, status: str) -> Optional[ProjectRecor
 
 def delete_project(project_id: int) -> bool:
     with _connect() as conn:
+        anchor_ids = [row["id"] for row in conn.execute("SELECT id FROM learning_anchors WHERE project_id = ?", (project_id,)).fetchall()]
+        for anchor_id in anchor_ids:
+            conn.execute("DELETE FROM learning_anchors_fts WHERE anchor_id = ?", (anchor_id,))
+        conn.execute("DELETE FROM learning_anchors WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM document_terms WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_links WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_edges WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_nodes WHERE project_id = ?", (project_id,))
@@ -747,20 +870,24 @@ def create_qa_record(
     display_title: Optional[str] = None,
     session_id: Optional[int] = None,
     retrieval_trace: Optional[str] = None,
+    parent_qa_id: Optional[int] = None,
+    relation_type: str = "follow_up",
 ) -> QARecord:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         cursor = conn.execute(
             """
             INSERT INTO qa_records (
-                project_id, session_id, source_type, source_path, display_title, selected_text, question,
+                project_id, session_id, parent_qa_id, relation_type, source_type, source_path, display_title, selected_text, question,
                 answer_md, provider, model, output_path, retrieval_trace, favorite, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
             """,
             (
                 project_id,
                 session_id,
+                parent_qa_id,
+                relation_type,
                 source_type,
                 source_path,
                 display_title,
@@ -917,6 +1044,19 @@ def list_recent_qa_records(project_id: int, session_id: int, limit: int = 6) -> 
             LIMIT ?
             """,
             (project_id, session_id, limit),
+        ).fetchall()
+        return [_row_to_qa_record(row) for row in rows]
+
+
+def list_qa_session_records(project_id: int, session_id: int) -> list[QARecord]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM qa_records
+            WHERE project_id = ? AND session_id = ?
+            ORDER BY created_at ASC, id ASC
+            """,
+            (project_id, session_id),
         ).fetchall()
         return [_row_to_qa_record(row) for row in rows]
 
@@ -1137,6 +1277,21 @@ def delete_qa_record(project_id: int, record_id: int) -> bool:
             ).fetchall()
         ]
         conn.execute("DELETE FROM knowledge_links WHERE project_id = ? AND qa_record_id = ?", (project_id, record_id))
+        anchor_rows = conn.execute(
+            "SELECT id FROM learning_anchors WHERE project_id = ? AND qa_record_id = ?",
+            (project_id, record_id),
+        ).fetchall()
+        for row in anchor_rows:
+            conn.execute("DELETE FROM learning_anchors_fts WHERE anchor_id = ?", (row["id"],))
+        conn.execute("DELETE FROM learning_anchors WHERE project_id = ? AND qa_record_id = ?", (project_id, record_id))
+        conn.execute(
+            "UPDATE document_terms SET status = 'candidate', qa_record_id = NULL WHERE project_id = ? AND qa_record_id = ?",
+            (project_id, record_id),
+        )
+        conn.execute(
+            "UPDATE qa_records SET parent_qa_id = NULL WHERE project_id = ? AND parent_qa_id = ?",
+            (project_id, record_id),
+        )
         for node_id in qa_nodes:
             conn.execute(
                 "DELETE FROM knowledge_edges WHERE project_id = ? AND (source_node_id = ? OR target_node_id = ?)",
@@ -1290,6 +1445,10 @@ def cleanup_course_artifacts(project_id: int, source_path: str) -> None:
         )
         conn.execute(
             "DELETE FROM knowledge_links WHERE project_id = ? AND source_type = 'course' AND source_path = ?",
+            (project_id, source_path),
+        )
+        conn.execute(
+            "DELETE FROM document_terms WHERE project_id = ? AND source_type = 'course' AND source_path = ?",
             (project_id, source_path),
         )
         if node_ids:
@@ -1484,6 +1643,205 @@ def list_knowledge_links(
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
         return [_row_to_knowledge_link(row) for row in rows]
+
+
+def upsert_document_term(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    term_text: str,
+    detection_source: str,
+    confidence: float = 0.7,
+) -> DocumentTerm:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO document_terms (
+                project_id, source_type, source_path, term_text, detection_source,
+                confidence, status, qa_record_id, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'candidate', NULL, ?, ?)
+            ON CONFLICT(project_id, source_type, source_path, term_text) DO UPDATE SET
+                detection_source = CASE
+                    WHEN document_terms.detection_source = 'model' THEN document_terms.detection_source
+                    ELSE excluded.detection_source
+                END,
+                confidence = MAX(document_terms.confidence, excluded.confidence),
+                updated_at = excluded.updated_at
+            """,
+            (project_id, source_type, source_path, term_text, detection_source, confidence, now, now),
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT * FROM document_terms
+            WHERE project_id = ? AND source_type = ? AND source_path = ? AND term_text = ?
+            """,
+            (project_id, source_type, source_path, term_text),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("document term was not persisted")
+        return _row_to_document_term(row)
+
+
+def get_document_term(project_id: int, term_id: int) -> Optional[DocumentTerm]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM document_terms WHERE project_id = ? AND id = ?",
+            (project_id, term_id),
+        ).fetchone()
+        return _row_to_document_term(row) if row else None
+
+
+def list_document_terms(
+    project_id: int,
+    source_type: Optional[str] = None,
+    source_path: Optional[str] = None,
+) -> list[DocumentTerm]:
+    clauses = ["project_id = ?"]
+    params: list[object] = [project_id]
+    if source_type:
+        clauses.append("source_type = ?")
+        params.append(source_type)
+    if source_path:
+        clauses.append("source_path = ?")
+        params.append(source_path)
+    sql = f"SELECT * FROM document_terms WHERE {' AND '.join(clauses)} ORDER BY LENGTH(term_text) DESC, confidence DESC, id ASC"
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_row_to_document_term(row) for row in rows]
+
+
+def update_document_term_status(
+    project_id: int,
+    term_id: int,
+    status: str,
+    qa_record_id: Optional[int] = None,
+) -> Optional[DocumentTerm]:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE document_terms
+            SET status = ?, qa_record_id = COALESCE(?, qa_record_id), updated_at = ?
+            WHERE project_id = ? AND id = ?
+            """,
+            (status, qa_record_id, now, project_id, term_id),
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            return None
+    return get_document_term(project_id, term_id)
+
+
+def upsert_learning_anchor(
+    project_id: int,
+    qa_record_id: int,
+    summary: str,
+    term_text: Optional[str] = None,
+) -> LearningAnchor:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO learning_anchors (
+                project_id, qa_record_id, term_text, summary, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(qa_record_id) DO UPDATE SET
+                term_text = excluded.term_text,
+                summary = excluded.summary,
+                updated_at = excluded.updated_at
+            """,
+            (project_id, qa_record_id, term_text, summary, now, now),
+        )
+        row = conn.execute(
+            "SELECT * FROM learning_anchors WHERE project_id = ? AND qa_record_id = ?",
+            (project_id, qa_record_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("learning anchor was not persisted")
+        anchor = _row_to_learning_anchor(row)
+        conn.execute("DELETE FROM learning_anchors_fts WHERE anchor_id = ?", (anchor.id,))
+        conn.execute(
+            "INSERT INTO learning_anchors_fts (anchor_id, project_id, term_text, summary) VALUES (?, ?, ?, ?)",
+            (anchor.id, project_id, term_text or "", summary),
+        )
+        if term_text:
+            conn.execute(
+                """
+                UPDATE document_terms
+                SET status = 'known', updated_at = ?
+                WHERE project_id = ? AND lower(term_text) = lower(?) AND status = 'candidate'
+                """,
+                (now, project_id, term_text),
+            )
+        conn.commit()
+        return anchor
+
+
+def get_learning_anchor(project_id: int, qa_record_id: int) -> Optional[LearningAnchor]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM learning_anchors WHERE project_id = ? AND qa_record_id = ?",
+            (project_id, qa_record_id),
+        ).fetchone()
+        return _row_to_learning_anchor(row) if row else None
+
+
+def list_learning_anchors(project_id: int) -> list[LearningAnchor]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM learning_anchors WHERE project_id = ? ORDER BY updated_at DESC, id DESC",
+            (project_id,),
+        ).fetchall()
+        return [_row_to_learning_anchor(row) for row in rows]
+
+
+def search_learning_anchors(project_id: int, query: str, limit: int = 3) -> list[LearningAnchor]:
+    terms = [item for item in re_split_search_terms(query) if item]
+    if not terms:
+        return list_learning_anchors(project_id)[:limit]
+    with _connect() as conn:
+        try:
+            rows = conn.execute(
+                """
+                SELECT a.* FROM learning_anchors_fts f
+                JOIN learning_anchors a ON a.id = f.anchor_id
+                WHERE learning_anchors_fts MATCH ? AND a.project_id = ?
+                ORDER BY bm25(learning_anchors_fts), a.updated_at DESC
+                LIMIT ?
+                """,
+                (" OR ".join(terms[:10]), project_id, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            like = f"%{terms[0]}%"
+            rows = conn.execute(
+                """
+                SELECT * FROM learning_anchors
+                WHERE project_id = ? AND (summary LIKE ? OR COALESCE(term_text, '') LIKE ?)
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (project_id, like, like, limit),
+            ).fetchall()
+        return [_row_to_learning_anchor(row) for row in rows]
+
+
+def delete_learning_anchor(project_id: int, qa_record_id: int) -> bool:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM learning_anchors WHERE project_id = ? AND qa_record_id = ?",
+            (project_id, qa_record_id),
+        ).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM learning_anchors_fts WHERE anchor_id = ?", (row["id"],))
+        conn.execute(
+            "DELETE FROM learning_anchors WHERE project_id = ? AND qa_record_id = ?",
+            (project_id, qa_record_id),
+        )
+        conn.commit()
+        return True
 
 
 def update_knowledge_link_node(project_id: int, link_id: int, node_id: int) -> Optional[KnowledgeLink]:

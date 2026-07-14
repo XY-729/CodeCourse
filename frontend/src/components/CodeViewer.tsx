@@ -10,7 +10,7 @@ export type ViewerRange = {
 };
 
 export type ViewerSelection = {
-  sourceType: "file" | "course";
+  sourceType: "file" | "course" | "qa";
   sourcePath: string | null;
   selectedText: string;
   language?: string;

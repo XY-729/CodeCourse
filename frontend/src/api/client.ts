@@ -43,12 +43,14 @@ export type FileContent = {
   content: string;
 };
 
-export type SourceType = "file" | "course" | "selection";
+export type SourceType = "file" | "course" | "selection" | "qa";
 
 export type QARecord = {
   id: number;
   project_id: number;
   session_id?: number | null;
+  parent_qa_id?: number | null;
+  relation_type: "follow_up" | "term_explanation" | "alternate" | string;
   source_type: SourceType;
   source_path?: string | null;
   display_title?: string | null;
@@ -128,12 +130,39 @@ export type QAAskPayload = {
   base_url: string;
   model: string;
   session_id?: number | null;
+  parent_qa_id?: number | null;
+  relation_type?: "follow_up" | "term_explanation" | "alternate";
+  term_candidate_id?: number | null;
   selection_range?: {
     start_line: number;
     start_column: number;
     end_line: number;
     end_column: number;
   } | null;
+};
+
+export type DocumentTerm = {
+  id: number;
+  project_id: number;
+  source_type: "course" | "qa";
+  source_path: string;
+  term_text: string;
+  detection_source: "model" | "index" | "rule" | string;
+  confidence: number;
+  status: "candidate" | "linked" | "known" | "dismissed" | string;
+  qa_record_id?: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type LearningAnchor = {
+  id: number;
+  project_id: number;
+  qa_record_id: number;
+  term_text?: string | null;
+  summary: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type ProjectIndexStatus = {
@@ -375,6 +404,45 @@ export function listQARecords(projectId: number, query = "", favorite?: boolean)
 
 export function getQARecord(projectId: number, qaId: number): Promise<QARecord> {
   return request<QARecord>(`/projects/${projectId}/qa/${qaId}`);
+}
+
+export function getQASessionTree(projectId: number, sessionId: number): Promise<QARecord[]> {
+  return request<QARecord[]>(`/projects/${projectId}/qa/sessions/${sessionId}/tree`);
+}
+
+export function getLearningAnchor(projectId: number, qaId: number): Promise<LearningAnchor> {
+  return request<LearningAnchor>(`/projects/${projectId}/qa/${qaId}/understanding`);
+}
+
+export function saveLearningAnchor(
+  projectId: number,
+  qaId: number,
+  summary: string,
+  termText?: string | null,
+): Promise<LearningAnchor> {
+  return request<LearningAnchor>(`/projects/${projectId}/qa/${qaId}/understanding`, {
+    method: "POST",
+    body: JSON.stringify({ summary, term_text: termText ?? null }),
+  });
+}
+
+export function deleteLearningAnchor(projectId: number, qaId: number): Promise<{ deleted: boolean; qa_id: number }> {
+  return request<{ deleted: boolean; qa_id: number }>(`/projects/${projectId}/qa/${qaId}/understanding`, {
+    method: "DELETE",
+  });
+}
+
+export function listDocumentTerms(projectId: number, sourceType: "course" | "qa", sourcePath: string): Promise<DocumentTerm[]> {
+  const params = new URLSearchParams({ source_type: sourceType, source_path: sourcePath });
+  return request<DocumentTerm[]>(`/projects/${projectId}/terms?${params.toString()}`);
+}
+
+export function markDocumentTermKnown(projectId: number, termId: number): Promise<DocumentTerm> {
+  return request<DocumentTerm>(`/projects/${projectId}/terms/${termId}/known`, { method: "POST" });
+}
+
+export function dismissDocumentTerm(projectId: number, termId: number): Promise<DocumentTerm> {
+  return request<DocumentTerm>(`/projects/${projectId}/terms/${termId}/dismiss`, { method: "POST" });
 }
 
 export function updateQARecord(

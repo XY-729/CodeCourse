@@ -7,7 +7,11 @@ import {
   createEmptyCourseFile,
   createLearningPlan,
   createHighlight,
+  deleteLearningAnchor,
+  dismissDocumentTerm,
   getQARecord,
+  getQASessionTree,
+  getLearningAnchor,
   deleteProject,
   generateFileLesson,
   generateOutlineLesson,
@@ -24,9 +28,12 @@ import {
   listGenerationTasks,
   listHighlights,
   listKnowledgeLinks,
+  listDocumentTerms,
   listProjects,
   listQARecords,
   regenerateProject,
+  markDocumentTermKnown,
+  saveLearningAnchor,
   setQAFavorite,
   updateQARecord,
   deleteQARecord,
@@ -40,6 +47,8 @@ import type {
   LLMSettings,
   Project,
   HighlightRecord,
+  DocumentTerm,
+  LearningAnchor,
   KnowledgeLink,
   ProjectIndexStatus,
   QARecord,
@@ -330,7 +339,7 @@ export default function App() {
   const [explainWidth, setExplainWidth] = useState(360);
   const [sidebarProjectHeight, setSidebarProjectHeight] = useState(150);
   const [sidebarCourseHeight, setSidebarCourseHeight] = useState(240);
-  const [qaAskHeight, setQAAskHeight] = useState(560);
+  const [qaAskHeight, setQAAskHeight] = useState(340);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [layout, setLayout] = useState<LayoutNode>(() => createInitialLayout());
   const [activeGroupId, setActiveGroupId] = useState(ROOT_GROUP_ID);
@@ -342,9 +351,13 @@ export default function App() {
   const [qaHistory, setQAHistory] = useState<QARecord[]>([]);
   const [qaHistoryQuery, setQAHistoryQuery] = useState("");
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
-  const [qaUpperTab, setQAUpperTab] = useState<"history" | "knowledge">("history");
+  const [qaUpperTab, setQAUpperTab] = useState<"assistant" | "history" | "knowledge">("assistant");
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
   const [qaSessionId, setQASessionId] = useState<number | null>(null);
+  const [qaSessionTree, setQASessionTree] = useState<QARecord[]>([]);
+  const [documentTerms, setDocumentTerms] = useState<DocumentTerm[]>([]);
+  const [documentTermsBySource, setDocumentTermsBySource] = useState<Record<string, DocumentTerm[]>>({});
+  const [learningAnchor, setLearningAnchor] = useState<LearningAnchor | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
   const [knowledgeLinks, setKnowledgeLinks] = useState<KnowledgeLink[]>([]);
@@ -355,7 +368,7 @@ export default function App() {
   const [contextMenu, setContextMenu] = useState<{
     x: number;
     y: number;
-    sourceType: "file" | "course" | "selection";
+    sourceType: "file" | "course" | "selection" | "qa";
     sourcePath: string;
     selectedText: string;
     existingStyle: AnnotationStyle;
@@ -444,6 +457,31 @@ export default function App() {
     }, 180);
     return () => window.clearTimeout(timer);
   }, [project?.id, qaHistoryQuery, qaFavoriteOnly]);
+
+  useEffect(() => {
+    if (!project || !selectedQA) {
+      setQASessionTree([]);
+      setDocumentTerms([]);
+      setLearningAnchor(null);
+      return;
+    }
+    let cancelled = false;
+    const sourcePath = selectedQA.output_path || String(selectedQA.id);
+    Promise.all([
+      selectedQA.session_id ? getQASessionTree(project.id, selectedQA.session_id) : Promise.resolve([selectedQA]),
+      listDocumentTerms(project.id, "qa", sourcePath),
+      getLearningAnchor(project.id, selectedQA.id).catch(() => null),
+    ]).then(([tree, terms, anchor]) => {
+      if (cancelled) return;
+      setQASessionTree(tree);
+      setDocumentTerms(terms);
+      setLearningAnchor(anchor);
+      setDocumentTermsBySource((current) => ({ ...current, [`qa:${sourcePath}`]: terms }));
+    }).catch((caught) => {
+      if (!cancelled) setQAPanelError(caught instanceof Error ? caught.message : "加载问答分支失败");
+    });
+    return () => { cancelled = true; };
+  }, [project?.id, selectedQA?.id, selectedQA?.updated_at]);
 
   function nextId(prefix: string) {
     idCounter.current += 1;
@@ -582,9 +620,6 @@ export default function App() {
       const records = await listQARecords(projectId, qaHistoryQuery, qaFavoriteOnly ? true : undefined);
       setQAHistory(records);
       setQAPanelError("");
-      if (selectedQA && !records.some((record) => record.id === selectedQA.id)) {
-        setSelectedQA(null);
-      }
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "加载历史失败");
     }
@@ -611,6 +646,21 @@ export default function App() {
       setKnowledgeLinks(await listKnowledgeLinks(projectId));
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "加载知识链接失败");
+    }
+  }
+
+  async function refreshDocumentTerms(sourceType: "course" | "qa", sourcePath: string, projectId = project?.id) {
+    if (!projectId || !sourcePath) return [];
+    try {
+      const terms = await listDocumentTerms(projectId, sourceType, sourcePath);
+      setDocumentTermsBySource((current) => ({ ...current, [`${sourceType}:${sourcePath}`]: terms }));
+      if (sourceType === "qa" && selectedQA && (selectedQA.output_path || String(selectedQA.id)) === sourcePath) {
+        setDocumentTerms(terms);
+      }
+      return terms;
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "加载陌生术语失败");
+      return [];
     }
   }
 
@@ -651,6 +701,7 @@ export default function App() {
     } else if (item.type === "course") {
       setSelectedCourse(item.path);
       setFileContent(null);
+      void refreshDocumentTerms(item.qaRecordId ? "qa" : "course", item.path);
     } else if (item.type === "knowledge_graph") {
       setFileContent(null);
       setSelectedCourse(null);
@@ -660,6 +711,8 @@ export default function App() {
       const record = qaHistory.find((entry) => entry.id === item.qaRecordId);
       if (record) {
         setSelectedQA(record);
+        setQASessionId(record.session_id ?? null);
+        void refreshDocumentTerms("qa", item.path);
       }
     }
   }
@@ -693,7 +746,7 @@ export default function App() {
     if (activeItem.qaRecordId || activeItem.type === "qa") {
       return {
         label: "当前回答",
-        sourceType: "selection",
+        sourceType: "qa",
         sourcePath: activeItem.path,
         preview: `将使用回答内容摘要作为上下文：${activeItem.title}`,
       };
@@ -732,9 +785,9 @@ export default function App() {
     }
     if (activeItem?.qaRecordId || activeItem?.type === "qa") {
       return {
-        source_type: "selection",
+        source_type: "qa",
         source_path: activeItem.path,
-        selected_text: activeItem.content.slice(0, 20000),
+        selected_text: "",
       };
     }
     if (activeItem?.type === "course") {
@@ -812,6 +865,7 @@ export default function App() {
     }
     if (payload.kind === "course" && payload.filename) {
       const content = await getCourseContent(project.id, payload.filename);
+      void refreshDocumentTerms("course", payload.filename, project.id);
       return {
         id: `course:${payload.filename}`,
         type: "course",
@@ -878,6 +932,7 @@ export default function App() {
 
   async function openCourseInActiveGroup(projectId: number, filename: string) {
     const content = await getCourseContent(projectId, filename);
+    void refreshDocumentTerms("course", filename, projectId);
     setSelectedCourse(filename);
     setFileContent(null);
     openItemInGroup(activeGroupId, {
@@ -920,6 +975,7 @@ export default function App() {
     }
     setSelectedQA(record);
     const relPath = _normalizeOutputPath(record.output_path, record.id, project.id);
+    void refreshDocumentTerms("qa", relPath, project.id);
     try {
       const result = await getCourseContent(project.id, relPath);
       setSelectedCourse(relPath);
@@ -1025,6 +1081,11 @@ export default function App() {
       setQAQuestion("");
       setSelectedQA(null);
       setQASessionId(null);
+      setQASessionTree([]);
+      setDocumentTerms([]);
+      setDocumentTermsBySource({});
+      setLearningAnchor(null);
+      setQAUpperTab("assistant");
       setQAPanelError("");
       setHighlights([]);
       setKnowledgeLinks([]);
@@ -1039,6 +1100,7 @@ export default function App() {
       const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
       if (firstCourse) {
         const content = await getCourseContent(freshProject.id, firstCourse.filename);
+        void refreshDocumentTerms("course", firstCourse.filename, freshProject.id);
         setSelectedCourse(firstCourse.filename);
         setLayout(
           updateGroup(initialLayout, ROOT_GROUP_ID, (group) =>
@@ -1395,6 +1457,8 @@ export default function App() {
         base_url: llmSettings.base_url,
         model: llmSettings.model,
         session_id: qaSessionId,
+        parent_qa_id: selectedQA?.id ?? null,
+        relation_type: "follow_up",
         selection_range: selectionAnchor?.range
           ? {
               start_line: selectionAnchor.range.startLineNumber,
@@ -1406,6 +1470,7 @@ export default function App() {
       });
       setSelectedQA(record);
       setQASessionId(record.session_id ?? qaSessionId);
+      setQAUpperTab("assistant");
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
       setQAQuestion("");
       await Promise.all([
@@ -1418,6 +1483,121 @@ export default function App() {
       setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
     } finally {
       setQALoading(false);
+    }
+  }
+
+  function handleNewConversation() {
+    setSelectedQA(null);
+    setQASessionId(null);
+    setQASessionTree([]);
+    setDocumentTerms([]);
+    setLearningAnchor(null);
+    setQAQuestion("");
+    setQAUpperTab("assistant");
+  }
+
+  async function handleGenerateTerm(term: DocumentTerm) {
+    if (!project) return;
+    if (term.status === "linked" && term.qa_record_id) {
+      const record = qaHistory.find((entry) => entry.id === term.qa_record_id) ?? await getQARecord(project.id, term.qa_record_id);
+      setSelectedQA(record);
+      setQASessionId(record.session_id ?? null);
+      setQAUpperTab("assistant");
+      setAssistantOpen(true);
+      return;
+    }
+    if (!llmSettings?.enabled || !llmSettings.has_api_key) {
+      setQAPanelError("请先配置模型 API。 ");
+      setSettingsOpen(true);
+      return;
+    }
+    const parent = term.source_type === "qa"
+      ? qaHistory.find((record) => (record.output_path || String(record.id)) === term.source_path) ?? selectedQA
+      : null;
+    const ok = await confirmAction(
+      "生成术语解释",
+      `将调用 ${llmSettings.model}，结合当前项目解释“${term.term_text}”，并把回答连接到${parent ? `“${qaTitle(parent)}”` : "当前课件"}。是否继续？`,
+      { confirmText: "生成解释" },
+    );
+    if (!ok) return;
+    setQALoading(true);
+    setQAPanelError("");
+    try {
+      const record = await askQuestion(project.id, {
+        source_type: term.source_type,
+        source_path: term.source_path,
+        selected_text: term.term_text,
+        question: `请结合当前项目，用适合初学者的方式解释“${term.term_text}”：它是什么、为什么会出现在这里，以及接下来应该看哪里。`,
+        provider: llmSettings.provider,
+        base_url: llmSettings.base_url,
+        model: llmSettings.model,
+        session_id: parent?.session_id ?? qaSessionId,
+        parent_qa_id: parent?.id ?? null,
+        relation_type: "term_explanation",
+        term_candidate_id: term.id,
+      });
+      setSelectedQA(record);
+      setQASessionId(record.session_id ?? null);
+      setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
+      setQAUpperTab("assistant");
+      setAssistantOpen(true);
+      await Promise.all([
+        refreshCourses(project.id),
+        refreshQAHistory(project.id),
+        refreshKnowledgeLinks(project.id),
+        refreshDocumentTerms(term.source_type, term.source_path, project.id),
+      ]);
+      setKnowledgeRefreshKey((value) => value + 1);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "生成术语解释失败");
+    } finally {
+      setQALoading(false);
+    }
+  }
+
+  async function handleTermAction(term: DocumentTerm) {
+    if (!project) return;
+    const action = await requestChoice("处理陌生术语", `“${term.term_text}”不需要继续提示时，可以标记为已认识或仅忽略这次识别。`, [
+      { value: "known", label: "我认识", description: "记为已掌握，后续不再作为陌生术语强调" },
+      { value: "dismiss", label: "忽略", description: "隐藏当前候选，不生成解释" },
+    ]);
+    if (!action) return;
+    try {
+      const updated = action === "known"
+        ? await markDocumentTermKnown(project.id, term.id)
+        : await dismissDocumentTerm(project.id, term.id);
+      const key = `${term.source_type}:${term.source_path}`;
+      setDocumentTermsBySource((current) => ({
+        ...current,
+        [key]: (current[key] ?? []).map((item) => item.id === updated.id ? updated : item),
+      }));
+      setDocumentTerms((items) => items.map((item) => item.id === updated.id ? updated : item));
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "更新术语状态失败");
+    }
+  }
+
+  async function handleSaveUnderstanding(record: QARecord, summary: string) {
+    if (!project) return;
+    try {
+      const anchor = await saveLearningAnchor(project.id, record.id, summary, record.selected_text || record.display_title);
+      setLearningAnchor(anchor);
+      setKnowledgeRefreshKey((value) => value + 1);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "保存理解失败");
+    }
+  }
+
+  async function handleDeleteUnderstanding(record: QARecord) {
+    if (!project) return;
+    const ok = await confirmAction("删除个人理解", "删除这条由你编写的学习总结？", { confirmText: "删除", danger: true });
+    if (!ok) return;
+    try {
+      await deleteLearningAnchor(project.id, record.id);
+      setLearningAnchor(null);
+      setKnowledgeRefreshKey((value) => value + 1);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "删除理解失败");
     }
   }
 
@@ -1509,7 +1689,7 @@ export default function App() {
   }
 
   function handleContextMenuOpen(
-    sourceType: "file" | "course" | "selection",
+    sourceType: "file" | "course" | "selection" | "qa",
     x: number,
     y: number,
     sourcePath: string | null,
@@ -1540,10 +1720,10 @@ export default function App() {
     });
   }
 
-  function handleMarkdownContextMenuOpen(event: MouseEvent, sourcePath: string, selectedText: string) {
+  function handleMarkdownContextMenuOpen(event: MouseEvent, sourcePath: string, selectedText: string, sourceType: "course" | "qa" = "course") {
     event.preventDefault();
     event.stopPropagation();
-    handleContextMenuOpen("course", event.clientX, event.clientY, sourcePath, selectedText);
+    handleContextMenuOpen(sourceType, event.clientX, event.clientY, sourcePath, selectedText);
   }
 
   function handleContextMenuClose() {
@@ -1878,18 +2058,22 @@ export default function App() {
               <MarkdownViewer
                 title={activeItem.title}
                 sourcePath={activeItem.path}
+                sourceType={activeItem.qaRecordId ? "qa" : "course"}
                 content={activeItem.content}
-                highlights={highlights.filter((highlight) => highlight.source_type === "course" && highlight.source_path === activeItem.path)}
+                highlights={highlights.filter((highlight) => highlight.source_type === (activeItem.qaRecordId ? "qa" : "course") && highlight.source_path === activeItem.path)}
                 knowledgeLinks={knowledgeLinks.filter((link) => link.source_type === "course" && link.source_path === activeItem.path)}
+                documentTerms={documentTermsBySource[`${activeItem.qaRecordId ? "qa" : "course"}:${activeItem.path}`] ?? []}
                 annotations={annotations.filter((ann) => ann.courseFile === activeItem.path)}
                 tempSelectedText={
-                  selectionAnchor?.sourceType === "course" && selectionAnchor.sourcePath === activeItem.path
+                  selectionAnchor?.sourceType === (activeItem.qaRecordId ? "qa" : "course") && selectionAnchor.sourcePath === activeItem.path
                     ? selectionAnchor.selectedText
                     : null
                 }
                 onSelectionChange={handleSelection}
-                onContextMenu={(event, text, sourcePath) => handleMarkdownContextMenuOpen(event, sourcePath, text)}
+                onContextMenu={(event, text, sourcePath) => handleMarkdownContextMenuOpen(event, sourcePath, text, activeItem.qaRecordId ? "qa" : "course")}
                 onOpenKnowledgeLink={handleOpenKnowledgeLink}
+                onGenerateTerm={handleGenerateTerm}
+                onTermAction={handleTermAction}
                 onGenerateLesson={activeItem.path === "outline.md" ? handleGenerateOutlineLesson : undefined}
                 headerActions={(activeItem.qaRecordId || activeItem.path.startsWith("selection_answers/") || activeItem.path.startsWith("qa/")) ? (
                   <button
@@ -2218,9 +2402,12 @@ export default function App() {
           question={qaQuestion}
           loading={qaLoading}
           history={qaHistory}
+          sessionTree={qaSessionTree}
           historyQuery={qaHistoryQuery}
           favoriteOnly={qaFavoriteOnly}
           selectedRecord={selectedQA}
+          learningAnchor={learningAnchor}
+          documentTerms={documentTerms}
           settings={llmSettings}
           panelError={qaPanelError}
           askHeight={qaAskHeight}
@@ -2250,13 +2437,22 @@ export default function App() {
           onSelectionTextChange={handleSelectionTextChange}
           onClearSelection={handleClearSelection}
           onAsk={handleAsk}
+          onNewConversation={handleNewConversation}
           onHistoryQueryChange={setQAHistoryQuery}
           onFavoriteOnlyChange={setQAFavoriteOnly}
-          onSelectRecord={setSelectedQA}
+          onSelectRecord={(record) => {
+            setSelectedQA(record);
+            setQASessionId(record.session_id ?? null);
+          }}
           onOpenRecord={(record) => openQAInActiveGroup(record)}
           onDeleteRecord={handleDeleteQA}
           onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
+          onSaveUnderstanding={handleSaveUnderstanding}
+          onDeleteUnderstanding={handleDeleteUnderstanding}
+          onGenerateTerm={handleGenerateTerm}
+          onTermAction={handleTermAction}
+          onSelectionChange={handleSelection}
           onOpenSettings={() => setSettingsOpen(true)}
           onClose={() => setAssistantOpen(false)}
         />

@@ -545,5 +545,106 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertIn("只写核心名词或最短主题", prompts["prompt.qa.answer"])
 
 
+    def test_answer_terms_create_child_branch_in_same_session(self):
+        root_answer = 'TITLE: Routing\nTERMS: ["FastAPI", "Dependency Injection"]\n\nFastAPI routing uses Dependency Injection.'
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value=root_answer):
+            root = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "FastAPI",
+                    "question": "What does this file use?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(root.status_code, 200)
+        root_data = root.json()
+        self.assertNotIn("TERMS:", root_data["answer_md"])
+        terms = self.client.get(
+            f"/api/projects/{self.project.id}/terms",
+            params={"source_type": "qa", "source_path": root_data["output_path"]},
+        )
+        self.assertEqual(terms.status_code, 200)
+        fastapi_term = next(item for item in terms.json() if item["term_text"] == "FastAPI")
+
+        child_answer = 'TITLE: FastAPI\nTERMS: []\n\nFastAPI dispatches an HTTP request to a route.'
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value=child_answer):
+            child = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "qa",
+                    "source_path": root_data["output_path"],
+                    "selected_text": "FastAPI",
+                    "question": "Explain this term.",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                    "parent_qa_id": root_data["id"],
+                    "relation_type": "term_explanation",
+                    "term_candidate_id": fastapi_term["id"],
+                },
+            )
+
+        self.assertEqual(child.status_code, 200)
+        child_data = child.json()
+        self.assertEqual(child_data["parent_qa_id"], root_data["id"])
+        self.assertEqual(child_data["session_id"], root_data["session_id"])
+        self.assertEqual(child_data["relation_type"], "term_explanation")
+
+        tree = self.client.get(
+            f"/api/projects/{self.project.id}/qa/sessions/{root_data['session_id']}/tree"
+        )
+        self.assertEqual(tree.status_code, 200)
+        self.assertEqual([item["id"] for item in tree.json()], [root_data["id"], child_data["id"]])
+
+        linked_terms = self.client.get(
+            f"/api/projects/{self.project.id}/terms",
+            params={"source_type": "qa", "source_path": root_data["output_path"]},
+        ).json()
+        linked = next(item for item in linked_terms if item["id"] == fastapi_term["id"])
+        self.assertEqual(linked["status"], "linked")
+        self.assertEqual(linked["qa_record_id"], child_data["id"])
+
+    def test_understanding_anchor_is_saved_and_added_to_graph(self):
+        with patch(
+            "app.services.qa_service.call_openai_compatible_chat",
+            return_value="TITLE: FastAPI\nTERMS: []\n\nA concise answer.",
+        ):
+            qa = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "FastAPI",
+                    "question": "What is this?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            ).json()
+
+        saved = self.client.post(
+            f"/api/projects/{self.project.id}/qa/{qa['id']}/understanding",
+            json={"summary": "FastAPI maps incoming HTTP requests to Python route functions."},
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["qa_record_id"], qa["id"])
+
+        loaded = self.client.get(
+            f"/api/projects/{self.project.id}/qa/{qa['id']}/understanding"
+        )
+        self.assertEqual(loaded.status_code, 200)
+        self.assertIn("HTTP requests", loaded.json()["summary"])
+
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        anchor_nodes = [node for node in graph["nodes"] if node["node_type"] == "anchor"]
+        self.assertEqual(len(anchor_nodes), 1)
+        self.assertEqual(anchor_nodes[0]["ref_id"], qa["id"])
+
+
 if __name__ == "__main__":
     unittest.main()
