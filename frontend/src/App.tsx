@@ -2243,24 +2243,33 @@ export default function App() {
             导入仓库
           </button>
           <div className="more-menu-wrap">
-            <button className="icon-button header-icon-button" onClick={() => setMoreMenuOpen((open) => !open)} title="更多工具">
+            <button
+              type="button"
+              className="icon-button header-icon-button"
+              onClick={() => setMoreMenuOpen((open) => !open)}
+              title="更多工具"
+              aria-haspopup="menu"
+              aria-expanded={moreMenuOpen}
+            >
               <MoreHorizontal size={18} />
             </button>
-            {moreMenuOpen ? (
-              <div className="more-menu" role="menu">
-                <button onClick={() => { setGenerationOpen(true); setMoreMenuOpen(false); }} disabled={!project}><Sparkles size={15} />生成课程</button>
-                <button onClick={() => { setSettingsOpen(true); setMoreMenuOpen(false); }}><Bot size={15} />模型 API</button>
-                <button onClick={() => { setPromptEditorOpen(true); setMoreMenuOpen(false); }}>提示词</button>
-                <button onClick={() => { handleBuildIndex(); setMoreMenuOpen(false); }} disabled={!project || isLearningPlanProject || indexBuilding}>
-                  {indexBuilding ? "正在构建索引" : "构建项目索引"}
-                </button>
-                <button onClick={() => { openKnowledgeGraphInActiveGroup(); setMoreMenuOpen(false); }} disabled={!project}>在工作区打开知识网络</button>
-                <button onClick={() => { handleCreateLearningPlan(); setMoreMenuOpen(false); }}>新建学习计划</button>
-              </div>
-            ) : null}
           </div>
         </div>
       </header>
+      {moreMenuOpen ? (
+        <div className="more-menu-layer" onMouseDown={() => setMoreMenuOpen(false)}>
+          <div className="more-menu topbar-more-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" role="menuitem" onClick={() => { setSettingsOpen(true); setMoreMenuOpen(false); }}>
+              <Bot size={15} />
+              模型 API
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setPromptEditorOpen(true); setMoreMenuOpen(false); }}>
+              <Sparkles size={15} />
+              提示词
+            </button>
+          </div>
+        </div>
+      ) : null}
       {error ? <div className="error-bar">{error}</div> : null}
       {showBusy ? <div className="busy-bar">{qaLoading ? "正在生成回答..." : loading ? "正在处理..." : "正在生成课程内容..."}</div> : null}
       <main

@@ -1763,6 +1763,8 @@ body {
 }
 
 .topbar {
+  position: relative;
+  z-index: 10;
   min-height: 52px;
   flex-wrap: nowrap;
   gap: 12px;
@@ -1857,10 +1859,17 @@ body {
   border-radius: 7px;
   color: var(--cc-muted);
   background: var(--cc-surface);
+  cursor: pointer;
 }
 
 .more-menu-wrap {
   position: relative;
+}
+
+.more-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
 }
 
 .more-menu {
@@ -1877,6 +1886,13 @@ body {
   background: var(--cc-surface);
   box-shadow: var(--cc-shadow);
   animation: cc-pop-in 160ms ease-out both;
+}
+
+.topbar-more-menu {
+  position: absolute;
+  top: 54px;
+  right: 12px;
+  width: 176px;
 }
 
 .more-menu button {
