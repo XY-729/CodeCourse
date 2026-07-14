@@ -4,6 +4,8 @@ import { getPrompts, savePrompts } from "../api/client";
 
 const PROMPT_LABELS: Record<string, string> = {
   "prompt.system": "总体要求",
+  "prompt.outline": "总纲生成",
+  "prompt.file_lesson.template": "课件模板",
   "prompt.file_lesson.detailed_expected": "详细生成",
   "prompt.file_lesson.brief_expected": "粗略介绍",
   "prompt.outline_lesson": "课件生成",

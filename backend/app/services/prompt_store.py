@@ -451,6 +451,8 @@ PROMPT_DEFAULTS = {
 
 EDITABLE_PROMPT_KEYS = (
     "prompt.system",
+    "prompt.outline",
+    "prompt.file_lesson.template",
     "prompt.file_lesson.detailed_expected",
     "prompt.file_lesson.brief_expected",
     "prompt.outline_lesson",
