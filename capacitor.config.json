@@ -1,0 +1,20 @@
+{
+  "appId": "com.codecourse.app",
+  "appName": "CodeCourse",
+  "webDir": "frontend/dist",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#f5f5f2"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "CapacitorSQLite": {
+      "androidIsEncryption": true,
+      "androidBiometric": {
+        "biometricAuth": false
+      }
+    }
+  }
+}

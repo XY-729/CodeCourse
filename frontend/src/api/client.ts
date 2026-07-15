@@ -1,15 +1,11 @@
+import { providerRequest } from "../platform/provider";
+
 declare global {
   interface Window {
     codecourseDesktop?: { apiBase?: string; openExternal?: (url: string) => void };
     __CODECOURSE_API_BASE__?: string;
   }
 }
-
-const configuredApiBase =
-  (typeof window !== "undefined" && (window.codecourseDesktop?.apiBase || window.__CODECOURSE_API_BASE__)) ||
-  import.meta.env.VITE_API_BASE_URL ||
-  "/api";
-const API_BASE = configuredApiBase.replace(/\/$/, "");
 
 export type Project = {
   id: number;
@@ -240,23 +236,7 @@ export type GenerationTask = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const hasBody = init?.body != null;
-  const response = await fetch(`${API_BASE}${path}`, {
-    headers: {
-      ...(hasBody ? { "Content-Type": "application/json" } : {}),
-      ...init?.headers,
-    },
-    ...init,
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({ detail: response.statusText }));
-    const detail = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string }) => item.msg).join("; ") : body.detail;
-    if (detail === "Not Found") {
-      throw new Error("接口未找到，请重启后端服务后重试。");
-    }
-    throw new Error(detail ?? (response.status === 404 ? "请求的资源不存在或已被删除。" : response.statusText));
-  }
-  return response.json() as Promise<T>;
+  return providerRequest<T>(path, init);
 }
 
 export function listProjects(): Promise<Project[]> {
@@ -351,6 +331,13 @@ export function generateFileLesson(projectId: number, path: string, mode: "brief
   return request<GenerationTask>(`/projects/${projectId}/lessons/file`, {
     method: "POST",
     body: JSON.stringify({ path, mode, instructions }),
+  });
+}
+
+export function importProjectArchive(file: File): Promise<Project> {
+  return request<Project>("/projects/import-archive", {
+    method: "POST",
+    body: file,
   });
 }
 

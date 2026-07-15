@@ -2492,6 +2492,450 @@ body {
   }
 }
 
+/* Android portrait workbench */
+.mobile-only,
+.activity-rail button > span {
+  display: none;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.mobile-code-viewer {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #171a1f;
+  color: #d9dee7;
+}
+
+.mobile-code-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 10px 0 28px;
+  font: 13px/1.62 "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.mobile-code-search {
+  flex: 0 0 50px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px 4px 10px;
+  border-bottom: 1px solid #343a44;
+  background: #20242b;
+}
+
+.mobile-code-search input {
+  min-width: 0;
+  flex: 1;
+  height: 40px;
+  border: 1px solid #48515e;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: #f0f3f7;
+  background: #171a1f;
+}
+
+.mobile-code-search > span {
+  min-width: 34px;
+  color: #aab2bf;
+  font-size: 11px;
+  text-align: center;
+}
+
+.platform-android .mobile-code-search .icon-button {
+  min-width: 40px;
+  width: 40px;
+  height: 44px;
+  min-height: 44px;
+  color: #c9d0da;
+}
+
+.mobile-code-line {
+  display: grid;
+  grid-template-columns: 46px max-content;
+  min-width: max-content;
+  min-height: 21px;
+  content-visibility: auto;
+  contain-intrinsic-size: 21px;
+}
+
+.mobile-line-number {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding-right: 12px;
+  text-align: right;
+  color: #68717e;
+  background: #171a1f;
+  user-select: none;
+}
+
+.mobile-code-line code {
+  display: block;
+  min-width: 100%;
+  padding-right: 18px;
+  white-space: pre;
+}
+
+.mobile-code-line.selection-anchor,
+.mobile-code-line.selection-anchor .mobile-line-number {
+  background: #25496d;
+}
+
+.mobile-code-line.selection-anchor code {
+  background: rgba(65, 126, 184, 0.28);
+}
+
+.mobile-code-line.search-match:not(.selection-anchor),
+.mobile-code-line.search-match:not(.selection-anchor) .mobile-line-number {
+  background: rgba(128, 99, 24, 0.38);
+}
+
+.mobile-code-viewer .hljs-keyword,
+.mobile-code-viewer .hljs-selector-tag { color: #d6a3ff; }
+.mobile-code-viewer .hljs-title,
+.mobile-code-viewer .hljs-function { color: #83c7ff; }
+.mobile-code-viewer .hljs-string,
+.mobile-code-viewer .hljs-attr { color: #a8d58c; }
+.mobile-code-viewer .hljs-number,
+.mobile-code-viewer .hljs-literal { color: #f3b37b; }
+.mobile-code-viewer .hljs-comment { color: #77818f; font-style: italic; }
+.mobile-code-viewer .hljs-type,
+.mobile-code-viewer .hljs-built_in { color: #70d6c1; }
+
+html.platform-android,
+html.platform-android body,
+html.platform-android #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #f6f6f3;
+}
+
+.platform-android .app-shell {
+  height: 100dvh;
+  min-height: 0;
+  padding-top: env(safe-area-inset-top);
+  background: #f6f6f3;
+}
+
+.platform-android .topbar {
+  min-height: 52px;
+  height: 52px;
+  padding: 6px 10px;
+  gap: 8px;
+}
+
+.platform-android .brand {
+  flex: 0 0 auto;
+}
+
+.platform-android .brand-logo {
+  width: 30px;
+  height: 30px;
+}
+
+.platform-android .brand-text {
+  display: none;
+}
+
+.platform-android .topbar-workspace-actions {
+  min-width: 0;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.platform-android .project-switch {
+  min-width: 0;
+  max-width: min(54vw, 230px);
+  height: 38px;
+}
+
+.platform-android .project-switch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-android .topbar-import {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+  font-size: 0;
+}
+
+.platform-android .topbar-import svg {
+  width: 18px;
+  height: 18px;
+}
+
+.platform-android .workbench,
+.platform-android .workbench.navigation-open {
+  position: relative;
+  display: block !important;
+  min-height: 0;
+  padding-bottom: calc(60px + env(safe-area-inset-bottom));
+}
+
+.platform-android .activity-rail {
+  position: fixed;
+  z-index: 70;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: calc(60px + env(safe-area-inset-bottom));
+  padding: 4px 8px env(safe-area-inset-bottom);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  border: 0;
+  border-top: 1px solid #dedfdc;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(18px);
+}
+
+.platform-android .activity-rail .activity-rail-spacer,
+.platform-android .activity-rail .desktop-project-nav {
+  display: none;
+}
+
+.platform-android .activity-rail .mobile-only {
+  display: flex;
+}
+
+.platform-android .activity-rail button {
+  flex: 1 1 25%;
+  width: auto;
+  height: 52px;
+  min-height: 52px;
+  margin: 0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: #6a6f72;
+}
+
+.platform-android .activity-rail button > span {
+  display: block;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.platform-android .activity-rail button.active {
+  color: #28685e;
+  background: #e8f2ef;
+}
+
+.platform-android .navigation-panel {
+  position: fixed;
+  z-index: 55;
+  inset: calc(52px + env(safe-area-inset-top)) 0 calc(60px + env(safe-area-inset-bottom)) 0;
+  width: 100% !important;
+  max-width: none;
+  border: 0;
+  background: #fff;
+  box-shadow: none;
+  animation: mobile-sheet-in 180ms ease-out;
+}
+
+.platform-android .navigation-panel-header {
+  min-height: 50px;
+  padding: 8px 14px;
+}
+
+.platform-android .navigation-panel button,
+.platform-android .project-row,
+.platform-android .tree-row,
+.platform-android .course-row {
+  min-height: 44px;
+}
+
+.platform-android .navigation-resizer,
+.platform-android .assistant-resizer,
+.platform-android .split-resizer,
+.platform-android .resize-handle {
+  display: none !important;
+}
+
+.platform-android .center-pane {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.platform-android .context-toolbar {
+  min-height: 44px;
+  padding: 5px 10px;
+}
+
+.platform-android .context-toolbar-title small {
+  display: none;
+}
+
+.platform-android .context-toolbar-actions .icon-button {
+  display: none;
+}
+
+.platform-android .reader-workspace,
+.platform-android .editor-group,
+.platform-android .editor-body {
+  min-height: 0;
+}
+
+.platform-android .reader-workspace {
+  height: calc(100% - 44px);
+}
+
+.platform-android .split-node > .split-child:first-child {
+  flex: 1 1 100% !important;
+}
+
+.platform-android .split-node > .split-child:nth-of-type(n + 2),
+.platform-android .split-node > .split-resizer {
+  display: none !important;
+}
+
+.platform-android .editor-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.platform-android .editor-tab {
+  min-height: 42px;
+  max-width: 74vw;
+  flex: 0 0 auto;
+}
+
+.platform-android .assistant-drawer {
+  position: fixed;
+  z-index: 60;
+  inset: calc(52px + env(safe-area-inset-top)) 0 calc(60px + env(safe-area-inset-bottom)) 0;
+  width: 100% !important;
+  max-width: none;
+  transform: translateY(16px);
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  background: #fff;
+  transition: transform 200ms ease, opacity 180ms ease;
+}
+
+.platform-android .assistant-drawer.open {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.platform-android .assistant-drawer .explain-panel,
+.platform-android .knowledge-graph-viewer {
+  width: 100%;
+  height: 100%;
+}
+
+.platform-android .generation-drawer {
+  inset: auto 0 0 0;
+  width: 100%;
+  max-height: calc(100dvh - env(safe-area-inset-top));
+  padding-bottom: env(safe-area-inset-bottom);
+  border-radius: 14px 14px 0 0;
+}
+
+.platform-android .modal-backdrop {
+  padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom));
+}
+
+.platform-android .settings-modal,
+.platform-android .prompt-editor-modal {
+  width: 100% !important;
+  max-width: none !important;
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.platform-android .settings-grid {
+  grid-template-columns: 1fr;
+  overflow-y: auto;
+}
+
+.platform-android .prompt-tabs {
+  flex: 0 0 auto;
+  padding-inline: 8px;
+  scroll-snap-type: x proximity;
+}
+
+.platform-android .prompt-tab {
+  min-height: 42px;
+  scroll-snap-align: start;
+}
+
+.platform-android .prompt-editor-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.platform-android .prompt-editor-textarea {
+  min-height: 0;
+  height: 100%;
+  resize: none;
+}
+
+.platform-android textarea,
+.platform-android input,
+.platform-android select {
+  font-size: 16px;
+}
+
+.platform-android button,
+.platform-android .icon-button {
+  min-height: 44px;
+}
+
+.platform-android .markdown-body {
+  padding: 20px 18px 72px;
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.platform-android .error-bar,
+.platform-android .busy-bar {
+  z-index: 80;
+}
+
+@keyframes mobile-sheet-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-android .navigation-panel,
+  .platform-android .assistant-drawer {
+    animation: none;
+    transition: none;
+  }
+}
+
 /* Hierarchical assistant */
 .assistant-thread-view {
   flex: 1;

@@ -1,6 +1,6 @@
 {
   "name": "codecourse-desktop",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "private": true,
   "description": "CodeCourse desktop shell for the GitHub project learner.",
   "main": "electron/main.cjs",
@@ -13,9 +13,14 @@
     "desktop:pack": "npm run frontend:build && npm run backend:build && electron-builder --dir",
     "desktop:portable": "npm run frontend:build && npm run backend:build && electron-builder --win portable",
     "desktop:release": "npm run frontend:build && npm run backend:build && npm run git:ensure && electron-builder --publish never --win portable --config.artifactName=CodeCourse-${version}-portable.${ext} && electron-builder --publish never --win nsis --config.artifactName=CodeCourse-${version}-setup.${ext}",
-    "backend:test": "cd backend && PYTHONPATH=.. .venv/bin/python -m unittest discover -s tests -v"
+    "backend:test": "cd backend && PYTHONPATH=.. .venv/bin/python -m unittest discover -s tests -v",
+    "mobile:sync": "npm run frontend:build && cap sync android",
+    "mobile:dev": "npm run mobile:sync && cap open android",
+    "mobile:build": "npm run mobile:sync && cd android && gradlew.bat assembleDebug",
+    "mobile:release": "npm run mobile:sync && cd android && gradlew.bat assembleRelease"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.4.2",
     "electron": "^31.7.7",
     "electron-builder": "^24.13.3"
   },
@@ -42,17 +47,33 @@
       }
     ],
     "win": {
-      "target": ["portable"],
+      "target": [
+        "portable"
+      ],
       "icon": "resources/icon.ico",
       "signAndEditExecutable": false
     },
     "linux": {
-      "target": ["AppImage", "dir"],
+      "target": [
+        "AppImage",
+        "dir"
+      ],
       "category": "Development"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     }
+  },
+  "dependencies": {
+    "@capacitor-community/sqlite": "8.1.0",
+    "@capacitor/android": "8.4.2",
+    "@capacitor/app": "8.0.1",
+    "@capacitor/core": "8.4.2",
+    "@capacitor/filesystem": "8.1.2",
+    "@capacitor/network": "8.0.1",
+    "@capacitor/preferences": "8.0.1",
+    "highlight.js": "11.11.1",
+    "jszip": "3.10.1"
   }
 }

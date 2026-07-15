@@ -233,6 +233,48 @@ dist-desktop/linux-unpacked/
 
 Web 开发模式仍然保留，可以继续使用后端 `8000` 和前端 `5173` 的启动方式。
 
+## Android 竖屏版
+
+Android 版使用 Capacitor 8，并采用独立本地运行架构。APK 不启动 FastAPI、不携带 Python 或 Git，也不读取电脑端 workspace。项目、课件、问答、索引和知识网络全部保存在手机应用数据目录中。
+
+主要能力：
+
+- 导入公开 GitHub HTTPS 仓库快照，或从系统文件选择器导入本地 ZIP。
+- 使用加密 SQLite 保存项目数据；模型 API Key 使用 Android Keystore 加密保存。
+- 本地扫描文件、识别关键配置、建立 FTS5/FTS4 索引并提供 RAG 检索。
+- 支持学习总纲、文件课件、学习计划分章节课件、AI 助手会话记忆、陌生术语、个人总结与知识网络。
+- 使用轻量只读代码阅读器，支持行号、语法高亮、横向滚动和选区提问；手机端不加载 Monaco。
+- 无网络时仍可阅读项目、课程、历史和知识网络；下载仓库和模型生成需要联网。
+
+移动端限制：
+
+- 只支持公开 GitHub 仓库和本地 ZIP，不支持 SSH、私有仓库或 Git 历史。
+- Android 与电脑端数据相互独立，第一版不提供跨设备同步。
+- 不运行、编译或调试导入项目。
+
+同步 Android 工程：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm run mobile:sync
+```
+
+本地构建 debug APK 需要 JDK 21、Android SDK 36 和 Gradle Wrapper：
+
+```bash
+cd android
+./gradlew assembleDebug
+```
+
+GitHub Actions 的 `Android APK Build` 支持手动生成 debug APK。推送 `v*` 标签时会构建签名 Release APK，并上传到对应 GitHub Release。签名发布前需要配置以下仓库 Secrets：
+
+- `CODECOURSE_ANDROID_KEYSTORE_BASE64`
+- `CODECOURSE_ANDROID_STORE_PASSWORD`
+- `CODECOURSE_ANDROID_KEY_ALIAS`
+- `CODECOURSE_ANDROID_KEY_PASSWORD`
+
+Release APK 构建后会执行隐私扫描，阻止个人仓库名、本地路径、数据库、workspace、环境文件或签名文件进入产物。
+
 ## 常用 API
 
 ### 项目

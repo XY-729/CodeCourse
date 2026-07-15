@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
-import { BookOpen, Bot, ChevronDown, Download, FolderTree, MoreHorizontal, PanelLeft, Save, Sparkles, Star, X } from "lucide-react";
+import { BookOpen, Bot, ChevronDown, Download, FileArchive, FolderTree, MoreHorizontal, PanelLeft, Save, Sparkles, Star, X } from "lucide-react";
 import {
   askQuestion,
   buildProjectIndex,
@@ -25,6 +25,7 @@ import {
   getProjectIndexStatus,
   getTree,
   importProject,
+  importProjectArchive,
   listGenerationTasks,
   listHighlights,
   listKnowledgeLinks,
@@ -59,12 +60,14 @@ import type { AppDialogState, ChoiceDialogOption } from "./components/AppDialog"
 import CodeViewer, { ViewerRange, ViewerSelection } from "./components/CodeViewer";
 import ContextMenu from "./components/ContextMenu";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
-import KnowledgeGraphViewer from "./components/KnowledgeGraphViewer";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
 import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
+import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
+
+const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewer"));
 
 type ScopeType = LearningScope["type"];
 type OpenItemType = "file" | "course" | "qa" | "knowledge_graph";
@@ -387,6 +390,8 @@ export default function App() {
 
   const idCounter = useRef(1);
   const dialogResolverRef = useRef<DialogResolver | null>(null);
+  const archiveInputRef = useRef<HTMLInputElement | null>(null);
+  const mobileRuntime = isAndroidRuntime();
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
   const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
@@ -413,6 +418,46 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [appDialog]);
+
+  useEffect(() => {
+    if (!mobileRuntime) {
+      return;
+    }
+
+    let disposed = false;
+    let removeListener: (() => void) | undefined;
+    void import("@capacitor/app").then(async ({ App: NativeApp }) => {
+      const listener = await NativeApp.addListener("backButton", () => {
+        if (appDialog) {
+          closeAppDialog(null);
+        } else if (settingsOpen) {
+          setSettingsOpen(false);
+        } else if (promptEditorOpen) {
+          setPromptEditorOpen(false);
+        } else if (generationOpen) {
+          setGenerationOpen(false);
+        } else if (moreMenuOpen) {
+          setMoreMenuOpen(false);
+        } else if (assistantOpen) {
+          setAssistantOpen(false);
+        } else if (navigationOpen) {
+          setNavigationOpen(false);
+        } else {
+          void NativeApp.exitApp();
+        }
+      });
+      if (disposed) {
+        await listener.remove();
+      } else {
+        removeListener = () => void listener.remove();
+      }
+    });
+
+    return () => {
+      disposed = true;
+      removeListener?.();
+    };
+  }, [appDialog, assistantOpen, generationOpen, mobileRuntime, moreMenuOpen, navigationOpen, promptEditorOpen, settingsOpen]);
 
   useEffect(() => {
     if (!dragState) {
@@ -564,6 +609,10 @@ export default function App() {
   }
 
   function openExternal(url: string) {
+    if (mobileRuntime) {
+      void CodeCourseNative.openExternal({ url }).catch(() => setError("无法打开外部链接。"));
+      return;
+    }
     if (typeof window !== "undefined" && window.codecourseDesktop?.openExternal) {
       window.codecourseDesktop.openExternal(url);
       return;
@@ -1141,6 +1190,22 @@ export default function App() {
       setError(caught instanceof Error ? caught.message : "导入失败");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleImportArchive(file: File) {
+    setLoading(true);
+    setError("");
+    setTaskMessage("正在导入本地项目");
+    try {
+      const imported = await importProjectArchive(file);
+      await loadProjects();
+      await openProject(imported);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "导入失败");
+    } finally {
+      setLoading(false);
+      if (archiveInputRef.current) archiveInputRef.current.value = "";
     }
   }
 
@@ -2167,7 +2232,7 @@ export default function App() {
           ) : null}
           {!activeItem ? <div className="empty-state">点击或拖拽文件/课件到这里阅读</div> : null}
           {activeItem?.type === "knowledge_graph" && project ? (
-            <KnowledgeGraphViewer
+            <Suspense fallback={<div className="viewer-loading">正在加载知识网络…</div>}><KnowledgeGraphViewer
               projectId={project.id}
               refreshKey={knowledgeRefreshKey}
               onRequestText={requestText}
@@ -2186,7 +2251,7 @@ export default function App() {
               onOpenFile={(path) => {
                 openFileInActiveGroup(project.id, path).catch((caught) => setError(caught instanceof Error ? caught.message : "打开文件失败"));
               }}
-            />
+            /></Suspense>
           ) : null}
         </div>
         {previewZone ? <div className={`drop-preview ${previewZone}`} /> : null}
@@ -2232,6 +2297,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
+        <input ref={archiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportArchive(file); }} />
         <div className="brand">
           <img
             src="/logo.jpg"
@@ -2287,6 +2353,7 @@ export default function App() {
               <Sparkles size={15} />
               提示词
             </button>
+            {mobileRuntime ? <button type="button" role="menuitem" onClick={() => { archiveInputRef.current?.click(); setMoreMenuOpen(false); }}><FileArchive size={15} />导入本地 ZIP</button> : null}
           </div>
         </div>
       ) : null}
@@ -2297,11 +2364,12 @@ export default function App() {
         style={{ gridTemplateColumns: navigationOpen ? `48px ${sidebarWidth}px 6px minmax(0, 1fr)` : "48px minmax(0, 1fr)" }}
       >
         <nav className="activity-rail" aria-label="学习导航">
-          <button className={navigationOpen && navigationView === "courses" ? "active" : ""} onClick={() => { setNavigationView("courses"); setNavigationOpen(navigationView !== "courses" || !navigationOpen); }} title="课程"><BookOpen size={18} /></button>
-          <button className={navigationOpen && navigationView === "files" ? "active" : ""} onClick={() => { setNavigationView("files"); setNavigationOpen(navigationView !== "files" || !navigationOpen); }} title="源码"><FolderTree size={18} /></button>
-          <button className={navigationOpen && navigationView === "projects" ? "active" : ""} onClick={() => { setNavigationView("projects"); setNavigationOpen(navigationView !== "projects" || !navigationOpen); }} title="项目"><PanelLeft size={18} /></button>
+          <button className={navigationOpen && navigationView === "courses" ? "active" : ""} onClick={() => { setNavigationView("courses"); setNavigationOpen(navigationView !== "courses" || !navigationOpen); }} title="课程"><BookOpen size={18} /><span>课程</span></button>
+          <button className={navigationOpen && navigationView === "files" ? "active" : ""} onClick={() => { setNavigationView("files"); setNavigationOpen(navigationView !== "files" || !navigationOpen); }} title="源码"><FolderTree size={18} /><span>源码</span></button>
+          <button className={`desktop-project-nav ${navigationOpen && navigationView === "projects" ? "active" : ""}`} onClick={() => { setNavigationView("projects"); setNavigationOpen(navigationView !== "projects" || !navigationOpen); }} title="项目"><PanelLeft size={18} /><span>项目</span></button>
           <span className="activity-rail-spacer" />
-          <button className={assistantOpen ? "active" : ""} onClick={() => setAssistantOpen((open) => !open)} title="AI 助手"><Bot size={18} /></button>
+          <button className={assistantOpen && qaUpperTab !== "knowledge" ? "active" : ""} onClick={() => { setQAUpperTab("assistant"); setAssistantOpen((open) => qaUpperTab === "knowledge" ? true : !open); }} title="AI 助手"><Bot size={18} /><span>助手</span></button>
+          <button className={`mobile-only ${assistantOpen && qaUpperTab === "knowledge" ? "active" : ""}`} onClick={() => { setQAUpperTab("knowledge"); setAssistantOpen(true); }} title="知识网络"><Sparkles size={18} /><span>网络</span></button>
         </nav>
         {navigationOpen ? (
           <>
@@ -2444,7 +2512,7 @@ export default function App() {
           onUpperTabChange={setQAUpperTab}
           knowledgeDisabled={!project}
           knowledgeContent={project ? (
-            <KnowledgeGraphViewer
+            <Suspense fallback={<div className="viewer-loading">正在加载知识网络…</div>}><KnowledgeGraphViewer
               projectId={project.id}
               refreshKey={knowledgeRefreshKey}
               compact
@@ -2464,7 +2532,7 @@ export default function App() {
               onOpenFile={(path) => {
                 openFileInActiveGroup(project.id, path).catch((caught) => setError(caught instanceof Error ? caught.message : "打开文件失败"));
               }}
-            />
+            /></Suspense>
           ) : null}
           onAskResizeStart={(event: MouseEvent<HTMLDivElement>) => setDragState({ kind: "qa-ask", startY: event.clientY, startHeight: qaAskHeight })}
           onQuestionChange={setQAQuestion}

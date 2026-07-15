@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CodeCourse</string>
+    <string name="title_activity_main">CodeCourse</string>
+    <string name="package_name">com.codecourse.app</string>
+    <string name="custom_url_scheme">com.codecourse.app</string>
+</resources>
