@@ -49,9 +49,7 @@ def get_course_content(project_id: int, filename: str) -> CourseContentResponse:
 def delete_course_file(project_id: int, filename: str):
     _project_root(project_id)
     try:
-        delete_project_course_file(project_id, filename)
+        file_existed = delete_project_course_file(project_id, filename)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid file path")
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Course file not found")
-    return {"deleted": True, "filename": filename}
+    return {"deleted": True, "filename": filename, "file_existed": file_existed}

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
@@ -24,6 +26,7 @@ from app.services.storage import (
     create_generation_task,
     find_knowledge_node,
     find_completed_task,
+    get_generation_task,
     get_llm_settings,
     get_project,
     update_generation_task,
@@ -66,11 +69,13 @@ def resolve_project_course_file(project_id: int, filename: str) -> Path:
     return target
 
 
-def delete_project_course_file(project_id: int, filename: str) -> None:
+def delete_project_course_file(project_id: int, filename: str) -> bool:
     target = resolve_project_course_file(project_id, filename)
-    if not target.exists() or not target.is_file():
-        raise FileNotFoundError(filename)
-    target.unlink()
+    deleted = target.exists() and target.is_file()
+    if deleted:
+        target.unlink()
+    # A stale course entry can outlive its file after an interrupted task or
+    # an older graph deletion. Deletion must still clear all related metadata.
     cleanup_course_artifacts(project_id, filename)
     try:
         parent = target.parent
@@ -79,6 +84,7 @@ def delete_project_course_file(project_id: int, filename: str) -> None:
             parent.rmdir()
     except OSError:
         pass
+    return deleted
 def create_empty_course_document(project_id: int, title: str) -> CourseFile:
     """Create an empty markdown course document and a corresponding knowledge node."""
     safe = re.sub(r'[\\/]', '_', title.strip())
@@ -310,6 +316,25 @@ def build_outline_lesson_input(
         raise RuntimeError("请先生成项目学习总纲，再生成课件。")
     outline = outline_path.read_text(encoding="utf-8")
     lesson_title, lesson_section = _lesson_outline_section(outline, lesson_number, requested_title)
+    project = get_project(project_id)
+    user_instructions = _clean_instructions(instructions)
+    if project is not None and project.project_type == "learning_plan":
+        lesson_input = "\n\n".join(
+            [
+                "学习计划总纲：\n```markdown\n" + outline[:10000] + "\n```",
+                "本课计划：\n```markdown\n" + lesson_section + "\n```",
+            ]
+        )
+        input_hash = hash_inputs(
+            PROMPT_VERSION,
+            "learning_plan_lesson",
+            str(lesson_number),
+            lesson_title,
+            user_instructions,
+            outline,
+        )
+        return lesson_title, lesson_input, input_hash
+
     search_query = f"{lesson_title} {lesson_section[:1200]}".strip()
     rag_context = "索引中没有匹配片段。"
     try:
@@ -324,7 +349,6 @@ def build_outline_lesson_input(
             )
     except Exception:
         pass
-    user_instructions = _clean_instructions(instructions)
     lesson_input = "\n\n".join(
         [
             "项目总纲摘要：\n```markdown\n" + outline[:7000] + "\n```",
@@ -358,24 +382,15 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
         scope_text = _scope_to_text(scope)
         user_instructions = _clean_instructions(instructions)
         if scope.type == "learning_plan":
+            learning_plan_prompt = load_prompt("prompt.learning_plan.outline").format(
+                model=settings["model"],
+                user_instructions=user_instructions or "无",
+            )
             messages = [
                 {"role": "system", "content": load_prompt("prompt.system")},
                 {
                     "role": "user",
-                    "content": f"""请根据用户给出的学习目标生成一份高质量学习总纲。
-
-这是一个"学习计划"项目，不绑定任何 GitHub 仓库。不要编造仓库目录、源码文件或 README。
-
-输出要求：
-1. 输出 Markdown。
-2. 标题使用"# 学习计划总纲"。
-3. 开头元信息包含：生成方式、模型/规则、学习范围、用户要求、不确定项。
-4. 必须包含：适合谁学、前置知识、学习目标、课程路径、每节课的学习产出、自测问题、后续可继续生成的课件建议。
-5. 课程路径用表格，给出 4-8 节。
-
-用户要求：
-{user_instructions or "无"}
-""" + term_metadata_instruction(),
+                    "content": learning_plan_prompt + term_metadata_instruction(),
                 },
             ]
             content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
@@ -542,6 +557,282 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
         update_generation_task(task_id, "failed", error_message=str(exc))
 
 
+def _parse_lesson_plan(content: str) -> dict:
+    normalized = content.strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", normalized, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        normalized = fenced.group(1)
+    else:
+        start = normalized.find("{")
+        end = normalized.rfind("}")
+        if start >= 0 and end > start:
+            normalized = normalized[start : end + 1]
+    try:
+        plan = json.loads(normalized)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("模型返回的课件章节计划不是有效 JSON，旧课件已保留。") from exc
+    if not isinstance(plan, dict):
+        raise RuntimeError("模型返回的课件章节计划格式无效，旧课件已保留。")
+    sections = plan.get("sections")
+    if not isinstance(sections, list) or not 4 <= len(sections) <= 10:
+        raise RuntimeError("课件章节计划必须包含 4-10 个章节，旧课件已保留。")
+    normalized_sections: list[dict] = []
+    for section in sections:
+        if not isinstance(section, dict) or not str(section.get("title", "")).strip():
+            raise RuntimeError("课件章节计划存在无标题章节，旧课件已保留。")
+        raw_items = section.get("items")
+        if not isinstance(raw_items, list) or not raw_items:
+            raise RuntimeError("课件章节计划中的每个章节都必须列出知识项，旧课件已保留。")
+        items: list[dict[str, str]] = []
+        for raw_item in raw_items[:24]:
+            if isinstance(raw_item, str):
+                name = raw_item.strip()
+                kind = "concept"
+                focus = ""
+            elif isinstance(raw_item, dict):
+                name = str(raw_item.get("name", "")).strip()
+                kind = str(raw_item.get("kind", "concept")).strip() or "concept"
+                focus = str(raw_item.get("focus", "")).strip()
+            else:
+                continue
+            if name:
+                items.append({"name": name, "kind": kind, "focus": focus})
+        if not items:
+            raise RuntimeError("课件章节计划存在空知识项，旧课件已保留。")
+        normalized_sections.append({"title": str(section["title"]).strip(), "items": items})
+    plan["sections"] = normalized_sections
+    return plan
+
+
+def _normalized_coverage_text(value: str) -> str:
+    return re.sub(r"[\s`*_#：:（）()\[\]{}<>]+", "", value).casefold()
+
+
+def _missing_lesson_items(markdown: str, sections: list[dict]) -> list[dict[str, str]]:
+    haystack = _normalized_coverage_text(markdown)
+    missing: list[dict[str, str]] = []
+    for section in sections:
+        for item in section["items"]:
+            if _normalized_coverage_text(item["name"]) not in haystack:
+                missing.append(item)
+    return missing
+
+
+def _lesson_textbook_markdown(plan: dict) -> str:
+    textbooks = plan.get("textbooks")
+    if not isinstance(textbooks, list) or not textbooks:
+        return "## 教材参照\n\n本课未列出能够确认书目信息的教材。"
+    lines = [
+        "## 教材参照",
+        "",
+        "> 以下书目来自模型已知的正式出版物，仅作为建议参阅；课件未直接读取教材原文。",
+        "",
+    ]
+    for book in textbooks[:12]:
+        if not isinstance(book, dict):
+            continue
+        title = str(book.get("title", "")).strip()
+        author = str(book.get("author", "")).strip()
+        topics = str(book.get("topics", "")).strip()
+        if title and author:
+            detail = f"；相关主题：{topics}" if topics else ""
+            lines.append(f"- 《{title}》— {author}{detail}")
+    if len(lines) == 4:
+        lines.append("本课未列出能够确认书目信息的教材。")
+    return "\n".join(lines)
+
+
+def _run_learning_plan_lesson_task(
+    project_id: int,
+    task_id: int,
+    lesson_number: int,
+    lesson_title: str,
+    lesson_input: str,
+    instructions: str,
+    settings: dict[str, str],
+) -> tuple[str, str]:
+    base_prompt = load_prompt("prompt.learning_plan.lesson")
+    user_instructions = _clean_instructions(instructions) or "无"
+    update_generation_task(
+        task_id,
+        "running",
+        progress_current=0,
+        progress_total=12,
+        stage_label="正在规划课件",
+    )
+    planner_prompt = f"""{base_prompt}
+
+请先为第 {lesson_number} 课“{lesson_title}”制定章节计划。只输出一个 JSON 对象，不要输出 Markdown 或额外解释。
+
+JSON 结构：
+{{
+  "lesson_title": "课程标题",
+  "position": "本课在学习路线中的位置",
+  "objectives": ["可验证目标"],
+  "sections": [
+    {{
+      "title": "章节标题",
+      "items": [
+        {{"name": "必须逐项讲解的函数、API、语法、概念、公式或方法", "kind": "function 或 concept", "focus": "讲解重点"}}
+      ]
+    }}
+  ],
+  "textbooks": [
+    {{"title": "确信存在的书名", "author": "作者", "topics": "相关章节主题"}}
+  ]
+}}
+
+章节必须为 4-10 个。知识项应覆盖本课计划中出现的全部关键内容，不能用“其他相关知识”等笼统项。教材不确定时返回空数组，不编造页码、版次或书目。
+
+用户补充要求：{user_instructions}
+
+学习材料：
+{lesson_input}
+"""
+    plan_content = call_openai_compatible_chat(
+        settings["base_url"],
+        settings["api_key"],
+        settings["model"],
+        [
+            {"role": "system", "content": load_prompt("prompt.system")},
+            {"role": "user", "content": planner_prompt},
+        ],
+        timeout=180,
+    )
+    plan = _parse_lesson_plan(plan_content)
+    sections: list[dict] = plan["sections"]
+    total_calls = 1 + len(sections)
+    update_generation_task(
+        task_id,
+        "running",
+        progress_current=1,
+        progress_total=total_calls,
+        stage_label="章节计划已完成",
+    )
+
+    staging_dir = project_course_dir(project_id) / ".tasks" / f"task-{task_id}"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    generated_sections: list[str] = []
+    try:
+        for index, section in enumerate(sections, start=1):
+            item_lines = "\n".join(
+                f"- {item['name']}（类型：{item['kind']}；重点：{item['focus'] or '完整讲清'}）"
+                for item in section["items"]
+            )
+            update_generation_task(
+                task_id,
+                "running",
+                progress_current=index,
+                progress_total=total_calls,
+                stage_label=f"正在生成 {index}/{len(sections)}：{section['title']}",
+            )
+            section_prompt = f"""{base_prompt}
+
+现在只生成第 {lesson_number} 课“{lesson_title}”中的一个章节。
+
+章节标题：{section['title']}
+本章必须逐项讲解：
+{item_lines}
+
+输出要求：
+- 直接以 `## {section['title']}` 开始，只输出本章 Markdown。
+- 每个知识项必须以包含其完整名称的 `###` 小节单独展开。
+- 不能省略任何知识项，不能用一句定义代替讲解。
+- 不要输出教材原文长引文，不要声称访问了教材全文。
+
+用户补充要求：{user_instructions}
+
+学习材料：
+{lesson_input}
+"""
+            content = call_openai_compatible_chat(
+                settings["base_url"],
+                settings["api_key"],
+                settings["model"],
+                [
+                    {"role": "system", "content": load_prompt("prompt.system")},
+                    {"role": "user", "content": section_prompt},
+                ],
+                timeout=240,
+            )
+            section_markdown = _require_markdown(content)
+            if not section_markdown.lstrip().startswith("##"):
+                section_markdown = f"## {section['title']}\n\n{section_markdown}"
+            _atomic_write(staging_dir / f"section-{index:02d}.part", section_markdown)
+            generated_sections.append(section_markdown.strip())
+            update_generation_task(
+                task_id,
+                "running",
+                progress_current=index + 1,
+                progress_total=total_calls,
+                stage_label=f"已完成 {index}/{len(sections)}：{section['title']}",
+            )
+
+        joined_sections = "\n\n".join(generated_sections)
+        missing = _missing_lesson_items(joined_sections, sections)
+        if missing:
+            total_calls += 1
+            if total_calls > 12:
+                raise RuntimeError("课件仍有遗漏知识项，但已达到 12 次 API 调用上限，旧课件已保留。")
+            update_generation_task(
+                task_id,
+                "running",
+                progress_current=total_calls - 1,
+                progress_total=total_calls,
+                stage_label=f"正在补全 {len(missing)} 个遗漏项",
+            )
+            missing_lines = "\n".join(f"- {item['name']}（{item['kind']}）：{item['focus']}" for item in missing)
+            supplement_prompt = f"""{base_prompt}
+
+以下知识项在第 {lesson_number} 课“{lesson_title}”正文中遗漏。请输出 `## 遗漏知识补全`，并为每个知识项建立包含完整名称的独立 `###` 小节，按课件要求完整讲解。
+
+{missing_lines}
+
+用户补充要求：{user_instructions}
+"""
+            supplement = _require_markdown(
+                call_openai_compatible_chat(
+                    settings["base_url"],
+                    settings["api_key"],
+                    settings["model"],
+                    [
+                        {"role": "system", "content": load_prompt("prompt.system")},
+                        {"role": "user", "content": supplement_prompt},
+                    ],
+                    timeout=240,
+                )
+            )
+            if not supplement.lstrip().startswith("##"):
+                supplement = "## 遗漏知识补全\n\n" + supplement
+            _atomic_write(staging_dir / "section-supplement.part", supplement)
+            generated_sections.append(supplement.strip())
+            joined_sections = "\n\n".join(generated_sections)
+            if _missing_lesson_items(joined_sections, sections):
+                raise RuntimeError("模型补全后仍未覆盖全部规划知识项，旧课件已保留。")
+
+        resolved_title = str(plan.get("lesson_title", "")).strip() or lesson_title
+        position = str(plan.get("position", "")).strip() or "本课承接学习总纲中的对应阶段。"
+        objectives = plan.get("objectives") if isinstance(plan.get("objectives"), list) else []
+        objective_lines = [f"- {str(item).strip()}" for item in objectives if str(item).strip()]
+        map_lines = ["| 章节 | 必须掌握的知识项 |", "|---|---|"]
+        for section in sections:
+            map_lines.append(f"| {section['title']} | {'、'.join(item['name'] for item in section['items'])} |")
+        lesson = "\n\n".join(
+            [
+                f"# 第 {lesson_number} 课：{resolved_title}",
+                "> 生成方式：AI 分章节生成  \n> 教材说明：书目仅作为建议参阅，模型未直接读取教材原文。",
+                f"## 本课定位\n\n{position}",
+                "## 本课目标\n\n" + ("\n".join(objective_lines) if objective_lines else "- 完成本课知识地图中的全部项目。"),
+                "## 知识地图\n\n" + "\n".join(map_lines),
+                joined_sections,
+                _lesson_textbook_markdown(plan),
+            ]
+        ).strip() + "\n"
+        return resolved_title, lesson
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+
 def run_outline_lesson_task(
     project_id: int,
     task_id: int,
@@ -564,6 +855,46 @@ def run_outline_lesson_task(
             requested_title,
             instructions,
         )
+        if project.project_type == "learning_plan":
+            lesson_title, lesson = _run_learning_plan_lesson_task(
+                project_id,
+                task_id,
+                lesson_number,
+                lesson_title,
+                lesson_input,
+                instructions,
+                settings,
+            )
+            relative_path = _outline_lesson_filename(lesson_number)
+            output_path = project_course_dir(project_id) / relative_path
+            _atomic_write(output_path, lesson)
+            register_document_terms(project_id, "course", relative_path, lesson, [])
+            node_title = f"第{lesson_number}课"
+            existing = find_knowledge_node(
+                project_id,
+                node_type="course",
+                title=node_title,
+                ref_type="course",
+                ref_path=relative_path,
+            )
+            if existing is None:
+                create_knowledge_node(
+                    project_id=project_id,
+                    node_type="course",
+                    title=node_title,
+                    ref_type="course",
+                    ref_path=relative_path,
+                    summary=lesson_title,
+                )
+            current_task = get_generation_task(task_id)
+            update_generation_task(
+                task_id,
+                "completed",
+                output_path=output_path,
+                progress_current=current_task.progress_total if current_task else 0,
+                stage_label="生成完成",
+            )
+            return
         prompt = load_prompt("prompt.outline_lesson").format(
             lesson_number=lesson_number,
             lesson_title=lesson_title,
@@ -607,7 +938,7 @@ def run_outline_lesson_task(
             )
         update_generation_task(task_id, "completed", output_path=output_path)
     except Exception as exc:  # noqa: BLE001
-        update_generation_task(task_id, "failed", error_message=str(exc))
+        update_generation_task(task_id, "failed", error_message=str(exc), stage_label="生成失败")
 
 
 def create_or_reuse_outline_lesson_task(
@@ -619,7 +950,9 @@ def create_or_reuse_outline_lesson_task(
     instructions: str = "",
 ) -> tuple[GenerationTask, bool]:
     _, _, input_hash = build_outline_lesson_input(project_id, repo_root, lesson_number, title, instructions)
-    prompt_hash = hash_inputs(input_hash, load_prompt("prompt.outline_lesson"), load_prompt("prompt.system"))
+    project = get_project(project_id)
+    prompt_key = "prompt.learning_plan.lesson" if project is not None and project.project_type == "learning_plan" else "prompt.outline_lesson"
+    prompt_hash = hash_inputs(input_hash, load_prompt(prompt_key), load_prompt("prompt.system"))
     mode = f"lesson-{lesson_number:02d}"
     cached = find_completed_task(project_id, "outline_lesson", prompt_hash, PROMPT_VERSION, source_path="outline.md", mode=mode)
     if cached and cached.output_path and Path(cached.output_path).exists():
@@ -646,7 +979,8 @@ def create_or_reuse_outline_task(
     instructions: str = "",
 ) -> tuple[GenerationTask, bool]:
     _, input_hash = build_outline_input(repo_root, scope, instructions)
-    prompt_hash = hash_inputs(input_hash, load_prompt("prompt.outline"), load_prompt("prompt.system"))
+    prompt_key = "prompt.learning_plan.outline" if scope.type == "learning_plan" else "prompt.outline"
+    prompt_hash = hash_inputs(input_hash, load_prompt(prompt_key), load_prompt("prompt.system"))
     cached = find_completed_task(project_id, "outline", prompt_hash, PROMPT_VERSION, mode=scope.type)
     if cached and cached.output_path and Path(cached.output_path).exists():
         return cached, True

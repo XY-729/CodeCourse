@@ -88,6 +88,9 @@ class GenerationTaskResponse(BaseModel):
     input_hash: str
     output_path: Optional[str] = None
     error_message: Optional[str] = None
+    progress_current: int = 0
+    progress_total: int = 0
+    stage_label: Optional[str] = None
     created_at: str
     updated_at: str
 

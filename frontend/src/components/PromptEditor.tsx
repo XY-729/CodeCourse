@@ -8,7 +8,9 @@ const PROMPT_LABELS: Record<string, string> = {
   "prompt.file_lesson.template": "课件模板",
   "prompt.file_lesson.detailed_expected": "详细生成",
   "prompt.file_lesson.brief_expected": "粗略介绍",
-  "prompt.outline_lesson": "课件生成",
+  "prompt.outline_lesson": "项目课件生成",
+  "prompt.learning_plan.outline": "学习计划总纲",
+  "prompt.learning_plan.lesson": "学习计划课件",
   "prompt.qa.answer": "AI 助手",
 };
 

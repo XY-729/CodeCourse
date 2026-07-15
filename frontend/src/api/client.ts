@@ -232,6 +232,9 @@ export type GenerationTask = {
   input_hash: string;
   output_path?: string | null;
   error_message?: string | null;
+  progress_current: number;
+  progress_total: number;
+  stage_label?: string | null;
   created_at: string;
   updated_at: string;
 };

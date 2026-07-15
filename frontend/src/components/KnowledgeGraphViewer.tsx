@@ -16,6 +16,7 @@ type Props = {
   onOpenQA: (qaId: number) => void;
   onOpenCourse: (path: string) => void;
   onOpenFile: (path: string) => void;
+  onContentChanged?: () => void | Promise<void>;
   compact?: boolean;
   onRequestText?: (options: { title: string; label?: string; initialValue?: string; placeholder?: string; confirmText?: string }) => Promise<string | null>;
   onConfirm?: (title: string, message: string, options?: { confirmText?: string; danger?: boolean }) => Promise<boolean>;
@@ -588,7 +589,7 @@ function createCompactOverviewLayout(cy: Core, graph: KnowledgeGraph) {
 }
 
 
-export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compact = false, onRequestText, onConfirm, onOpenQA, onOpenCourse, onOpenFile }: Props) {
+export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compact = false, onRequestText, onConfirm, onOpenQA, onOpenCourse, onOpenFile, onContentChanged }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
   const lastTapRef = useRef<{ id: string; at: number } | null>(null);
@@ -918,6 +919,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       }
       setSelectedNode(null);
       await reload();
+      await onContentChanged?.();
       return;
     }
     if (selectedEdge) {

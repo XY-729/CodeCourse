@@ -37,6 +37,9 @@ class GenerationTask:
     input_hash: str
     output_path: Optional[str]
     error_message: Optional[str]
+    progress_current: int
+    progress_total: int
+    stage_label: Optional[str]
     created_at: str
     updated_at: str
 
@@ -226,6 +229,9 @@ def init_storage() -> None:
                 input_hash TEXT NOT NULL,
                 output_path TEXT,
                 error_message TEXT,
+                progress_current INTEGER NOT NULL DEFAULT 0,
+                progress_total INTEGER NOT NULL DEFAULT 0,
+                stage_label TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id)
@@ -407,6 +413,13 @@ def init_storage() -> None:
             ON knowledge_links(project_id, source_type, source_path, term_text)
             """
         )
+        task_cols = [row[1] for row in conn.execute("PRAGMA table_info(generation_tasks)").fetchall()]
+        if "progress_current" not in task_cols:
+            conn.execute("ALTER TABLE generation_tasks ADD COLUMN progress_current INTEGER NOT NULL DEFAULT 0")
+        if "progress_total" not in task_cols:
+            conn.execute("ALTER TABLE generation_tasks ADD COLUMN progress_total INTEGER NOT NULL DEFAULT 0")
+        if "stage_label" not in task_cols:
+            conn.execute("ALTER TABLE generation_tasks ADD COLUMN stage_label TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS document_terms (
@@ -488,6 +501,9 @@ def _row_to_task(row: sqlite3.Row) -> GenerationTask:
         input_hash=row["input_hash"],
         output_path=row["output_path"],
         error_message=row["error_message"],
+        progress_current=row["progress_current"] if "progress_current" in row.keys() else 0,
+        progress_total=row["progress_total"] if "progress_total" in row.keys() else 0,
+        stage_label=row["stage_label"] if "stage_label" in row.keys() else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -797,6 +813,9 @@ def update_generation_task(
     status: str,
     output_path: Optional[Path] = None,
     error_message: Optional[str] = None,
+    progress_current: Optional[int] = None,
+    progress_total: Optional[int] = None,
+    stage_label: Optional[str] = None,
 ) -> Optional[GenerationTask]:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
@@ -806,10 +825,22 @@ def update_generation_task(
             SET status = ?,
                 output_path = COALESCE(?, output_path),
                 error_message = ?,
+                progress_current = COALESCE(?, progress_current),
+                progress_total = COALESCE(?, progress_total),
+                stage_label = COALESCE(?, stage_label),
                 updated_at = ?
             WHERE id = ?
             """,
-            (status, str(output_path) if output_path else None, error_message, now, task_id),
+            (
+                status,
+                str(output_path) if output_path else None,
+                error_message,
+                progress_current,
+                progress_total,
+                stage_label,
+                now,
+                task_id,
+            ),
         )
         conn.commit()
     return get_generation_task(task_id)
@@ -1380,6 +1411,25 @@ def list_knowledge_nodes(project_id: int) -> list[KnowledgeNode]:
             (project_id,),
         ).fetchall()
         return [_row_to_knowledge_node(row) for row in rows]
+
+
+def normalize_default_course_node_titles(project_id: int) -> int:
+    """Upgrade legacy outline labels without overwriting user aliases."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE knowledge_nodes
+            SET title = '总纲', updated_at = ?
+            WHERE project_id = ?
+              AND ref_type = 'course'
+              AND ref_path = 'outline.md'
+              AND title IN ('outline.md', 'outline', '项目学习总纲')
+            """,
+            (now, project_id),
+        )
+        conn.commit()
+        return cursor.rowcount
 
 
 def update_knowledge_node(

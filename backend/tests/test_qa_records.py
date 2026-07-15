@@ -290,6 +290,136 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(highlights.status_code, 200)
         self.assertEqual(highlights.json(), [])
 
+    def test_delete_missing_course_file_still_cleans_stale_graph_entry(self):
+        from app.services.storage import create_highlight, create_knowledge_node
+
+        stale = create_knowledge_node(
+            self.project.id,
+            "course",
+            "Stale lesson",
+            ref_type="course",
+            ref_path="missing.md",
+        )
+        create_highlight(self.project.id, "course", "missing.md", "stale", "yellow")
+
+        deleted = self.client.delete(f"/api/projects/{self.project.id}/course/missing.md")
+
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse(deleted.json()["file_existed"])
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        self.assertFalse(any(node["id"] == stale.id for node in graph["nodes"]))
+        highlights = self.client.get(
+            f"/api/projects/{self.project.id}/highlights?source_type=course&source_path=missing.md"
+        )
+        self.assertEqual(highlights.json(), [])
+
+    def test_renamed_course_node_is_reused_as_document_alias(self):
+        from app.services.storage import create_knowledge_node
+
+        course_node = create_knowledge_node(
+            self.project.id,
+            "course",
+            "outline.md",
+            ref_type="course",
+            ref_path="outline.md",
+        )
+        renamed = self.client.put(
+            f"/api/projects/{self.project.id}/knowledge/nodes/{course_node.id}",
+            json={"title": "我的学习路线"},
+        )
+        self.assertEqual(renamed.status_code, 200)
+
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: FastAPI\n\nAnswer"):
+            asked = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "FastAPI",
+                    "question": "What is it?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+        self.assertEqual(asked.status_code, 200)
+
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        matching = [
+            node for node in graph["nodes"]
+            if node["ref_type"] == "course" and node["ref_path"] == "outline.md"
+        ]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["id"], course_node.id)
+        self.assertEqual(matching[0]["title"], "我的学习路线")
+
+    def test_renamed_qa_node_is_reused_for_follow_up(self):
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: Root\n\nRoot answer"):
+            root = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "selected_text": "FastAPI",
+                    "question": "Root question",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            ).json()
+
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        root_node = next(node for node in graph["nodes"] if node["ref_type"] == "qa" and node["ref_id"] == root["id"])
+        self.client.put(
+            f"/api/projects/{self.project.id}/knowledge/nodes/{root_node['id']}",
+            json={"title": "自定义别名"},
+        )
+
+        with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: Child\n\nChild answer"):
+            child = self.client.post(
+                f"/api/projects/{self.project.id}/qa/ask",
+                json={
+                    "source_type": "qa",
+                    "source_path": root["output_path"],
+                    "selected_text": "answer",
+                    "question": "Follow up",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                    "session_id": root["session_id"],
+                    "parent_qa_id": root["id"],
+                },
+            )
+        self.assertEqual(child.status_code, 200)
+
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        root_nodes = [node for node in graph["nodes"] if node["ref_type"] == "qa" and node["ref_id"] == root["id"]]
+        self.assertEqual(len(root_nodes), 1)
+        self.assertEqual(root_nodes[0]["id"], root_node["id"])
+        self.assertEqual(root_nodes[0]["title"], "自定义别名")
+
+    def test_outline_node_uses_default_outline_label_without_overwriting_alias(self):
+        from app.services.storage import create_knowledge_node
+
+        legacy = create_knowledge_node(
+            self.project.id,
+            "course",
+            "outline.md",
+            ref_type="course",
+            ref_path="outline.md",
+        )
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        upgraded = next(node for node in graph["nodes"] if node["id"] == legacy.id)
+        self.assertEqual(upgraded["title"], "总纲")
+
+        self.client.put(
+            f"/api/projects/{self.project.id}/knowledge/nodes/{legacy.id}",
+            json={"title": "自定义总纲别名"},
+        )
+        graph = self.client.get(f"/api/projects/{self.project.id}/knowledge/graph").json()
+        aliased = next(node for node in graph["nodes"] if node["id"] == legacy.id)
+        self.assertEqual(aliased["title"], "自定义总纲别名")
+
     def test_search_favorite_and_edit_update_markdown(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="初始回答"):
             created = self.client.post(
@@ -528,21 +658,23 @@ class QARecordEndpointTests(unittest.TestCase):
             list(prompts.keys()),
             [
                 "prompt.system",
+                "prompt.outline",
+                "prompt.file_lesson.template",
                 "prompt.file_lesson.detailed_expected",
                 "prompt.file_lesson.brief_expected",
                 "prompt.outline_lesson",
+                "prompt.learning_plan.outline",
+                "prompt.learning_plan.lesson",
                 "prompt.qa.answer",
             ],
         )
-        self.assertNotIn("prompt.outline", prompts)
-        self.assertNotIn("prompt.file_lesson.template", prompts)
         self.assertIn("prompt.qa.answer", prompts)
         self.assertIn("prompt.outline_lesson", prompts)
+        self.assertIn("prompt.learning_plan.outline", prompts)
+        self.assertIn("prompt.learning_plan.lesson", prompts)
         self.assertIn("TITLE:", prompts["prompt.qa.answer"])
-        self.assertIn("刚开始读这个项目的小白开发者", prompts["prompt.qa.answer"])
-        self.assertIn("上下文材料", prompts["prompt.qa.answer"])
-        self.assertIn("项目内置的 AI 助手", prompts["prompt.qa.answer"])
-        self.assertIn("只写核心名词或最短主题", prompts["prompt.qa.answer"])
+        self.assertIn("{model}", prompts["prompt.learning_plan.outline"])
+        self.assertIn("4-10", prompts["prompt.learning_plan.outline"])
 
 
     def test_answer_terms_create_child_branch_in_same_session(self):

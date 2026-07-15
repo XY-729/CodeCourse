@@ -148,8 +148,16 @@ function parentDir(path: string): string {
 }
 
 function taskLabel(task: GenerationTask): string {
-  const type = task.task_type === "file_lesson" ? "文件课件" : task.task_type === "outline_lesson" ? "项目课件" : "项目总纲";
+  const type = task.task_type === "file_lesson" ? "文件课件" : task.task_type === "outline_lesson" ? "按课课件" : "项目总纲";
   return `${type} / ${task.status}`;
+}
+
+function taskStatusMessage(task: GenerationTask): string {
+  if (task.stage_label) {
+    const progress = task.progress_total > 0 ? ` (${task.progress_current}/${task.progress_total})` : "";
+    return `${task.stage_label}${progress}`;
+  }
+  return taskLabel(task);
 }
 
 function qaTitle(record: QARecord): string {
@@ -1241,16 +1249,21 @@ export default function App() {
       return;
     }
     setActiveTask(initialTask);
-    setTaskMessage(`任务已创建：${taskLabel(initialTask)}`);
+    setTaskMessage(initialTask.stage_label ? taskStatusMessage(initialTask) : `任务已创建：${taskLabel(initialTask)}`);
     let nextTask = initialTask;
-    for (let attempt = 0; attempt < 90; attempt += 1) {
+    const trackingDeadline = Date.now() + 60 * 60 * 1000;
+    while (Date.now() < trackingDeadline) {
       if (TERMINAL_TASK_STATUSES.has(nextTask.status)) {
         break;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 1500));
       nextTask = await getGenerationTask(project.id, initialTask.id);
       setActiveTask(nextTask);
-      setTaskMessage(`正在生成：${taskLabel(nextTask)}`);
+      setTaskMessage(taskStatusMessage(nextTask));
+    }
+    if (!TERMINAL_TASK_STATUSES.has(nextTask.status)) {
+      setTaskMessage("任务仍在后端生成，可稍后在任务状态中查看结果");
+      return;
     }
     const nextCourses = await refreshCourses(project.id);
     const freshProject = await getProject(project.id);
@@ -1322,7 +1335,9 @@ export default function App() {
     }
     const ok = await confirmAction(
       `生成第 ${lessonNumber} 课`,
-      `将调用模型 API 生成“${title}”的详细课件，并使用已构建的项目索引作为代码上下文，可能消耗较多 token。是否继续？`,
+      isLearningPlanProject
+        ? `将分章节生成“${title}”的详细课件。本次操作最多调用 12 次模型 API，可能消耗较多 token；一次确认将授权完成整节课的规划、分章生成与遗漏补全。是否继续？`
+        : `将调用模型 API 生成“${title}”的详细课件，并使用已构建的项目索引作为代码上下文，可能消耗较多 token。是否继续？`,
       { confirmText: "生成" },
     );
     if (!ok) {
@@ -2157,6 +2172,11 @@ export default function App() {
               refreshKey={knowledgeRefreshKey}
               onRequestText={requestText}
               onConfirm={confirmAction}
+              onContentChanged={async () => {
+                await refreshCourses(project.id);
+                await refreshQAHistory(project.id);
+                setKnowledgeRefreshKey((value) => value + 1);
+              }}
               onOpenQA={(qaId) => {
                 openQAById(qaId).catch((caught) => setError(caught instanceof Error ? caught.message : "打开回答失败"));
               }}
@@ -2430,6 +2450,11 @@ export default function App() {
               compact
               onRequestText={requestText}
               onConfirm={confirmAction}
+              onContentChanged={async () => {
+                await refreshCourses(project.id);
+                await refreshQAHistory(project.id);
+                setKnowledgeRefreshKey((value) => value + 1);
+              }}
               onOpenQA={(qaId) => {
                 openQAById(qaId).catch((caught) => setError(caught instanceof Error ? caught.message : "打开回答失败"));
               }}

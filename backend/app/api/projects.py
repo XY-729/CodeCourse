@@ -87,6 +87,9 @@ def _to_task_response(task: GenerationTask) -> GenerationTaskResponse:
         input_hash=task.input_hash,
         output_path=task.output_path,
         error_message=task.error_message,
+        progress_current=task.progress_current,
+        progress_total=task.progress_total,
+        stage_label=task.stage_label,
         created_at=task.created_at,
         updated_at=task.updated_at,
     )

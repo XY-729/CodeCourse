@@ -2720,7 +2720,30 @@ body {
 
 .assistant-empty-card strong { color: #323936; }
 .assistant-empty-card span { max-width: 220px; font-size: 12px; line-height: 1.5; }
-.qa-panel-tabs .panel-close { margin-left: auto; }
+.qa-panel-tabs .panel-close {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  margin: auto 0 auto auto;
+  padding: 0;
+  flex: 0 0 32px;
+  border: 1px solid #d7dcd9;
+  border-radius: 7px;
+  color: #46504c;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(24, 30, 28, 0.05);
+}
+
+.qa-panel-tabs .panel-close:hover:not(:disabled) {
+  border-color: #b7c3be;
+  color: #173f39;
+  background: #f1f5f3;
+}
+
+.qa-panel-tabs .panel-close:active:not(:disabled) {
+  background: #e5ece9;
+  transform: translateY(1px);
+}
 
 .term-candidate-link {
   display: inline;

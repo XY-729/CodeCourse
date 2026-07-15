@@ -9,7 +9,6 @@ from app.services.storage import (
     KnowledgeNode,
     LearningAnchor,
     QARecord,
-    cleanup_course_artifacts,
     collapse_knowledge_term_bridges,
     create_knowledge_edge,
     create_knowledge_link,
@@ -25,6 +24,7 @@ from app.services.storage import (
     list_knowledge_edges,
     list_knowledge_links,
     list_knowledge_nodes,
+    normalize_default_course_node_titles,
     update_knowledge_edge,
     update_knowledge_node,
 )
@@ -46,6 +46,8 @@ def _clean_term(text: str) -> str:
 def _source_node_title(source_type: str, source_path: Optional[str]) -> str:
     if not source_path:
         return "项目上下文"
+    if source_type == "course" and source_path == "outline.md":
+        return "总纲"
     return source_path.split("/")[-1] or source_path
 
 
@@ -62,14 +64,32 @@ def get_or_create_node(
     ref_path: Optional[str] = None,
     summary: Optional[str] = None,
 ) -> KnowledgeNode:
-    existing = find_knowledge_node(
-        project_id,
-        node_type=node_type,
-        title=title,
-        ref_type=ref_type,
-        ref_id=ref_id,
-        ref_path=ref_path,
-    )
+    # ref_id/ref_path is the stable document identity. The title is a user
+    # editable alias and must never participate in identity matching.
+    existing = None
+    if ref_id is not None:
+        existing = find_knowledge_node(
+            project_id,
+            node_type=node_type,
+            ref_type=ref_type,
+            ref_id=ref_id,
+        )
+    elif ref_path is not None:
+        existing = find_knowledge_node(
+            project_id,
+            node_type=node_type,
+            ref_type=ref_type,
+            ref_path=ref_path,
+        )
+    if existing is None:
+        existing = find_knowledge_node(
+            project_id,
+            node_type=node_type,
+            title=title,
+            ref_type=ref_type,
+            ref_id=ref_id,
+            ref_path=ref_path,
+        )
     if existing:
         return existing
     return create_knowledge_node(
@@ -99,6 +119,7 @@ def create_manual_node(
 
 def list_graph(project_id: int) -> tuple[list[KnowledgeNode], list[KnowledgeEdge]]:
     collapse_knowledge_term_bridges(project_id)
+    normalize_default_course_node_titles(project_id)
     return list_knowledge_nodes(project_id), list_knowledge_edges(project_id)
 
 
@@ -122,8 +143,6 @@ def remove_node(project_id: int, node_id: int) -> bool:
 
         try:
             delete_project_course_file(project_id, node.ref_path)
-        except FileNotFoundError:
-            cleanup_course_artifacts(project_id, node.ref_path)
         except ValueError:
             return False
         return True
