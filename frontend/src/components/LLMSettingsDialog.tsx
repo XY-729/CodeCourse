@@ -1,4 +1,4 @@
-import { ExternalLink, KeyRound, Save, TestTube2, Trash2, X } from "lucide-react";
+import { ClipboardPaste, ExternalLink, KeyRound, Save, TestTube2, Trash2, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { getLLMSettings, saveLLMSettings, testLLMSettings, type LLMSettings } from "../api/client";
 
@@ -81,6 +81,30 @@ export default function LLMSettingsDialog({ open, onClose, onConfirm, onOpenExte
     }
   }
 
+  async function pasteApiKey() {
+    setMessage("");
+    try {
+      let value = "";
+      if (document.documentElement.classList.contains("platform-android")) {
+        const { Clipboard } = await import("@capacitor/clipboard");
+        value = (await Clipboard.read()).value;
+      } else if (navigator.clipboard?.readText) {
+        value = await navigator.clipboard.readText();
+      }
+
+      if (!value.trim()) {
+        setMessage("剪贴板中没有可粘贴的文本。");
+        return;
+      }
+
+      setApiKey(value.trim());
+      setClearApiKey(false);
+      setMessage("API Key 已从剪贴板粘贴。");
+    } catch {
+      setMessage("无法读取剪贴板，请长按输入框选择粘贴。");
+    }
+  }
+
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="模型 API 设置">
       <form className="settings-modal" onSubmit={submit}>
@@ -120,13 +144,29 @@ export default function LLMSettingsDialog({ open, onClose, onConfirm, onOpenExte
             </label>
             <label>
               <span>API Key</span>
-              <input
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                type="password"
-                placeholder={settings.has_api_key ? `已保存：${settings.masked_api_key}` : "sk-..."}
-                autoComplete="off"
-              />
+              <div className="settings-secret-row">
+                <input
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                  type="password"
+                  placeholder={settings.has_api_key ? `已保存：${settings.masked_api_key}` : "sk-..."}
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="done"
+                />
+                <button
+                  type="button"
+                  className="secondary-button compact settings-paste-button"
+                  onClick={() => void pasteApiKey()}
+                  title="从剪贴板粘贴 API Key"
+                  aria-label="从剪贴板粘贴 API Key"
+                >
+                  <ClipboardPaste size={15} />
+                  粘贴
+                </button>
+              </div>
             </label>
             <label className="toggle-row">
               <input
