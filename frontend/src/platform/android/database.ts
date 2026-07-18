@@ -187,6 +187,22 @@ export class MobileDatabase {
           updated_at TEXT NOT NULL,
           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS learning_states (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id INTEGER NOT NULL,
+          source_type TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'in_progress',
+          position_kind TEXT NOT NULL DEFAULT 'scroll_ratio',
+          position_value REAL NOT NULL DEFAULT 0,
+          last_opened_at TEXT NOT NULL,
+          completed_at TEXT,
+          updated_at TEXT NOT NULL,
+          UNIQUE(project_id, source_type, source_path) ON CONFLICT REPLACE,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_learning_states_project_opened
+          ON learning_states(project_id, last_opened_at DESC);
         CREATE TABLE IF NOT EXISTS code_chunks (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           project_id INTEGER NOT NULL,

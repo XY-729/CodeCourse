@@ -3101,6 +3101,149 @@ html.platform-android #root {
   }
 }
 
+.platform-android .mobile-topbar-action {
+  flex: 0 0 40px;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+}
+
+.platform-android .more-menu-divider {
+  height: 1px;
+  margin: 5px 4px;
+  background: #e1e3e0;
+}
+
+.platform-android .topbar-more-menu {
+  width: min(270px, calc(100vw - 20px));
+  max-height: calc(100dvh - 72px - env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+
+.platform-android .generation-drawer-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.platform-android .generation-drawer-actions > button {
+  width: 100%;
+  min-width: 0;
+}
+
+.platform-android .command-palette-layer {
+  align-items: stretch;
+  padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom));
+}
+
+.platform-android .command-palette {
+  width: 100%;
+  max-height: 100%;
+  margin: 0;
+  border-radius: 12px;
+}
+
+.platform-android .command-palette-results > button {
+  min-height: 52px;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+}
+
+html.platform-android[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html.platform-android[data-theme="dark"],
+html.platform-android[data-theme="dark"] body,
+html.platform-android[data-theme="dark"] #root,
+html.platform-android[data-theme="dark"] .app-shell,
+html.platform-android[data-theme="dark"] .workbench,
+html.platform-android[data-theme="dark"] .center-pane,
+html.platform-android[data-theme="dark"] .reader-workspace,
+html.platform-android[data-theme="dark"] .editor-group,
+html.platform-android[data-theme="dark"] .editor-body {
+  color: #f2f2f7;
+  background: #1c1c1e;
+}
+
+html.platform-android[data-theme="dark"] .topbar,
+html.platform-android[data-theme="dark"] .activity-rail,
+html.platform-android[data-theme="dark"] .navigation-panel,
+html.platform-android[data-theme="dark"] .assistant-drawer,
+html.platform-android[data-theme="dark"] .sidebar,
+html.platform-android[data-theme="dark"] .explain-panel,
+html.platform-android[data-theme="dark"] .viewer,
+html.platform-android[data-theme="dark"] .viewer-header,
+html.platform-android[data-theme="dark"] .editor-tabs,
+html.platform-android[data-theme="dark"] .generation-drawer,
+html.platform-android[data-theme="dark"] .settings-modal,
+html.platform-android[data-theme="dark"] .prompt-editor-modal,
+html.platform-android[data-theme="dark"] .command-palette,
+html.platform-android[data-theme="dark"] .more-menu,
+html.platform-android[data-theme="dark"] .modal-card {
+  color: #f2f2f7;
+  background: #242426;
+  border-color: rgba(235, 235, 245, 0.16);
+}
+
+html.platform-android[data-theme="dark"] .markdown-body {
+  color: #f2f2f7;
+  background: #242426;
+}
+
+html.platform-android[data-theme="dark"] .markdown-body pre {
+  color: #f2f2f7;
+  background: #1c1c1e;
+  border-color: rgba(235, 235, 245, 0.18);
+}
+
+html.platform-android[data-theme="dark"] .markdown-body code:not(pre code) {
+  color: #f2f2f7;
+  background: rgba(235, 235, 245, 0.12);
+}
+
+html.platform-android[data-theme="dark"] input,
+html.platform-android[data-theme="dark"] textarea,
+html.platform-android[data-theme="dark"] select,
+html.platform-android[data-theme="dark"] .project-switch,
+html.platform-android[data-theme="dark"] .command-palette-search input {
+  color: #f2f2f7;
+  background: #2c2c2e;
+  border-color: rgba(235, 235, 245, 0.18);
+}
+
+html.platform-android[data-theme="dark"] .course-row:hover,
+html.platform-android[data-theme="dark"] .project-row:hover,
+html.platform-android[data-theme="dark"] .tree-row:hover,
+html.platform-android[data-theme="dark"] .more-menu button:hover:not(:disabled),
+html.platform-android[data-theme="dark"] .command-palette-results > button.active {
+  color: #fff;
+  background: rgba(10, 132, 255, 0.2);
+}
+
+html.platform-android[data-theme="dark"] .course-row.selected,
+html.platform-android[data-theme="dark"] .project-row.selected,
+html.platform-android[data-theme="dark"] .activity-rail button.active {
+  color: #64a0ff;
+  background: rgba(10, 132, 255, 0.18);
+}
+
+html.platform-android[data-theme="dark"] .more-menu-divider {
+  background: rgba(235, 235, 245, 0.16);
+}
+
+html.platform-android[data-theme="dark"] .command-palette-results > button,
+html.platform-android[data-theme="dark"] .command-palette-search input,
+html.platform-android[data-theme="dark"] .command-copy strong {
+  color: #f2f2f7;
+}
+
+html.platform-android[data-theme="dark"] .command-copy small,
+html.platform-android[data-theme="dark"] .command-section,
+html.platform-android[data-theme="dark"] .scope-helper,
+html.platform-android[data-theme="dark"] .field-label > span {
+  color: #aeaeb2;
+}
+
 /* Hierarchical assistant */
 .assistant-thread-view {
   flex: 1;

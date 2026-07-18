@@ -2,7 +2,8 @@ import { CodeCourseSecureStore } from "../runtime";
 import type { CodeCourseProvider } from "../provider";
 import type {
   CourseFile, GenerationTask, HighlightRecord, KnowledgeEdge, KnowledgeGraph, KnowledgeLink, KnowledgeNode,
-  LearningAnchor, LLMSettings, Project, ProjectIndexStatus, ProjectSearchResult, QAAskPayload, QARecord, TreeNode,
+  LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, Project, ProjectIndexStatus, ProjectSearchResult,
+  QAAskPayload, QARecord, TreeNode,
 } from "../../api/client";
 import promptDefaults from "./default-prompts.json";
 import { MobileDatabase } from "./database";
@@ -144,6 +145,20 @@ function taskFromRow(row: Row): GenerationTask {
 function qaFromRow(row: Row): QARecord {
   return { ...row, id: Number(row.id), project_id: Number(row.project_id), favorite: bool(row.favorite), selected_text: String(row.selected_text || "") } as QARecord;
 }
+function learningStateFromRow(row: Row): LearningState {
+  return {
+    id: Number(row.id),
+    project_id: Number(row.project_id),
+    source_type: row.source_type,
+    source_path: String(row.source_path),
+    status: row.status,
+    position_kind: row.position_kind,
+    position_value: Number(row.position_value || 0),
+    last_opened_at: String(row.last_opened_at),
+    completed_at: row.completed_at ? String(row.completed_at) : null,
+    updated_at: String(row.updated_at),
+  } as LearningState;
+}
 
 export class AndroidLocalProvider implements CodeCourseProvider {
   private runningTasks = new Set<number>();
@@ -199,6 +214,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if ((match = path.match(/^\/projects\/(\d+)\/tasks\/(\d+)$/))) return this.getTask(Number(match[1]), Number(match[2])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/index\/build$/))) return this.buildIndex(Number(match[1])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/index\/status$/))) return this.indexStatus(Number(match[1])) as Promise<T>;
+    if ((match = path.match(/^\/projects\/(\d+)\/learning-state$/))) {
+      const projectId = Number(match[1]);
+      if (method === "GET") return this.listLearningStates(projectId) as Promise<T>;
+      if (method === "PUT") return this.updateLearningState(projectId, body) as Promise<T>;
+      if (method === "DELETE") return this.resetLearningStates(projectId) as Promise<T>;
+    }
     if ((match = path.match(/^\/projects\/(\d+)\/search$/))) return this.search(Number(match[1]), body.query, body.source_path, body.limit) as Promise<T>;
 
     if ((match = path.match(/^\/projects\/(\d+)\/qa\/ask$/))) return this.ask(Number(match[1]), body) as Promise<T>;
@@ -319,6 +340,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
   private async deleteCourse(projectId: number, filename: string): Promise<{ deleted: boolean; filename: string }> {
     await db.run("DELETE FROM course_files WHERE project_id = ? AND filename = ?", [projectId, filename]);
+    await db.run("DELETE FROM learning_states WHERE project_id = ? AND source_path = ? AND source_type IN ('course','qa')", [projectId, filename]);
     await db.run("DELETE FROM highlights WHERE project_id = ? AND source_type = 'course' AND source_path = ?", [projectId, filename]);
     await db.run("DELETE FROM knowledge_links WHERE project_id = ? AND source_type = 'course' AND source_path = ?", [projectId, filename]);
     await db.run("DELETE FROM document_terms WHERE project_id = ? AND source_type = 'course' AND source_path = ?", [projectId, filename]);
@@ -611,6 +633,65 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       rows = await db.query<Row>("SELECT * FROM code_chunks WHERE project_id=? AND (content LIKE ? OR symbol_name LIKE ? OR path LIKE ?) ORDER BY CASE WHEN path=? THEN 0 ELSE 1 END LIMIT ?", [projectId, `%${query}%`, `%${query}%`, `%${query}%`, sourcePath || "", limit]);
     }
     return rows.map((row, index) => ({ path: row.path, language: row.language, start_line: Number(row.start_line), end_line: Number(row.end_line), chunk_type: row.chunk_type, symbol_name: row.symbol_name, content: row.content, score: 1 / (index + 1) }));
+  }
+
+  private async learningSourceExists(projectId: number, sourceType: LearningState["source_type"], sourcePath: string): Promise<boolean> {
+    if (sourceType === "file") {
+      return (await db.query<Row>("SELECT id FROM project_files WHERE project_id=? AND path=?", [projectId, sourcePath])).length > 0;
+    }
+    if (sourceType === "qa") {
+      return (await db.query<Row>("SELECT id FROM qa_records WHERE project_id=? AND output_path=?", [projectId, sourcePath])).length > 0;
+    }
+    return (await db.query<Row>("SELECT id FROM course_files WHERE project_id=? AND filename=?", [projectId, sourcePath])).length > 0;
+  }
+
+  private async listLearningStates(projectId: number): Promise<LearningState[]> {
+    await this.getProject(projectId);
+    const rows = await db.query<Row>("SELECT * FROM learning_states WHERE project_id=? ORDER BY last_opened_at DESC,id DESC", [projectId]);
+    const valid: LearningState[] = [];
+    for (const row of rows) {
+      const state = learningStateFromRow(row);
+      if (await this.learningSourceExists(projectId, state.source_type, state.source_path)) {
+        valid.push(state);
+      } else {
+        await db.run("DELETE FROM learning_states WHERE id=?", [state.id]);
+      }
+    }
+    return valid;
+  }
+
+  private async updateLearningState(projectId: number, payload: LearningStateUpdate): Promise<LearningState> {
+    await this.getProject(projectId);
+    const sourceType = payload.source_type;
+    const sourcePath = String(payload.source_path || "").trim();
+    if (!sourcePath || !(await this.learningSourceExists(projectId, sourceType, sourcePath))) {
+      throw new Error("学习来源不存在。");
+    }
+    const status = payload.status === "completed" ? "completed" : "in_progress";
+    const positionKind = payload.position_kind === "line" ? "line" : "scroll_ratio";
+    const rawPosition = Number(payload.position_value || 0);
+    const positionValue = positionKind === "line" ? Math.max(1, Math.round(rawPosition)) : Math.min(1, Math.max(0, rawPosition));
+    const stamp = now();
+    const completedAt = status === "completed" ? stamp : null;
+    await db.run(`INSERT INTO learning_states(project_id,source_type,source_path,status,position_kind,position_value,last_opened_at,completed_at,updated_at)
+      VALUES(?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(project_id,source_type,source_path) DO UPDATE SET
+        status=excluded.status,
+        position_kind=excluded.position_kind,
+        position_value=excluded.position_value,
+        last_opened_at=excluded.last_opened_at,
+        completed_at=CASE WHEN excluded.status='completed' THEN COALESCE(learning_states.completed_at,excluded.completed_at) ELSE NULL END,
+        updated_at=excluded.updated_at`, [projectId, sourceType, sourcePath, status, positionKind, positionValue, stamp, completedAt, stamp]);
+    const row = (await db.query<Row>("SELECT * FROM learning_states WHERE project_id=? AND source_type=? AND source_path=?", [projectId, sourceType, sourcePath]))[0];
+    if (!row) throw new Error("学习进度保存失败。");
+    return learningStateFromRow(row);
+  }
+
+  private async resetLearningStates(projectId: number): Promise<{ reset: boolean; deleted: number }> {
+    await this.getProject(projectId);
+    const existing = await db.query<Row>("SELECT id FROM learning_states WHERE project_id=?", [projectId]);
+    await db.run("DELETE FROM learning_states WHERE project_id=?", [projectId]);
+    return { reset: true, deleted: existing.length };
   }
 
   private async sourceContext(projectId: number, payload: QAAskPayload): Promise<string> {

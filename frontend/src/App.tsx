@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
-import { BookOpen, Bot, ChevronDown, Download, FileArchive, FolderTree, MoreHorizontal, PanelLeft, Save, Sparkles, Star, X } from "lucide-react";
+import { BookOpen, Bot, ChevronDown, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
 import {
   askQuestionStream,
   buildProjectIndex,
@@ -2811,23 +2811,44 @@ export default function App() {
             <button className="project-switch" onClick={() => { setNavigationView("projects"); setNavigationOpen(true); }}>
               <span>{project?.name ?? "选择项目"}</span><ChevronDown size={15} />
             </button>
-            <button className="primary-button topbar-import" onClick={handleImportRequest} disabled={loading}><Download size={15} /></button>
-            <button className="icon-button header-icon-button" onClick={() => setMoreMenuOpen((open) => !open)}><MoreHorizontal size={18} /></button>
+            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => setCommandPaletteOpen(true)} title="搜索" aria-label="搜索"><Search size={18} /></button>
+            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => { setGenerationIntent(activeLessonNumber ? "lesson" : "outline"); setGenerationOpen(true); }} disabled={!project} title="生成学习内容" aria-label="生成学习内容"><Sparkles size={18} /></button>
+            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => setMoreMenuOpen((open) => !open)} title="更多" aria-label="更多"><MoreHorizontal size={18} /></button>
           </div>
         </header>
       )}
       {mobileRuntime && moreMenuOpen ? (
         <div className="more-menu-layer" onMouseDown={() => setMoreMenuOpen(false)}>
           <div className="more-menu topbar-more-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" role="menuitem" onClick={() => { handleImportRequest(); setMoreMenuOpen(false); }}>
+              <Download size={15} />
+              导入 GitHub 仓库
+            </button>
+            <button type="button" role="menuitem" onClick={() => { archiveInputRef.current?.click(); setMoreMenuOpen(false); }}>
+              <FileArchive size={15} />
+              导入本地 ZIP
+            </button>
+            <div className="more-menu-divider" />
             <button type="button" role="menuitem" onClick={() => { setSettingsOpen(true); setMoreMenuOpen(false); }}>
               <Bot size={15} />
               模型 API
             </button>
             <button type="button" role="menuitem" onClick={() => { setPromptEditorOpen(true); setMoreMenuOpen(false); }}>
               <Sparkles size={15} />
-              提示词
+              提示词编辑
             </button>
-            {mobileRuntime ? <button type="button" role="menuitem" onClick={() => { archiveInputRef.current?.click(); setMoreMenuOpen(false); }}><FileArchive size={15} />导入本地 ZIP</button> : null}
+            <button type="button" role="menuitem" disabled={!project || isLearningPlanProject || indexBuilding} onClick={() => { void handleBuildIndex(); setMoreMenuOpen(false); }}>
+              <RefreshCw size={15} />
+              {indexBuilding || indexStatus?.status === "building" ? "正在构建索引" : "重新构建索引"}
+            </button>
+            <button type="button" role="menuitem" disabled={!project || learningStates.length === 0} onClick={() => { void handleResetLearningProgress(); setMoreMenuOpen(false); }}>
+              <RotateCcw size={15} />
+              重置学习进度
+            </button>
+            <button type="button" role="menuitem" onClick={() => { setThemeMode((current) => current === "dark" ? "light" : "dark"); setMoreMenuOpen(false); }}>
+              {themeMode === "dark" ? <Sun size={15} /> : <Moon size={15} />}
+              {themeMode === "dark" ? "切换到亮色" : "切换到暗色"}
+            </button>
           </div>
         </div>
       ) : null}
@@ -3045,6 +3066,11 @@ export default function App() {
               </label>
               <div className="generation-drawer-actions">
                 <button className="primary-button" onClick={handleGenerateOutline} disabled={!project || isTaskRunning}><Sparkles size={15} />生成 AI 总纲</button>
+                {activeLessonNumber ? (
+                  <button className="primary-button" onClick={() => handleGenerateOutlineLesson(activeLessonNumber, activeLessonTitle)} disabled={!project || isTaskRunning}>
+                    <BookOpen size={15} />生成当前课件
+                  </button>
+                ) : null}
                 {fileContent ? (
                   <>
                     <button className="secondary-button" onClick={() => handleGenerateFileLesson("brief")} disabled={!canGenerateFileLesson || isTaskRunning}>粗略介绍</button>
