@@ -26,7 +26,15 @@ if (-not (Test-Path -LiteralPath $archivePath)) {
     Invoke-WebRequest -Uri $downloadUrl -OutFile $archivePath -UseBasicParsing
 }
 
-$actualSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$archiveStream = [System.IO.File]::OpenRead($archivePath)
+try {
+    $hashBytes = $sha256.ComputeHash($archiveStream)
+} finally {
+    $archiveStream.Dispose()
+    $sha256.Dispose()
+}
+$actualSha256 = ([System.BitConverter]::ToString($hashBytes) -replace "-", "").ToLowerInvariant()
 if ($actualSha256 -ne $ExpectedSha256.ToLowerInvariant()) {
     Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
     throw "codebase-memory-mcp SHA-256 mismatch. Expected $ExpectedSha256, received $actualSha256."
