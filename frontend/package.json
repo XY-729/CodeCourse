@@ -11,14 +11,15 @@
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "vite": "^6.0.7",
-    "typescript": "^5.7.2",
+    "cytoscape": "^3.30.4",
+    "cytoscape-fcose": "2.2.0",
+    "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
-    "lucide-react": "^0.468.0",
-    "cytoscape": "^3.30.4"
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
   },
   "devDependencies": {
     "@types/react": "^19.0.2",

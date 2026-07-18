@@ -1,0 +1,478 @@
+html:not(.platform-android) .app-shell {
+  height: 100dvh;
+  background: var(--apple-canvas);
+}
+
+.desktop-only { display: initial; }
+
+html:not(.platform-android) .apple-toolbar {
+  position: relative;
+  z-index: 40;
+  height: 46px;
+  min-height: 46px;
+  padding: 0 10px;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(140px, auto) minmax(340px, 1fr);
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid var(--apple-separator);
+  background: var(--apple-toolbar);
+  color: var(--apple-text);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+}
+
+html:not(.platform-android) .apple-toolbar-leading,
+html:not(.platform-android) .apple-toolbar-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+html:not(.platform-android) .apple-toolbar-actions { justify-content: flex-end; }
+
+html:not(.platform-android) .apple-icon-button,
+html:not(.platform-android) .apple-toolbar-button,
+html:not(.platform-android) .apple-project-switcher,
+html:not(.platform-android) .apple-search-button,
+html:not(.platform-android) .apple-primary-button,
+html:not(.platform-android) .apple-secondary-button,
+html:not(.platform-android) .apple-text-button {
+  border: 0;
+  color: var(--apple-text);
+  background: transparent;
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease, opacity 140ms ease, transform 100ms var(--apple-ease-out);
+}
+
+html:not(.platform-android) .apple-icon-button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--apple-radius-sm);
+  color: var(--apple-text-secondary);
+}
+
+html:not(.platform-android) .apple-icon-button:hover,
+html:not(.platform-android) .apple-icon-button.active,
+html:not(.platform-android) .apple-toolbar-button:hover,
+html:not(.platform-android) .apple-toolbar-button.active,
+html:not(.platform-android) .apple-search-button:hover {
+  color: var(--apple-text);
+  background: var(--apple-fill-hover);
+}
+
+html:not(.platform-android) .apple-icon-button.subtle { width: 26px; height: 26px; }
+html:not(.platform-android) .apple-icon-button.danger:hover { color: var(--apple-red); background: color-mix(in srgb, var(--apple-red) 12%, transparent); }
+
+html:not(.platform-android) .apple-project-switcher {
+  min-width: 0;
+  max-width: 260px;
+  height: 32px;
+  padding: 0 8px 0 5px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: var(--apple-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+html:not(.platform-android) .apple-project-switcher:hover,
+html:not(.platform-android) .apple-project-switcher.active { background: var(--apple-fill); }
+html:not(.platform-android) .apple-project-switcher img { width: 23px; height: 23px; border-radius: 6px; object-fit: cover; }
+html:not(.platform-android) .apple-project-switcher span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+html:not(.platform-android) .apple-document-identity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+
+html:not(.platform-android) .apple-document-identity strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+html:not(.platform-android) .apple-document-identity span { color: var(--apple-text-secondary); font-size: 11px; white-space: nowrap; }
+
+html:not(.platform-android) .apple-toolbar-button,
+html:not(.platform-android) .apple-search-button {
+  height: 30px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--apple-radius-sm);
+  font-size: 12px;
+}
+
+html:not(.platform-android) .apple-search-button { color: var(--apple-text-secondary); background: var(--apple-fill); }
+html:not(.platform-android) .apple-search-button kbd,
+html:not(.platform-android) .apple-popover kbd { margin-left: 4px; color: var(--apple-text-tertiary); font-size: 10px; font-family: inherit; }
+
+html:not(.platform-android) .apple-menu-anchor { position: relative; }
+
+html:not(.platform-android) .apple-popover {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 7px);
+  min-width: 220px;
+  padding: 6px;
+  border: 1px solid var(--apple-separator);
+  border-radius: var(--apple-radius);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-shadow-popover);
+  transform-origin: top left;
+  animation: apple-popover-in 160ms var(--apple-ease-out) both;
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+html:not(.platform-android) .project-popover { left: 0; width: min(340px, calc(100vw - 24px)); }
+html:not(.platform-android) .generation-popover,
+html:not(.platform-android) .more-popover { right: 0; transform-origin: top right; }
+html:not(.platform-android) .generation-popover { width: 270px; }
+
+html:not(.platform-android) .apple-popover > button {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--apple-radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--apple-text);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+html:not(.platform-android) .apple-popover > button:hover:not(:disabled) { background: var(--apple-blue); color: white; }
+html:not(.platform-android) .apple-popover > button:disabled { opacity: 0.42; cursor: default; }
+html:not(.platform-android) .apple-popover > button > span { display: flex; flex-direction: column; gap: 1px; }
+html:not(.platform-android) .apple-popover > button strong { font-size: 12px; font-weight: 650; }
+html:not(.platform-android) .apple-popover > button small { color: var(--apple-text-secondary); font-size: 11px; }
+html:not(.platform-android) .apple-popover > button:hover small { color: rgba(255, 255, 255, 0.82); }
+html:not(.platform-android) .apple-popover-heading { padding: 5px 8px 6px; color: var(--apple-text-secondary); font-size: 11px; font-weight: 650; }
+html:not(.platform-android) .apple-popover-divider { height: 1px; margin: 5px 3px; background: var(--apple-separator); }
+html:not(.platform-android) .apple-popover-empty { padding: 14px 8px; color: var(--apple-text-secondary); text-align: center; font-size: 12px; }
+
+html:not(.platform-android) .project-popover-list { max-height: min(340px, 52vh); overflow: auto; }
+html:not(.platform-android) .project-popover-row { min-height: 42px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 2px; border-radius: var(--apple-radius-sm); }
+html:not(.platform-android) .project-popover-row:hover { background: var(--apple-fill); }
+html:not(.platform-android) .project-popover-row.selected { background: var(--apple-blue-soft); }
+html:not(.platform-android) .project-popover-main { min-width: 0; padding: 5px 8px; border: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; color: var(--apple-text); background: transparent; cursor: pointer; }
+html:not(.platform-android) .project-popover-main span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+html:not(.platform-android) .project-popover-main small { color: var(--apple-text-secondary); font-size: 10px; }
+
+html:not(.platform-android) .workbench {
+  flex: 1;
+  min-height: 0;
+  background: var(--apple-canvas);
+  transition: grid-template-columns 210ms var(--apple-ease-drawer);
+}
+html:not(.platform-android) .workbench.assistant-resizing { transition: none; }
+
+html:not(.platform-android) .navigation-panel {
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: 48px minmax(0, 1fr);
+  border: 0;
+  border-right: 1px solid var(--apple-separator);
+  background: var(--apple-sidebar);
+  color: var(--apple-text);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  animation: apple-sidebar-in 220ms var(--apple-ease-drawer) both;
+}
+
+html:not(.platform-android) .navigation-panel-header {
+  min-height: 48px;
+  padding: 8px 9px;
+  border-bottom: 0;
+  background: transparent;
+}
+
+html:not(.platform-android) .navigation-segmented {
+  flex: 1;
+  height: 30px;
+  padding: 2px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  border-radius: var(--apple-radius-sm);
+  background: var(--apple-fill);
+}
+
+html:not(.platform-android) .navigation-segmented button {
+  min-width: 0;
+  border: 0;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: var(--apple-text-secondary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  transition: color 140ms ease, background-color 160ms ease, box-shadow 180ms ease, transform 120ms var(--apple-ease-out);
+}
+
+html:not(.platform-android) .navigation-segmented button.active {
+  color: var(--apple-text);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-shadow-sm);
+  transform: translateY(-0.5px);
+}
+
+html:not(.platform-android) .navigation-panel .sidebar-scroll { padding: 6px 7px 12px; }
+html:not(.platform-android) .navigation-resizer,
+html:not(.platform-android) .assistant-resizer { width: 5px; min-width: 5px; border: 0; background: var(--apple-canvas); }
+html:not(.platform-android) .navigation-resizer:hover,
+html:not(.platform-android) .assistant-resizer:hover,
+html:not(.platform-android) .workbench.assistant-resizing .assistant-resizer { background: color-mix(in srgb, var(--apple-blue) 25%, transparent); }
+
+html:not(.platform-android) .center-pane { min-width: 0; min-height: 0; background: var(--apple-surface); }
+html:not(.platform-android) .reader-workspace { height: 100%; background: var(--apple-separator); }
+html:not(.platform-android) .reader-pane { background: var(--apple-surface); }
+html:not(.platform-android) .reader-pane.active { outline: 1px solid color-mix(in srgb, var(--apple-blue) 48%, transparent); outline-offset: -1px; }
+html:not(.platform-android) .pane-tabs { height: 37px; padding: 4px 8px; gap: 3px; border-bottom: 1px solid var(--apple-separator); background: var(--apple-surface-muted); }
+html:not(.platform-android) .pane-name { display: none; }
+html:not(.platform-android) .pane-tab { height: 28px; max-width: 210px; padding: 0 8px; border: 0; border-radius: var(--apple-radius-sm); color: var(--apple-text-secondary); background: transparent; }
+html:not(.platform-android) .pane-tab { transition: color 140ms ease, background-color 160ms ease, box-shadow 180ms ease, transform 140ms var(--apple-ease-out); }
+html:not(.platform-android) .pane-tab:hover { color: var(--apple-text); background: var(--apple-fill); }
+html:not(.platform-android) .pane-tab.active { color: var(--apple-text); background: var(--apple-surface-raised); box-shadow: var(--apple-shadow-sm); }
+html:not(.platform-android) .pane-tab.active { transform: translateY(-0.5px); }
+html:not(.platform-android) .pane-tab svg { opacity: 0; transition: opacity 120ms ease; }
+html:not(.platform-android) .pane-tab:hover svg,
+html:not(.platform-android) .pane-tab.active svg { opacity: 1; }
+html:not(.platform-android) .pane-body { background: var(--apple-surface); }
+
+html:not(.platform-android) .assistant-drawer {
+  border-left: 1px solid var(--apple-separator);
+  background: var(--apple-surface);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.045);
+  transform: translateX(12px);
+  opacity: 0.72;
+  transition: opacity 180ms var(--apple-ease-out), transform 210ms var(--apple-ease-drawer);
+}
+html:not(.platform-android) .assistant-drawer.open { transform: translateX(0); opacity: 1; }
+html:not(.platform-android) .assistant-drawer .explain-panel { color: var(--apple-text); background: var(--apple-surface); }
+html:not(.platform-android) .qa-panel-tabs {
+  min-height: 48px;
+  padding: 8px 9px;
+  gap: 7px;
+  border-bottom: 1px solid var(--apple-separator);
+  background: color-mix(in srgb, var(--apple-surface-muted) 82%, transparent);
+  backdrop-filter: blur(18px) saturate(170%);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+}
+html:not(.platform-android) .qa-panel-tabs button {
+  min-height: 30px;
+  border: 0;
+  border-radius: var(--apple-radius-sm);
+  color: var(--apple-text-secondary);
+  background: transparent;
+  transition: color 140ms ease, background-color 160ms ease, box-shadow 180ms ease, transform 110ms var(--apple-ease-out);
+}
+html:not(.platform-android) .qa-panel-tabs button.active { color: var(--apple-text); background: var(--apple-surface-raised); box-shadow: var(--apple-shadow-sm); }
+html:not(.platform-android) .qa-panel-home { width: 30px; flex: 0 0 30px; padding: 0; display: grid; place-items: center; }
+html:not(.platform-android) .qa-panel-mode-tabs {
+  min-width: 0;
+  height: 30px;
+  padding: 2px;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-radius: var(--apple-radius-sm);
+  background: var(--apple-fill);
+}
+html:not(.platform-android) .qa-panel-mode-tabs > button { padding: 0 11px; font-size: 12px; }
+html:not(.platform-android) .qa-panel-mode-tabs > button.active { transform: translateY(-0.5px); }
+html:not(.platform-android) .ask-box-toolbar {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--apple-text-secondary);
+  font-size: 11px;
+}
+html:not(.platform-android) .ask-box-toolbar > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+html:not(.platform-android) .ask-box-toolbar .icon-button {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  color: var(--apple-text-secondary);
+  background: transparent;
+}
+html:not(.platform-android) .ask-box-toolbar .icon-button:hover { color: var(--apple-text); background: var(--apple-fill); }
+
+html:not(.platform-android) .qa-panel-tabs .panel-close {
+  border-color: transparent;
+  color: var(--apple-text-secondary);
+  background: transparent;
+}
+html:not(.platform-android) .qa-panel-tabs .panel-close:hover:not(:disabled) {
+  border-color: transparent;
+  color: var(--apple-text);
+  background: var(--apple-fill-hover);
+}
+
+html:not(.platform-android) .assistant-thread-view,
+html:not(.platform-android) .assistant-thread-toolbar,
+html:not(.platform-android) .assistant-mini-tree,
+html:not(.platform-android) .assistant-answer-card,
+html:not(.platform-android) .assistant-stream-card,
+html:not(.platform-android) .markdown-viewer.embedded,
+html:not(.platform-android) .qa-reference-sources,
+html:not(.platform-android) .understanding-block,
+html:not(.platform-android) .qa-ask-section,
+html:not(.platform-android) .qa-history-section,
+html:not(.platform-android) .qa-section {
+  border-color: var(--apple-separator);
+  color: var(--apple-text);
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .qa-upper-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: apple-inspector-view-in 210ms var(--apple-ease-out) both;
+}
+
+html:not(.platform-android) .assistant-drawer.open .qa-ask-section {
+  animation: apple-inspector-section-in 240ms 45ms var(--apple-ease-out) both;
+}
+
+html:not(.platform-android) .assistant-thread-toolbar,
+html:not(.platform-android) .assistant-mini-tree,
+html:not(.platform-android) .qa-reference-sources,
+html:not(.platform-android) .understanding-block { background: var(--apple-surface-muted); }
+
+html:not(.platform-android) .assistant-mini-tree button,
+html:not(.platform-android) .qa-reference-list > button {
+  color: var(--apple-text);
+  background: transparent;
+}
+html:not(.platform-android) .assistant-mini-tree button:hover,
+html:not(.platform-android) .assistant-mini-tree button.active,
+html:not(.platform-android) .qa-reference-list > button:hover {
+  border-color: var(--apple-separator);
+  color: var(--apple-text);
+  background: var(--apple-blue-soft);
+}
+
+html:not(.platform-android) .assistant-card-shadow { border-color: var(--apple-separator); background: var(--apple-fill); }
+html:not(.platform-android) .assistant-card-shadow { transition: opacity 180ms ease, transform 220ms var(--apple-ease-drawer); }
+html:not(.platform-android) .assistant-answer-card,
+html:not(.platform-android) .assistant-stream-card { border-color: var(--apple-separator); box-shadow: var(--apple-shadow-sm); }
+html:not(.platform-android) .assistant-answer-card > header,
+html:not(.platform-android) .assistant-stream-card > header { border-color: var(--apple-separator); color: var(--apple-text); }
+html:not(.platform-android) .assistant-answer-card > header small,
+html:not(.platform-android) .qa-reference-sources summary,
+html:not(.platform-android) .qa-reference-meta { color: var(--apple-text-secondary); }
+
+html:not(.platform-android) .assistant-stream-placeholder span {
+  background: linear-gradient(90deg, var(--apple-fill) 20%, var(--apple-fill-hover) 50%, var(--apple-fill) 80%);
+  background-size: 220% 100%;
+}
+
+html:not(.platform-android) .assistant-empty-card { color: var(--apple-text-secondary); background: var(--apple-surface); }
+html:not(.platform-android) .assistant-empty-card strong { color: var(--apple-text); }
+html:not(.platform-android) .qa-section-title,
+html:not(.platform-android) .selection-meta,
+html:not(.platform-android) .selection-path { color: var(--apple-text-secondary); }
+
+html:not(.platform-android) .selection-editor,
+html:not(.platform-android) .context-preview,
+html:not(.platform-android) .ask-box textarea,
+html:not(.platform-android) .model-row select,
+html:not(.platform-android) .search-row input {
+  border-color: var(--apple-separator-strong);
+  color: var(--apple-text);
+  background: var(--apple-surface-muted);
+}
+html:not(.platform-android) .ask-box textarea:focus,
+html:not(.platform-android) .selection-editor:focus,
+html:not(.platform-android) .search-row input:focus {
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 3px var(--apple-blue-soft);
+}
+
+html:not(.platform-android) .qa-history { background: var(--apple-surface); }
+html:not(.platform-android) .qa-history-row { color: var(--apple-text); background: transparent; }
+html:not(.platform-android) .qa-history-row small { color: var(--apple-text-secondary); }
+html:not(.platform-android) .qa-history-row:hover { background: var(--apple-fill); }
+html:not(.platform-android) .qa-history-row.selected { color: var(--apple-text); background: var(--apple-blue-soft); }
+html:not(.platform-android) .qa-history-row { transition: color 140ms ease, background-color 160ms ease, transform 140ms var(--apple-ease-out); }
+html:not(.platform-android) .qa-history-row:hover { transform: translateX(2px); }
+html:not(.platform-android) .resize-handle-y { background: var(--apple-separator); }
+html:not(.platform-android) .resize-handle-y:hover { background: color-mix(in srgb, var(--apple-blue) 28%, var(--apple-separator)); }
+
+@keyframes apple-popover-in {
+  from { opacity: 0; transform: scale(0.97) translateY(-3px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes apple-sidebar-in {
+  from { opacity: 0.72; transform: translateX(-10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes apple-inspector-view-in {
+  from { opacity: 0; transform: translateX(7px) scale(0.995); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes apple-inspector-section-in {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 1100px) {
+  html:not(.platform-android) .apple-toolbar { grid-template-columns: minmax(190px, 1fr) minmax(100px, auto) minmax(250px, 1fr); }
+  html:not(.platform-android) .apple-search-button span,
+  html:not(.platform-android) .apple-search-button kbd,
+  html:not(.platform-android) .apple-toolbar-button > span { display: none; }
+}
+
+@media (max-width: 820px) {
+  html:not(.platform-android) .apple-document-identity span { display: none; }
+  html:not(.platform-android) .apple-toolbar { grid-template-columns: minmax(160px, 1fr) minmax(80px, auto) auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(.platform-android) .apple-popover { animation: none; }
+  html:not(.platform-android) .workbench,
+  html:not(.platform-android) .assistant-drawer { transition: opacity 120ms ease; }
+  html:not(.platform-android) .navigation-panel,
+  html:not(.platform-android) .qa-upper-view,
+  html:not(.platform-android) .assistant-drawer.open .qa-ask-section { animation: none; }
+  html:not(.platform-android) .qa-history-row:hover,
+  html:not(.platform-android) .pane-tab.active,
+  html:not(.platform-android) .navigation-segmented button.active { transform: none; }
+}

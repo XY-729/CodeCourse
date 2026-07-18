@@ -145,7 +145,7 @@ export default function LLMSettingsDialog({ open, onClose, onConfirm, onOpenExte
           <div className="empty">读取中...</div>
         )}
         <div className="settings-actions">
-          <button type="button" className="link-button" onClick={() => onOpenExternal(DEEPSEEK_API_KEY_URL)}>
+          <button type="button" className="secondary-button" onClick={() => onOpenExternal(DEEPSEEK_API_KEY_URL)}>
             <ExternalLink size={15} />
             DeepSeek API Key
           </button>
@@ -153,7 +153,7 @@ export default function LLMSettingsDialog({ open, onClose, onConfirm, onOpenExte
             <TestTube2 size={15} />
             {testing ? "测试中..." : "测试"}
           </button>
-          <button type="submit" disabled={saving || !settings}>
+          <button type="submit" className="primary-button" disabled={saving || !settings}>
             <Save size={15} />
             {saving ? "保存中..." : "保存"}
           </button>

@@ -61,6 +61,7 @@ class QARecord:
     model: str
     output_path: Optional[str]
     retrieval_trace: Optional[str]
+    retrieval_sources_json: Optional[str]
     favorite: bool
     created_at: str
     updated_at: str
@@ -172,11 +173,28 @@ class LearningAnchor:
     updated_at: str
 
 
+@dataclass
+class LearningState:
+    id: int
+    project_id: int
+    source_type: str
+    source_path: str
+    status: str
+    position_kind: str
+    position_value: float
+    last_opened_at: str
+    completed_at: Optional[str]
+    updated_at: str
+
+
 def init_storage() -> None:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     REPOS_ROOT.mkdir(parents=True, exist_ok=True)
     GENERATED_ROOT.mkdir(parents=True, exist_ok=True)
-    with closing(sqlite3.connect(DB_PATH)) as conn:
+    with closing(sqlite3.connect(DB_PATH, timeout=15)) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=15000")
+        conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS projects (
@@ -266,6 +284,8 @@ def init_storage() -> None:
             conn.execute("ALTER TABLE qa_records ADD COLUMN session_id INTEGER")
         if "retrieval_trace" not in qa_cols:
             conn.execute("ALTER TABLE qa_records ADD COLUMN retrieval_trace TEXT")
+        if "retrieval_sources_json" not in qa_cols:
+            conn.execute("ALTER TABLE qa_records ADD COLUMN retrieval_sources_json TEXT")
         if "parent_qa_id" not in qa_cols:
             conn.execute("ALTER TABLE qa_records ADD COLUMN parent_qa_id INTEGER")
         if "relation_type" not in qa_cols:
@@ -335,10 +355,43 @@ def init_storage() -> None:
                 project_id INTEGER PRIMARY KEY,
                 status TEXT NOT NULL,
                 chunk_count INTEGER NOT NULL DEFAULT 0,
+                text_status TEXT NOT NULL DEFAULT 'not_built',
+                structural_status TEXT NOT NULL DEFAULT 'not_built',
+                node_count INTEGER NOT NULL DEFAULT 0,
+                edge_count INTEGER NOT NULL DEFAULT 0,
+                engine TEXT,
+                degraded_reason TEXT,
+                indexed_fingerprint TEXT,
+                structural_project_name TEXT,
                 error_message TEXT,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id)
             )
+            """
+        )
+        index_cols = [row[1] for row in conn.execute("PRAGMA table_info(project_indexes)").fetchall()]
+        index_migrations = {
+            "text_status": "TEXT NOT NULL DEFAULT 'not_built'",
+            "structural_status": "TEXT NOT NULL DEFAULT 'not_built'",
+            "node_count": "INTEGER NOT NULL DEFAULT 0",
+            "edge_count": "INTEGER NOT NULL DEFAULT 0",
+            "engine": "TEXT",
+            "degraded_reason": "TEXT",
+            "indexed_fingerprint": "TEXT",
+            "structural_project_name": "TEXT",
+        }
+        for column, definition in index_migrations.items():
+            if column not in index_cols:
+                conn.execute(f"ALTER TABLE project_indexes ADD COLUMN {column} {definition}")
+        conn.execute(
+            """
+            UPDATE project_indexes
+            SET text_status = CASE
+                WHEN text_status = 'not_built' AND status = 'completed' THEN 'completed'
+                WHEN text_status = 'not_built' AND status = 'building' THEN 'building'
+                WHEN text_status = 'not_built' AND status = 'failed' THEN 'failed'
+                ELSE text_status
+            END
             """
         )
         conn.execute(
@@ -463,6 +516,30 @@ def init_storage() -> None:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS learning_states (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                source_type TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'in_progress',
+                position_kind TEXT NOT NULL DEFAULT 'scroll_ratio',
+                position_value REAL NOT NULL DEFAULT 0,
+                last_opened_at TEXT NOT NULL,
+                completed_at TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                UNIQUE(project_id, source_type, source_path)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_learning_states_project_recent
+            ON learning_states(project_id, last_opened_at DESC)
+            """
+        )
+        conn.execute(
+            """
             CREATE VIRTUAL TABLE IF NOT EXISTS learning_anchors_fts USING fts5(
                 anchor_id UNINDEXED,
                 project_id UNINDEXED,
@@ -526,6 +603,7 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
         model=row["model"],
         output_path=row["output_path"],
         retrieval_trace=row["retrieval_trace"] if "retrieval_trace" in row.keys() else None,
+        retrieval_sources_json=row["retrieval_sources_json"] if "retrieval_sources_json" in row.keys() else None,
         favorite=bool(row["favorite"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -556,6 +634,21 @@ def _row_to_learning_anchor(row: sqlite3.Row) -> LearningAnchor:
         term_text=row["term_text"],
         summary=row["summary"],
         created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _row_to_learning_state(row: sqlite3.Row) -> LearningState:
+    return LearningState(
+        id=row["id"],
+        project_id=row["project_id"],
+        source_type=row["source_type"],
+        source_path=row["source_path"],
+        status=row["status"],
+        position_kind=row["position_kind"],
+        position_value=float(row["position_value"]),
+        last_opened_at=row["last_opened_at"],
+        completed_at=row["completed_at"],
         updated_at=row["updated_at"],
     )
 
@@ -648,8 +741,10 @@ def _row_to_knowledge_link(row: sqlite3.Row) -> KnowledgeLink:
 
 @contextmanager
 def _connect() -> Iterator[sqlite3.Connection]:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=15000")
+    conn.execute("PRAGMA synchronous=NORMAL")
     try:
         yield conn
     finally:
@@ -744,6 +839,7 @@ def update_project_status(project_id: int, status: str) -> Optional[ProjectRecor
 
 def delete_project(project_id: int) -> bool:
     with _connect() as conn:
+        conn.execute("DELETE FROM learning_states WHERE project_id = ?", (project_id,))
         anchor_ids = [row["id"] for row in conn.execute("SELECT id FROM learning_anchors WHERE project_id = ?", (project_id,)).fetchall()]
         for anchor_id in anchor_ids:
             conn.execute("DELETE FROM learning_anchors_fts WHERE anchor_id = ?", (anchor_id,))
@@ -901,6 +997,7 @@ def create_qa_record(
     display_title: Optional[str] = None,
     session_id: Optional[int] = None,
     retrieval_trace: Optional[str] = None,
+    retrieval_sources_json: Optional[str] = None,
     parent_qa_id: Optional[int] = None,
     relation_type: str = "follow_up",
 ) -> QARecord:
@@ -910,9 +1007,9 @@ def create_qa_record(
             """
             INSERT INTO qa_records (
                 project_id, session_id, parent_qa_id, relation_type, source_type, source_path, display_title, selected_text, question,
-                answer_md, provider, model, output_path, retrieval_trace, favorite, created_at, updated_at
+                answer_md, provider, model, output_path, retrieval_trace, retrieval_sources_json, favorite, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
             """,
             (
                 project_id,
@@ -929,6 +1026,7 @@ def create_qa_record(
                 model,
                 str(output_path) if output_path else None,
                 retrieval_trace,
+                retrieval_sources_json,
                 now,
                 now,
             ),
@@ -1092,20 +1190,72 @@ def list_qa_session_records(project_id: int, session_id: int) -> list[QARecord]:
         return [_row_to_qa_record(row) for row in rows]
 
 
-def set_project_index_status(project_id: int, status: str, chunk_count: int = 0, error_message: Optional[str] = None) -> None:
+def set_project_index_status(
+    project_id: int,
+    status: str,
+    chunk_count: int = 0,
+    error_message: Optional[str] = None,
+    *,
+    text_status: Optional[str] = None,
+    structural_status: Optional[str] = None,
+    node_count: Optional[int] = None,
+    edge_count: Optional[int] = None,
+    engine: Optional[str] = None,
+    degraded_reason: Optional[str] = None,
+    indexed_fingerprint: Optional[str] = None,
+    structural_project_name: Optional[str] = None,
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
+        existing = conn.execute("SELECT * FROM project_indexes WHERE project_id = ?", (project_id,)).fetchone()
+        previous = dict(existing) if existing else {}
+        values = {
+            "text_status": text_status if text_status is not None else previous.get("text_status", "not_built"),
+            "structural_status": structural_status if structural_status is not None else previous.get("structural_status", "not_built"),
+            "node_count": node_count if node_count is not None else previous.get("node_count", 0),
+            "edge_count": edge_count if edge_count is not None else previous.get("edge_count", 0),
+            "engine": engine if engine is not None else previous.get("engine"),
+            "degraded_reason": degraded_reason,
+            "indexed_fingerprint": indexed_fingerprint if indexed_fingerprint is not None else previous.get("indexed_fingerprint"),
+            "structural_project_name": structural_project_name if structural_project_name is not None else previous.get("structural_project_name"),
+        }
         conn.execute(
             """
-            INSERT INTO project_indexes (project_id, status, chunk_count, error_message, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO project_indexes (
+                project_id, status, chunk_count, text_status, structural_status,
+                node_count, edge_count, engine, degraded_reason, indexed_fingerprint,
+                structural_project_name, error_message, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id) DO UPDATE SET
                 status = excluded.status,
                 chunk_count = excluded.chunk_count,
+                text_status = excluded.text_status,
+                structural_status = excluded.structural_status,
+                node_count = excluded.node_count,
+                edge_count = excluded.edge_count,
+                engine = excluded.engine,
+                degraded_reason = excluded.degraded_reason,
+                indexed_fingerprint = excluded.indexed_fingerprint,
+                structural_project_name = excluded.structural_project_name,
                 error_message = excluded.error_message,
                 updated_at = excluded.updated_at
             """,
-            (project_id, status, chunk_count, error_message, now),
+            (
+                project_id,
+                status,
+                chunk_count,
+                values["text_status"],
+                values["structural_status"],
+                values["node_count"],
+                values["edge_count"],
+                values["engine"],
+                values["degraded_reason"],
+                values["indexed_fingerprint"],
+                values["structural_project_name"],
+                error_message,
+                now,
+            ),
         )
         conn.commit()
 
@@ -1114,14 +1264,24 @@ def get_project_index_status(project_id: int) -> dict[str, object]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM project_indexes WHERE project_id = ?", (project_id,)).fetchone()
         if not row:
-            return {"project_id": project_id, "status": "not_built", "chunk_count": 0, "error_message": None, "updated_at": None}
-        return {
-            "project_id": project_id,
-            "status": row["status"],
-            "chunk_count": row["chunk_count"],
-            "error_message": row["error_message"],
-            "updated_at": row["updated_at"],
-        }
+            return {
+                "project_id": project_id,
+                "status": "not_built",
+                "chunk_count": 0,
+                "text_status": "not_built",
+                "structural_status": "not_built",
+                "node_count": 0,
+                "edge_count": 0,
+                "engine": None,
+                "degraded_reason": None,
+                "indexed_fingerprint": None,
+                "structural_project_name": None,
+                "error_message": None,
+                "updated_at": None,
+            }
+        result = dict(row)
+        result["project_id"] = project_id
+        return result
 
 
 def replace_code_chunks(project_id: int, chunks: list[dict[str, object]]) -> int:
@@ -1160,7 +1320,6 @@ def replace_code_chunks(project_id: int, chunks: list[dict[str, object]]) -> int
                 (chunk_id, project_id, str(chunk["path"]), chunk.get("symbol_name"), str(chunk["content"])),
             )
         conn.commit()
-    set_project_index_status(project_id, "completed", len(chunks), None)
     return len(chunks)
 
 
@@ -1300,6 +1459,15 @@ def set_qa_favorite(project_id: int, record_id: int, favorite: bool) -> Optional
 
 def delete_qa_record(project_id: int, record_id: int) -> bool:
     with _connect() as conn:
+        qa_record = conn.execute(
+            "SELECT output_path FROM qa_records WHERE project_id = ? AND id = ?",
+            (project_id, record_id),
+        ).fetchone()
+        if qa_record and qa_record["output_path"]:
+            conn.execute(
+                "DELETE FROM learning_states WHERE project_id = ? AND source_type = 'qa' AND source_path = ?",
+                (project_id, qa_record["output_path"]),
+            )
         qa_nodes = [
             row["id"]
             for row in conn.execute(
@@ -1479,6 +1647,10 @@ def delete_knowledge_node(project_id: int, node_id: int) -> bool:
 
 def cleanup_course_artifacts(project_id: int, source_path: str) -> None:
     with _connect() as conn:
+        conn.execute(
+            "DELETE FROM learning_states WHERE project_id = ? AND source_type = 'course' AND source_path = ?",
+            (project_id, source_path),
+        )
         node_ids = [
             row["id"]
             for row in conn.execute(
@@ -1733,6 +1905,90 @@ def upsert_document_term(
         if row is None:
             raise RuntimeError("document term was not persisted")
         return _row_to_document_term(row)
+
+
+def upsert_learning_state(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    status: str,
+    position_kind: str,
+    position_value: float,
+) -> LearningState:
+    now = datetime.now(timezone.utc).isoformat()
+    completed_at = now if status == "completed" else None
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO learning_states (
+                project_id, source_type, source_path, status, position_kind,
+                position_value, last_opened_at, completed_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, source_type, source_path) DO UPDATE SET
+                status = excluded.status,
+                position_kind = excluded.position_kind,
+                position_value = excluded.position_value,
+                last_opened_at = excluded.last_opened_at,
+                completed_at = CASE
+                    WHEN excluded.status = 'completed' THEN COALESCE(learning_states.completed_at, excluded.completed_at)
+                    ELSE NULL
+                END,
+                updated_at = excluded.updated_at
+            """,
+            (
+                project_id,
+                source_type,
+                source_path,
+                status,
+                position_kind,
+                position_value,
+                now,
+                completed_at,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT * FROM learning_states
+            WHERE project_id = ? AND source_type = ? AND source_path = ?
+            """,
+            (project_id, source_type, source_path),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("learning state was not persisted")
+        return _row_to_learning_state(row)
+
+
+def list_learning_states(project_id: int) -> list[LearningState]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM learning_states
+            WHERE project_id = ?
+            ORDER BY last_opened_at DESC, id DESC
+            """,
+            (project_id,),
+        ).fetchall()
+        return [_row_to_learning_state(row) for row in rows]
+
+
+def delete_learning_state(project_id: int, source_type: str, source_path: str) -> bool:
+    with _connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM learning_states WHERE project_id = ? AND source_type = ? AND source_path = ?",
+            (project_id, source_type, source_path),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def reset_learning_states(project_id: int) -> int:
+    with _connect() as conn:
+        cursor = conn.execute("DELETE FROM learning_states WHERE project_id = ?", (project_id,))
+        conn.commit()
+        return cursor.rowcount
 
 
 def get_document_term(project_id: int, term_id: int) -> Optional[DocumentTerm]:

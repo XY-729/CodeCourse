@@ -1,4 +1,4 @@
-import { Children, useRef, useState } from "react";
+import { Children, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -26,6 +26,8 @@ type Props = {
   onGenerateLesson?: (lessonNumber: number, title: string) => void;
   headerActions?: ReactNode;
   embedded?: boolean;
+  initialScrollRatio?: number;
+  onScrollRatioChange?: (ratio: number) => void;
 };
 
 /* ---- Backend highlights ---- */
@@ -284,9 +286,28 @@ export default function MarkdownViewer({
   onGenerateLesson,
   headerActions,
   embedded = false,
+  initialScrollRatio = 0,
+  onScrollRatioChange,
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
   const [selectedText, setSelectedText] = useState("");
+
+  useEffect(() => {
+    const article = articleRef.current;
+    if (!article) return;
+    const frame = window.requestAnimationFrame(() => {
+      const maxScroll = Math.max(0, article.scrollHeight - article.clientHeight);
+      article.scrollTop = maxScroll * Math.min(1, Math.max(0, initialScrollRatio));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [sourcePath]);
+
+  function reportScroll() {
+    const article = articleRef.current;
+    if (!article || !onScrollRatioChange) return;
+    const maxScroll = Math.max(0, article.scrollHeight - article.clientHeight);
+    onScrollRatioChange(maxScroll > 0 ? article.scrollTop / maxScroll : 0);
+  }
 
   function captureSelection() {
     const article = articleRef.current;
@@ -404,6 +425,7 @@ export default function MarkdownViewer({
         onMouseUp={captureSelection}
         onKeyUp={captureSelection}
         onContextMenu={handleContextMenu}
+        onScroll={reportScroll}
       >
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={highlightedComponents}>
           {content}

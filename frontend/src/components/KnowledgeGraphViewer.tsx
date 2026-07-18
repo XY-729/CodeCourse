@@ -25,13 +25,17 @@ type Props = {
 type RelationType = "explains" | "parent_of" | "related_to" | "references";
 type ViewMode = "overview" | "focus";
 
-type NodeVisual = { size: number; fontSize: number; color: string; borderColor: string };
+type NodeVisual = { size: number; color: string; borderColor: string };
+
+function currentDarkMode() {
+  return document.documentElement.dataset.theme === "dark";
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function nodeVisuals(graph: KnowledgeGraph, container: HTMLElement | null): Map<number, NodeVisual> {
+function nodeVisuals(graph: KnowledgeGraph, container: HTMLElement | null, darkMode = false): Map<number, NodeVisual> {
   const metrics = new Map<number, { incoming: number; outgoing: number }>();
   for (const node of graph.nodes) {
     metrics.set(node.id, { incoming: 0, outgoing: 0 });
@@ -46,14 +50,23 @@ function nodeVisuals(graph: KnowledgeGraph, container: HTMLElement | null): Map<
   // 目标尺寸按当前容器计算；紧凑侧栏也保留足够大的最低节点尺寸。
   const baseSize = clamp(minDimension * 0.06 * density, 52, 76);
   const sizeSteps = [1, 1.28, 1.62, 2, 2.4, 2.82];
-  const colorSteps = [
-    { color: "#ffffff", borderColor: "#98a5b5" },
-    { color: "#3aa76d", borderColor: "#238653" },
-    { color: "#3b82e6", borderColor: "#2563c9" },
-    { color: "#8b5cf6", borderColor: "#7041d0" },
-    { color: "#f59e0b", borderColor: "#c67b00" },
-    { color: "#e54b4b", borderColor: "#b92d35" },
-  ];
+  const colorSteps = darkMode
+    ? [
+        { color: "#343438", borderColor: "#8e8e93" },
+        { color: "#30a46c", borderColor: "#49c984" },
+        { color: "#3378d5", borderColor: "#64a0ff" },
+        { color: "#7a4fd8", borderColor: "#a980ff" },
+        { color: "#d88a10", borderColor: "#ffb340" },
+        { color: "#d7474f", borderColor: "#ff696f" },
+      ]
+    : [
+        { color: "#ffffff", borderColor: "#98a5b5" },
+        { color: "#3aa76d", borderColor: "#238653" },
+        { color: "#3b82e6", borderColor: "#2563c9" },
+        { color: "#8b5cf6", borderColor: "#7041d0" },
+        { color: "#f59e0b", borderColor: "#c67b00" },
+        { color: "#e54b4b", borderColor: "#b92d35" },
+      ];
 
   return new Map(
     graph.nodes.map((node) => {
@@ -62,8 +75,7 @@ function nodeVisuals(graph: KnowledgeGraph, container: HTMLElement | null): Map<
       const level = Math.min(5, degree);
       const size = Math.round(baseSize * sizeSteps[level]);
       const color = colorSteps[level];
-      // 标签的字号不随节点或全览缩放而缩小，保证名称始终可读。
-      return [node.id, { size, fontSize: 15, ...color }];
+      return [node.id, { size, ...color }];
     }),
   );
 }
@@ -76,9 +88,6 @@ function focusSizes(container: HTMLElement | null) {
     root: Math.round(clamp(dim * 0.105, 76, 110)),
     parent: Math.round(clamp(dim * 0.065, 44, 68)),
     child: Math.round(clamp(dim * 0.055, 38, 58)),
-    rootFont: Math.round(clamp(dim * 0.026, 16, 22)),
-    parentFont: Math.round(clamp(dim * 0.019, 13, 17)),
-    childFont: Math.round(clamp(dim * 0.017, 12, 15)),
   };
 }
 
@@ -92,6 +101,91 @@ const RELATION_LABELS: Record<string, string> = {
   related_to: "相关",
   references: "引用",
 };
+
+type LabelOverlayState = {
+  viewMode: ViewMode;
+  focusedNodeId: number | null;
+  focusDepth: 1 | 2;
+  selectedNodeId: number | null;
+  hoveredNodeId: number | null;
+  searchQuery: string;
+};
+
+function syncLabelOverlay(
+  cy: Core,
+  graph: KnowledgeGraph,
+  layer: HTMLDivElement,
+  labels: Map<number, HTMLDivElement>,
+  state: LabelOverlayState,
+) {
+  const degrees = new Map(graph.nodes.map((node) => [node.id, 0]));
+  for (const edge of graph.edges) {
+    degrees.set(edge.source_node_id, (degrees.get(edge.source_node_id) ?? 0) + 1);
+    degrees.set(edge.target_node_id, (degrees.get(edge.target_node_id) ?? 0) + 1);
+  }
+  const query = state.searchQuery.trim().toLocaleLowerCase();
+  const focusedNodeIds = state.viewMode === "focus" && state.focusedNodeId != null
+    ? directNeighborhood(graph, state.focusedNodeId, state.focusDepth).nodeIds
+    : null;
+  const candidates: Array<{ id: number; element: HTMLDivElement; x: number; y: number; width: number; height: number; priority: number }> = [];
+
+  for (const graphNode of graph.nodes) {
+    const node = cy.getElementById(`n${graphNode.id}`);
+    let label = labels.get(graphNode.id);
+    if (!label) {
+      label = document.createElement("div");
+      label.className = "knowledge-node-label";
+      label.textContent = graphNode.title;
+      layer.appendChild(label);
+      labels.set(graphNode.id, label);
+    } else if (label.textContent !== graphNode.title) {
+      label.textContent = graphNode.title;
+    }
+    if (
+      node.empty()
+      || (focusedNodeIds != null && !focusedNodeIds.has(graphNode.id))
+      || node.hasClass("graph-hidden")
+      || (node.hasClass("hover-dim") && graphNode.id !== state.focusedNodeId)
+    ) {
+      label.hidden = true;
+      continue;
+    }
+    const rendered = node.renderedPosition();
+    const y = rendered.y + node.renderedOuterHeight() / 2 + 7;
+    const important = graphNode.id === state.focusedNodeId || graphNode.id === state.selectedNodeId || graphNode.id === state.hoveredNodeId;
+    const matched = Boolean(query && graphNode.title.toLocaleLowerCase().includes(query));
+    label.hidden = false;
+    label.style.left = `${rendered.x}px`;
+    label.style.top = `${y}px`;
+    label.classList.toggle("important", important);
+    label.classList.toggle("matched", matched);
+    const width = Math.min(176, Math.max(48, graphNode.title.length * 7.2));
+    const height = graphNode.title.length > 20 ? 38 : 22;
+    candidates.push({
+      id: graphNode.id,
+      element: label,
+      x: rendered.x,
+      y,
+      width,
+      height,
+      priority: (important ? 1000 : 0) + (matched ? 800 : 0) + (degrees.get(graphNode.id) ?? 0) * 10,
+    });
+  }
+
+  if (graph.nodes.length <= 50) return;
+  const accepted: typeof candidates = [];
+  for (const candidate of [...candidates].sort((a, b) => b.priority - a.priority || a.id - b.id)) {
+    const overlaps = accepted.some((item) => (
+      Math.abs(item.x - candidate.x) < (item.width + candidate.width) / 2 + 6
+      && Math.abs(item.y - candidate.y) < (item.height + candidate.height) / 2 + 4
+    ));
+    if (overlaps && candidate.priority < 800) {
+      candidate.element.hidden = true;
+    } else {
+      accepted.push(candidate);
+    }
+  }
+}
 
 function fallbackPosition(index: number, total: number, anchor: { x: number; y: number }) {
   const ring = Math.floor(index / 10);
@@ -132,8 +226,8 @@ function detectComponents(graph: KnowledgeGraph): number[][] {
   return components;
 }
 
-function toElements(graph: KnowledgeGraph, container: HTMLElement | null): ElementDefinition[] {
-  const visuals = nodeVisuals(graph, container);
+function toElements(graph: KnowledgeGraph, container: HTMLElement | null, darkMode = false): ElementDefinition[] {
+  const visuals = nodeVisuals(graph, container, darkMode);
 
   const positioned = graph.nodes.filter((node) => node.x != null && node.y != null);
   const components = detectComponents(graph);
@@ -195,7 +289,6 @@ function toElements(graph: KnowledgeGraph, container: HTMLElement | null): Eleme
           color: visual.color,
           borderColor: visual.borderColor,
           size: visual.size,
-          fontSize: visual.fontSize,
         },
         position,
       };
@@ -213,21 +306,36 @@ function toElements(graph: KnowledgeGraph, container: HTMLElement | null): Eleme
   ];
 }
 
-function directNeighborhood(graph: KnowledgeGraph, focusedNodeId: number) {
+function directNeighborhood(graph: KnowledgeGraph, focusedNodeId: number, depth = 1) {
   const nodeIds = new Set<number>([focusedNodeId]);
+  const levels = new Map<number, number>([[focusedNodeId, 0]]);
   const edgeIds = new Set<number>();
-  for (const edge of graph.edges) {
-    if (edge.source_node_id === focusedNodeId || edge.target_node_id === focusedNodeId) {
-      edgeIds.add(edge.id);
-      nodeIds.add(edge.source_node_id);
-      nodeIds.add(edge.target_node_id);
+  let frontier = [focusedNodeId];
+  for (let level = 1; level <= depth; level += 1) {
+    const next: number[] = [];
+    for (const current of frontier) {
+      for (const edge of graph.edges) {
+        let adjacent: number | null = null;
+        if (edge.source_node_id === current) adjacent = edge.target_node_id;
+        else if (edge.target_node_id === current) adjacent = edge.source_node_id;
+        if (adjacent == null) continue;
+        if (!nodeIds.has(adjacent)) {
+          nodeIds.add(adjacent);
+          levels.set(adjacent, level);
+          next.push(adjacent);
+        }
+      }
     }
+    frontier = next;
   }
-  return { nodeIds, edgeIds };
+  for (const edge of graph.edges) {
+    if (nodeIds.has(edge.source_node_id) && nodeIds.has(edge.target_node_id)) edgeIds.add(edge.id);
+  }
+  return { nodeIds, edgeIds, levels };
 }
 
-function arrangeFocusNeighborhood(cy: Core, graph: KnowledgeGraph, focusedNodeId: number, animate: boolean) {
-  const { nodeIds } = directNeighborhood(graph, focusedNodeId);
+function arrangeFocusNeighborhood(cy: Core, graph: KnowledgeGraph, focusedNodeId: number, depth: number, animate: boolean) {
+  const { nodeIds, levels } = directNeighborhood(graph, focusedNodeId, depth);
   const centerNode = cy.getElementById(`n${focusedNodeId}`);
   if (centerNode.empty()) return;
   const neighbors = [...nodeIds]
@@ -239,8 +347,9 @@ function arrangeFocusNeighborhood(cy: Core, graph: KnowledgeGraph, focusedNodeId
     centerNode.position(center);
     return 0;
   }
-  const radius = Math.max(240, 176 + neighbors.length * 34);
-  const startAngle = neighbors.length === 1 ? -0.1 : -Math.PI / 2;
+  const levelOne = neighbors.filter((node) => levels.get(Number(node.data("nodeId"))) === 1);
+  const levelTwo = neighbors.filter((node) => levels.get(Number(node.data("nodeId"))) === 2);
+  const rowGap = Math.max(220, 176 + levelOne.length * 24);
   const moveNode = (node: NodeSingular, position: { x: number; y: number }) => {
     node.stop();
     if (animate) {
@@ -250,14 +359,41 @@ function arrangeFocusNeighborhood(cy: Core, graph: KnowledgeGraph, focusedNodeId
     }
   };
   moveNode(centerNode, center);
-  neighbors.forEach((node, index) => {
-    const angle = startAngle + (Math.PI * 2 * index) / neighbors.length;
-    moveNode(node, {
-      x: center.x + Math.cos(angle) * radius,
-      y: center.y + Math.sin(angle) * radius,
-    });
+  const incomingIds = new Set(graph.edges.filter((edge) => edge.target_node_id === focusedNodeId).map((edge) => edge.source_node_id));
+  const outgoingIds = new Set(graph.edges.filter((edge) => edge.source_node_id === focusedNodeId).map((edge) => edge.target_node_id));
+  const parents = levelOne.filter((node) => incomingIds.has(Number(node.data("nodeId"))));
+  const children = levelOne.filter((node) => outgoingIds.has(Number(node.data("nodeId"))) && !incomingIds.has(Number(node.data("nodeId"))));
+  const neutral = levelOne.filter((node) => !parents.includes(node) && !children.includes(node));
+  const placeRow = (nodes: NodeSingular[], y: number) => {
+    const gap = Math.max(168, Math.min(250, 760 / Math.max(1, nodes.length)));
+    nodes.forEach((node, index) => moveNode(node, { x: (index - (nodes.length - 1) / 2) * gap, y }));
+  };
+  placeRow(parents, -rowGap);
+  placeRow(children, rowGap);
+  neutral.forEach((node, index) => {
+    const side = index % 2 === 0 ? -1 : 1;
+    const column = Math.floor(index / 2) + 1;
+    moveNode(node, { x: side * (rowGap + column * 120), y: 0 });
   });
-  return radius;
+  const parentIds = new Set(parents.map((node) => Number(node.data("nodeId"))));
+  const childIds = new Set(children.map((node) => Number(node.data("nodeId"))));
+  const ancestors = levelTwo.filter((node) => {
+    const id = Number(node.data("nodeId"));
+    return graph.edges.some((edge) => edge.source_node_id === id && parentIds.has(edge.target_node_id));
+  });
+  const descendants = levelTwo.filter((node) => {
+    const id = Number(node.data("nodeId"));
+    return graph.edges.some((edge) => childIds.has(edge.source_node_id) && edge.target_node_id === id);
+  });
+  const remaining = levelTwo.filter((node) => !ancestors.includes(node) && !descendants.includes(node));
+  placeRow(ancestors, -rowGap * 2);
+  placeRow(descendants, rowGap * 2);
+  remaining.forEach((node, index) => {
+    const side = index % 2 === 0 ? -1 : 1;
+    const column = Math.floor(index / 2) + 1;
+    moveNode(node, { x: side * (rowGap * 1.6 + column * 120), y: rowGap * 0.65 });
+  });
+  return levelTwo.length ? rowGap * 2 : rowGap;
 }
 
 function focusViewport(cy: Core, focusedNodeId: number, radius: number, animate: boolean) {
@@ -275,31 +411,29 @@ function focusViewport(cy: Core, focusedNodeId: number, radius: number, animate:
   cy.stop();
   if (animate) {
     cy.animate({ zoom, pan }, { duration: ANIMATION_MS, easing: "ease-in-out-cubic" });
-    window.setTimeout(() => !cy.destroyed() && syncFixedLabelScale(cy), ANIMATION_MS + 24);
   } else {
     cy.zoom(zoom);
     cy.pan(pan);
-    syncFixedLabelScale(cy);
   }
 }
 
-function scheduleViewport(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, focusRadius?: number) {
+function scheduleViewport(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, depth: number, focusRadius?: number) {
   window.setTimeout(() => {
     if (cy.destroyed()) return;
     cy.resize();
     if (mode === "focus" && focusedNodeId && focusRadius) {
       focusViewport(cy, focusedNodeId, focusRadius, true);
     } else {
-      fitVisible(cy, graph, mode, focusedNodeId, true);
+      fitVisible(cy, graph, mode, focusedNodeId, depth, true);
     }
   }, FOCUS_SECONDARY_FIT_DELAY_MS);
 }
 
-function fitVisible(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, animate: boolean) {
+function fitVisible(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, depth: number, animate: boolean) {
   let fitElements = cy.elements().filter((element) => !element.hasClass("graph-hidden"));
   let padding = LAYOUT_PADDING;
   if (mode === "focus" && focusedNodeId) {
-    const { nodeIds, edgeIds } = directNeighborhood(graph, focusedNodeId);
+    const { nodeIds, edgeIds } = directNeighborhood(graph, focusedNodeId, depth);
     fitElements = cy.collection();
     for (const id of nodeIds) {
       fitElements = fitElements.union(cy.getElementById(`n${id}`));
@@ -313,46 +447,24 @@ function fitVisible(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNode
   cy.stop();
   if (animate) {
     cy.animate({ fit: { eles: fitElements, padding } }, { duration: ANIMATION_MS, easing: "ease-in-out-cubic" });
-    // `fit` 动画最后一帧会写回默认缩放样式；动画结束后再次补偿，避免
-    // 节点先变大、随后又缩回去。
-    window.setTimeout(() => !cy.destroyed() && syncFixedLabelScale(cy), ANIMATION_MS + 24);
   } else {
     cy.fit(fitElements, padding);
-    syncFixedLabelScale(cy);
   }
 }
 
-// Cytoscape 的标签会和画布一起缩放。反向补偿字号和标签宽度后，文字在
-// 屏幕上保持稳定可读，而不是在全览时缩成几个像素。
-function syncFixedLabelScale(cy: Core) {
-  const zoom = Math.max(cy.zoom(), 0.05);
-  cy.nodes().forEach((node) => {
-    const screenFont = node.hasClass("focus-root") ? 18 : node.hasClass("focus-parent") ? 16 : 15;
-    const screenSize = Number(node.data("displaySize") ?? node.data("size") ?? 40);
-    node.style({
-      width: screenSize / zoom,
-      height: screenSize / zoom,
-      "font-size": screenFont / zoom,
-      "text-max-width": 124 / zoom,
-      "text-margin-y": 10 / zoom,
-      "text-background-padding": 2 / zoom,
-    });
-  });
-}
-
-function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, animate = true) {
+function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, depth: number, animate = true) {
   cy.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge");
   const overview = nodeVisuals(graph, cy.container());
   cy.nodes().forEach((node) => {
     const visual = overview.get(Number(node.data("nodeId")));
     if (visual) {
       node.data("displaySize", visual.size);
-      node.style({ width: visual.size, height: visual.size, "font-size": visual.fontSize });
+      node.style({ width: visual.size, height: visual.size });
     }
   });
 
   if (mode === "focus" && focusedNodeId) {
-    const { nodeIds, edgeIds } = directNeighborhood(graph, focusedNodeId);
+    const { nodeIds, edgeIds } = directNeighborhood(graph, focusedNodeId, depth);
     const parentIds = new Set<number>();
     const childIds = new Set<number>();
     for (const edge of graph.edges) {
@@ -370,15 +482,15 @@ function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focused
       } else if (nodeId === focusedNodeId) {
         node.addClass("focus-root");
         node.data("displaySize", sizes.root);
-        node.style({ width: sizes.root, height: sizes.root, "font-size": sizes.rootFont });
+        node.style({ width: sizes.root, height: sizes.root });
       } else if (parentIds.has(nodeId)) {
         node.addClass("focus-parent");
         node.data("displaySize", sizes.parent);
-        node.style({ width: sizes.parent, height: sizes.parent, "font-size": sizes.parentFont });
+        node.style({ width: sizes.parent, height: sizes.parent });
       } else {
         node.addClass("focus-child");
         node.data("displaySize", sizes.child);
-        node.style({ width: sizes.child, height: sizes.child, "font-size": sizes.childFont });
+        node.style({ width: sizes.child, height: sizes.child });
       }
     });
     cy.edges().forEach((edge) => {
@@ -389,18 +501,20 @@ function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focused
         edge.addClass("graph-hidden");
       }
     });
-    const focusRadius = arrangeFocusNeighborhood(cy, graph, focusedNodeId, animate);
-    syncFixedLabelScale(cy);
+    const focusRadius = arrangeFocusNeighborhood(cy, graph, focusedNodeId, depth, animate);
     if (focusRadius != null) {
       window.setTimeout(() => focusViewport(cy, focusedNodeId, focusRadius, true), animate ? ANIMATION_MS : 0);
-      scheduleViewport(cy, graph, mode, focusedNodeId, focusRadius);
+      scheduleViewport(cy, graph, mode, focusedNodeId, depth, focusRadius);
     }
+    cy.emit("render");
+    window.setTimeout(() => !cy.destroyed() && cy.emit("render"), animate ? ANIMATION_MS + 32 : 0);
     return;
   }
 
-  syncFixedLabelScale(cy);
-  fitVisible(cy, graph, mode, focusedNodeId, animate);
-  scheduleViewport(cy, graph, mode, focusedNodeId);
+  fitVisible(cy, graph, mode, focusedNodeId, depth, animate);
+  scheduleViewport(cy, graph, mode, focusedNodeId, depth);
+  cy.emit("render");
+  window.setTimeout(() => !cy.destroyed() && cy.emit("render"), animate ? ANIMATION_MS + 32 : 0);
 }
 
 function placeAlongArc(count: number, middle: number, spread: number) {
@@ -548,49 +662,157 @@ function createHubBranchPositions(graph: KnowledgeGraph, isComponent = false) {
   return resolvePositionCollisions(graph, positions);
 }
 
-function createCompactOverviewLayout(cy: Core, graph: KnowledgeGraph) {
-  const positions = createHubBranchPositions(graph);
-  if (positions.size === graph.nodes.length && graph.nodes.length > 1) {
-    // `preset` 的函数回调在不同 Cytoscape 版本中传入的 ID 形式不完全一致。
-    // 使用显式坐标表并同时保留元素 ID/业务 ID，避免回退到 (0, 0) 导致节点重叠。
-    const positionMap: Record<string, { x: number; y: number }> = {};
-    for (const [nodeId, position] of positions) {
-      positionMap[`n${nodeId}`] = position;
-      positionMap[String(nodeId)] = position;
+function createTreeForestPositions(graph: KnowledgeGraph) {
+  const nodeIds = new Set(graph.nodes.map((node) => node.id));
+  const outgoing = new Map(graph.nodes.map((node) => [node.id, [] as number[]]));
+  const incoming = new Map(graph.nodes.map((node) => [node.id, [] as number[]]));
+  const undirected = new Map(graph.nodes.map((node) => [node.id, new Set<number>()]));
+  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  for (const edge of graph.edges) {
+    if (!nodeIds.has(edge.source_node_id) || !nodeIds.has(edge.target_node_id)) continue;
+    outgoing.get(edge.source_node_id)?.push(edge.target_node_id);
+    incoming.get(edge.target_node_id)?.push(edge.source_node_id);
+    undirected.get(edge.source_node_id)?.add(edge.target_node_id);
+    undirected.get(edge.target_node_id)?.add(edge.source_node_id);
+  }
+  const rank = (id: number) => (outgoing.get(id)?.length ?? 0) * 3 + (undirected.get(id)?.size ?? 0);
+  const sortNodes = (ids: Iterable<number>) => [...new Set(ids)].sort((a, b) => rank(b) - rank(a) || a - b);
+  const positions = new Map<number, { x: number; y: number }>();
+  const components = detectComponents(graph).sort((a, b) => b.length - a.length || a[0] - b[0]);
+  const horizontalSlot = 210;
+  const verticalGap = 190;
+  const rootGap = 0.7;
+  const componentGap = 300;
+  let componentCursor = 0;
+
+  for (const component of components) {
+    const componentIds = new Set(component);
+    const children = new Map(component.map((id) => [id, [] as number[]]));
+    const visited = new Set<number>();
+    const roots: number[] = [];
+    const initialRoots = sortNodes(component.filter((id) => (
+      incoming.get(id)?.filter((source) => componentIds.has(source)).length ?? 0
+    ) === 0));
+    if (!initialRoots.length && component.length) {
+      initialRoots.push(sortNodes(component)[0]);
     }
-    return cy.layout({
-      name: "preset",
-      fit: false,
-      animate: true,
-      animationDuration: 500,
-      animationEasing: "ease-in-out-cubic",
-      positions: positionMap,
-      padding: LAYOUT_PADDING,
-    });
+
+    const growFrom = (rootId: number) => {
+      if (visited.has(rootId)) return;
+      roots.push(rootId);
+      visited.add(rootId);
+      const queue = [rootId];
+      while (queue.length) {
+        const parentId = queue.shift()!;
+        for (const childId of sortNodes((outgoing.get(parentId) ?? []).filter((id) => componentIds.has(id)))) {
+          if (visited.has(childId)) continue;
+          visited.add(childId);
+          children.get(parentId)?.push(childId);
+          queue.push(childId);
+        }
+      }
+    };
+    initialRoots.forEach(growFrom);
+
+    while (visited.size < component.length) {
+      const remaining = component.filter((id) => !visited.has(id));
+      let attached = false;
+      for (const childId of sortNodes(remaining)) {
+        const directedParent = sortNodes((incoming.get(childId) ?? []).filter((id) => visited.has(id)))[0];
+        const adjacentParent = directedParent ?? sortNodes([...(undirected.get(childId) ?? [])].filter((id) => visited.has(id)))[0];
+        if (adjacentParent == null) continue;
+        visited.add(childId);
+        children.get(adjacentParent)?.push(childId);
+        const queue = [childId];
+        while (queue.length) {
+          const parentId = queue.shift()!;
+          for (const nextId of sortNodes((outgoing.get(parentId) ?? []).filter((id) => componentIds.has(id)))) {
+            if (visited.has(nextId)) continue;
+            visited.add(nextId);
+            children.get(parentId)?.push(nextId);
+            queue.push(nextId);
+          }
+        }
+        attached = true;
+        break;
+      }
+      if (!attached) growFrom(sortNodes(remaining)[0]);
+    }
+
+    const subtreeWidth = new Map<number, number>();
+    const measure = (nodeId: number): number => {
+      const ownWidth = clamp((nodeById.get(nodeId)?.title.length ?? 0) / 15, 1, 1.7);
+      const branch = children.get(nodeId) ?? [];
+      if (!branch.length) {
+        subtreeWidth.set(nodeId, ownWidth);
+        return ownWidth;
+      }
+      const childWidth = branch.reduce((sum, id) => sum + measure(id), 0) + Math.max(0, branch.length - 1) * 0.28;
+      const width = Math.max(ownWidth, childWidth);
+      subtreeWidth.set(nodeId, width);
+      return width;
+    };
+    roots.forEach(measure);
+
+    const place = (nodeId: number, centerX: number, level: number) => {
+      positions.set(nodeId, { x: centerX * horizontalSlot, y: level * verticalGap });
+      const branch = children.get(nodeId) ?? [];
+      if (!branch.length) return;
+      const total = branch.reduce((sum, id) => sum + (subtreeWidth.get(id) ?? 1), 0) + Math.max(0, branch.length - 1) * 0.28;
+      let cursor = centerX - total / 2;
+      for (const childId of branch) {
+        const width = subtreeWidth.get(childId) ?? 1;
+        place(childId, cursor + width / 2, level + 1);
+        cursor += width + 0.28;
+      }
+    };
+
+    const componentWidth = roots.reduce((sum, id) => sum + (subtreeWidth.get(id) ?? 1), 0)
+      + Math.max(0, roots.length - 1) * rootGap;
+    let rootCursor = componentCursor / horizontalSlot;
+    for (const rootId of roots) {
+      const width = subtreeWidth.get(rootId) ?? 1;
+      place(rootId, rootCursor + width / 2, 0);
+      rootCursor += width + rootGap;
+    }
+    componentCursor += componentWidth * horizontalSlot + componentGap;
   }
 
+  if (positions.size) {
+    const minX = Math.min(...[...positions.values()].map((point) => point.x));
+    const maxX = Math.max(...[...positions.values()].map((point) => point.x));
+    const offset = (minX + maxX) / 2;
+    positions.forEach((point) => { point.x -= offset; });
+  }
+  return positions;
+}
+
+function createCompactOverviewLayout(cy: Core, graph: KnowledgeGraph) {
+  const positions = createTreeForestPositions(graph);
   return cy.layout({
-    name: "cose",
+    name: "preset",
     fit: false,
     animate: true,
-    animationDuration: 550,
-    randomize: true,
-    nodeRepulsion: 6000,
-    idealEdgeLength: 85,
-    edgeElasticity: 100,
-    gravity: 0.35,
-    componentSpacing: 150,
-    nestingFactor: 1.1,
-    numIter: 1000,
-    initialTemp: 180,
-    coolingFactor: 0.95,
-    minTemp: 1,
-  });
+    animationDuration: 520,
+    animationEasing: "ease-in-out-cubic",
+    positions: (node: NodeSingular) => positions.get(Number(node.data("nodeId"))) ?? { x: 0, y: 0 },
+    padding: LAYOUT_PADDING,
+  } as never);
 }
 
 
 export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compact = false, onRequestText, onConfirm, onOpenQA, onOpenCourse, onOpenFile, onContentChanged }: Props) {
+  const viewerRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const labelLayerRef = useRef<HTMLDivElement | null>(null);
+  const labelElementsRef = useRef(new Map<number, HTMLDivElement>());
+  const labelFrameRef = useRef<number | null>(null);
+  const hoveredNodeIdRef = useRef<number | null>(null);
+  const selectedNodeIdRef = useRef<number | null>(null);
+  const searchQueryRef = useRef("");
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const pointerInsideRef = useRef(false);
+  const overviewPositionsRef = useRef(new Map<number, { x: number; y: number }>());
   const cyRef = useRef<Core | null>(null);
   const lastTapRef = useRef<{ id: string; at: number } | null>(null);
   const graphRef = useRef<KnowledgeGraph>({ nodes: [], edges: [] });
@@ -598,6 +820,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const connectSourceIdRef = useRef<number | null>(null);
   const viewModeRef = useRef<ViewMode>("overview");
   const focusedNodeIdRef = useRef<number | null>(null);
+  const focusDepthRef = useRef<1 | 2>(1);
   const onOpenQARef = useRef(onOpenQA);
   const onOpenCourseRef = useRef(onOpenCourse);
   const onOpenFileRef = useRef(onOpenFile);
@@ -610,7 +833,18 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const [connectSourceId, setConnectSourceId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [focusedNodeId, setFocusedNodeId] = useState<number | null>(null);
+  const [focusDepth, setFocusDepth] = useState<1 | 2>(1);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   const [message, setMessage] = useState("");
+  const [darkMode, setDarkMode] = useState(currentDarkMode);
+
+  useEffect(() => {
+    const updateTheme = () => setDarkMode(currentDarkMode());
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
 
   async function reload() {
     const next = await getKnowledgeGraph(projectId);
@@ -629,7 +863,45 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   useEffect(() => {
     viewModeRef.current = viewMode;
     focusedNodeIdRef.current = focusedNodeId;
-  }, [viewMode, focusedNodeId]);
+    focusDepthRef.current = focusDepth;
+  }, [viewMode, focusedNodeId, focusDepth]);
+
+  useEffect(() => {
+    selectedNodeIdRef.current = selectedNode?.id ?? null;
+    cyRef.current?.emit("render");
+  }, [selectedNode?.id]);
+
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+    cyRef.current?.emit("render");
+  }, [searchQuery]);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const isTyping = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
+      const isActiveViewer = pointerInsideRef.current || Boolean(target && viewerRef.current?.contains(target));
+      if (!isActiveViewer) {
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
+        event.preventDefault();
+        setSearchOpen(true);
+        window.setTimeout(() => searchInputRef.current?.focus(), 0);
+      } else if (!isTyping && event.key === "Escape") {
+        setSearchOpen(false);
+        setSearchQuery("");
+        setViewMode("overview");
+        setFocusedNodeId(null);
+      } else if (!isTyping && (event.key === "+" || event.key === "=")) {
+        setFocusDepth(2);
+      } else if (!isTyping && event.key === "-") {
+        setFocusDepth(1);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     onOpenQARef.current = onOpenQA;
@@ -664,32 +936,19 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     cyRef.current?.destroy();
     const cy = cytoscape({
       container,
-      elements: toElements(graph, container),
+      elements: toElements(graph, container, darkMode),
       style: [
         {
           selector: "node",
           style: {
             "background-color": "data(color)",
-            label: "data(label)",
-            color: "#1f2937",
-            "font-size": "data(fontSize)",
-            "text-wrap": "wrap",
-            "text-max-width": "116px",
-            "text-valign": "bottom",
-            "text-halign": "center",
-            "text-margin-y": 10,
-            "text-background-color": "#f8fafb",
-            "text-background-opacity": 0.92,
-            "text-background-padding": "2px",
-            "text-background-shape": "roundrectangle",
-            "text-outline-color": "#f8fafb",
-            "text-outline-width": 2,
+            label: "",
             "border-width": 2,
             "border-color": "data(borderColor)",
             width: "data(size)",
             height: "data(size)",
             opacity: 1,
-            "transition-property": "width height opacity border-width font-size text-margin-y",
+            "transition-property": "opacity border-width border-color",
             "transition-duration": 220,
             "transition-timing-function": "ease-in-out-cubic",
           },
@@ -697,18 +956,14 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         {
           selector: "node.focus-root",
           style: {
-            "text-max-width": "140px",
-            "border-color": "#174c43",
+            "border-color": darkMode ? "#8fc9ff" : "#174c43",
             "border-width": 5,
-            "text-margin-y": 14,
           },
         },
         {
           selector: "node.focus-parent",
           style: {
-            "text-max-width": "120px",
-            "text-margin-y": 12,
-            "border-color": "#75998e",
+            "border-color": darkMode ? "#6e8a84" : "#75998e",
             "border-width": 3,
             opacity: 0.95,
           },
@@ -716,8 +971,6 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         {
           selector: "node.focus-child",
           style: {
-            "text-max-width": "102px",
-            "text-margin-y": 10,
             opacity: 0.88,
           },
         },
@@ -732,16 +985,24 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         {
           selector: "node:selected",
           style: {
-            "border-color": "#174c43",
+            "border-color": darkMode ? "#8fc9ff" : "#174c43",
             "border-width": 4,
           },
+        },
+        {
+          selector: "node.hover-related",
+          style: { "border-color": darkMode ? "#64a0ff" : "#25766c", "border-width": 4 },
+        },
+        {
+          selector: "node.hover-dim",
+          style: { opacity: 0.2 },
         },
         {
           selector: "edge",
           style: {
             width: 2,
-            "line-color": "#9aa7b8",
-            "target-arrow-color": "#9aa7b8",
+            "line-color": darkMode ? "#606067" : "#9aa7b8",
+            "target-arrow-color": darkMode ? "#606067" : "#9aa7b8",
             "target-arrow-shape": "triangle",
             "curve-style": "bezier",
             label: "",
@@ -755,8 +1016,8 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         {
           selector: "edge.focus-edge",
           style: {
-            "line-color": "#25766c",
-            "target-arrow-color": "#25766c",
+            "line-color": darkMode ? "#64a0ff" : "#25766c",
+            "target-arrow-color": darkMode ? "#64a0ff" : "#25766c",
             width: 3,
             "z-index": 12,
             opacity: 1,
@@ -773,47 +1034,85 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         {
           selector: "edge:selected",
           style: {
-            "line-color": "#25766c",
-            "target-arrow-color": "#25766c",
+            "line-color": darkMode ? "#64a0ff" : "#25766c",
+            "target-arrow-color": darkMode ? "#64a0ff" : "#25766c",
             width: 3,
             "z-index": 12,
           },
         },
+        {
+          selector: "edge.hover-related",
+          style: { "line-color": darkMode ? "#64a0ff" : "#25766c", "target-arrow-color": darkMode ? "#64a0ff" : "#25766c", width: 3, opacity: 1 },
+        },
+        {
+          selector: "edge.hover-dim",
+          style: { opacity: 0.12 },
+        },
       ],
       layout: { name: "preset", fit: false },
-      wheelSensitivity: 0.2,
-      // 侧栏图谱不允许 fit 动画把节点和标签缩到不可阅读的大小。
-      minZoom: compact ? 0.9 : 0.55,
+      minZoom: compact ? 0.15 : 0.25,
       maxZoom: 3,
     });
     cyRef.current = cy;
-    cy.on("zoom", () => syncFixedLabelScale(cy));
+
+    const labelLayer = labelLayerRef.current;
+    labelElementsRef.current.clear();
+    labelLayer?.replaceChildren();
+    const scheduleLabels = () => {
+      if (!labelLayer || labelFrameRef.current != null) return;
+      labelFrameRef.current = window.requestAnimationFrame(() => {
+        labelFrameRef.current = null;
+        if (cy.destroyed()) return;
+        syncLabelOverlay(cy, graphRef.current, labelLayer, labelElementsRef.current, {
+          viewMode: viewModeRef.current,
+          focusedNodeId: focusedNodeIdRef.current,
+          focusDepth: focusDepthRef.current,
+          selectedNodeId: selectedNodeIdRef.current,
+          hoveredNodeId: hoveredNodeIdRef.current,
+          searchQuery: searchQueryRef.current,
+        });
+      });
+    };
+    cy.on("render pan zoom position resize", scheduleLabels);
+    cy.on("mouseover", "node", (event) => {
+      const nodeId = Number(event.target.data("nodeId"));
+      hoveredNodeIdRef.current = nodeId;
+      if (!connectModeRef.current) {
+        const { nodeIds, edgeIds } = directNeighborhood(graphRef.current, nodeId, 1);
+        cy.nodes().forEach((node) => { node.toggleClass("hover-dim", !nodeIds.has(Number(node.data("nodeId")))); });
+        cy.nodes().forEach((node) => { node.toggleClass("hover-related", nodeIds.has(Number(node.data("nodeId")))); });
+        cy.edges().forEach((edge) => { edge.toggleClass("hover-dim", !edgeIds.has(Number(edge.data("edgeId")))); });
+        cy.edges().forEach((edge) => { edge.toggleClass("hover-related", edgeIds.has(Number(edge.data("edgeId")))); });
+      }
+      scheduleLabels();
+    });
+    cy.on("mouseout", "node", () => {
+      hoveredNodeIdRef.current = null;
+      cy.elements().removeClass("hover-dim hover-related");
+      scheduleLabels();
+    });
+    scheduleLabels();
 
     const allNodesHavePosition = graph.nodes.length > 0 && graph.nodes.every((node) => node.x != null && node.y != null);
     if (!allNodesHavePosition && graph.nodes.length > 1) {
-      cy.layout({
-        name: "cose",
-        fit: false,
-        animate: true,
-        animationDuration: 560,
-        randomize: true,
-        nodeRepulsion: 20000,
-        idealEdgeLength: 145,
-        edgeElasticity: 90,
-        nestingFactor: 1.2,
-        gravity: 0.06,
-        numIter: 1200,
-        initialTemp: 220,
-        coolingFactor: 0.92,
-        minTemp: 1,
-        avoidOverlap: true,
-        componentSpacing: 300,
-        padding: LAYOUT_PADDING,
-      }).run();
-      window.setTimeout(() => applyGraphView(cy, graphRef.current, viewModeRef.current, focusedNodeIdRef.current, true), 620);
+      const initialLayout = createCompactOverviewLayout(cy, graph);
+      initialLayout.one("layoutstop", () => {
+        if (!cy.destroyed()) {
+          const positions = new Map<number, { x: number; y: number }>();
+          cy.nodes().forEach((node) => { positions.set(Number(node.data("nodeId")), { ...node.position() }); });
+          overviewPositionsRef.current = positions;
+          applyGraphView(cy, graphRef.current, viewModeRef.current, focusedNodeIdRef.current, focusDepthRef.current, true);
+        }
+      });
+      initialLayout.run();
     } else {
       cy.layout({ name: "preset", fit: false }).run();
-      window.setTimeout(() => applyGraphView(cy, graphRef.current, viewModeRef.current, focusedNodeIdRef.current, false), 0);
+      overviewPositionsRef.current = new Map(
+        graph.nodes
+          .filter((node) => node.x != null && node.y != null)
+          .map((node) => [node.id, { x: node.x!, y: node.y! }]),
+      );
+      window.setTimeout(() => applyGraphView(cy, graphRef.current, viewModeRef.current, focusedNodeIdRef.current, focusDepthRef.current, false), 0);
     }
 
     cy.on("tap", "node", async (event) => {
@@ -859,8 +1158,14 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         return;
       }
 
+      if (viewModeRef.current === "overview") {
+        const positions = new Map<number, { x: number; y: number }>();
+        cy.nodes().forEach((item) => { positions.set(Number(item.data("nodeId")), { ...item.position() }); });
+        overviewPositionsRef.current = positions;
+      }
       setViewMode("focus");
       setFocusedNodeId(nodeId);
+      setFocusDepth(1);
       setMessage(found ? `已聚焦：${found.title}` : "已聚焦节点");
     });
 
@@ -875,22 +1180,31 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       const node = event.target as NodeSingular;
       const nodeId = Number(node.data("nodeId"));
       const position = node.position();
-      updateKnowledgeNode(projectId, nodeId, { x: position.x, y: position.y }).catch(() => undefined);
+      if (viewModeRef.current === "overview") {
+        overviewPositionsRef.current.set(nodeId, { x: position.x, y: position.y });
+        updateKnowledgeNode(projectId, nodeId, { x: position.x, y: position.y }).catch(() => undefined);
+      }
     });
 
     return () => {
+      if (labelFrameRef.current != null) {
+        window.cancelAnimationFrame(labelFrameRef.current);
+        labelFrameRef.current = null;
+      }
+      labelLayer?.replaceChildren();
+      labelElementsRef.current.clear();
       cy.destroy();
       if (cyRef.current === cy) {
         cyRef.current = null;
       }
     };
-  }, [graph, projectId]);
+  }, [graph, projectId, darkMode]);
 
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    applyGraphView(cy, graph, viewMode, focusedNodeId, true);
-  }, [graph, viewMode, focusedNodeId]);
+    applyGraphView(cy, graph, viewMode, focusedNodeId, focusDepth, true);
+  }, [graph, viewMode, focusedNodeId, focusDepth]);
 
   async function handleRenameNode() {
     if (!selectedNode) return;
@@ -934,6 +1248,13 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   }
 
   function handleOverview() {
+    const cy = cyRef.current;
+    if (cy && overviewPositionsRef.current.size) {
+      cy.nodes().forEach((node) => {
+        const position = overviewPositionsRef.current.get(Number(node.data("nodeId")));
+        if (position) node.position(position);
+      });
+    }
     setViewMode("overview");
     setFocusedNodeId(null);
     setSelectedEdge(null);
@@ -954,28 +1275,34 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     const layout = createCompactOverviewLayout(cy, graphRef.current);
     layout.one("layoutstop", () => {
       if (cy.destroyed()) return;
-      fitVisible(cy, graphRef.current, "overview", null, true);
+      fitVisible(cy, graphRef.current, "overview", null, 1, true);
       const updates: Promise<unknown>[] = [];
       cy.nodes().forEach((node) => {
         const nodeId = Number(node.data("nodeId"));
         const position = node.position();
+        overviewPositionsRef.current.set(nodeId, { x: position.x, y: position.y });
         updates.push(updateKnowledgeNode(projectId, nodeId, { x: position.x, y: position.y }));
       });
       void Promise.allSettled(updates).then((results) => {
         const failedCount = results.filter((result) => result.status === "rejected").length;
-        setMessage(failedCount > 0 ? `布局已整理，但有 ${failedCount} 个节点的位置保存失败` : "已整理并保存全览布局");
+        setMessage(failedCount > 0 ? `树状布局已生成，但有 ${failedCount} 个节点的位置保存失败` : "已整理为树状布局并保存");
       });
     });
     layout.run();
   }
 
   return (
-    <div className={`knowledge-viewer ${compact ? "compact" : ""}`}>
+    <div
+      ref={viewerRef}
+      className={`knowledge-viewer ${compact ? "compact" : ""}`}
+      onPointerEnter={() => { pointerInsideRef.current = true; }}
+      onPointerLeave={() => { pointerInsideRef.current = false; }}
+    >
       <div className="viewer-header">
         <span>知识网络</span>
         <div className="viewer-actions">
           <button className={`secondary-button compact ${viewMode === "overview" ? "active" : ""}`} onClick={handleOverview}>全览</button>
-          <button className="secondary-button compact" onClick={handleArrangeOverview} disabled={graph.nodes.length < 2} title="重新计算紧凑布局并保存节点位置">整理</button>
+          <button className="secondary-button compact" onClick={handleArrangeOverview} disabled={graph.nodes.length < 2} title="按父子关系整理为树状布局并保存节点位置">整理</button>
           <button
             className={`secondary-button compact ${connectMode ? "active" : ""}`}
             onClick={() => {
@@ -992,8 +1319,43 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         </div>
       </div>
       <div className="knowledge-body">
-        <div ref={containerRef} className="knowledge-canvas" />
-        <aside className="knowledge-inspector">
+        <div className="knowledge-canvas-shell">
+          <div ref={containerRef} className="knowledge-canvas" />
+          <div ref={labelLayerRef} className="knowledge-label-layer" aria-hidden="true" />
+          {searchOpen ? (
+            <div className="knowledge-search" role="search">
+              <input
+                ref={searchInputRef}
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="搜索节点"
+                aria-label="搜索知识网络节点"
+              />
+              <button className="icon-button" onClick={() => { setSearchOpen(false); setSearchQuery(""); }} aria-label="关闭搜索">×</button>
+              {searchQuery.trim() ? (
+                <div className="knowledge-search-results">
+                  {graph.nodes
+                    .filter((node) => node.title.toLocaleLowerCase().includes(searchQuery.trim().toLocaleLowerCase()))
+                    .slice(0, 8)
+                    .map((node) => (
+                      <button
+                        key={node.id}
+                        onClick={() => {
+                          setSelectedNode(node);
+                          setSelectedEdge(null);
+                          setFocusedNodeId(node.id);
+                          setFocusDepth(1);
+                          setViewMode("focus");
+                          setSearchOpen(false);
+                        }}
+                      >{node.title}</button>
+                    ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {selectedNode || selectedEdge || message ? <aside className="knowledge-inspector open">
           {selectedNode ? (
             <>
               <strong>{selectedNode.title}</strong>
@@ -1011,7 +1373,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
             <span>单击节点聚焦一跳关系，双击打开对应回答、课件或代码。</span>
           )}
           {message ? <small>{message}</small> : null}
-        </aside>
+        </aside> : null}
       </div>
     </div>
   );

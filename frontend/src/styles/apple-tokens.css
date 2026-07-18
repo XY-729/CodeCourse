@@ -1,0 +1,115 @@
+html:not(.platform-android) {
+  color-scheme: light;
+  --apple-canvas: #f5f5f7;
+  --apple-sidebar: rgba(246, 246, 248, 0.92);
+  --apple-toolbar: rgba(250, 250, 252, 0.82);
+  --apple-surface: #ffffff;
+  --apple-surface-raised: rgba(255, 255, 255, 0.94);
+  --apple-surface-muted: #f2f2f4;
+  --apple-fill: rgba(120, 120, 128, 0.12);
+  --apple-fill-hover: rgba(120, 120, 128, 0.18);
+  --apple-separator: rgba(60, 60, 67, 0.18);
+  --apple-separator-strong: rgba(60, 60, 67, 0.28);
+  --apple-text: #1d1d1f;
+  --apple-text-secondary: #6e6e73;
+  --apple-text-tertiary: #8e8e93;
+  --apple-blue: #007aff;
+  --apple-blue-hover: #006ee6;
+  --apple-blue-soft: rgba(0, 122, 255, 0.12);
+  --apple-green: #248a3d;
+  --apple-red: #d70015;
+  --apple-orange: #c93400;
+  --apple-code-bg: #f2f2f4;
+  --apple-code-text: #242426;
+  --apple-code-border: rgba(60, 60, 67, 0.16);
+  --apple-inline-code-bg: rgba(120, 120, 128, 0.12);
+  --apple-inline-code-text: #3a3a3c;
+  --apple-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05), 0 3px 12px rgba(0, 0, 0, 0.04);
+  --apple-shadow-popover: 0 12px 42px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --apple-shadow-sheet: -18px 0 54px rgba(0, 0, 0, 0.14);
+  --apple-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --apple-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --apple-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --apple-radius-sm: 6px;
+  --apple-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font-optical-sizing: auto;
+}
+
+html:not(.platform-android)[data-theme="dark"] {
+    color-scheme: dark;
+    --apple-canvas: #1c1c1e;
+    --apple-sidebar: rgba(35, 35, 38, 0.94);
+    --apple-toolbar: rgba(40, 40, 43, 0.82);
+    --apple-surface: #242426;
+    --apple-surface-raised: rgba(48, 48, 51, 0.96);
+    --apple-surface-muted: #2c2c2e;
+    --apple-fill: rgba(235, 235, 245, 0.1);
+    --apple-fill-hover: rgba(235, 235, 245, 0.17);
+    --apple-separator: rgba(235, 235, 245, 0.16);
+    --apple-separator-strong: rgba(235, 235, 245, 0.26);
+    --apple-text: #f5f5f7;
+    --apple-text-secondary: #aeaeb2;
+    --apple-text-tertiary: #8e8e93;
+    --apple-blue: #0a84ff;
+    --apple-blue-hover: #409cff;
+    --apple-blue-soft: rgba(10, 132, 255, 0.18);
+    --apple-green: #30d158;
+    --apple-red: #ff453a;
+    --apple-orange: #ff9f0a;
+    --apple-code-bg: #1c1c1e;
+    --apple-code-text: #f2f2f7;
+    --apple-code-border: rgba(235, 235, 245, 0.18);
+    --apple-inline-code-bg: rgba(235, 235, 245, 0.12);
+    --apple-inline-code-text: #f2f2f7;
+    --apple-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25), 0 3px 12px rgba(0, 0, 0, 0.18);
+    --apple-shadow-popover: 0 16px 50px rgba(0, 0, 0, 0.48), 0 2px 10px rgba(0, 0, 0, 0.3);
+    --apple-shadow-sheet: -18px 0 54px rgba(0, 0, 0, 0.42);
+}
+
+html:not(.platform-android),
+html:not(.platform-android) body,
+html:not(.platform-android) #root {
+  background: var(--apple-canvas);
+  color: var(--apple-text);
+  transition: background-color 220ms var(--apple-ease-out), color 170ms ease;
+}
+
+html:not(.platform-android) body {
+  font-family: inherit;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+html:not(.platform-android) button,
+html:not(.platform-android) input,
+html:not(.platform-android) textarea,
+html:not(.platform-android) select {
+  font-family: inherit;
+  letter-spacing: 0;
+}
+
+html:not(.platform-android) :focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--apple-blue) 38%, transparent);
+  outline-offset: 1px;
+}
+
+html:not(.platform-android) button:active:not(:disabled) {
+  transform: scale(0.97);
+  transition: transform 100ms var(--apple-ease-out);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html:not(.platform-android) {
+    --apple-sidebar: var(--apple-surface-muted);
+    --apple-toolbar: var(--apple-surface);
+    --apple-surface-raised: var(--apple-surface);
+  }
+}
+
+@media (prefers-contrast: more) {
+  html:not(.platform-android) {
+    --apple-separator: currentColor;
+    --apple-separator-strong: currentColor;
+  }
+}

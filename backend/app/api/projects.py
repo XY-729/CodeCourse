@@ -28,6 +28,7 @@ from app.services.generation_service import (
 )
 from app.services.git_service import clone_or_reuse, repo_name_from_url, validate_git_url
 from app.services.index_service import build_project_index
+from app.services.code_intelligence import remove_structural_project_data
 from app.services.scanner import scan_tree
 from app.core.config import REPOS_ROOT
 from app.services.storage import (
@@ -246,6 +247,7 @@ def remove_project(project_id: int) -> ProjectActionResponse:
     repo_root = Path(project.local_path).resolve()
     import shutil
 
+    remove_structural_project_data(project_id)
     if repo_root.exists():
         if REPOS_ROOT.resolve() not in repo_root.parents:
             raise HTTPException(status_code=400, detail="Stored project path is outside the repos workspace")

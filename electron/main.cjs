@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
 const http = require("http");
@@ -20,6 +20,12 @@ function backendDir() {
 
 function packagedBackendExecutable() {
   return path.join(backendDir(), "backend.exe");
+}
+
+function codeIntelligenceExecutable() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "code-intelligence", "codebase-memory-mcp.exe")
+    : path.join(projectRoot(), "resources", "code-intelligence", "codebase-memory-mcp.exe");
 }
 
 function addBundledGitToPath(env) {
@@ -110,6 +116,10 @@ async function startBackend() {
     GPL_WORKSPACE_ROOT: userData,
     PYTHONPATH: cwd,
   };
+  const intelligenceExecutable = codeIntelligenceExecutable();
+  if (fs.existsSync(intelligenceExecutable)) {
+    baseEnv.CODECOURSE_CBM_BIN = intelligenceExecutable;
+  }
   const env = addBundledGitToPath(baseEnv);
 
   if (app.isPackaged && process.platform === "win32") {
@@ -172,7 +182,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 720,
     title: "CodeCourse",
-    backgroundColor: "#eef1f4",
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c1c1e" : "#f5f5f7",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

@@ -19,22 +19,24 @@ jobs:
         with:
           node-version: "20"
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.16.1"
+          run_install: false
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install Node dependencies
-        run: npm install
-
-      - name: Install frontend dependencies
-        run: npm --prefix frontend ci
+        run: pnpm install --frozen-lockfile
 
       - name: Install backend build dependencies
         run: python -m pip install -r backend/requirements-build.txt
 
       - name: Build installer and portable executable
         shell: pwsh
-        run: npm run desktop:release
+        run: pnpm run desktop:release
 
       - name: Upload Windows release executables
         uses: actions/upload-artifact@v4

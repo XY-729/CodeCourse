@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 
 from app.models.schemas import (
     LearningAnchorRequest,
@@ -12,6 +15,7 @@ from app.models.schemas import (
     QAFavoriteRequest,
     QARecordResponse,
     QAUpdateRequest,
+    RetrievalSourceResponse,
 )
 from app.services.qa_service import (
     ask_question,
@@ -23,10 +27,37 @@ from app.services.qa_service import (
     remove_understanding,
     save_understanding,
     search_records,
+    finalize_question,
+    prepare_question,
 )
-from app.services.storage import LearningAnchor, QARecord, get_project
+from app.services.llm_client import stream_openai_compatible_chat
+from app.services.storage import LearningAnchor, QARecord, get_project, get_qa_record
 
 router = APIRouter(prefix="/api/projects", tags=["qa"])
+_PROJECT_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
+_SESSION_LOCKS: dict[tuple[int, int], asyncio.Lock] = {}
+
+
+def _project_semaphore(project_id: int) -> asyncio.Semaphore:
+    return _PROJECT_SEMAPHORES.setdefault(project_id, asyncio.Semaphore(2))
+
+
+def _session_lock(project_id: int, session_id: Optional[int]) -> Optional[asyncio.Lock]:
+    if session_id is None:
+        return None
+    return _SESSION_LOCKS.setdefault((project_id, session_id), asyncio.Lock())
+
+
+def _requested_session_id(project_id: int, payload: QAAskRequest) -> Optional[int]:
+    if payload.parent_qa_id:
+        parent = get_qa_record(project_id, payload.parent_qa_id)
+        if parent and parent.session_id:
+            return parent.session_id
+    return payload.session_id
+
+
+def _sse(event: str, data: object) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _require_project(project_id: int) -> None:
@@ -38,6 +69,19 @@ def _require_project(project_id: int) -> None:
 
 
 def _to_response(record: QARecord) -> QARecordResponse:
+    try:
+        raw_sources = json.loads(record.retrieval_sources_json or "[]")
+    except (json.JSONDecodeError, TypeError):
+        raw_sources = []
+    retrieval_sources = []
+    if isinstance(raw_sources, list):
+        for source in raw_sources:
+            if not isinstance(source, dict):
+                continue
+            try:
+                retrieval_sources.append(RetrievalSourceResponse.model_validate(source))
+            except Exception:
+                continue
     return QARecordResponse(
         id=record.id,
         project_id=record.project_id,
@@ -54,6 +98,7 @@ def _to_response(record: QARecord) -> QARecordResponse:
         model=record.model,
         output_path=record.output_path,
         retrieval_trace=record.retrieval_trace,
+        retrieval_sources=retrieval_sources,
         favorite=record.favorite,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -65,13 +110,74 @@ def _anchor_response(anchor: LearningAnchor) -> LearningAnchorResponse:
 
 
 @router.post("/{project_id}/qa/ask", response_model=QARecordResponse)
-def ask(project_id: int, payload: QAAskRequest) -> QARecordResponse:
+async def ask(project_id: int, payload: QAAskRequest) -> QARecordResponse:
     _require_project(project_id)
     try:
-        record = ask_question(project_id, payload)
+        session_id = await asyncio.to_thread(_requested_session_id, project_id, payload)
+        lock = _session_lock(project_id, session_id)
+        async with _project_semaphore(project_id):
+            if lock is None:
+                record = await asyncio.to_thread(ask_question, project_id, payload)
+            else:
+                async with lock:
+                    record = await asyncio.to_thread(ask_question, project_id, payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _to_response(record)
+
+
+@router.post("/{project_id}/qa/stream")
+async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingResponse:
+    _require_project(project_id)
+
+    async def generate():
+        yield _sse("stage", {"stage": "queued", "label": "等待生成位置"})
+        try:
+            requested_session_id = await asyncio.to_thread(_requested_session_id, project_id, payload)
+            lock = _session_lock(project_id, requested_session_id)
+            async with _project_semaphore(project_id):
+                async def run_stream():
+                    yield _sse("stage", {"stage": "retrieving", "label": "检索上下文"})
+                    prepared = await asyncio.to_thread(prepare_question, project_id, payload)
+                    if prepared.existing_record is not None:
+                        yield _sse("completed", _to_response(prepared.existing_record).model_dump(mode="json"))
+                        return
+                    yield _sse("stage", {"stage": "waiting_model", "label": "等待模型"})
+                    chunks: list[str] = []
+                    emitted_answer_stage = False
+                    async for chunk in stream_openai_compatible_chat(
+                        prepared.settings["base_url"],
+                        prepared.settings["api_key"],
+                        prepared.settings["model"],
+                        prepared.messages,
+                        timeout=90,
+                    ):
+                        if not emitted_answer_stage:
+                            emitted_answer_stage = True
+                            yield _sse("stage", {"stage": "answering", "label": "正在回答"})
+                        chunks.append(chunk)
+                        yield _sse("delta", {"text": chunk})
+                    yield _sse("stage", {"stage": "saving", "label": "保存记录"})
+                    record = await asyncio.to_thread(finalize_question, prepared, "".join(chunks))
+                    yield _sse("completed", _to_response(record).model_dump(mode="json"))
+
+                if lock is None:
+                    async for event in run_stream():
+                        yield event
+                else:
+                    async with lock:
+                        async for event in run_stream():
+                            yield event
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            yield _sse("error", {"message": str(exc)})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/{project_id}/qa", response_model=list[QARecordResponse])

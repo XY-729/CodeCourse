@@ -1,6 +1,6 @@
 {
   "name": "codecourse-desktop",
-  "version": "0.2.9",
+  "version": "0.2.13",
   "private": true,
   "description": "CodeCourse desktop shell for the GitHub project learner.",
   "main": "electron/main.cjs",
@@ -9,10 +9,11 @@
     "backend:build": "pyinstaller --noconfirm --clean --distpath dist-backend --workpath build/pyinstaller backend/backend.spec",
     "frontend:build": "npm --prefix frontend run build",
     "git:ensure": "powershell -ExecutionPolicy Bypass -File scripts/ensure-mingit.ps1",
-    "desktop:build": "npm run frontend:build && npm run backend:build && electron-builder --win portable",
-    "desktop:pack": "npm run frontend:build && npm run backend:build && electron-builder --dir",
-    "desktop:portable": "npm run frontend:build && npm run backend:build && electron-builder --win portable",
-    "desktop:release": "npm run frontend:build && npm run backend:build && npm run git:ensure && electron-builder --publish never --win portable --config.artifactName=CodeCourse-${version}-portable.${ext} && electron-builder --publish never --win nsis --config.artifactName=CodeCourse-${version}-setup.${ext}",
+    "intelligence:ensure": "powershell -ExecutionPolicy Bypass -File scripts/ensure-code-intelligence.ps1",
+    "desktop:build": "npm run frontend:build && npm run backend:build && npm run git:ensure && npm run intelligence:ensure && electron-builder --win portable",
+    "desktop:pack": "npm run frontend:build && npm run backend:build && npm run git:ensure && npm run intelligence:ensure && electron-builder --dir",
+    "desktop:portable": "npm run frontend:build && npm run backend:build && npm run git:ensure && npm run intelligence:ensure && electron-builder --win portable",
+    "desktop:release": "npm run frontend:build && npm run backend:build && npm run git:ensure && npm run intelligence:ensure && electron-builder --publish never --win portable --config.artifactName=CodeCourse-${version}-portable.${ext} && electron-builder --publish never --win nsis --config.artifactName=CodeCourse-${version}-setup.${ext}",
     "backend:test": "cd backend && PYTHONPATH=.. .venv/bin/python -m unittest discover -s tests -v",
     "mobile:sync": "npm run frontend:build && cap sync android",
     "mobile:dev": "npm run mobile:sync && cap open android",
@@ -44,6 +45,14 @@
       {
         "from": "resources/git",
         "to": "git"
+      },
+      {
+        "from": "resources/code-intelligence",
+        "to": "code-intelligence"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
       }
     ],
     "win": {

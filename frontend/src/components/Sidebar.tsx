@@ -1,5 +1,5 @@
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
-import type { CourseFile, Project, TreeNode } from "../api/client";
+import { BookOpen, Code2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import type { CourseFile, LearningState, Project, TreeNode } from "../api/client";
 import CourseList from "./CourseList";
 import FileTree from "./FileTree";
 
@@ -26,6 +26,9 @@ type Props = {
   onSelectCourse: (filename: string) => void;
   onCreateCourse?: () => void;
   onDeleteCourse?: (file: CourseFile) => void;
+  learningStates?: LearningState[];
+  onContinueLearning?: (filename: string) => void;
+  onViewChange?: (view: Extract<NavigationView, "courses" | "files">) => void;
 };
 
 export default function Sidebar({
@@ -49,6 +52,9 @@ export default function Sidebar({
   onSelectCourse,
   onCreateCourse,
   onDeleteCourse,
+  learningStates = [],
+  onContinueLearning,
+  onViewChange,
 }: Props) {
   if (view === "projects") {
     return (
@@ -87,8 +93,13 @@ export default function Sidebar({
     return (
       <aside className="sidebar navigation-panel">
         <header className="navigation-panel-header">
-          <span>源码</span>
-          {fileSelectionMode ? <small>点击选择，双击打开</small> : null}
+          {onViewChange ? (
+            <div className="navigation-segmented" aria-label="导航内容">
+              <button onClick={() => onViewChange("courses")}><BookOpen size={14} />课程</button>
+              <button className="active" onClick={() => onViewChange("files")}><Code2 size={14} />源码</button>
+            </div>
+          ) : <span>源码</span>}
+          {fileSelectionMode ? <small>选择生成范围</small> : null}
         </header>
         <div className="sidebar-scroll">
           {projectType === "learning_plan" ? <div className="empty">学习计划不包含源码文件</div> : tree ? (
@@ -109,7 +120,12 @@ export default function Sidebar({
   return (
     <aside className="sidebar navigation-panel">
       <header className="navigation-panel-header">
-        <span>课程</span>
+        {onViewChange ? (
+          <div className="navigation-segmented" aria-label="导航内容">
+            <button className="active" onClick={() => onViewChange("courses")}><BookOpen size={14} />课程</button>
+            <button onClick={() => onViewChange("files")}><Code2 size={14} />源码</button>
+          </div>
+        ) : <span>课程</span>}
         {onCreateCourse ? (
           <button className="icon-button" onClick={onCreateCourse} disabled={!currentProjectId} title="新建文档">
             <Plus size={16} />
@@ -117,7 +133,22 @@ export default function Sidebar({
         ) : null}
       </header>
       <div className="sidebar-scroll compact">
-        {courses.length ? <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDelete={onDeleteCourse} /> : (
+        {(() => {
+          const lessons = courses.filter((file) => /^lessons\/lesson_\d+\.md$/i.test(file.filename));
+          const completed = lessons.filter((file) => learningStates.some((entry) => entry.source_type === "course" && entry.source_path === file.filename && entry.status === "completed")).length;
+          const recent = [...learningStates].filter((entry) => entry.source_type === "course" && lessons.some((file) => file.filename === entry.source_path)).sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
+          const next = lessons.find((file) => !learningStates.some((entry) => entry.source_type === "course" && entry.source_path === file.filename && entry.status === "completed"));
+          const target = recent?.source_path ?? next?.filename;
+          return lessons.length ? (
+            <section className="continue-learning-card">
+              <div className="continue-learning-copy"><span>继续学习</span><strong>{courses.find((file) => file.filename === target)?.title ?? "从第一课开始"}</strong></div>
+              <button className="secondary-button compact" onClick={() => target && onContinueLearning?.(target)} disabled={!target}>继续</button>
+              <div className="learning-progress-track"><span style={{ width: `${lessons.length ? (completed / lessons.length) * 100 : 0}%` }} /></div>
+              <small>{completed}/{lessons.length} 课已完成</small>
+            </section>
+          ) : null;
+        })()}
+        {courses.length ? <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDelete={onDeleteCourse} learningStates={learningStates} /> : (
           <div className="empty">还没有课程内容</div>
         )}
       </div>

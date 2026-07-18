@@ -27,6 +27,13 @@ def _status_response(project_id: int) -> ProjectIndexStatusResponse:
         chunk_count=int(status["chunk_count"]),
         updated_at=status["updated_at"] if status["updated_at"] else None,
         error_message=status["error_message"] if status["error_message"] else None,
+        text_status=str(status.get("text_status") or "not_built"),
+        structural_status=str(status.get("structural_status") or "not_built"),
+        node_count=int(status.get("node_count") or 0),
+        edge_count=int(status.get("edge_count") or 0),
+        engine=str(status["engine"]) if status.get("engine") else None,
+        degraded_reason=str(status["degraded_reason"]) if status.get("degraded_reason") else None,
+        indexed_fingerprint=str(status["indexed_fingerprint"]) if status.get("indexed_fingerprint") else None,
     )
 
 
@@ -34,13 +41,21 @@ def _run_build(project_id: int) -> None:
     try:
         build_project_index(project_id)
     except Exception as exc:
-        set_project_index_status(project_id, "failed", 0, str(exc))
+        set_project_index_status(project_id, "failed", 0, str(exc), text_status="failed")
 
 
 @router.post("/{project_id}/index/build", response_model=ProjectIndexStatusResponse)
 def build_index(project_id: int, background_tasks: BackgroundTasks) -> ProjectIndexStatusResponse:
     _require_project(project_id)
-    set_project_index_status(project_id, "building", 0, None)
+    set_project_index_status(
+        project_id,
+        "building",
+        0,
+        None,
+        text_status="building",
+        structural_status="not_built",
+        degraded_reason=None,
+    )
     background_tasks.add_task(_run_build, project_id)
     return _status_response(project_id)
 

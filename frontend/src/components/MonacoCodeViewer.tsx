@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import type { ViewerRange, ViewerSelection } from "./CodeViewer";
@@ -10,13 +10,27 @@ type Props = {
   selectedRange?: ViewerRange | null;
   onSelectionChange?: (selection: ViewerSelection) => void;
   onContextMenu?: (payload: { clientX: number; clientY: number; selectedText: string; sourcePath: string | null }) => void;
+  initialLine?: number;
+  onVisibleLineChange?: (line: number) => void;
 };
 
-export default function MonacoCodeViewer({ path, language, content, selectedRange, onSelectionChange, onContextMenu }: Props) {
+function currentEditorTheme() {
+  return document.documentElement.dataset.theme === "dark" ? "vs-dark" : "vs";
+}
+
+export default function MonacoCodeViewer({ path, language, content, selectedRange, onSelectionChange, onContextMenu, initialLine = 1, onVisibleLineChange }: Props) {
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
   const decorationIds = useRef<string[]>([]);
   const selectedRangeRef = useRef<ViewerRange | null>(selectedRange ?? null);
+  const [editorTheme, setEditorTheme] = useState(currentEditorTheme);
+
+  useEffect(() => {
+    const updateTheme = () => setEditorTheme(currentEditorTheme());
+    const observer = new MutationObserver(updateTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
 
   function setPersistentSelection(range: ViewerRange | null) {
     const editor = editorRef.current; const monaco = monacoRef.current; if (!editor || !monaco) return;
@@ -28,9 +42,23 @@ export default function MonacoCodeViewer({ path, language, content, selectedRang
   }
 
   useEffect(() => { setPersistentSelection(selectedRange ?? null); }, [selectedRange, content, path]);
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const line = Math.max(1, Math.round(initialLine));
+    editor.revealLineInCenter(line);
+    editor.setPosition({ lineNumber: line, column: 1 });
+  }, [initialLine, path]);
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor; monacoRef.current = monaco; setPersistentSelection(selectedRange ?? null);
+    editor.revealLineInCenter(Math.max(1, Math.round(initialLine)));
+    editor.setPosition({ lineNumber: Math.max(1, Math.round(initialLine)), column: 1 });
+    editor.onDidScrollChange((event) => {
+      if (!event.scrollTopChanged) return;
+      const visible = editor.getVisibleRanges()[0];
+      if (visible) onVisibleLineChange?.(visible.startLineNumber);
+    });
     editor.onDidChangeCursorSelection((event) => {
       const model = editor.getModel(); if (!model || event.selection.isEmpty()) return;
       const selectedText = model.getValueInRange(event.selection).trim(); if (!selectedText) return;
@@ -47,5 +75,5 @@ export default function MonacoCodeViewer({ path, language, content, selectedRang
     });
   };
 
-  return <div className="viewer code-viewer"><div className="viewer-header"><span>{path ?? "代码"}</span><strong>{language}</strong></div><Editor height="100%" language={language} value={content} theme="vs-dark" onMount={handleMount} options={{ readOnly: true, minimap: { enabled: false }, fontSize: 14, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, renderValidationDecorations: "off", quickSuggestions: false, suggestOnTriggerCharacters: false }} /></div>;
+  return <div className="viewer code-viewer"><div className="viewer-header"><span>{path ?? "代码"}</span><strong>{language}</strong></div><Editor height="100%" language={language} value={content} theme={editorTheme} onMount={handleMount} options={{ readOnly: true, minimap: { enabled: false }, fontSize: 14, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, renderValidationDecorations: "off", quickSuggestions: false, suggestOnTriggerCharacters: false }} /></div>;
 }

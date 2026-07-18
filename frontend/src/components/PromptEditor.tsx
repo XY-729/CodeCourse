@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { getPrompts, savePrompts } from "../api/client";
 
 const PROMPT_LABELS: Record<string, string> = {
@@ -68,7 +68,7 @@ export default function PromptEditor({ onClose }: Props) {
       >
         <div className="modal-title">
           <span>提示词编辑</span>
-          <button className="icon-button" onClick={onClose}>X</button>
+          <button className="icon-button" onClick={onClose} title="关闭"><X size={16} /></button>
         </div>
 
         {loading ? (

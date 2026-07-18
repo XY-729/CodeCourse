@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import { BookOpen, Bot, ChevronDown, Download, FileArchive, FolderTree, MoreHorizontal, PanelLeft, Save, Sparkles, Star, X } from "lucide-react";
 import {
-  askQuestion,
+  askQuestionStream,
   buildProjectIndex,
   createEmptyCourseFile,
   createLearningPlan,
@@ -20,6 +20,7 @@ import {
   getCourseFiles,
   getGenerationTask,
   getLLMSettings,
+  getLearningStates,
   getProject,
   getProjectFile,
   getProjectIndexStatus,
@@ -32,11 +33,13 @@ import {
   listDocumentTerms,
   listProjects,
   listQARecords,
+  resetLearningStates,
   regenerateProject,
   markDocumentTermKnown,
   saveLearningAnchor,
   setQAFavorite,
   updateQARecord,
+  updateLearningState,
   deleteQARecord,
   deleteCourseFile,
 } from "./api/client";
@@ -50,26 +53,37 @@ import type {
   HighlightRecord,
   DocumentTerm,
   LearningAnchor,
+  LearningState,
+  LearningStateUpdate,
   KnowledgeLink,
   ProjectIndexStatus,
   QARecord,
+  QAAskPayload,
+  RetrievalSource,
   TreeNode,
 } from "./api/client";
 import AppDialog from "./components/AppDialog";
 import type { AppDialogState, ChoiceDialogOption } from "./components/AppDialog";
 import CodeViewer, { ViewerRange, ViewerSelection } from "./components/CodeViewer";
 import ContextMenu from "./components/ContextMenu";
+import CommandPalette, { type CommandPaletteItem } from "./components/CommandPalette";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
+import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
+import SelectionQuickBar from "./components/SelectionQuickBar";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
+import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolbar";
+import GenerationSheet from "./components/GenerationSheet";
+import TaskFeedback from "./components/TaskFeedback";
 import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
 
 const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewer"));
 
 type ScopeType = LearningScope["type"];
+type ThemeMode = "light" | "dark";
 type OpenItemType = "file" | "course" | "qa" | "knowledge_graph";
 type SplitDirection = "row" | "column";
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -84,6 +98,7 @@ type OpenItem = {
   qaRecordId?: number;
   favorite?: boolean;
   dirty?: boolean;
+  initialLine?: number;
 };
 
 type EditorGroup = {
@@ -129,9 +144,31 @@ type SelectionAnchor = SelectionSummary & {
 
 type DialogResolver = (value: string | boolean | null) => void;
 
+type QAGenerationState = {
+  label: string;
+  partial: string;
+};
+
+type StoredWorkbench = {
+  version: number;
+  layout: LayoutNode;
+  activeGroupId: string;
+  navigationView: NavigationView;
+  navigationOpen: boolean;
+  sidebarWidth: number;
+};
+
 const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
 const MAX_GROUPS = 9;
 const ROOT_GROUP_ID = "group-1";
+const ASSISTANT_WIDTH_STORAGE_KEY = "codecourse.assistantWidth";
+const THEME_STORAGE_KEY = "codecourse.theme";
+const WORKBENCH_STORAGE_VERSION = 1;
+const MIN_READER_WIDTH = 520;
+
+function getInitialTheme(): ThemeMode {
+  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -155,12 +192,53 @@ function taskLabel(task: GenerationTask): string {
   return `${type} / ${task.status}`;
 }
 
+function isLessonPath(path: string): boolean {
+  return /^lessons\/lesson_\d+\.md$/i.test(path);
+}
+
+function flattenTree(node: TreeNode | null): TreeNode[] {
+  if (!node) return [];
+  return [node, ...node.children.flatMap((child) => flattenTree(child))];
+}
+
+function stripLayoutContent(node: LayoutNode): LayoutNode {
+  if (node.type === "group") {
+    return {
+      ...node,
+      group: {
+        ...node.group,
+        items: node.group.items.map((item) => ({ ...item, content: "", dirty: false })),
+      },
+    };
+  }
+  return { ...node, first: stripLayoutContent(node.first), second: stripLayoutContent(node.second) };
+}
+
+function workbenchStorageKey(projectId: number) {
+  return `codecourse.workbench.v${WORKBENCH_STORAGE_VERSION}.${projectId}`;
+}
+
 function taskStatusMessage(task: GenerationTask): string {
   if (task.stage_label) {
     const progress = task.progress_total > 0 ? ` (${task.progress_current}/${task.progress_total})` : "";
     return `${task.stage_label}${progress}`;
   }
   return taskLabel(task);
+}
+
+function indexStatusMessage(status: ProjectIndexStatus | null): string {
+  if (!status) return "索引未构建";
+  if (status.text_status === "building") return "正在构建基础索引";
+  if (status.structural_status === "building") return "基础索引完成，正在分析调用关系";
+  if (status.structural_status === "completed") {
+    const graphSize = status.node_count ? ` · ${status.node_count} 个结构节点` : "";
+    return `结构索引已完成${graphSize}`;
+  }
+  if (status.text_status === "completed" && status.structural_status && status.structural_status !== "not_built") {
+    return "基础索引已完成 · 结构分析不可用";
+  }
+  if (status.status === "failed") return "索引失败";
+  return `${status.status} · ${status.chunk_count} 个文本片段`;
 }
 
 function qaTitle(record: QARecord): string {
@@ -180,6 +258,11 @@ function countGroups(node: LayoutNode): number {
     return 1;
   }
   return countGroups(node.first) + countGroups(node.second);
+}
+
+function countLayoutItems(node: LayoutNode): number {
+  if (node.type === "group") return node.group.items.length;
+  return countLayoutItems(node.first) + countLayoutItems(node.second);
 }
 
 function findGroup(node: LayoutNode, groupId: string): EditorGroup | null {
@@ -332,10 +415,11 @@ export default function App() {
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
-  const [navigationOpen, setNavigationOpen] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(() => !isAndroidRuntime());
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [generationOpen, setGenerationOpen] = useState(false);
+  const [generationIntent, setGenerationIntent] = useState<GenerationIntent>("outline");
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [llmSettings, setLLMSettings] = useState<LLMSettings | null>(null);
   const [scopeType, setScopeType] = useState<ScopeType>("full_project");
@@ -346,8 +430,11 @@ export default function App() {
   const [indexStatus, setIndexStatus] = useState<ProjectIndexStatus | null>(null);
   const [indexBuilding, setIndexBuilding] = useState(false);
   const [taskMessage, setTaskMessage] = useState("");
-  const [sidebarWidth, setSidebarWidth] = useState(300);
-  const [explainWidth, setExplainWidth] = useState(360);
+  const [sidebarWidth, setSidebarWidth] = useState(264);
+  const [explainWidth, setExplainWidth] = useState(() => {
+    const stored = Number(window.localStorage.getItem(ASSISTANT_WIDTH_STORAGE_KEY));
+    return Number.isFinite(stored) && stored > 0 ? clamp(stored, 340, 520) : 400;
+  });
   const [sidebarProjectHeight, setSidebarProjectHeight] = useState(150);
   const [sidebarCourseHeight, setSidebarCourseHeight] = useState(240);
   const [qaAskHeight, setQAAskHeight] = useState(340);
@@ -358,11 +445,12 @@ export default function App() {
 
   const [selection, setSelection] = useState<SelectionSummary | null>(null);
   const [qaQuestion, setQAQuestion] = useState("");
-  const [qaLoading, setQALoading] = useState(false);
+  const [qaGenerations, setQAGenerations] = useState<Record<string, QAGenerationState>>({});
+  const [qaDraftId, setQADraftId] = useState(1);
   const [qaHistory, setQAHistory] = useState<QARecord[]>([]);
   const [qaHistoryQuery, setQAHistoryQuery] = useState("");
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
-  const [qaUpperTab, setQAUpperTab] = useState<"assistant" | "history" | "knowledge">("assistant");
+  const [qaUpperTab, setQAUpperTab] = useState<"history" | "knowledge">("history");
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
   const [qaSessionId, setQASessionId] = useState<number | null>(null);
   const [qaSessionTree, setQASessionTree] = useState<QARecord[]>([]);
@@ -373,6 +461,9 @@ export default function App() {
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
   const [knowledgeLinks, setKnowledgeLinks] = useState<KnowledgeLink[]>([]);
   const [knowledgeRefreshKey, setKnowledgeRefreshKey] = useState(0);
+  const [learningStates, setLearningStates] = useState<LearningState[]>([]);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [toast, setToast] = useState("");
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
@@ -387,15 +478,55 @@ export default function App() {
   const [editingCourseItemId, setEditingCourseItemId] = useState<string | null>(null);
   const [appDialog, setAppDialog] = useState<AppDialogState | null>(null);
   const [appDialogValue, setAppDialogValue] = useState("");
+  const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialTheme);
 
   const idCounter = useRef(1);
   const dialogResolverRef = useRef<DialogResolver | null>(null);
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
+  const learningStatesRef = useRef<LearningState[]>([]);
+  const learningSaveTimers = useRef<Map<string, number>>(new Map());
+  const pendingLearningUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
   const mobileRuntime = isAndroidRuntime();
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
   const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
-  const showBusy = loading || isTaskRunning || qaLoading;
+  const activeQAKey = qaSessionId ? `session:${qaSessionId}` : `draft:${qaDraftId}`;
+  const activeQAGeneration = qaGenerations[activeQAKey] ?? null;
+  const qaLoading = Boolean(activeQAGeneration);
+  const anyQALoading = Object.keys(qaGenerations).length > 0;
+  const showBusy = loading || isTaskRunning || anyQALoading;
+
+  useEffect(() => {
+    learningStatesRef.current = learningStates;
+  }, [learningStates]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), 2400);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    if (!project || loading) return;
+    const stored: StoredWorkbench = {
+      version: WORKBENCH_STORAGE_VERSION,
+      layout: stripLayoutContent(layout),
+      activeGroupId,
+      navigationView,
+      navigationOpen,
+      sidebarWidth,
+    };
+    try {
+      window.localStorage.setItem(workbenchStorageKey(project.id), JSON.stringify(stored));
+    } catch {
+      // A full storage area must not interrupt reading; recent position still lives in SQLite.
+    }
+  }, [activeGroupId, layout, loading, navigationOpen, navigationView, project?.id, sidebarWidth]);
 
   useEffect(() => {
     loadProjects();
@@ -403,8 +534,36 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    window.localStorage.setItem(ASSISTANT_WIDTH_STORAGE_KEY, String(Math.round(explainWidth)));
+  }, [explainWidth]);
+
+  useEffect(() => {
+    if (mobileRuntime || !assistantOpen || !navigationOpen) {
+      return;
+    }
+    function keepReaderReadable() {
+      const reserved = sidebarWidth + 5 + explainWidth + 5;
+      if (window.innerWidth - reserved < MIN_READER_WIDTH) {
+        setNavigationOpen(false);
+      }
+    }
+    keepReaderReadable();
+    window.addEventListener("resize", keepReaderReadable);
+    return () => window.removeEventListener("resize", keepReaderReadable);
+  }, [assistantOpen, explainWidth, mobileRuntime, navigationOpen, sidebarWidth]);
+
+  useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((open) => !open);
+        return;
+      }
       if (event.key !== "Escape") {
+        return;
+      }
+      if (commandPaletteOpen) {
+        setCommandPaletteOpen(false);
         return;
       }
       if (appDialog) {
@@ -417,7 +576,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [appDialog]);
+  }, [appDialog, commandPaletteOpen]);
 
   useEffect(() => {
     if (!mobileRuntime) {
@@ -466,9 +625,9 @@ export default function App() {
     const currentDrag = dragState;
     function onMouseMove(event: globalThis.MouseEvent) {
       if (currentDrag.kind === "sidebar-width") {
-        setSidebarWidth(clamp(currentDrag.startWidth + event.clientX - currentDrag.startX, 220, 520));
+        setSidebarWidth(clamp(currentDrag.startWidth + event.clientX - currentDrag.startX, 240, 360));
       } else if (currentDrag.kind === "explain-width") {
-        setExplainWidth(clamp(currentDrag.startWidth - (event.clientX - currentDrag.startX), 300, 620));
+        setExplainWidth(clamp(currentDrag.startWidth - (event.clientX - currentDrag.startX), 340, 520));
       } else if (currentDrag.kind === "sidebar-project") {
         setSidebarProjectHeight(clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 96, 320));
       } else if (currentDrag.kind === "sidebar-course") {
@@ -669,6 +828,87 @@ export default function App() {
     return nextCourses;
   }
 
+  function learningStateKey(sourceType: LearningState["source_type"], sourcePath: string) {
+    return `${sourceType}:${sourcePath}`;
+  }
+
+  function findLearningState(sourceType: LearningState["source_type"], sourcePath: string) {
+    return learningStatesRef.current.find((entry) => entry.source_type === sourceType && entry.source_path === sourcePath);
+  }
+
+  async function persistLearningUpdate(projectId: number, key: string, payload: LearningStateUpdate) {
+    try {
+      const saved = await updateLearningState(projectId, payload);
+      setLearningStates((current) => [...current.filter((entry) => learningStateKey(entry.source_type, entry.source_path) !== key), saved]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "保存学习位置失败");
+    } finally {
+      pendingLearningUpdates.current.delete(key);
+      learningSaveTimers.current.delete(key);
+    }
+  }
+
+  function queueLearningUpdate(
+    sourceType: LearningState["source_type"],
+    sourcePath: string,
+    positionKind: LearningState["position_kind"],
+    positionValue: number,
+    status?: LearningState["status"],
+    immediate = false,
+  ) {
+    if (!project || !sourcePath) return;
+    const key = learningStateKey(sourceType, sourcePath);
+    const existing = findLearningState(sourceType, sourcePath);
+    const payload: LearningStateUpdate = {
+      source_type: sourceType,
+      source_path: sourcePath,
+      status: status ?? existing?.status ?? "in_progress",
+      position_kind: positionKind,
+      position_value: positionKind === "scroll_ratio" ? clamp(positionValue, 0, 1) : Math.max(1, Math.round(positionValue)),
+    };
+    pendingLearningUpdates.current.set(key, payload);
+    const timer = learningSaveTimers.current.get(key);
+    if (timer) window.clearTimeout(timer);
+    if (immediate) {
+      void persistLearningUpdate(project.id, key, payload);
+      return;
+    }
+    learningSaveTimers.current.set(key, window.setTimeout(() => {
+      const latest = pendingLearningUpdates.current.get(key);
+      if (latest) void persistLearningUpdate(project.id, key, latest);
+    }, 800));
+  }
+
+  function touchOpenItem(item: OpenItem) {
+    if (item.type === "file") {
+      const state = findLearningState("file", item.path);
+      queueLearningUpdate("file", item.path, "line", state?.position_value ?? 1, state?.status);
+    } else if (item.type === "course") {
+      const sourceType = item.qaRecordId ? "qa" : "course";
+      const state = findLearningState(sourceType, item.path);
+      queueLearningUpdate(sourceType, item.path, "scroll_ratio", state?.position_value ?? 0, state?.status);
+    } else if (item.type === "qa") {
+      const state = findLearningState("qa", item.path);
+      queueLearningUpdate("qa", item.path, "scroll_ratio", state?.position_value ?? 0, state?.status);
+    }
+  }
+
+  async function toggleLessonComplete(filename: string) {
+    if (!project) return;
+    const existing = findLearningState("course", filename);
+    const nextStatus = existing?.status === "completed" ? "in_progress" : "completed";
+    const key = learningStateKey("course", filename);
+    await persistLearningUpdate(project.id, key, {
+      source_type: "course",
+      source_path: filename,
+      status: nextStatus,
+      position_kind: "scroll_ratio",
+      position_value: existing?.position_value ?? 0,
+    });
+    setTaskMessage(nextStatus === "completed" ? "本课已完成" : "已恢复为学习中");
+    setToast(nextStatus === "completed" ? "已标记完成" : "已恢复为学习中");
+  }
+
   async function refreshQAHistory(projectId = project?.id) {
     if (!projectId) {
       return;
@@ -824,7 +1064,7 @@ export default function App() {
     };
   }
 
-  function buildAskPayloadContext(): Pick<Parameters<typeof askQuestion>[1], "source_type" | "source_path" | "selected_text"> {
+  function buildAskPayloadContext(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text"> {
     if (selection) {
       return {
         source_type: selection.sourceType,
@@ -865,6 +1105,7 @@ export default function App() {
     setLayout((prev) => updateGroup(prev, groupId, (group) => openItem(group, item)));
     setActiveGroupId(groupId);
     applyActiveItem(item);
+    touchOpenItem(item);
   }
 
   function splitGroupWithItem(groupId: string, zone: DropZone, item: OpenItem) {
@@ -892,6 +1133,7 @@ export default function App() {
     setLayout((prev) => updateGroup(prev, groupId, (group) => ({ ...group, activeItemId: item.id })));
     setActiveGroupId(groupId);
     applyActiveItem(item);
+    touchOpenItem(item);
   }
 
   function updateOpenQARecord(record: QARecord) {
@@ -903,6 +1145,46 @@ export default function App() {
         ),
       })),
     );
+  }
+
+  async function hydrateStoredItem(item: OpenItem, projectId: number, availableCourses: CourseFile[]): Promise<OpenItem | null> {
+    try {
+      if (item.type === "file") {
+        const file = await getProjectFile(projectId, item.path);
+        return { ...item, content: file.content, language: file.language, dirty: false };
+      }
+      if (item.type === "course") {
+        const course = await getCourseContent(projectId, item.path);
+        let title = availableCourses.find((entry) => entry.filename === item.path)?.title ?? item.title;
+        if (item.qaRecordId) {
+          const record = await getQARecord(projectId, item.qaRecordId).catch(() => null);
+          if (record) title = qaTitle(record);
+        }
+        return { ...item, title, content: course.content, dirty: false };
+      }
+      if (item.type === "qa" && item.qaRecordId) {
+        const record = await getQARecord(projectId, item.qaRecordId);
+        return { ...item, title: qaTitle(record), content: record.answer_md, favorite: record.favorite, dirty: false };
+      }
+      if (item.type === "knowledge_graph") return { ...item, content: "" };
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  async function hydrateStoredLayout(node: LayoutNode, projectId: number, availableCourses: CourseFile[]): Promise<LayoutNode> {
+    if (node.type === "group") {
+      const hydrated = await Promise.all(node.group.items.map((item) => hydrateStoredItem(item, projectId, availableCourses)));
+      const items = hydrated.filter((item): item is OpenItem => Boolean(item));
+      const activeItemId = items.some((item) => item.id === node.group.activeItemId) ? node.group.activeItemId : items.at(-1)?.id ?? null;
+      return { ...node, group: { ...node.group, items, activeItemId } };
+    }
+    const [first, second] = await Promise.all([
+      hydrateStoredLayout(node.first, projectId, availableCourses),
+      hydrateStoredLayout(node.second, projectId, availableCourses),
+    ]);
+    return { ...node, first, second };
   }
 
   async function buildOpenItem(payload: DropPayload): Promise<OpenItem | null> {
@@ -973,7 +1255,7 @@ export default function App() {
     return null;
   }
 
-  async function openFileInActiveGroup(projectId: number, path: string) {
+  async function openFileInActiveGroup(projectId: number, path: string, initialLine?: number) {
     const content = await getProjectFile(projectId, path);
     setFileContent(content);
     setSelectedCourse(null);
@@ -984,6 +1266,7 @@ export default function App() {
       title: path.split("/").pop() ?? path,
       content: content.content,
       language: content.language,
+      initialLine,
     });
   }
 
@@ -1114,12 +1397,14 @@ export default function App() {
     try {
       const freshProject = await getProject(nextProject.id);
       setProject(freshProject);
-      const [nextTree, nextCourses, tasks, settings, nextIndexStatus] = await Promise.all([
+      const [nextTree, nextCourses, tasks, settings, nextIndexStatus, nextLearningStates, nextQARecords] = await Promise.all([
         getTree(freshProject.id),
         getCourseFiles(freshProject.id),
         listGenerationTasks(freshProject.id),
         getLLMSettings().catch(() => null),
         getProjectIndexStatus(freshProject.id).catch(() => null),
+        getLearningStates(freshProject.id).catch(() => []),
+        listQARecords(freshProject.id).catch(() => []),
       ]);
       const initialLayout = createInitialLayout();
       setTree(nextTree);
@@ -1127,6 +1412,9 @@ export default function App() {
       setLLMSettings(settings);
       setActiveTask(tasks[0] ?? null);
       setIndexStatus(nextIndexStatus);
+      setLearningStates(nextLearningStates);
+      learningStatesRef.current = nextLearningStates;
+      setQAHistory(nextQARecords);
       setIndexBuilding(nextIndexStatus?.status === "building");
       setTaskMessage(tasks[0] ? `最近任务：${taskLabel(tasks[0])}` : "待生成");
       setScopeType(freshProject.project_type === "learning_plan" ? "learning_plan" : "full_project");
@@ -1142,7 +1430,7 @@ export default function App() {
       setDocumentTerms([]);
       setDocumentTermsBySource({});
       setLearningAnchor(null);
-      setQAUpperTab("assistant");
+      setQAUpperTab("history");
       setQAPanelError("");
       setHighlights([]);
       setKnowledgeLinks([]);
@@ -1154,7 +1442,79 @@ export default function App() {
       await refreshQAHistory(freshProject.id);
       await refreshHighlights(freshProject.id);
       await refreshKnowledgeLinks(freshProject.id);
-      const firstCourse = nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses[0];
+      try {
+        const rawWorkbench = window.localStorage.getItem(workbenchStorageKey(freshProject.id));
+        const stored = rawWorkbench ? JSON.parse(rawWorkbench) as StoredWorkbench : null;
+        if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
+          const restoredLayout = await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses);
+          if (countLayoutItems(restoredLayout) > 0) {
+            const restoredGroupId = hasGroup(restoredLayout, stored.activeGroupId) ? stored.activeGroupId : firstGroupId(restoredLayout);
+            const restoredGroup = findGroup(restoredLayout, restoredGroupId);
+            const restoredItem = restoredGroup?.items.find((item) => item.id === restoredGroup.activeItemId) ?? null;
+            setLayout(restoredLayout);
+            setActiveGroupId(restoredGroupId);
+            setNavigationView(stored.navigationView ?? "courses");
+            setNavigationOpen(Boolean(stored.navigationOpen));
+            setSidebarWidth(clamp(stored.sidebarWidth || 264, 240, 360));
+            if (restoredItem?.type === "file") {
+              setFileContent({ path: restoredItem.path, content: restoredItem.content, language: restoredItem.language ?? "plaintext" });
+            } else if (restoredItem?.type === "course") {
+              setSelectedCourse(restoredItem.path);
+              void refreshDocumentTerms(restoredItem.qaRecordId ? "qa" : "course", restoredItem.path, freshProject.id);
+            }
+            return;
+          }
+        }
+      } catch {
+        window.localStorage.removeItem(workbenchStorageKey(freshProject.id));
+      }
+      const recent = [...nextLearningStates].sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
+      const recentCourse = recent?.source_type === "course" ? nextCourses.find((file) => file.filename === recent.source_path) : null;
+      const firstCourse = recentCourse ?? nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses.find((file) => isLessonPath(file.filename)) ?? nextCourses[0];
+      if (recent?.source_type === "qa") {
+        const record = nextQARecords.find((entry) => _normalizeOutputPath(entry.output_path, entry.id, freshProject.id) === recent.source_path);
+        if (record) {
+          const relPath = _normalizeOutputPath(record.output_path, record.id, freshProject.id);
+          const course = await getCourseContent(freshProject.id, relPath).catch(() => null);
+          setSelectedQA(record);
+          setQASessionId(record.session_id ?? null);
+          setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, course ? {
+            id: `course:${relPath}`,
+            type: "course",
+            path: relPath,
+            title: qaTitle(record),
+            content: course.content,
+            qaRecordId: record.id,
+            favorite: record.favorite,
+          } : {
+            id: `qa:${record.id}`,
+            type: "qa",
+            path: relPath,
+            title: qaTitle(record),
+            content: record.answer_md,
+            qaRecordId: record.id,
+            favorite: record.favorite,
+          })));
+          return;
+        }
+      }
+      if (recent?.source_type === "file") {
+        try {
+          const content = await getProjectFile(freshProject.id, recent.source_path);
+          setFileContent(content);
+          setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, {
+            id: `file:${recent.source_path}`,
+            type: "file",
+            path: recent.source_path,
+            title: recent.source_path.split("/").pop() ?? recent.source_path,
+            content: content.content,
+            language: content.language,
+          })));
+          return;
+        } catch {
+          // A deleted recent file is ignored and the course fallback is opened below.
+        }
+      }
       if (firstCourse) {
         const content = await getCourseContent(freshProject.id, firstCourse.filename);
         void refreshDocumentTerms("course", firstCourse.filename, freshProject.id);
@@ -1336,6 +1696,7 @@ export default function App() {
     setProjects((items) => items.map((item) => (item.id === freshProject.id ? freshProject : item)));
     if (nextTask.status === "completed") {
       setTaskMessage("生成完成");
+      setToast("内容已生成");
       const preferred = nextTask.task_type === "file_lesson" || nextTask.task_type === "outline_lesson"
         ? nextCourses.find((item) => item.filename === nextTask.output_path?.split("/").slice(-2).join("/"))
         : nextCourses.find((item) => item.filename === "outline.md");
@@ -1462,6 +1823,7 @@ export default function App() {
     setError("");
     try {
       await deleteProject(nextProject.id);
+      window.localStorage.removeItem(workbenchStorageKey(nextProject.id));
       const remaining = await listProjects();
       setProjects(remaining);
       if (project?.id === nextProject.id) {
@@ -1481,6 +1843,8 @@ export default function App() {
         setQAHistory([]);
         setHighlights([]);
         setKnowledgeLinks([]);
+        setLearningStates([]);
+        learningStatesRef.current = [];
         setKnowledgeRefreshKey((value) => value + 1);
         setTaskMessage("");
         if (remaining.length > 0) {
@@ -1514,6 +1878,33 @@ export default function App() {
     });
   }
 
+  async function runStreamingQuestion(payload: QAAskPayload, generationKey: string): Promise<QARecord> {
+    setQAGenerations((current) => ({
+      ...current,
+      [generationKey]: { label: "检索上下文", partial: "" },
+    }));
+    try {
+      return await askQuestionStream(project!.id, payload, {
+        onStage: (_stage, label) => {
+          setQAGenerations((current) => current[generationKey]
+            ? { ...current, [generationKey]: { ...current[generationKey], label } }
+            : current);
+        },
+        onDelta: (text) => {
+          setQAGenerations((current) => current[generationKey]
+            ? { ...current, [generationKey]: { ...current[generationKey], partial: current[generationKey].partial + text } }
+            : current);
+        },
+      });
+    } finally {
+      setQAGenerations((current) => {
+        const next = { ...current };
+        delete next[generationKey];
+        return next;
+      });
+    }
+  }
+
   async function handleAsk() {
     if (!project || !qaQuestion.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) {
       return;
@@ -1524,11 +1915,11 @@ export default function App() {
     if (!ok) {
       return;
     }
-    setQALoading(true);
     setQAPanelError("");
+    const generationKey = activeQAKey;
     try {
       const context = buildAskPayloadContext();
-      const record = await askQuestion(project.id, {
+      const record = await runStreamingQuestion({
         source_type: context.source_type,
         source_path: context.source_path,
         selected_text: context.selected_text,
@@ -1547,10 +1938,10 @@ export default function App() {
               end_column: selectionAnchor.range.endColumn,
             }
           : null,
-      });
+      }, generationKey);
       setSelectedQA(record);
       setQASessionId(record.session_id ?? qaSessionId);
-      setQAUpperTab("assistant");
+      setQAUpperTab("history");
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
       setQAQuestion("");
       await Promise.all([
@@ -1561,8 +1952,6 @@ export default function App() {
       setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
-    } finally {
-      setQALoading(false);
     }
   }
 
@@ -1573,7 +1962,8 @@ export default function App() {
     setDocumentTerms([]);
     setLearningAnchor(null);
     setQAQuestion("");
-    setQAUpperTab("assistant");
+    setQAUpperTab("history");
+    setQADraftId((value) => value + 1);
   }
 
   async function handleGenerateTerm(term: DocumentTerm) {
@@ -1582,7 +1972,7 @@ export default function App() {
       const record = qaHistory.find((entry) => entry.id === term.qa_record_id) ?? await getQARecord(project.id, term.qa_record_id);
       setSelectedQA(record);
       setQASessionId(record.session_id ?? null);
-      setQAUpperTab("assistant");
+      setQAUpperTab("history");
       setAssistantOpen(true);
       return;
     }
@@ -1600,10 +1990,10 @@ export default function App() {
       { confirmText: "生成解释" },
     );
     if (!ok) return;
-    setQALoading(true);
     setQAPanelError("");
+    const generationKey = parent?.session_id ? `session:${parent.session_id}` : activeQAKey;
     try {
-      const record = await askQuestion(project.id, {
+      const record = await runStreamingQuestion({
         source_type: term.source_type,
         source_path: term.source_path,
         selected_text: term.term_text,
@@ -1615,11 +2005,11 @@ export default function App() {
         parent_qa_id: parent?.id ?? null,
         relation_type: "term_explanation",
         term_candidate_id: term.id,
-      });
+      }, generationKey);
       setSelectedQA(record);
       setQASessionId(record.session_id ?? null);
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
-      setQAUpperTab("assistant");
+      setQAUpperTab("history");
       setAssistantOpen(true);
       await Promise.all([
         refreshCourses(project.id),
@@ -1630,8 +2020,6 @@ export default function App() {
       setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成术语解释失败");
-    } finally {
-      setQALoading(false);
     }
   }
 
@@ -2019,6 +2407,10 @@ export default function App() {
   function renderGroup(group: EditorGroup) {
     const activeItem = group.items.find((item) => item.id === group.activeItemId) ?? null;
     const previewZone = dropPreview?.groupId === group.id ? dropPreview.zone : null;
+    const lessonFiles = courses.filter((file) => isLessonPath(file.filename)).sort((a, b) => a.filename.localeCompare(b.filename));
+    const lessonIndex = activeItem?.type === "course" ? lessonFiles.findIndex((file) => file.filename === activeItem.path) : -1;
+    const activeLearningType: LearningState["source_type"] | null = activeItem?.type === "file" ? "file" : activeItem?.type === "qa" || activeItem?.qaRecordId ? "qa" : activeItem?.type === "course" ? "course" : null;
+    const activeLearningState = activeItem && activeLearningType ? findLearningState(activeLearningType, activeItem.path) : undefined;
     const activeQAHighlights =
       activeItem?.type === "qa" ? highlights.filter((highlight) => highlight.source_type === "qa" && highlight.source_path === activeItem.path) : [];
 
@@ -2060,6 +2452,17 @@ export default function App() {
           ))}
         </div>
         <div className="pane-body">
+          {activeItem?.type === "course" && lessonIndex >= 0 ? (
+            <ReaderLearningToolbar
+              title={activeItem.title}
+              index={lessonIndex}
+              total={lessonFiles.length}
+              completed={activeLearningState?.status === "completed"}
+              onPrevious={lessonIndex > 0 ? () => void openCourseInActiveGroup(project!.id, lessonFiles[lessonIndex - 1].filename) : undefined}
+              onNext={lessonIndex < lessonFiles.length - 1 ? () => void openCourseInActiveGroup(project!.id, lessonFiles[lessonIndex + 1].filename) : undefined}
+              onToggleComplete={() => void toggleLessonComplete(activeItem.path)}
+            />
+          ) : null}
           {activeItem?.type === "file" ? (
             <CodeViewer
               path={activeItem.path}
@@ -2072,6 +2475,8 @@ export default function App() {
               }
               onSelectionChange={handleSelection}
               onContextMenu={(payload) => handleContextMenuOpen("file", payload.clientX, payload.clientY, payload.sourcePath, payload.selectedText)}
+              initialLine={activeItem.initialLine ?? (activeLearningState?.position_kind === "line" ? activeLearningState.position_value : 1)}
+              onVisibleLineChange={(line) => queueLearningUpdate("file", activeItem.path, "line", line)}
             />
           ) : null}
           {activeItem?.type === "course" ? (
@@ -2155,6 +2560,8 @@ export default function App() {
                 onGenerateTerm={handleGenerateTerm}
                 onTermAction={handleTermAction}
                 onGenerateLesson={activeItem.path === "outline.md" ? handleGenerateOutlineLesson : undefined}
+                initialScrollRatio={activeLearningState?.position_kind === "scroll_ratio" ? activeLearningState.position_value : 0}
+                onScrollRatioChange={(ratio) => queueLearningUpdate(activeItem.qaRecordId ? "qa" : "course", activeItem.path, "scroll_ratio", ratio)}
                 headerActions={(activeItem.qaRecordId || activeItem.path.startsWith("selection_answers/") || activeItem.path.startsWith("qa/")) ? (
                   <button
                     className="secondary-button compact"
@@ -2294,55 +2701,122 @@ export default function App() {
     );
   }
 
+  async function handleResetLearningProgress() {
+    if (!project) return;
+    const confirmed = await confirmAction("重置学习进度", "将清除课程完成状态和阅读位置。课程文件不会被删除。", { confirmText: "重置", danger: true });
+    if (!confirmed) return;
+    await resetLearningStates(project.id);
+    setLearningStates([]);
+    learningStatesRef.current = [];
+    setTaskMessage("学习进度已重置");
+    setToast("学习进度已重置");
+  }
+
+  function commandPaletteItems(): CommandPaletteItem[] {
+    const items: CommandPaletteItem[] = [
+      { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => setAssistantOpen(true) },
+      { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", run: () => { setGenerationIntent("outline"); setGenerationOpen(true); } },
+      { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => { setNavigationView("courses"); setNavigationOpen(true); } },
+      { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => { setNavigationView("files"); setNavigationOpen(true); } },
+      { id: "command:settings", label: "模型 API 设置", section: "命令", keywords: "deepseek key 模型", run: () => setSettingsOpen(true) },
+      { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: () => setPromptEditorOpen(true) },
+      { id: "command:index", label: "构建项目索引", section: "命令", keywords: "rag 搜索 索引", run: () => void handleBuildIndex() },
+      { id: "command:reset-progress", label: "重置学习进度", section: "命令", keywords: "清除 完成 阅读位置", run: () => void handleResetLearningProgress() },
+    ];
+    for (const course of courses) {
+      items.push({ id: `course:${course.filename}`, label: course.title, description: course.filename, section: "课程", keywords: course.filename, run: () => project && void openCourseInActiveGroup(project.id, course.filename) });
+    }
+    for (const node of flattenTree(tree).filter((entry) => entry.type === "file")) {
+      items.push({ id: `file:${node.path}`, label: node.name, description: node.path, section: "源码", keywords: node.path, run: () => project && void openFileInActiveGroup(project.id, node.path) });
+    }
+    for (const record of qaHistory) {
+      items.push({ id: `qa:${record.id}`, label: qaTitle(record), description: record.question, section: "回答", keywords: `${record.source_path ?? ""} ${record.answer_md.slice(0, 160)}`, run: () => void openQAInActiveGroup(record) });
+    }
+    for (const entry of projects) {
+      items.push({ id: `project:${entry.id}`, label: entry.name, description: entry.project_type === "learning_plan" ? "学习计划" : entry.url, section: "项目", keywords: entry.url, run: () => void openProject(entry) });
+    }
+    return items;
+  }
+
+  const activeOpenItem = getActiveOpenItem();
+  const activeLessonMatch = activeOpenItem?.type === "course" ? activeOpenItem.path.match(/^lessons\/lesson_(\d+)\.md$/i) : null;
+  const activeLessonNumber = activeLessonMatch ? Number(activeLessonMatch[1]) : null;
+  const activeLessonTitle = activeOpenItem && activeLessonNumber
+    ? courses.find((item) => item.filename === activeOpenItem.path)?.title ?? activeOpenItem.title
+    : "";
+  const lessonFilesForProgress = courses.filter((item) => isLessonPath(item.filename));
+  const completedLessonCount = lessonFilesForProgress.filter((item) =>
+    learningStates.some((state) => state.source_type === "course" && state.source_path === item.filename && state.status === "completed"),
+  ).length;
+  const progressLabel = lessonFilesForProgress.length ? `${completedLessonCount}/${lessonFilesForProgress.length} 课已完成` : undefined;
+  const activeDocumentTitle = activeOpenItem?.title ?? (project ? "学习工作台" : "CodeCourse");
+
+  function openGeneration(intent: GenerationIntent) {
+    setGenerationIntent(intent);
+    setGenerationOpen(true);
+  }
+
+  function runSelectedGeneration() {
+    if (generationIntent === "outline") {
+      void handleGenerateOutline();
+    } else if (generationIntent === "lesson" && activeLessonNumber) {
+      void handleGenerateOutlineLesson(activeLessonNumber, activeLessonTitle);
+    } else if (generationIntent === "brief" || generationIntent === "detailed") {
+      void handleGenerateFileLesson(generationIntent);
+    }
+  }
+
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <input ref={archiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportArchive(file); }} />
-        <div className="brand">
-          <img
-            src="/logo.jpg"
-            alt="CodeCourse logo"
-            className="brand-logo"
-            onError={(event) => {
-              event.currentTarget.style.display = "none";
-            }}
-          />
-          <div className="brand-text">
-            <strong>GitHub 项目学习器</strong>
-            <span>{project ? project.name : "MVP"}</span>
+      <input ref={archiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportArchive(file); }} />
+      {!mobileRuntime ? (
+        <DesktopToolbar
+          project={project}
+          projects={projects}
+          activeTitle={activeDocumentTitle}
+          progressLabel={progressLabel}
+          navigationOpen={navigationOpen}
+          assistantOpen={assistantOpen}
+          busyProjectId={busyProjectId}
+          loading={loading || isTaskRunning}
+          canGenerateLesson={Boolean(activeLessonNumber)}
+          canGenerateFile={canGenerateFileLesson}
+          indexLabel={indexBuilding || indexStatus?.status === "building" ? "正在构建索引" : "构建项目索引"}
+          indexDisabled={!project || isLearningPlanProject || indexBuilding}
+          themeMode={themeMode}
+          onToggleNavigation={() => {
+            if (navigationView === "projects") setNavigationView("courses");
+            setNavigationOpen((open) => !open);
+          }}
+          onSelectProject={openProject}
+          onImport={handleImportRequest}
+          onCreateLearningPlan={handleCreateLearningPlan}
+          onRegenerateProject={handleRegenerate}
+          onDeleteProject={handleDelete}
+          onOpenGeneration={openGeneration}
+          onToggleAssistant={() => { setQAUpperTab("history"); setAssistantOpen((open) => !open); }}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenPrompts={() => setPromptEditorOpen(true)}
+          onBuildIndex={() => void handleBuildIndex()}
+          onToggleTheme={() => setThemeMode((current) => current === "dark" ? "light" : "dark")}
+        />
+      ) : (
+        <header className="topbar mobile-topbar">
+          <div className="brand">
+            <img src="/logo.png" alt="CodeCourse logo" className="brand-logo" />
+            <div className="brand-text"><strong>CodeCourse</strong><span>{project?.name ?? "学习工作台"}</span></div>
           </div>
-        </div>
-        <div className="topbar-workspace-actions">
-          <button
-            className="project-switch"
-            onClick={() => {
-              setNavigationView("projects");
-              setNavigationOpen(true);
-            }}
-            title="切换项目"
-          >
-            <span>{project?.name ?? "选择项目"}</span>
-            <ChevronDown size={15} />
-          </button>
-          <button className="primary-button topbar-import" onClick={handleImportRequest} disabled={loading}>
-            <Download size={15} />
-            导入仓库
-          </button>
-          <div className="more-menu-wrap">
-            <button
-              type="button"
-              className="icon-button header-icon-button"
-              onClick={() => setMoreMenuOpen((open) => !open)}
-              title="更多工具"
-              aria-haspopup="menu"
-              aria-expanded={moreMenuOpen}
-            >
-              <MoreHorizontal size={18} />
+          <div className="topbar-workspace-actions">
+            <button className="project-switch" onClick={() => { setNavigationView("projects"); setNavigationOpen(true); }}>
+              <span>{project?.name ?? "选择项目"}</span><ChevronDown size={15} />
             </button>
+            <button className="primary-button topbar-import" onClick={handleImportRequest} disabled={loading}><Download size={15} /></button>
+            <button className="icon-button header-icon-button" onClick={() => setMoreMenuOpen((open) => !open)}><MoreHorizontal size={18} /></button>
           </div>
-        </div>
-      </header>
-      {moreMenuOpen ? (
+        </header>
+      )}
+      {mobileRuntime && moreMenuOpen ? (
         <div className="more-menu-layer" onMouseDown={() => setMoreMenuOpen(false)}>
           <div className="more-menu topbar-more-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
             <button type="button" role="menuitem" onClick={() => { setSettingsOpen(true); setMoreMenuOpen(false); }}>
@@ -2357,24 +2831,42 @@ export default function App() {
           </div>
         </div>
       ) : null}
-      {error ? <div className="error-bar">{error}</div> : null}
-      {showBusy ? <div className="busy-bar">{qaLoading ? "正在生成回答..." : loading ? "正在处理..." : "正在生成课程内容..."}</div> : null}
+      {!mobileRuntime ? (
+        <TaskFeedback
+          error={error}
+          busy={showBusy}
+          label={anyQALoading ? (activeQAGeneration?.label || "正在生成回答") : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : ""}
+          progressCurrent={activeTask?.progress_current}
+          progressTotal={activeTask?.progress_total}
+          toast={toast}
+          onDismissError={() => setError("")}
+        />
+      ) : (
+        <>{error ? <div className="error-bar">{error}</div> : null}{showBusy ? <div className="busy-bar">{taskMessage || "正在处理…"}</div> : null}</>
+      )}
       <main
-        className={`workbench ${navigationOpen ? "navigation-open" : ""}`}
-        style={{ gridTemplateColumns: navigationOpen ? `48px ${sidebarWidth}px 6px minmax(0, 1fr)` : "48px minmax(0, 1fr)" }}
+        className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen ? "assistant-open" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
+        style={{
+          gridTemplateColumns: [
+            ...(mobileRuntime ? ["48px"] : []),
+            ...(navigationOpen ? [`${sidebarWidth}px`, "5px"] : []),
+            "minmax(0, 1fr)",
+            ...(assistantOpen ? ["5px", `${explainWidth}px`] : []),
+          ].join(" "),
+        }}
       >
-        <nav className="activity-rail" aria-label="学习导航">
+        {mobileRuntime ? <nav className="activity-rail" aria-label="学习导航">
           <button className={navigationOpen && navigationView === "courses" ? "active" : ""} onClick={() => { setNavigationView("courses"); setNavigationOpen(navigationView !== "courses" || !navigationOpen); }} title="课程"><BookOpen size={18} /><span>课程</span></button>
           <button className={navigationOpen && navigationView === "files" ? "active" : ""} onClick={() => { setNavigationView("files"); setNavigationOpen(navigationView !== "files" || !navigationOpen); }} title="源码"><FolderTree size={18} /><span>源码</span></button>
           <button className={`desktop-project-nav ${navigationOpen && navigationView === "projects" ? "active" : ""}`} onClick={() => { setNavigationView("projects"); setNavigationOpen(navigationView !== "projects" || !navigationOpen); }} title="项目"><PanelLeft size={18} /><span>项目</span></button>
           <span className="activity-rail-spacer" />
-          <button className={assistantOpen && qaUpperTab !== "knowledge" ? "active" : ""} onClick={() => { setQAUpperTab("assistant"); setAssistantOpen((open) => qaUpperTab === "knowledge" ? true : !open); }} title="AI 助手"><Bot size={18} /><span>助手</span></button>
+          <button className={assistantOpen && qaUpperTab !== "knowledge" ? "active" : ""} onClick={() => { setQAUpperTab("history"); setAssistantOpen((open) => qaUpperTab === "knowledge" ? true : !open); }} title="AI 助手"><Bot size={18} /><span>助手</span></button>
           <button className={`mobile-only ${assistantOpen && qaUpperTab === "knowledge" ? "active" : ""}`} onClick={() => { setQAUpperTab("knowledge"); setAssistantOpen(true); }} title="知识网络"><Sparkles size={18} /><span>网络</span></button>
-        </nav>
+        </nav> : null}
         {navigationOpen ? (
           <>
             <Sidebar
-              view={navigationView}
+              view={mobileRuntime ? navigationView : navigationView === "files" ? "files" : "courses"}
               projects={projects}
               currentProjectId={project?.id ?? null}
               tree={tree}
@@ -2394,6 +2886,9 @@ export default function App() {
               onSelectCourse={handleSelectCourse}
               onCreateCourse={handleCreateCourse}
               onDeleteCourse={handleDeleteCourse}
+              learningStates={learningStates}
+              onContinueLearning={(filename) => void openCourseInActiveGroup(project!.id, filename)}
+              onViewChange={mobileRuntime ? undefined : (view) => setNavigationView(view)}
             />
           </>
         ) : null}
@@ -2403,76 +2898,6 @@ export default function App() {
           title="拖拽调整左栏宽度"
         /> : null}
         <section className="center-pane">
-          <div className="context-toolbar">
-            <div className="context-toolbar-title">
-              <span>{project ? (selectedCourse ? "课程阅读" : fileContent ? "源码阅读" : "学习工作台") : "开始学习"}</span>
-              {taskMessage ? <small className={activeTask?.status === "failed" ? "failed" : ""}>{taskMessage}</small> : null}
-            </div>
-            <div className="context-toolbar-actions">
-              {project ? <button className="secondary-button compact" onClick={() => setGenerationOpen(true)} disabled={isTaskRunning}><Sparkles size={14} />生成</button> : null}
-              <button className="icon-button" onClick={() => setAssistantOpen(true)} title="打开 AI 助手"><Bot size={17} /></button>
-            </div>
-          </div>
-          <div className="generation-bar legacy-generation-bar">
-            <div className="scope-controls">
-              <select
-                value={isLearningPlanProject ? "learning_plan" : scopeType}
-                onChange={(event) => {
-                  const nextScope = event.target.value as ScopeType;
-                  setScopeType(nextScope);
-                  if (nextScope !== "files") {
-                    setSelectedScopeFiles([]);
-                  }
-                }}
-                disabled={!project || isTaskRunning || isLearningPlanProject}
-              >
-                <option value="full_project">全项目</option>
-                <option value="files">指定文件</option>
-                <option value="learning_plan">学习计划</option>
-              </select>
-              <div className="scope-file-summary">
-                {isLearningPlanProject || scopeType === "learning_plan"
-                  ? "根据生成要求生成学习计划"
-                  : scopeType === "files"
-                    ? selectedScopeFiles.length
-                      ? `已选 ${selectedScopeFiles.length} 个：${selectedScopeFiles.map((path) => path.split("/").pop() ?? path).join("、")}`
-                      : "请在文件树中选择文件"
-                    : "使用整个项目生成总纲"}
-              </div>
-              <button onClick={handleGenerateOutline} disabled={!project || isTaskRunning}>
-                生成 AI 总纲
-              </button>
-              <button className="secondary-button" onClick={() => setPromptEditorOpen(true)}>
-                提示词
-              </button>
-              <button
-                className="secondary-button"
-                onClick={handleBuildIndex}
-                disabled={!project || isLearningPlanProject || indexBuilding}
-              >
-                {indexBuilding || indexStatus?.status === "building" ? "索引中..." : "构建索引"}
-              </button>
-            </div>
-            <textarea
-              className="generation-instructions"
-              value={generationInstructions}
-              onChange={(event) => setGenerationInstructions(event.target.value)}
-              placeholder="生成要求"
-              disabled={!project || isTaskRunning}
-            />
-            <div className="lesson-actions">
-              <button onClick={() => handleGenerateFileLesson("brief")} disabled={!canGenerateFileLesson || isTaskRunning}>
-                生成粗略介绍
-              </button>
-              <button onClick={() => handleGenerateFileLesson("detailed")} disabled={!canGenerateFileLesson || isTaskRunning}>
-                生成详细分析
-              </button>
-            </div>
-            <div className={`task-status ${activeTask?.status === "failed" ? "failed" : ""}`}>
-              {taskMessage || "待生成"}
-              {project && !isLearningPlanProject ? ` · 索引：${indexStatus?.status ?? "未构建"} (${indexStatus?.chunk_count ?? 0})` : ""}
-            </div>
-          </div>
           {project ? (
             <div className="reader-workspace">{renderLayoutNode(layout)}</div>
           ) : (
@@ -2488,23 +2913,21 @@ export default function App() {
           )}
         </section>
         <div
-          className="resize-handle assistant-resizer"
+          className={`resize-handle assistant-resizer ${assistantOpen ? "visible" : ""}`}
           onMouseDown={(event) => setDragState({ kind: "explain-width", startX: event.clientX, startWidth: explainWidth })}
           title="拖拽调整右栏宽度"
         />
-        <div className={`assistant-drawer ${assistantOpen ? "open" : ""}`} style={{ width: `${explainWidth}px` }}>
+        <div className={`assistant-drawer ${assistantOpen ? "open" : ""}`}>
         <ExplainPanel
           selection={selection}
           contextSummary={buildAssistantContextSummary()}
           question={qaQuestion}
           loading={qaLoading}
+          loadingLabel={activeQAGeneration?.label}
           history={qaHistory}
-          sessionTree={qaSessionTree}
           historyQuery={qaHistoryQuery}
           favoriteOnly={qaFavoriteOnly}
           selectedRecord={selectedQA}
-          learningAnchor={learningAnchor}
-          documentTerms={documentTerms}
           settings={llmSettings}
           panelError={qaPanelError}
           askHeight={qaAskHeight}
@@ -2550,17 +2973,37 @@ export default function App() {
           onDeleteRecord={handleDeleteQA}
           onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
-          onSaveUnderstanding={handleSaveUnderstanding}
-          onDeleteUnderstanding={handleDeleteUnderstanding}
-          onGenerateTerm={handleGenerateTerm}
-          onTermAction={handleTermAction}
-          onSelectionChange={handleSelection}
           onOpenSettings={() => setSettingsOpen(true)}
           onClose={() => setAssistantOpen(false)}
         />
         </div>
       </main>
-      {generationOpen ? (
+      {!mobileRuntime ? (
+        <GenerationSheet
+          open={generationOpen}
+          intent={generationIntent}
+          project={project}
+          scope={scopeType}
+          selectedFileCount={selectedScopeFiles.length}
+          instructions={generationInstructions}
+          running={isTaskRunning}
+          activeTask={activeTask}
+          taskMessage={taskMessage}
+          onClose={() => setGenerationOpen(false)}
+          onScopeChange={(nextScope) => {
+            setScopeType(nextScope);
+            if (nextScope !== "files") {
+              setSelectedScopeFiles([]);
+            } else {
+              setNavigationView("files");
+              setNavigationOpen(true);
+            }
+          }}
+          onInstructionsChange={setGenerationInstructions}
+          onOpenPrompts={() => setPromptEditorOpen(true)}
+          onGenerate={runSelectedGeneration}
+        />
+      ) : generationOpen ? (
         <div className="tool-drawer-backdrop" onMouseDown={() => setGenerationOpen(false)}>
           <section className="generation-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label="生成课程">
             <header className="drawer-header">
@@ -2641,6 +3084,25 @@ export default function App() {
           onToggleUnderline={handleToggleUnderline}
         />
       ) : null}
+      {selectionAnchor?.selectedText && !contextMenu ? (
+        <SelectionQuickBar
+          canHighlight={selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa"}
+          onAsk={() => {
+            setSelection({ ...selectionAnchor });
+            setQAUpperTab("history");
+            setAssistantOpen(true);
+          }}
+          onHighlight={() => {
+            if (selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa") {
+              void handleCreateHighlight(selectionAnchor.sourceType, selectionAnchor.sourcePath ?? "", selectionAnchor.selectedText);
+            }
+          }}
+          onCopy={() => void navigator.clipboard.writeText(selectionAnchor.selectedText)}
+          onClose={handleDismissSelection}
+        />
+      ) : null}
+      <CommandPalette open={commandPaletteOpen} items={commandPaletteItems()} onClose={() => setCommandPaletteOpen(false)} />
+      {mobileRuntime && toast ? <div className="app-toast" role="status">{toast}</div> : null}
       <AppDialog
         state={appDialog}
         value={appDialogValue}

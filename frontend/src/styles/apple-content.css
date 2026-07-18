@@ -1,0 +1,206 @@
+html:not(.platform-android) .tree-row,
+html:not(.platform-android) .course-row,
+html:not(.platform-android) .project-row,
+html:not(.platform-android) .qa-history-row,
+html:not(.platform-android) .course-group-header {
+  min-height: 30px;
+  border-radius: var(--apple-radius-sm);
+  color: var(--apple-text);
+}
+
+html:not(.platform-android) .tree-row:hover,
+html:not(.platform-android) .course-row:hover,
+html:not(.platform-android) .project-row:hover,
+html:not(.platform-android) .qa-history-row:hover,
+html:not(.platform-android) .course-group-header:hover { background: var(--apple-fill); }
+
+html:not(.platform-android) .tree-row.selected,
+html:not(.platform-android) .course-row.selected,
+html:not(.platform-android) .project-row.selected,
+html:not(.platform-android) .qa-history-row.selected { color: var(--apple-text); background: var(--apple-blue-soft); }
+
+html:not(.platform-android) .continue-learning-card {
+  margin: 1px 1px 9px;
+  padding: 10px;
+  border: 0;
+  border-radius: var(--apple-radius);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-shadow-sm);
+}
+
+html:not(.platform-android) .learning-progress-track { background: var(--apple-fill); }
+html:not(.platform-android) .learning-progress-track span { background: var(--apple-blue); }
+
+html:not(.platform-android) .markdown-body {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 42px clamp(28px, 6vw, 72px) 88px;
+  color: var(--apple-text);
+  font-size: 16px;
+  line-height: 1.78;
+  letter-spacing: 0;
+}
+
+html:not(.platform-android) .markdown-body h1,
+html:not(.platform-android) .markdown-body h2,
+html:not(.platform-android) .markdown-body h3,
+html:not(.platform-android) .markdown-body h4 {
+  color: var(--apple-text);
+  font-weight: 700;
+  letter-spacing: -0.012em;
+}
+
+html:not(.platform-android) .markdown-body h1 { margin: 0 0 28px; font-size: 32px; line-height: 1.18; }
+html:not(.platform-android) .markdown-body h2 { margin: 42px 0 16px; font-size: 23px; line-height: 1.25; }
+html:not(.platform-android) .markdown-body h3 { margin: 30px 0 12px; font-size: 18px; line-height: 1.35; }
+html:not(.platform-android) .markdown-body p,
+html:not(.platform-android) .markdown-body li { color: color-mix(in srgb, var(--apple-text) 92%, var(--apple-text-secondary)); }
+html:not(.platform-android) .markdown-body a { color: var(--apple-blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+html:not(.platform-android) .markdown-body code {
+  border-radius: 5px;
+  color: var(--apple-inline-code-text);
+  background: var(--apple-inline-code-bg);
+  transition:
+    color 170ms ease,
+    background-color 220ms var(--apple-ease-out);
+}
+
+html:not(.platform-android) .markdown-body pre {
+  border: 1px solid var(--apple-code-border);
+  border-radius: var(--apple-radius);
+  color: var(--apple-code-text);
+  background: var(--apple-code-bg);
+  box-shadow: var(--apple-shadow-sm);
+  transition:
+    color 170ms ease,
+    background-color 220ms var(--apple-ease-out),
+    border-color 220ms var(--apple-ease-out),
+    box-shadow 220ms var(--apple-ease-out);
+}
+
+html:not(.platform-android) .markdown-body pre code {
+  color: inherit;
+  background: transparent;
+}
+
+html:not(.platform-android) .markdown-body pre ::selection {
+  color: #ffffff;
+  background: color-mix(in srgb, var(--apple-blue) 78%, transparent);
+}
+html:not(.platform-android) .markdown-body blockquote { margin-left: 0; padding: 8px 0 8px 18px; border-left: 3px solid var(--apple-blue); color: var(--apple-text-secondary); }
+html:not(.platform-android) .markdown-body table { border: 1px solid var(--apple-separator); border-radius: var(--apple-radius); overflow: hidden; }
+html:not(.platform-android) .markdown-body th { background: var(--apple-surface-muted); }
+html:not(.platform-android) .markdown-body th,
+html:not(.platform-android) .markdown-body td { border-color: var(--apple-separator); }
+
+html:not(.platform-android) .viewer-header,
+html:not(.platform-android) .reader-learning-toolbar {
+  min-height: 38px;
+  border-bottom: 1px solid var(--apple-separator);
+  color: var(--apple-text-secondary);
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .reader-learning-toolbar { padding: 0 10px; }
+html:not(.platform-android) .viewer-loading {
+  background: linear-gradient(100deg, var(--apple-surface) 20%, var(--apple-surface-muted) 42%, var(--apple-surface) 64%);
+  background-size: 220% 100%;
+  color: var(--apple-text-secondary);
+  animation: apple-loading-sheen 1.4s linear infinite;
+}
+
+html:not(.platform-android) .learning-empty-state { background: var(--apple-surface); }
+html:not(.platform-android) .learning-empty-mark { width: 52px; height: 52px; border-radius: var(--apple-radius); color: var(--apple-blue); background: var(--apple-blue-soft); }
+html:not(.platform-android) .learning-empty-state h1 { color: var(--apple-text); font-size: 22px; letter-spacing: -0.012em; }
+html:not(.platform-android) .learning-empty-state p { color: var(--apple-text-secondary); }
+
+html:not(.platform-android) .primary-button,
+html:not(.platform-android) .apple-primary-button {
+  min-height: 34px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: var(--apple-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #fff;
+  background: var(--apple-blue);
+  cursor: pointer;
+}
+
+html:not(.platform-android) .primary-button:hover:not(:disabled),
+html:not(.platform-android) .apple-primary-button:hover:not(:disabled) { background: var(--apple-blue-hover); }
+html:not(.platform-android) .secondary-button,
+html:not(.platform-android) .apple-secondary-button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--apple-separator-strong);
+  border-radius: var(--apple-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--apple-text);
+  background: var(--apple-surface-raised);
+  cursor: pointer;
+}
+html:not(.platform-android) .secondary-button:hover:not(:disabled),
+html:not(.platform-android) .apple-secondary-button:hover:not(:disabled) { background: var(--apple-fill); }
+html:not(.platform-android) .icon-button { color: var(--apple-text-secondary); background: transparent; border-color: transparent; border-radius: var(--apple-radius-sm); }
+html:not(.platform-android) .icon-button:hover:not(:disabled) { color: var(--apple-text); background: var(--apple-fill); }
+
+html:not(.platform-android) .empty,
+html:not(.platform-android) .empty-state { color: var(--apple-text-secondary); }
+
+html:not(.platform-android) .knowledge-viewer,
+html:not(.platform-android) .knowledge-body,
+html:not(.platform-android) .knowledge-canvas-shell,
+html:not(.platform-android) .knowledge-canvas {
+  color: var(--apple-text);
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .knowledge-body { border-top-color: var(--apple-separator); }
+
+html:not(.platform-android) .knowledge-node-label {
+  color: var(--apple-text);
+  background: color-mix(in srgb, var(--apple-surface) 84%, transparent);
+  text-shadow: 0 1px 2px var(--apple-surface);
+}
+
+html:not(.platform-android) .knowledge-node-label.important,
+html:not(.platform-android) .knowledge-node-label.matched {
+  color: var(--apple-text);
+  background: color-mix(in srgb, var(--apple-blue-soft) 70%, var(--apple-surface));
+}
+
+html:not(.platform-android) .knowledge-search,
+html:not(.platform-android) .knowledge-inspector {
+  border-color: var(--apple-separator);
+  color: var(--apple-text);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-shadow-popover);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+html:not(.platform-android) .knowledge-search input,
+html:not(.platform-android) .knowledge-inspector strong,
+html:not(.platform-android) .knowledge-inspector span,
+html:not(.platform-android) .knowledge-inspector p,
+html:not(.platform-android) .knowledge-inspector small { color: var(--apple-text); }
+
+html:not(.platform-android) .knowledge-inline-link {
+  border-bottom-color: var(--apple-blue);
+  color: var(--apple-blue);
+}
+
+html:not(.platform-android) .knowledge-inline-link:hover { color: var(--apple-blue-hover); background: var(--apple-blue-soft); }
+
+@keyframes apple-loading-sheen { to { background-position: -220% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(.platform-android) .viewer-loading { animation: none; background: var(--apple-surface-muted); }
+}

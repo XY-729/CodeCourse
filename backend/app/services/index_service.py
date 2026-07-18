@@ -9,14 +9,15 @@ from app.core.config import IGNORED_DIRS, MAX_TEXT_BYTES
 from app.models.schemas import ProjectSearchResult
 from app.services.generation_service import extract_file_signals
 from app.services.scanner import infer_language
-from app.services.storage import (
-    CodeChunk,
-    get_project,
-    get_project_index_status,
-    replace_code_chunks,
-    search_code_chunks,
-    set_project_index_status,
+from app.services.code_intelligence import (
+    ENGINE_NAME,
+    StructuralEngineError,
+    build_structural_index,
+    hybrid_retrieve,
+    project_fingerprint,
+    structural_available,
 )
+from app.services.storage import get_project, get_project_index_status, replace_code_chunks, set_project_index_status
 
 CHUNK_LINES = 80
 CHUNK_OVERLAP = 12
@@ -123,7 +124,27 @@ def build_project_index(project_id: int) -> int:
     root = Path(project.local_path).resolve()
     if not root.exists():
         raise RuntimeError("Project directory not found")
-    set_project_index_status(project_id, "building", 0, None)
+    if project.project_type == "learning_plan":
+        set_project_index_status(
+            project_id,
+            "completed",
+            0,
+            None,
+            text_status="not_applicable",
+            structural_status="not_applicable",
+            engine="fts",
+        )
+        return 0
+    previous = get_project_index_status(project_id)
+    set_project_index_status(
+        project_id,
+        "building",
+        int(previous.get("chunk_count") or 0),
+        None,
+        text_status="building",
+        structural_status=str(previous.get("structural_status") or "not_built"),
+        degraded_reason=None,
+    )
     try:
         chunks: list[dict[str, object]] = []
         for path in root.rglob("*"):
@@ -131,10 +152,103 @@ def build_project_index(project_id: int) -> int:
                 continue
             chunks.extend(_chunk_file(project_id, root, path))
         count = replace_code_chunks(project_id, chunks)
-        return count
     except Exception as exc:
-        set_project_index_status(project_id, "failed", 0, str(exc))
+        set_project_index_status(
+            project_id,
+            "failed",
+            0,
+            str(exc),
+            text_status="failed",
+            structural_status=str(previous.get("structural_status") or "not_built"),
+        )
         raise
+
+    if not structural_available():
+        set_project_index_status(
+            project_id,
+            "completed",
+            count,
+            None,
+            text_status="completed",
+            structural_status="unavailable",
+            engine="fts",
+            degraded_reason="结构索引组件不可用，当前使用基础全文检索。",
+        )
+        return count
+
+    try:
+        fingerprint = project_fingerprint(project_id)
+    except Exception as exc:
+        set_project_index_status(
+            project_id,
+            "completed",
+            count,
+            None,
+            text_status="completed",
+            structural_status="failed",
+            engine="fts",
+            degraded_reason=f"结构索引准备失败，已使用基础全文检索：{str(exc)[:600]}",
+        )
+        return count
+    if (
+        previous.get("structural_status") == "completed"
+        and previous.get("indexed_fingerprint") == fingerprint
+        and previous.get("structural_project_name")
+    ):
+        set_project_index_status(
+            project_id,
+            "completed",
+            count,
+            None,
+            text_status="completed",
+            structural_status="completed",
+            node_count=int(previous.get("node_count") or 0),
+            edge_count=int(previous.get("edge_count") or 0),
+            engine=ENGINE_NAME,
+            degraded_reason=None,
+            indexed_fingerprint=fingerprint,
+            structural_project_name=str(previous.get("structural_project_name")),
+        )
+        return count
+
+    set_project_index_status(
+        project_id,
+        "building",
+        count,
+        None,
+        text_status="completed",
+        structural_status="building",
+        engine=ENGINE_NAME,
+        degraded_reason=None,
+    )
+    try:
+        structural = build_structural_index(project_id, fingerprint)
+        set_project_index_status(
+            project_id,
+            "completed",
+            count,
+            None,
+            text_status="completed",
+            structural_status="completed",
+            node_count=int(structural.get("node_count") or 0),
+            edge_count=int(structural.get("edge_count") or 0),
+            engine=ENGINE_NAME,
+            degraded_reason=None,
+            indexed_fingerprint=fingerprint,
+            structural_project_name=str(structural.get("structural_project_name") or ""),
+        )
+    except Exception as exc:
+        set_project_index_status(
+            project_id,
+            "completed",
+            count,
+            None,
+            text_status="completed",
+            structural_status="failed",
+            engine="fts",
+            degraded_reason=f"结构索引失败，已使用基础全文检索：{str(exc)[:600]}",
+        )
+    return count
 
 
 def index_status(project_id: int) -> dict[str, object]:
@@ -142,23 +256,20 @@ def index_status(project_id: int) -> dict[str, object]:
 
 
 def search_project(project_id: int, query: str, source_path: Optional[str] = None, limit: int = 8) -> list[ProjectSearchResult]:
-    chunks = search_code_chunks(project_id, query, source_path=source_path, limit=limit)
-    return [_to_result(chunk, source_path) for chunk in chunks]
-
-
-def _to_result(chunk: CodeChunk, source_path: Optional[str]) -> ProjectSearchResult:
-    score = 20.0 if source_path and chunk.path == source_path else 10.0
-    if chunk.chunk_type == "signals":
-        score += 2.0
-    if chunk.symbol_name:
-        score += 1.0
-    return ProjectSearchResult(
-        path=chunk.path,
-        language=chunk.language,
-        start_line=chunk.start_line,
-        end_line=chunk.end_line,
-        chunk_type=chunk.chunk_type,
-        symbol_name=chunk.symbol_name,
-        content=chunk.content[:4000],
-        score=score,
-    )
+    sources = hybrid_retrieve(project_id, query, source_path=source_path, limit=limit)
+    return [
+        ProjectSearchResult(
+            path=source.path,
+            language=infer_language(Path(source.path)),
+            start_line=source.start_line,
+            end_line=source.end_line,
+            chunk_type=source.evidence_type,
+            symbol_name=source.symbol_name,
+            qualified_name=source.qualified_name,
+            relation=source.relation,
+            provider=source.provider,
+            content=source.content,
+            score=source.score,
+        )
+        for source in sources
+    ]

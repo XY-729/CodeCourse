@@ -1,6 +1,6 @@
-import { BookOpen, ChevronDown, ChevronRight, Trash2 } from "lucide-react";
+import { BookOpen, Check, ChevronDown, ChevronRight, Circle, Trash2 } from "lucide-react";
 import { useState } from "react";
-import type { CourseFile } from "../api/client";
+import type { CourseFile, LearningState } from "../api/client";
 
 type Props = {
   files: CourseFile[];
@@ -8,6 +8,7 @@ type Props = {
   onSelect: (filename: string) => void;
   onDragItem?: (kind: "course", filename: string) => void;
   onDelete?: (file: CourseFile) => void;
+  learningStates?: LearningState[];
 };
 
 function groupFiles(files: CourseFile[]): Map<string, CourseFile[]> {
@@ -22,7 +23,7 @@ function groupFiles(files: CourseFile[]): Map<string, CourseFile[]> {
   return map;
 }
 
-export default function CourseList({ files, selected, onSelect, onDragItem, onDelete }: Props) {
+export default function CourseList({ files, selected, onSelect, onDragItem, onDelete, learningStates = [] }: Props) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const groups = groupFiles(files);
@@ -49,7 +50,10 @@ export default function CourseList({ files, selected, onSelect, onDragItem, onDe
             <small>({groupFiles.length})</small>
           </button>
           {!collapsedGroups.has(group) &&
-            groupFiles.map((file) => (
+            groupFiles.map((file) => {
+              const state = learningStates.find((entry) => entry.source_type === "course" && entry.source_path === file.filename);
+              const lesson = /^lessons\/lesson_\d+\.md$/i.test(file.filename);
+              return (
               <div key={file.filename} className="course-row-wrapper">
                 <button
                   className={`course-row ${selected === file.filename ? "selected" : ""}`}
@@ -65,7 +69,9 @@ export default function CourseList({ files, selected, onSelect, onDragItem, onDe
                     onDragItem?.("course", file.filename);
                   }}
                 >
-                  <BookOpen size={14} />
+                  {lesson ? (
+                    state?.status === "completed" ? <Check className="course-state completed" size={14} /> : state ? <Circle className="course-state in-progress" size={11} /> : <Circle className="course-state" size={11} />
+                  ) : <BookOpen size={14} />}
                   <span>{file.title}</span>
                 </button>
                 {onDelete ? (
@@ -81,7 +87,8 @@ export default function CourseList({ files, selected, onSelect, onDragItem, onDe
                   </button>
                 ) : null}
               </div>
-            ))}
+              );
+            })}
         </div>
       ))}
     </div>

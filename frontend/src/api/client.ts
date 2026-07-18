@@ -1,4 +1,5 @@
-import { providerRequest } from "../platform/provider";
+import { httpApiUrl, providerRequest } from "../platform/provider";
+import { isAndroidRuntime } from "../platform/runtime";
 
 declare global {
   interface Window {
@@ -41,6 +42,19 @@ export type FileContent = {
 
 export type SourceType = "file" | "course" | "selection" | "qa";
 
+export type RetrievalSource = {
+  path: string;
+  start_line: number;
+  end_line: number;
+  symbol_name?: string | null;
+  qualified_name?: string | null;
+  relation?: string | null;
+  evidence_type: string;
+  provider: string;
+  content: string;
+  score: number;
+};
+
 export type QARecord = {
   id: number;
   project_id: number;
@@ -57,6 +71,7 @@ export type QARecord = {
   model: string;
   output_path?: string | null;
   retrieval_trace?: string | null;
+  retrieval_sources?: RetrievalSource[];
   favorite: boolean;
   created_at: string;
   updated_at: string;
@@ -137,6 +152,13 @@ export type QAAskPayload = {
   } | null;
 };
 
+export type QAStreamStage = "queued" | "retrieving" | "waiting_model" | "answering" | "saving";
+
+export type QAStreamHandlers = {
+  onStage?: (stage: QAStreamStage, label: string) => void;
+  onDelta?: (text: string) => void;
+};
+
 export type DocumentTerm = {
   id: number;
   project_id: number;
@@ -167,6 +189,34 @@ export type ProjectIndexStatus = {
   chunk_count: number;
   updated_at?: string | null;
   error_message?: string | null;
+  text_status?: string;
+  structural_status?: string;
+  node_count?: number;
+  edge_count?: number;
+  engine?: string | null;
+  degraded_reason?: string | null;
+  indexed_fingerprint?: string | null;
+};
+
+export type LearningState = {
+  id: number;
+  project_id: number;
+  source_type: "course" | "file" | "qa";
+  source_path: string;
+  status: "in_progress" | "completed";
+  position_kind: "scroll_ratio" | "line";
+  position_value: number;
+  last_opened_at: string;
+  completed_at?: string | null;
+  updated_at: string;
+};
+
+export type LearningStateUpdate = {
+  source_type: LearningState["source_type"];
+  source_path: string;
+  status: LearningState["status"];
+  position_kind: LearningState["position_kind"];
+  position_value: number;
 };
 
 export type ProjectSearchResult = {
@@ -176,6 +226,9 @@ export type ProjectSearchResult = {
   end_line: number;
   chunk_type: string;
   symbol_name?: string | null;
+  qualified_name?: string | null;
+  relation?: string | null;
+  provider?: string;
   content: string;
   score: number;
 };
@@ -366,6 +419,21 @@ export function getProjectIndexStatus(projectId: number): Promise<ProjectIndexSt
   return request<ProjectIndexStatus>(`/projects/${projectId}/index/status`);
 }
 
+export function getLearningStates(projectId: number): Promise<LearningState[]> {
+  return request<LearningState[]>(`/projects/${projectId}/learning-state`);
+}
+
+export function updateLearningState(projectId: number, payload: LearningStateUpdate): Promise<LearningState> {
+  return request<LearningState>(`/projects/${projectId}/learning-state`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function resetLearningStates(projectId: number): Promise<{ deleted: number }> {
+  return request<{ deleted: number }>(`/projects/${projectId}/learning-state`, { method: "DELETE" });
+}
+
 export function searchProject(projectId: number, query: string, sourcePath?: string | null, limit = 8): Promise<ProjectSearchResult[]> {
   return request<ProjectSearchResult[]>(`/projects/${projectId}/search`, {
     method: "POST",
@@ -394,6 +462,64 @@ export function listQARecords(projectId: number, query = "", favorite?: boolean)
 
 export function getQARecord(projectId: number, qaId: number): Promise<QARecord> {
   return request<QARecord>(`/projects/${projectId}/qa/${qaId}`);
+}
+
+export async function askQuestionStream(
+  projectId: number,
+  payload: QAAskPayload,
+  handlers: QAStreamHandlers = {},
+  signal?: AbortSignal,
+): Promise<QARecord> {
+  if (isAndroidRuntime()) {
+    handlers.onStage?.("waiting_model", "等待模型");
+    const record = await askQuestion(projectId, payload);
+    handlers.onDelta?.(record.answer_md);
+    return record;
+  }
+
+  const response = await fetch(httpApiUrl(`/projects/${projectId}/qa/stream`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(body.detail || response.statusText || "流式问答请求失败");
+  }
+  if (!response.body) throw new Error("当前运行环境不支持流式回答");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let completed: QARecord | null = null;
+
+  function consumeBlock(block: string) {
+    let eventName = "message";
+    const dataLines: string[] = [];
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+    }
+    if (!dataLines.length) return;
+    const data = JSON.parse(dataLines.join("\n"));
+    if (eventName === "stage") handlers.onStage?.(data.stage as QAStreamStage, String(data.label || ""));
+    else if (eventName === "delta") handlers.onDelta?.(String(data.text || ""));
+    else if (eventName === "completed") completed = data as QARecord;
+    else if (eventName === "error") throw new Error(String(data.message || "生成回答失败"));
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || "";
+    for (const block of blocks) consumeBlock(block);
+    if (done) break;
+  }
+  if (buffer.trim()) consumeBlock(buffer);
+  if (!completed) throw new Error("模型回答已结束，但未收到保存结果");
+  return completed;
 }
 
 export function getQASessionTree(projectId: number, sessionId: number): Promise<QARecord[]> {

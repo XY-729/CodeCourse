@@ -3,6 +3,7 @@ workspace/
 backend/.venv/
 frontend/node_modules/
 frontend/dist/
+frontend/dist-new/
 frontend/tsconfig.tsbuildinfo
 __pycache__/
 *.pyc
@@ -20,6 +21,7 @@ dist-release-v024/
 electron/backend.log
 npm-debug.log*
 resources/git/
+resources/code-intelligence/
 .cache/
 *.spec.bak
 dist-mobile/

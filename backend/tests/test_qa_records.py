@@ -777,6 +777,42 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertEqual(len(anchor_nodes), 1)
         self.assertEqual(anchor_nodes[0]["ref_id"], qa["id"])
 
+    def test_streaming_ask_emits_stages_deltas_and_persists_once(self):
+        import app.services.qa_service as qa_service
+
+        async def fake_stream(*_args, **_kwargs):
+            yield "TITLE: FastAPI\nTERMS: []\n\n"
+            yield "FastAPI connects routes to Python handlers."
+
+        with (
+            patch("app.api.qa.stream_openai_compatible_chat", fake_stream),
+            patch(
+                "app.services.qa_service._retrieval_context",
+                wraps=qa_service._retrieval_context,
+            ) as retrieval,
+        ):
+            response = self.client.post(
+                f"/api/projects/{self.project.id}/qa/stream",
+                json={
+                    "source_type": "file",
+                    "source_path": "src/main.py",
+                    "selected_text": "FastAPI",
+                    "question": "What does this do?",
+                    "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "model": "deepseek-test",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event: stage", response.text)
+        self.assertIn("event: delta", response.text)
+        self.assertIn("event: completed", response.text)
+        self.assertIn("FastAPI connects routes", response.text)
+        self.assertEqual(retrieval.call_count, 1)
+        history = self.client.get(f"/api/projects/{self.project.id}/qa").json()
+        self.assertEqual(len(history), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

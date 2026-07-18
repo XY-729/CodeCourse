@@ -54,6 +54,27 @@ class CourseCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 
 
+class LearningStateUpdateRequest(BaseModel):
+    source_type: Literal["course", "file", "qa"]
+    source_path: str = Field(min_length=1, max_length=1000)
+    status: Literal["in_progress", "completed"] = "in_progress"
+    position_kind: Literal["scroll_ratio", "line"] = "scroll_ratio"
+    position_value: float = Field(default=0, ge=0)
+
+
+class LearningStateResponse(BaseModel):
+    id: int
+    project_id: int
+    source_type: Literal["course", "file", "qa"]
+    source_path: str
+    status: Literal["in_progress", "completed"]
+    position_kind: Literal["scroll_ratio", "line"]
+    position_value: float
+    last_opened_at: str
+    completed_at: Optional[str] = None
+    updated_at: str
+
+
 class LearningScopeRequest(BaseModel):
     type: Literal["full_project", "files", "learning_plan"] = "full_project"
     paths: list[str] = Field(default_factory=list)
@@ -117,6 +138,19 @@ class QAAskRequest(BaseModel):
     selection_range: Optional[SelectionRange] = None
 
 
+class RetrievalSourceResponse(BaseModel):
+    path: str
+    start_line: int = 1
+    end_line: int = 1
+    symbol_name: Optional[str] = None
+    qualified_name: Optional[str] = None
+    relation: Optional[str] = None
+    evidence_type: str = "text"
+    provider: str = "fts"
+    content: str = ""
+    score: float = 0
+
+
 class QARecordResponse(BaseModel):
     id: int
     project_id: int
@@ -133,6 +167,7 @@ class QARecordResponse(BaseModel):
     model: str
     output_path: Optional[str] = None
     retrieval_trace: Optional[str] = None
+    retrieval_sources: list[RetrievalSourceResponse] = Field(default_factory=list)
     favorite: bool
     created_at: str
     updated_at: str
@@ -276,6 +311,13 @@ class ProjectIndexStatusResponse(BaseModel):
     chunk_count: int = 0
     updated_at: Optional[str] = None
     error_message: Optional[str] = None
+    text_status: str = "not_built"
+    structural_status: str = "not_built"
+    node_count: int = 0
+    edge_count: int = 0
+    engine: Optional[str] = None
+    degraded_reason: Optional[str] = None
+    indexed_fingerprint: Optional[str] = None
 
 
 class ProjectSearchRequest(BaseModel):
@@ -291,6 +333,9 @@ class ProjectSearchResult(BaseModel):
     end_line: int
     chunk_type: str
     symbol_name: Optional[str] = None
+    qualified_name: Optional[str] = None
+    relation: Optional[str] = None
+    provider: str = "fts"
     content: str
     score: float = 0
 

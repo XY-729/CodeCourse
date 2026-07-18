@@ -92,7 +92,7 @@ class ProjectDedupTests(unittest.TestCase):
         """Importing HTTPS then SSH URL for the same repo should result in 1 project record."""
         from app.services.storage import list_projects, upsert_project
 
-        fake_path = Path("/tmp/test-repo")
+        fake_path = Path(self._tmpdir.name) / "test-repo"
         fake_path.mkdir(parents=True, exist_ok=True)
 
         # Import via HTTPS
@@ -113,7 +113,7 @@ class ProjectDedupTests(unittest.TestCase):
         """Different repos should create separate project records."""
         from app.services.storage import list_projects, upsert_project
 
-        fake_path = Path("/tmp/test-repo2")
+        fake_path = Path(self._tmpdir.name) / "test-repo2"
         fake_path.mkdir(parents=True, exist_ok=True)
 
         p1 = upsert_project("repo-a", "https://github.com/owner/repo-a.git", fake_path, "scanned")

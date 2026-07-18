@@ -30,7 +30,7 @@ class HttpProvider implements CodeCourseProvider {
 
 let providerPromise: Promise<CodeCourseProvider> | null = null;
 
-function configuredApiBase(): string {
+export function configuredApiBase(): string {
   const desktopWindow = window as Window & {
     codecourseDesktop?: { apiBase?: string };
     __CODECOURSE_API_BASE__?: string;
@@ -41,6 +41,10 @@ function configuredApiBase(): string {
     import.meta.env.VITE_API_BASE_URL ||
     "/api"
   ).replace(/\/$/, "");
+}
+
+export function httpApiUrl(path: string): string {
+  return `${configuredApiBase()}${path}`;
 }
 
 export function getCodeCourseProvider(): Promise<CodeCourseProvider> {

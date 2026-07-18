@@ -1,0 +1,256 @@
+html:not(.platform-android) .apple-sheet-layer {
+  position: fixed;
+  z-index: 70;
+  inset: 46px 0 0;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(0, 0, 0, 0.12);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  animation: apple-fade-in 160ms var(--apple-ease-out) both;
+}
+
+html:not(.platform-android) .apple-sheet {
+  width: min(420px, 100vw);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--apple-separator);
+  background: var(--apple-surface-raised);
+  color: var(--apple-text);
+  box-shadow: var(--apple-shadow-sheet);
+  animation: apple-sheet-in 220ms var(--apple-ease-drawer) both;
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+}
+
+html:not(.platform-android) .apple-sheet-header {
+  min-height: 58px;
+  padding: 0 12px 0 17px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--apple-separator);
+}
+html:not(.platform-android) .apple-sheet-header > div { display: flex; flex-direction: column; gap: 2px; }
+html:not(.platform-android) .apple-sheet-header strong { font-size: 15px; }
+html:not(.platform-android) .apple-sheet-header small { color: var(--apple-text-secondary); font-size: 11px; }
+html:not(.platform-android) .apple-sheet-body { flex: 1; min-height: 0; overflow: auto; padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+html:not(.platform-android) .generation-sheet-intro { margin: 0; color: var(--apple-text-secondary); line-height: 1.55; }
+
+html:not(.platform-android) .apple-field { display: flex; flex-direction: column; gap: 7px; color: var(--apple-text); font-size: 12px; font-weight: 650; }
+html:not(.platform-android) .apple-field select,
+html:not(.platform-android) .apple-field textarea {
+  width: 100%;
+  border: 1px solid var(--apple-separator-strong);
+  border-radius: var(--apple-radius-sm);
+  color: var(--apple-text);
+  background: var(--apple-surface);
+}
+html:not(.platform-android) .apple-field select { height: 34px; padding: 0 9px; }
+html:not(.platform-android) .apple-field textarea { min-height: 126px; padding: 9px 10px; resize: vertical; line-height: 1.55; }
+html:not(.platform-android) .apple-field small { color: var(--apple-text-secondary); font-size: 11px; font-weight: 400; line-height: 1.45; }
+html:not(.platform-android) .apple-text-button { align-self: flex-start; padding: 0; color: var(--apple-blue); font-size: 12px; }
+html:not(.platform-android) .generation-sheet-status { padding: 9px 10px; border-radius: var(--apple-radius-sm); display: flex; justify-content: space-between; gap: 8px; color: var(--apple-text-secondary); background: var(--apple-fill); font-size: 12px; }
+html:not(.platform-android) .generation-sheet-status.failed { color: var(--apple-red); }
+html:not(.platform-android) .apple-sheet-footer { min-height: 58px; padding: 10px 14px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; border-top: 1px solid var(--apple-separator); }
+
+html:not(.platform-android) .apple-feedback-stack {
+  position: fixed;
+  z-index: 100;
+  top: 54px;
+  left: 50%;
+  width: min(560px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+html:not(.platform-android) .apple-feedback {
+  max-width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--apple-separator);
+  border-radius: var(--apple-radius);
+  color: var(--apple-text);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-shadow-popover);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  pointer-events: auto;
+  animation: apple-feedback-in 180ms var(--apple-ease-out) both;
+  font-size: 12px;
+}
+html:not(.platform-android) .apple-feedback > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html:not(.platform-android) .apple-feedback > button { width: 24px; height: 24px; border: 0; border-radius: 5px; display: grid; place-items: center; color: inherit; background: transparent; cursor: pointer; }
+html:not(.platform-android) .apple-feedback.error { color: var(--apple-red); }
+html:not(.platform-android) .apple-feedback.success { color: var(--apple-green); }
+html:not(.platform-android) .apple-feedback-progress { width: 90px; height: 3px; overflow: hidden; border-radius: 999px; background: var(--apple-fill); }
+html:not(.platform-android) .apple-feedback-progress i { display: block; height: 100%; border-radius: inherit; background: var(--apple-blue); }
+
+html:not(.platform-android) .modal-backdrop,
+html:not(.platform-android) .settings-overlay,
+html:not(.platform-android) .command-palette-layer {
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+html:not(.platform-android) .app-dialog,
+html:not(.platform-android) .settings-modal,
+html:not(.platform-android) .prompt-editor,
+html:not(.platform-android) .command-palette {
+  border: 1px solid var(--apple-separator);
+  border-radius: var(--apple-radius);
+  color: var(--apple-text);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-shadow-popover);
+}
+
+html:not(.platform-android) .app-dialog-title,
+html:not(.platform-android) .modal-title,
+html:not(.platform-android) .prompt-editor-header {
+  border-bottom-color: var(--apple-separator);
+  color: var(--apple-text);
+  background: transparent;
+}
+
+html:not(.platform-android) .app-dialog-message,
+html:not(.platform-android) .settings-message { color: var(--apple-text-secondary); }
+
+html:not(.platform-android) .app-dialog-field,
+html:not(.platform-android) .settings-grid label,
+html:not(.platform-android) .prompt-editor label { color: var(--apple-text); }
+
+html:not(.platform-android) .app-dialog-field input,
+html:not(.platform-android) .settings-grid input,
+html:not(.platform-android) .settings-grid select,
+html:not(.platform-android) .prompt-editor input,
+html:not(.platform-android) .prompt-editor textarea,
+html:not(.platform-android) .prompt-editor select {
+  border-color: var(--apple-separator-strong);
+  color: var(--apple-text);
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .app-dialog-field input:focus,
+html:not(.platform-android) .settings-grid input:focus,
+html:not(.platform-android) .settings-grid select:focus,
+html:not(.platform-android) .prompt-editor textarea:focus {
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 3px var(--apple-blue-soft);
+}
+
+html:not(.platform-android) .app-dialog-choice {
+  border-color: var(--apple-separator);
+  color: var(--apple-text);
+  background: var(--apple-surface);
+}
+html:not(.platform-android) .app-dialog-choice:hover { background: var(--apple-fill); }
+html:not(.platform-android) .app-dialog-choice small { color: var(--apple-text-secondary); }
+
+html:not(.platform-android) .app-dialog-actions,
+html:not(.platform-android) .settings-actions,
+html:not(.platform-android) .prompt-editor-footer {
+  border-top-color: var(--apple-separator);
+  background: var(--apple-surface-muted);
+}
+
+html:not(.platform-android) .settings-message { background: var(--apple-fill); }
+
+html:not(.platform-android) .prompt-tabs {
+  border-bottom-color: var(--apple-separator);
+  background: var(--apple-surface-muted);
+}
+html:not(.platform-android) .prompt-tab { color: var(--apple-text-secondary); background: transparent; }
+html:not(.platform-android) .prompt-tab:hover { color: var(--apple-text); background: var(--apple-fill); }
+html:not(.platform-android) .prompt-tab.active { border-bottom-color: var(--apple-blue); color: var(--apple-text); background: var(--apple-surface); }
+html:not(.platform-android) .prompt-editor-label { color: var(--apple-text); }
+html:not(.platform-android) .prompt-editor-textarea {
+  border-color: var(--apple-separator-strong);
+  color: var(--apple-text);
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .command-palette-layer {
+  align-items: flex-start;
+  padding-top: 13vh;
+  opacity: 0;
+  pointer-events: none;
+  animation: none;
+  transition: opacity 170ms var(--apple-ease-out), backdrop-filter 190ms var(--apple-ease-out);
+}
+html:not(.platform-android) .command-palette-layer.is-open { opacity: 1; pointer-events: auto; }
+html:not(.platform-android) .command-palette {
+  width: min(640px, calc(100vw - 32px));
+  opacity: 0;
+  transform: translateY(-10px) scale(0.97);
+  transform-origin: top center;
+  animation: none;
+  will-change: transform, opacity;
+  transition: opacity 160ms var(--apple-ease-out), transform 210ms var(--apple-ease-drawer);
+}
+html:not(.platform-android) .command-palette-layer.is-open .command-palette { opacity: 1; transform: translateY(0) scale(1); }
+html:not(.platform-android) .command-palette-search { border-bottom-color: var(--apple-separator); }
+html:not(.platform-android) .command-palette-search input { color: var(--apple-text); background: transparent; }
+html:not(.platform-android) .command-palette-close {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--apple-radius-sm);
+  display: grid;
+  place-items: center;
+  color: var(--apple-text-secondary);
+  background: var(--apple-fill);
+  cursor: pointer;
+  transition: color 140ms ease, background-color 160ms ease, transform 100ms var(--apple-ease-out);
+}
+html:not(.platform-android) .command-palette-close:hover { color: var(--apple-text); background: var(--apple-fill-hover); }
+html:not(.platform-android) .command-palette-results button { color: var(--apple-text); background: transparent; }
+html:not(.platform-android) .command-palette-results button { transition: color 120ms ease, background-color 150ms ease, transform 140ms var(--apple-ease-out); }
+html:not(.platform-android) .command-palette-results button.active { color: white; background: var(--apple-blue); }
+html:not(.platform-android) .command-palette-results button.active { transform: translateX(2px); }
+html:not(.platform-android) .command-palette-results button.active small,
+html:not(.platform-android) .command-palette-results button.active .command-section { color: rgba(255,255,255,.78); }
+
+html:not(.platform-android) .selection-quick-bar,
+html:not(.platform-android) .context-menu {
+  border: 1px solid var(--apple-separator);
+  border-radius: var(--apple-radius);
+  color: var(--apple-text);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-shadow-popover);
+  transform-origin: bottom center;
+  animation: apple-popover-in 140ms var(--apple-ease-out) both;
+  backdrop-filter: blur(20px) saturate(180%);
+}
+
+@keyframes apple-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes apple-sheet-in { from { opacity: .82; transform: translateX(26px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes apple-feedback-in { from { opacity: 0; transform: translateY(-5px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(.platform-android) .apple-sheet-layer,
+  html:not(.platform-android) .apple-sheet,
+  html:not(.platform-android) .apple-feedback,
+  html:not(.platform-android) .selection-quick-bar,
+  html:not(.platform-android) .context-menu { animation: none; }
+  html:not(.platform-android) .command-palette-layer,
+  html:not(.platform-android) .command-palette { transition: opacity 120ms ease; transform: none; }
+  html:not(.platform-android) .command-palette-results button.active { transform: none; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html:not(.platform-android) .apple-sheet-layer,
+  html:not(.platform-android) .apple-sheet,
+  html:not(.platform-android) .apple-feedback,
+  html:not(.platform-android) .modal-backdrop,
+  html:not(.platform-android) .settings-overlay,
+  html:not(.platform-android) .command-palette-layer { backdrop-filter: none; -webkit-backdrop-filter: none; }
+}

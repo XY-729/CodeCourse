@@ -6,7 +6,7 @@ const MonacoCodeViewer = lazy(() => import("./MonacoCodeViewer"));
 
 export type ViewerRange = { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
 export type ViewerSelection = { sourceType: "file" | "course" | "qa"; sourcePath: string | null; selectedText: string; language?: string; range?: ViewerRange };
-type Props = { path: string | null; language: string; content: string; selectedRange?: ViewerRange | null; onSelectionChange?: (selection: ViewerSelection) => void; onContextMenu?: (payload: { clientX: number; clientY: number; selectedText: string; sourcePath: string | null }) => void };
+type Props = { path: string | null; language: string; content: string; selectedRange?: ViewerRange | null; onSelectionChange?: (selection: ViewerSelection) => void; onContextMenu?: (payload: { clientX: number; clientY: number; selectedText: string; sourcePath: string | null }) => void; initialLine?: number; onVisibleLineChange?: (line: number) => void };
 
 export default function CodeViewer(props: Props) {
   if (isAndroidRuntime()) return <MobileCodeViewer path={props.path} language={props.language} content={props.content} selectedRange={props.selectedRange} onSelectionChange={props.onSelectionChange} />;
