@@ -1,5 +1,5 @@
 import { BookOpen, Check, ChevronDown, ChevronRight, Circle, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import type { CourseFile, LearningState } from "../api/client";
 
 type Props = {
@@ -50,13 +50,14 @@ export default function CourseList({ files, selected, onSelect, onDragItem, onDe
             <small>({groupFiles.length})</small>
           </button>
           {!collapsedGroups.has(group) &&
-            groupFiles.map((file) => {
+            groupFiles.map((file, index) => {
               const state = learningStates.find((entry) => entry.source_type === "course" && entry.source_path === file.filename);
               const lesson = /^lessons\/lesson_\d+\.md$/i.test(file.filename);
+              const stateClass = state?.status === "completed" ? "completed" : state ? "in-progress" : "not-started";
               return (
-              <div key={file.filename} className="course-row-wrapper">
+              <div key={file.filename} className={`course-row-wrapper ${lesson ? `lesson ${stateClass}` : "reference"}`} style={{ "--course-order": Math.min(index, 8) } as CSSProperties}>
                 <button
-                  className={`course-row ${selected === file.filename ? "selected" : ""}`}
+                  className={`course-row ${selected === file.filename ? "selected" : ""} ${lesson ? stateClass : ""}`}
                   onClick={() => onSelect(file.filename)}
                   title={`${file.filename} - 可拖拽到中间工作区`}
                   draggable

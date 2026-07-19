@@ -1,0 +1,1004 @@
+/* Android learning experience: calm surfaces, purposeful motion, and clear progress. */
+html.platform-android {
+  color-scheme: light;
+  --mobile-canvas: #f7faf8;
+  --mobile-surface: #ffffff;
+  --mobile-surface-raised: #ffffff;
+  --mobile-surface-soft: #edf6f2;
+  --mobile-surface-pressed: #e3f0eb;
+  --mobile-text: #17231f;
+  --mobile-text-secondary: #61716a;
+  --mobile-text-tertiary: #89958f;
+  --mobile-line: rgba(32, 73, 60, 0.12);
+  --mobile-line-strong: rgba(24, 91, 72, 0.22);
+  --mobile-accent: #16826b;
+  --mobile-accent-strong: #0d6c59;
+  --mobile-accent-soft: rgba(22, 130, 107, 0.12);
+  --mobile-accent-glow: rgba(22, 130, 107, 0.22);
+  --mobile-danger: #c84343;
+  --mobile-shadow-sm: 0 1px 2px rgba(18, 54, 43, 0.05), 0 5px 18px rgba(18, 54, 43, 0.04);
+  --mobile-shadow-md: 0 10px 35px rgba(16, 44, 36, 0.12), 0 2px 8px rgba(16, 44, 36, 0.06);
+  --mobile-radius-sm: 10px;
+  --mobile-radius: 14px;
+  --mobile-radius-lg: 20px;
+  --mobile-duration-fast: 120ms;
+  --mobile-duration: 200ms;
+  --mobile-duration-slow: 320ms;
+  --mobile-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --mobile-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --mobile-ease-spring: cubic-bezier(0.22, 1.18, 0.36, 1);
+}
+
+html.platform-android[data-theme="dark"] {
+  color-scheme: dark;
+  --mobile-canvas: #090c12;
+  --mobile-surface: #111722;
+  --mobile-surface-raised: #161e2b;
+  --mobile-surface-soft: #182337;
+  --mobile-surface-pressed: #202d43;
+  --mobile-text: #f3f7fd;
+  --mobile-text-secondary: #a6b2c3;
+  --mobile-text-tertiary: #748198;
+  --mobile-line: rgba(142, 177, 226, 0.14);
+  --mobile-line-strong: rgba(111, 164, 246, 0.28);
+  --mobile-accent: #4c8dff;
+  --mobile-accent-strong: #79abff;
+  --mobile-accent-soft: rgba(76, 141, 255, 0.16);
+  --mobile-accent-glow: rgba(76, 141, 255, 0.3);
+  --mobile-danger: #ff7777;
+  --mobile-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24), 0 6px 20px rgba(0, 0, 0, 0.14);
+  --mobile-shadow-md: 0 14px 42px rgba(0, 0, 0, 0.36), 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+html.platform-android,
+html.platform-android body,
+html.platform-android #root,
+html.platform-android .app-shell,
+html.platform-android .workbench,
+html.platform-android .center-pane,
+html.platform-android .reader-workspace,
+html.platform-android .editor-group,
+html.platform-android .editor-body {
+  color: var(--mobile-text);
+  background: var(--mobile-canvas);
+}
+
+html.platform-android body {
+  font-family: Inter, "Segoe UI Variable", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html.platform-android button,
+html.platform-android [role="button"] {
+  touch-action: manipulation;
+}
+
+html.platform-android button:not(:disabled):active,
+html.platform-android .icon-button:not(:disabled):active {
+  transform: scale(0.96);
+  transition-duration: 70ms;
+}
+
+html.platform-android button:focus-visible,
+html.platform-android [role="button"]:focus-visible,
+html.platform-android input:focus-visible,
+html.platform-android textarea:focus-visible,
+html.platform-android select:focus-visible {
+  outline: 2px solid var(--mobile-accent);
+  outline-offset: 2px;
+}
+
+/* Top bar */
+html.platform-android .topbar {
+  min-height: 56px;
+  height: 56px;
+  padding: 7px 10px;
+  color: var(--mobile-text);
+  border-bottom: 1px solid var(--mobile-line);
+  background: color-mix(in srgb, var(--mobile-surface) 94%, transparent);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.46);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+}
+
+html.platform-android .brand-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  box-shadow: var(--mobile-shadow-sm);
+}
+
+html.platform-android .project-switch,
+html.platform-android .mobile-topbar-action,
+html.platform-android .topbar-import {
+  color: var(--mobile-text);
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  transition: color var(--mobile-duration-fast) ease, background-color var(--mobile-duration-fast) ease, transform 90ms var(--mobile-ease-out);
+}
+
+html.platform-android .project-switch {
+  font-weight: 660;
+  letter-spacing: 0;
+}
+
+html.platform-android .project-switch:active,
+html.platform-android .mobile-topbar-action:active,
+html.platform-android .topbar-import:active {
+  background: var(--mobile-surface-pressed);
+}
+
+/* Mutually exclusive mobile surfaces */
+html.platform-android .navigation-panel,
+html.platform-android .assistant-drawer {
+  color: var(--mobile-text);
+  background: var(--mobile-canvas);
+}
+
+html.platform-android .navigation-panel {
+  animation: mobile-surface-enter var(--mobile-duration) var(--mobile-ease-out) both;
+}
+
+html.platform-android .assistant-drawer {
+  transform: translateY(10px);
+  transition: opacity 160ms var(--mobile-ease-out), transform var(--mobile-duration) var(--mobile-ease-out);
+}
+
+html.platform-android .assistant-drawer.open {
+  transform: translateY(0);
+}
+
+html.platform-android .navigation-panel-header,
+html.platform-android .viewer-header,
+html.platform-android .editor-tabs,
+html.platform-android .assistant-thread-toolbar,
+html.platform-android .assistant-mini-tree,
+html.platform-android .qa-panel-tabs {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface);
+}
+
+html.platform-android .navigation-panel-header {
+  min-height: 54px;
+  padding: 9px 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+html.platform-android .sidebar-scroll {
+  padding: 8px 8px 22px;
+  background: var(--mobile-canvas);
+}
+
+html.platform-android .empty {
+  margin: 20px 8px;
+  padding: 28px 18px;
+  color: var(--mobile-text-secondary);
+  border: 1px dashed var(--mobile-line-strong);
+  border-radius: var(--mobile-radius);
+  background: var(--mobile-surface);
+  text-align: center;
+}
+
+/* Bottom navigation */
+html.platform-android .activity-rail {
+  height: calc(66px + env(safe-area-inset-bottom));
+  padding: 5px 8px env(safe-area-inset-bottom);
+  border-top: 1px solid var(--mobile-line);
+  background: color-mix(in srgb, var(--mobile-surface) 94%, transparent);
+  box-shadow: 0 -8px 28px rgba(14, 55, 43, 0.05);
+  backdrop-filter: blur(24px) saturate(155%);
+  -webkit-backdrop-filter: blur(24px) saturate(155%);
+}
+
+html.platform-android .workbench,
+html.platform-android .workbench.navigation-open {
+  padding-bottom: calc(66px + env(safe-area-inset-bottom));
+}
+
+html.platform-android .navigation-panel,
+html.platform-android .assistant-drawer {
+  bottom: calc(66px + env(safe-area-inset-bottom));
+}
+
+html.platform-android .activity-rail button {
+  position: relative;
+  isolation: isolate;
+  height: 56px;
+  min-height: 56px;
+  gap: 3px;
+  overflow: hidden;
+  color: var(--mobile-text-tertiary);
+  background: transparent;
+  transition: color var(--mobile-duration-fast) ease, transform 90ms var(--mobile-ease-out);
+}
+
+html.platform-android .activity-rail button::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 4px 8px;
+  border-radius: 13px;
+  background: var(--mobile-accent-soft);
+  opacity: 0;
+  transform: scale(0.82);
+  transition: opacity 150ms ease, transform var(--mobile-duration) var(--mobile-ease-spring);
+}
+
+html.platform-android .activity-rail button svg {
+  transition: transform var(--mobile-duration) var(--mobile-ease-spring), stroke-width var(--mobile-duration-fast) ease;
+}
+
+html.platform-android .activity-rail button > span {
+  font-size: 10.5px;
+  font-weight: 580;
+  transition: color var(--mobile-duration-fast) ease, transform var(--mobile-duration) var(--mobile-ease-out);
+}
+
+html.platform-android .activity-rail button.active {
+  color: var(--mobile-accent-strong);
+  background: transparent;
+}
+
+html.platform-android .activity-rail button.active::before {
+  opacity: 1;
+  transform: scale(1);
+}
+
+html.platform-android .activity-rail button.active svg {
+  transform: translateY(-1px) scale(1.08);
+  stroke-width: 2.25;
+}
+
+html.platform-android .activity-rail button.active > span {
+  font-weight: 720;
+  transform: translateY(-1px);
+}
+
+html.platform-android .activity-rail button:active svg {
+  transform: scale(0.9);
+}
+
+/* Learning momentum */
+html.platform-android .continue-learning-card {
+  position: relative;
+  margin: 2px 4px 14px;
+  padding: 15px;
+  gap: 12px;
+  overflow: hidden;
+  border: 1px solid var(--mobile-line);
+  border-radius: var(--mobile-radius-lg);
+  color: var(--mobile-text);
+  background: var(--mobile-surface-raised);
+  box-shadow: var(--mobile-shadow-sm);
+  animation: mobile-card-enter 280ms var(--mobile-ease-out) both;
+}
+
+html.platform-android .continue-learning-card::after {
+  content: "";
+  position: absolute;
+  width: 76px;
+  height: 76px;
+  right: -34px;
+  top: -38px;
+  border-radius: 50%;
+  background: var(--mobile-accent-soft);
+  pointer-events: none;
+}
+
+html.platform-android .continue-learning-copy {
+  gap: 5px;
+}
+
+html.platform-android .continue-learning-copy strong {
+  color: var(--mobile-text);
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+html.platform-android .continue-learning-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--mobile-accent-strong);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+html.platform-android .continue-learning-kicker i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--mobile-accent);
+  box-shadow: 0 0 0 0 var(--mobile-accent-glow);
+  animation: mobile-learning-pulse 2.4s ease-out infinite;
+}
+
+html.platform-android .continue-learning-action {
+  min-width: 72px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 12px;
+  gap: 5px;
+  color: #fff;
+  border-color: transparent;
+  border-radius: 12px;
+  background: var(--mobile-accent);
+  box-shadow: 0 5px 14px var(--mobile-accent-glow);
+  transition: background-color var(--mobile-duration-fast) ease, box-shadow var(--mobile-duration) ease, transform 90ms var(--mobile-ease-out);
+}
+
+html.platform-android .continue-learning-action svg {
+  transition: transform var(--mobile-duration) var(--mobile-ease-out);
+}
+
+html.platform-android .continue-learning-action:active svg {
+  transform: translateX(2px);
+}
+
+html.platform-android .learning-progress-track {
+  height: 6px;
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .learning-progress-track span {
+  background: var(--mobile-accent);
+  transform-origin: left center;
+  animation: mobile-progress-reveal 620ms var(--mobile-ease-out) both;
+  transition: width 460ms var(--mobile-ease-out);
+}
+
+html.platform-android .continue-learning-card > small {
+  color: var(--mobile-text-secondary);
+  font-size: 11px;
+}
+
+html.platform-android .continue-learning-card.is-complete {
+  border-color: var(--mobile-line-strong);
+  background: color-mix(in srgb, var(--mobile-surface) 88%, var(--mobile-accent-soft));
+}
+
+/* Course list */
+html.platform-android .course-group {
+  margin: 0 0 12px;
+}
+
+html.platform-android .course-group-header {
+  min-height: 42px;
+  padding: 0 10px;
+  color: var(--mobile-text-secondary);
+  font-size: 12px;
+  font-weight: 720;
+  background: transparent;
+}
+
+html.platform-android .course-group-header svg {
+  transition: transform var(--mobile-duration) var(--mobile-ease-out);
+}
+
+html.platform-android .course-row-wrapper {
+  min-height: 52px;
+  margin: 4px 2px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: var(--mobile-surface);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.34);
+  animation: mobile-row-enter 260ms var(--mobile-ease-out) both;
+  animation-delay: calc(var(--course-order, 0) * 22ms);
+}
+
+html.platform-android .course-row-wrapper.completed {
+  background: color-mix(in srgb, var(--mobile-surface) 91%, var(--mobile-accent-soft));
+}
+
+html.platform-android .course-row {
+  min-height: 52px;
+  padding: 0 11px;
+  gap: 10px;
+  color: var(--mobile-text);
+  border-radius: 12px;
+  background: transparent;
+  transition: color var(--mobile-duration-fast) ease, background-color var(--mobile-duration) ease, transform 90ms var(--mobile-ease-out);
+}
+
+html.platform-android .course-row span {
+  font-size: 14px;
+  font-weight: 590;
+}
+
+html.platform-android .course-row.selected {
+  color: var(--mobile-accent-strong);
+  background: var(--mobile-accent-soft);
+  box-shadow: inset 3px 0 0 var(--mobile-accent);
+}
+
+html.platform-android .course-row.completed span {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .course-state {
+  color: var(--mobile-text-tertiary);
+}
+
+html.platform-android .course-state.in-progress {
+  color: var(--mobile-accent);
+  fill: var(--mobile-accent-soft);
+}
+
+html.platform-android .course-state.completed {
+  color: var(--mobile-accent-strong);
+  animation: mobile-check-in 300ms var(--mobile-ease-spring) both;
+}
+
+html.platform-android .course-row-wrapper .icon-button.danger.compact {
+  color: var(--mobile-danger);
+  background: transparent;
+}
+
+/* Reader */
+html.platform-android .editor-tabs {
+  min-height: 44px;
+  padding: 4px 6px 0;
+}
+
+html.platform-android .pane-tabs,
+html.platform-android .reader-learning-toolbar {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface);
+}
+
+html.platform-android .pane-tabs {
+  min-height: 44px;
+  padding: 4px 6px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+html.platform-android .pane-name,
+html.platform-android .reader-breadcrumb,
+html.platform-android .lesson-position {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .pane-tab {
+  color: var(--mobile-text-secondary);
+  border-color: transparent;
+  background: transparent;
+}
+
+html.platform-android .pane-tab.active {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface-raised);
+}
+
+html.platform-android .reader-learning-toolbar {
+  min-height: 48px;
+  padding: 6px 10px 6px 14px;
+}
+
+html.platform-android .reader-breadcrumb strong {
+  color: var(--mobile-text);
+}
+
+html.platform-android .reader-learning-actions .icon-button,
+html.platform-android .reader-learning-actions .complete-button {
+  color: var(--mobile-text-secondary);
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface-raised);
+}
+
+html.platform-android .reader-learning-actions .complete-button.completed {
+  color: var(--mobile-accent-strong);
+  border-color: var(--mobile-line-strong);
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .editor-tab {
+  border-radius: 10px 10px 0 0;
+  color: var(--mobile-text-secondary);
+  transition: color var(--mobile-duration-fast) ease, background-color var(--mobile-duration-fast) ease, transform 90ms var(--mobile-ease-out);
+}
+
+html.platform-android .editor-tab.active {
+  color: var(--mobile-text);
+  background: var(--mobile-surface);
+}
+
+html.platform-android .viewer,
+html.platform-android .markdown-viewer,
+html.platform-android .markdown-body {
+  color: var(--mobile-text);
+  background: var(--mobile-surface);
+}
+
+html.platform-android .markdown-body {
+  padding: 24px 19px 88px;
+  line-height: 1.78;
+}
+
+html.platform-android .markdown-body h1,
+html.platform-android .markdown-body h2,
+html.platform-android .markdown-body h3 {
+  color: var(--mobile-text);
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+html.platform-android .markdown-body h1 { font-size: 30px; line-height: 1.28; }
+html.platform-android .markdown-body h2 { font-size: 23px; line-height: 1.35; }
+html.platform-android .markdown-body h3 { font-size: 19px; line-height: 1.4; }
+
+html.platform-android .markdown-body a,
+html.platform-android .knowledge-inline-link {
+  color: var(--mobile-accent-strong);
+}
+
+html.platform-android .markdown-body blockquote {
+  color: var(--mobile-text-secondary);
+  border-left-color: var(--mobile-accent);
+  background: var(--mobile-surface-soft);
+}
+
+html.platform-android .markdown-body pre {
+  color: #20322d;
+  border: 1px solid var(--mobile-line);
+  background: #f0f6f3;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+html.platform-android .markdown-body code:not(pre code) {
+  color: var(--mobile-accent-strong);
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android[data-theme="dark"] .markdown-body pre {
+  color: #e8effb;
+  background: #0b1018;
+  border-color: var(--mobile-line);
+}
+
+html.platform-android[data-theme="dark"] .markdown-body code:not(pre code) {
+  color: #a8c8ff;
+  background: rgba(76, 141, 255, 0.14);
+}
+
+html.platform-android[data-theme="dark"],
+html.platform-android[data-theme="dark"] body,
+html.platform-android[data-theme="dark"] #root,
+html.platform-android[data-theme="dark"] .app-shell,
+html.platform-android[data-theme="dark"] .workbench,
+html.platform-android[data-theme="dark"] .center-pane,
+html.platform-android[data-theme="dark"] .reader-workspace,
+html.platform-android[data-theme="dark"] .editor-group,
+html.platform-android[data-theme="dark"] .editor-body,
+html.platform-android[data-theme="dark"] .sidebar-scroll,
+html.platform-android[data-theme="dark"] .assistant-thread-view,
+html.platform-android[data-theme="dark"] .assistant-card-stack,
+html.platform-android[data-theme="dark"] .explain-panel,
+html.platform-android[data-theme="dark"] .knowledge-graph-viewer {
+  color: var(--mobile-text);
+  background: var(--mobile-canvas);
+}
+
+html.platform-android[data-theme="dark"] .topbar,
+html.platform-android[data-theme="dark"] .activity-rail,
+html.platform-android[data-theme="dark"] .navigation-panel,
+html.platform-android[data-theme="dark"] .assistant-drawer,
+html.platform-android[data-theme="dark"] .viewer,
+html.platform-android[data-theme="dark"] .viewer-header,
+html.platform-android[data-theme="dark"] .editor-tabs,
+html.platform-android[data-theme="dark"] .generation-drawer,
+html.platform-android[data-theme="dark"] .settings-modal,
+html.platform-android[data-theme="dark"] .prompt-editor-modal,
+html.platform-android[data-theme="dark"] .command-palette,
+html.platform-android[data-theme="dark"] .more-menu,
+html.platform-android[data-theme="dark"] .modal-card,
+html.platform-android[data-theme="dark"] .app-dialog,
+html.platform-android[data-theme="dark"] .assistant-answer-card,
+html.platform-android[data-theme="dark"] .assistant-stream-card,
+html.platform-android[data-theme="dark"] .markdown-viewer,
+html.platform-android[data-theme="dark"] .markdown-body,
+html.platform-android[data-theme="dark"] .markdown-viewer.embedded,
+html.platform-android[data-theme="dark"] .qa-reference-sources,
+html.platform-android[data-theme="dark"] .understanding-block {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface);
+}
+
+html.platform-android[data-theme="dark"] .pane-tabs,
+html.platform-android[data-theme="dark"] .pane-tab.active,
+html.platform-android[data-theme="dark"] .reader-learning-toolbar {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface);
+}
+
+html.platform-android[data-theme="dark"] .reader-breadcrumb strong {
+  color: var(--mobile-text);
+}
+
+html.platform-android[data-theme="dark"] input,
+html.platform-android[data-theme="dark"] textarea,
+html.platform-android[data-theme="dark"] select,
+html.platform-android[data-theme="dark"] .project-switch,
+html.platform-android[data-theme="dark"] .command-palette-search input {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line-strong);
+  background: var(--mobile-surface-raised);
+}
+
+html.platform-android .viewer-loading {
+  color: var(--mobile-text-secondary);
+  background: linear-gradient(100deg, var(--mobile-canvas) 20%, var(--mobile-surface-soft) 45%, var(--mobile-canvas) 70%);
+  background-size: 220% 100%;
+}
+
+/* Lightweight mobile code palette */
+html.platform-android .mobile-code-viewer,
+html.platform-android .mobile-code-scroll,
+html.platform-android .mobile-code-line {
+  color: #24342f;
+  background: #f7faf9;
+}
+
+html.platform-android .mobile-line-number {
+  color: #8a9892;
+  border-right-color: var(--mobile-line);
+  background: #f1f6f4;
+}
+
+html.platform-android .mobile-code-viewer .hljs-keyword,
+html.platform-android .mobile-code-viewer .hljs-selector-tag { color: #7b3fc2; }
+html.platform-android .mobile-code-viewer .hljs-title,
+html.platform-android .mobile-code-viewer .hljs-function { color: #1769aa; }
+html.platform-android .mobile-code-viewer .hljs-string,
+html.platform-android .mobile-code-viewer .hljs-attr { color: #16745f; }
+html.platform-android .mobile-code-viewer .hljs-number,
+html.platform-android .mobile-code-viewer .hljs-literal { color: #a65418; }
+html.platform-android .mobile-code-viewer .hljs-comment { color: #7b8983; }
+html.platform-android .mobile-code-viewer .hljs-type,
+html.platform-android .mobile-code-viewer .hljs-built_in { color: #0e7b84; }
+
+html.platform-android[data-theme="dark"] .mobile-code-viewer,
+html.platform-android[data-theme="dark"] .mobile-code-scroll,
+html.platform-android[data-theme="dark"] .mobile-code-line {
+  color: #e8effb;
+  background: #0b1018;
+}
+
+html.platform-android[data-theme="dark"] .mobile-line-number {
+  color: #697991;
+  background: #0e141e;
+}
+
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-keyword,
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-selector-tag { color: #c69cff; }
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-title,
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-function { color: #7db4ff; }
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-string,
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-attr { color: #7cd4be; }
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-number,
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-literal { color: #ffb77a; }
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-comment { color: #708097; }
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-type,
+html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-built_in { color: #68cbd5; }
+
+/* Assistant and knowledge views */
+html.platform-android .assistant-thread-view,
+html.platform-android .assistant-card-stack,
+html.platform-android .explain-panel,
+html.platform-android .knowledge-graph-viewer {
+  color: var(--mobile-text);
+  background: var(--mobile-canvas);
+}
+
+html.platform-android .assistant-answer-card,
+html.platform-android .assistant-stream-card,
+html.platform-android .markdown-viewer.embedded,
+html.platform-android .qa-reference-sources,
+html.platform-android .understanding-block {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface);
+}
+
+html.platform-android .assistant-answer-card {
+  border-radius: var(--mobile-radius-lg);
+  box-shadow: var(--mobile-shadow-md);
+  animation: mobile-card-enter 240ms var(--mobile-ease-out) both;
+}
+
+html.platform-android .assistant-card-shadow {
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface-soft);
+}
+
+html.platform-android .assistant-empty-card,
+html.platform-android .assistant-empty-card strong,
+html.platform-android .assistant-answer-card,
+html.platform-android .qa-reference-sources summary,
+html.platform-android .understanding-saved > span {
+  color: var(--mobile-text);
+}
+
+html.platform-android .assistant-empty-card span,
+html.platform-android .assistant-answer-card small,
+html.platform-android .qa-reference-meta {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .assistant-mini-tree button:hover,
+html.platform-android .assistant-mini-tree button.active,
+html.platform-android .qa-reference-list > button:hover {
+  color: var(--mobile-accent-strong);
+  background: var(--mobile-accent-soft);
+}
+
+/* Forms and overlays */
+html.platform-android input,
+html.platform-android textarea,
+html.platform-android select {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line-strong);
+  border-radius: 12px;
+  background: var(--mobile-surface);
+  caret-color: var(--mobile-accent);
+}
+
+html.platform-android input:focus,
+html.platform-android textarea:focus,
+html.platform-android select:focus {
+  border-color: var(--mobile-accent);
+  outline: 3px solid var(--mobile-accent-soft);
+}
+
+html.platform-android .primary-button {
+  color: #fff;
+  border-color: transparent;
+  border-radius: 12px;
+  background: var(--mobile-accent);
+  box-shadow: 0 5px 16px var(--mobile-accent-glow);
+}
+
+html.platform-android .secondary-button,
+html.platform-android .icon-button {
+  color: var(--mobile-text-secondary);
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface);
+}
+
+html.platform-android .modal-backdrop,
+html.platform-android .settings-overlay,
+html.platform-android .tool-drawer-backdrop,
+html.platform-android .command-palette-layer {
+  background: rgba(5, 15, 12, 0.34);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: mobile-fade-in 160ms ease-out both;
+}
+
+html.platform-android .settings-modal,
+html.platform-android .prompt-editor-modal,
+html.platform-android .app-dialog,
+html.platform-android .command-palette,
+html.platform-android .more-menu {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  border-radius: var(--mobile-radius-lg);
+  background: var(--mobile-surface-raised);
+  box-shadow: var(--mobile-shadow-md);
+  animation: mobile-modal-enter 220ms var(--mobile-ease-out) both;
+  transform-origin: center bottom;
+}
+
+html.platform-android .generation-drawer {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  border-radius: 22px 22px 0 0;
+  background: var(--mobile-surface-raised);
+  box-shadow: 0 -18px 48px rgba(6, 25, 19, 0.18);
+  animation: mobile-drawer-enter 240ms var(--mobile-ease-out) both;
+}
+
+html.platform-android .drawer-header,
+html.platform-android .settings-actions,
+html.platform-android .prompt-editor-header,
+html.platform-android .app-dialog-actions {
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface-raised);
+}
+
+html.platform-android .more-menu button,
+html.platform-android .command-palette-results > button {
+  color: var(--mobile-text);
+  border-radius: 10px;
+  background: transparent;
+}
+
+html.platform-android .more-menu button:active,
+html.platform-android .command-palette-results > button.active {
+  color: var(--mobile-accent-strong);
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .more-menu-divider,
+html.platform-android .command-palette-search,
+html.platform-android .qa-panel-tabs {
+  border-color: var(--mobile-line);
+}
+
+/* Unified, non-blocking task feedback */
+html.platform-android .apple-feedback-stack {
+  position: fixed;
+  z-index: 130;
+  top: calc(62px + env(safe-area-inset-top));
+  left: 10px;
+  right: 10px;
+  display: grid;
+  justify-items: stretch;
+  gap: 7px;
+  pointer-events: none;
+}
+
+html.platform-android .apple-feedback {
+  min-height: 42px;
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+  color: var(--mobile-text);
+  border: 1px solid var(--mobile-line);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--mobile-surface-raised) 94%, transparent);
+  box-shadow: var(--mobile-shadow-md);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  pointer-events: auto;
+  animation: mobile-feedback-enter 220ms var(--mobile-ease-out) both;
+  font-size: 13px;
+}
+
+html.platform-android .apple-feedback > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.platform-android .apple-feedback > button {
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  border: 0;
+  border-radius: 9px;
+  color: inherit;
+  background: transparent;
+}
+
+html.platform-android .apple-feedback.busy { color: var(--mobile-accent-strong); }
+html.platform-android .apple-feedback.success { color: var(--mobile-accent-strong); }
+html.platform-android .apple-feedback.error { color: var(--mobile-danger); }
+
+html.platform-android .apple-feedback-progress {
+  width: 74px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .apple-feedback-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: currentColor;
+  transition: width 420ms var(--mobile-ease-out);
+}
+
+html.platform-android .selection-quick-bar {
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--mobile-surface-raised) 96%, transparent);
+  box-shadow: var(--mobile-shadow-md);
+  animation: mobile-selection-enter 180ms var(--mobile-ease-out) both;
+}
+
+html.platform-android .selection-quick-bar button {
+  min-height: 38px;
+  color: var(--mobile-text);
+}
+
+/* Motion */
+@keyframes mobile-surface-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mobile-card-enter {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes mobile-row-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mobile-progress-reveal {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes mobile-learning-pulse {
+  0%, 55%, 100% { box-shadow: 0 0 0 0 var(--mobile-accent-glow); }
+  72% { box-shadow: 0 0 0 7px transparent; }
+}
+
+@keyframes mobile-check-in {
+  from { opacity: 0; transform: scale(0.72) rotate(-8deg); }
+  to { opacity: 1; transform: scale(1) rotate(0); }
+}
+
+@keyframes mobile-modal-enter {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes mobile-drawer-enter {
+  from { opacity: 0.85; transform: translateY(26px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mobile-feedback-enter {
+  from { opacity: 0; transform: translateY(-7px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes mobile-selection-enter {
+  from { opacity: 0; transform: translate(-50%, 8px) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes mobile-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.platform-android *,
+  html.platform-android *::before,
+  html.platform-android *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  html.platform-android {
+    --mobile-line: currentColor;
+    --mobile-line-strong: currentColor;
+  }
+
+  html.platform-android .activity-rail button.active::before,
+  html.platform-android .course-row.selected {
+    outline: 2px solid currentColor;
+    outline-offset: -2px;
+  }
+}
+
+@media (max-width: 370px) {
+  html.platform-android .markdown-body h1 { font-size: 27px; }
+  html.platform-android .markdown-body { padding-inline: 17px; }
+}

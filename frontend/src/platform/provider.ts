@@ -1,4 +1,4 @@
-import { isAndroidRuntime } from "./runtime";
+import { isNativeAndroidRuntime } from "./runtime";
 
 export interface CodeCourseProvider {
   request<T>(path: string, init?: RequestInit): Promise<T>;
@@ -49,7 +49,7 @@ export function httpApiUrl(path: string): string {
 
 export function getCodeCourseProvider(): Promise<CodeCourseProvider> {
   if (!providerPromise) {
-    providerPromise = isAndroidRuntime()
+    providerPromise = isNativeAndroidRuntime()
       ? import("./android/localProvider").then(({ AndroidLocalProvider }) => AndroidLocalProvider.create())
       : Promise.resolve(new HttpProvider(configuredApiBase()));
   }

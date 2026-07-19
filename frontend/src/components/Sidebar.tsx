@@ -1,4 +1,4 @@
-import { BookOpen, Code2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowRight, BookOpen, CheckCircle2, Code2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { CourseFile, LearningState, Project, TreeNode } from "../api/client";
 import CourseList from "./CourseList";
 import FileTree from "./FileTree";
@@ -139,12 +139,24 @@ export default function Sidebar({
           const recent = [...learningStates].filter((entry) => entry.source_type === "course" && lessons.some((file) => file.filename === entry.source_path)).sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
           const next = lessons.find((file) => !learningStates.some((entry) => entry.source_type === "course" && entry.source_path === file.filename && entry.status === "completed"));
           const target = recent?.source_path ?? next?.filename;
+          const complete = completed === lessons.length;
+          const progress = lessons.length ? (completed / lessons.length) * 100 : 0;
           return lessons.length ? (
-            <section className="continue-learning-card">
-              <div className="continue-learning-copy"><span>继续学习</span><strong>{courses.find((file) => file.filename === target)?.title ?? "从第一课开始"}</strong></div>
-              <button className="secondary-button compact" onClick={() => target && onContinueLearning?.(target)} disabled={!target}>继续</button>
-              <div className="learning-progress-track"><span style={{ width: `${lessons.length ? (completed / lessons.length) * 100 : 0}%` }} /></div>
-              <small>{completed}/{lessons.length} 课已完成</small>
+            <section className={`continue-learning-card ${complete ? "is-complete" : ""}`}>
+              <div className="continue-learning-copy">
+                <span className="continue-learning-kicker">
+                  {complete ? <CheckCircle2 size={13} /> : <i aria-hidden="true" />}
+                  {complete ? "阶段完成" : "继续学习"}
+                </span>
+                <strong>{courses.find((file) => file.filename === target)?.title ?? "从第一课开始"}</strong>
+              </div>
+              <button className="secondary-button compact continue-learning-action" onClick={() => target && onContinueLearning?.(target)} disabled={!target}>
+                {complete ? "复习" : "继续"}<ArrowRight size={13} />
+              </button>
+              <div className="learning-progress-track" role="progressbar" aria-label="课程学习进度" aria-valuemin={0} aria-valuemax={lessons.length} aria-valuenow={completed}>
+                <span style={{ width: `${progress}%` }} />
+              </div>
+              <small>{complete ? `已完成全部 ${lessons.length} 课` : `${completed}/${lessons.length} 课已完成`}</small>
             </section>
           ) : null;
         })()}

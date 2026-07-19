@@ -503,6 +503,7 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeMode === "dark" ? "#090c12" : "#f7faf8");
   }, [themeMode]);
 
   useEffect(() => {
@@ -2892,19 +2893,15 @@ export default function App() {
           </div>
         </div>
       ) : null}
-      {!mobileRuntime ? (
-        <TaskFeedback
-          error={error}
-          busy={showBusy}
-          label={anyQALoading ? (activeQAGeneration?.label || "正在生成回答") : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : ""}
-          progressCurrent={activeTask?.progress_current}
-          progressTotal={activeTask?.progress_total}
-          toast={toast}
-          onDismissError={() => setError("")}
-        />
-      ) : (
-        <>{error ? <div className="error-bar">{error}</div> : null}{showBusy ? <div className="busy-bar">{taskMessage || "正在处理…"}</div> : null}</>
-      )}
+      <TaskFeedback
+        error={error}
+        busy={showBusy}
+        label={anyQALoading ? (activeQAGeneration?.label || "正在生成回答") : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
+        progressCurrent={activeTask?.progress_current}
+        progressTotal={activeTask?.progress_total}
+        toast={toast}
+        onDismissError={() => setError("")}
+      />
       <main
         className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen ? "assistant-open" : ""} ${mobileRuntime && (navigationOpen || assistantOpen) ? "mobile-panel-open" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
         style={{
@@ -3168,7 +3165,6 @@ export default function App() {
         />
       ) : null}
       <CommandPalette open={commandPaletteOpen} items={commandPaletteItems()} onClose={() => setCommandPaletteOpen(false)} />
-      {mobileRuntime && toast ? <div className="app-toast" role="status">{toast}</div> : null}
       <AppDialog
         state={appDialog}
         value={appDialogValue}

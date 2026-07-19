@@ -6,6 +6,7 @@ import "./styles/apple-tokens.css";
 import "./styles/apple-workbench.css";
 import "./styles/apple-content.css";
 import "./styles/apple-overlays.css";
+import "./styles/android-experience.css";
 import { applyPlatformClass } from "./platform/runtime";
 
 applyPlatformClass();
@@ -17,6 +18,7 @@ const initialTheme = storedTheme === "light" || storedTheme === "dark"
     ? "dark"
     : "light";
 document.documentElement.dataset.theme = initialTheme;
+document.querySelector('meta[name="theme-color"]')?.setAttribute("content", initialTheme === "dark" ? "#090c12" : "#f7faf8");
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
