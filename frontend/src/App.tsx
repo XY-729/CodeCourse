@@ -553,6 +553,12 @@ export default function App() {
   }, [assistantOpen, explainWidth, mobileRuntime, navigationOpen, sidebarWidth]);
 
   useEffect(() => {
+    if (mobileRuntime && assistantOpen && navigationOpen) {
+      setNavigationOpen(false);
+    }
+  }, [assistantOpen, mobileRuntime, navigationOpen]);
+
+  useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -1268,6 +1274,10 @@ export default function App() {
       language: content.language,
       initialLine,
     });
+    if (mobileRuntime) {
+      setNavigationOpen(false);
+      setAssistantOpen(false);
+    }
   }
 
   async function openCourseInActiveGroup(projectId: number, filename: string) {
@@ -1282,6 +1292,10 @@ export default function App() {
       title: courses.find((file) => file.filename === filename)?.title ?? filename,
       content: content.content,
     });
+    if (mobileRuntime) {
+      setNavigationOpen(false);
+      setAssistantOpen(false);
+    }
   }
 
   function _normalizeOutputPath(outputPath: string | null | undefined, recordId: number, projectId: number): string {
@@ -1340,6 +1354,10 @@ export default function App() {
         favorite: record.favorite,
         dirty: false,
       });
+    }
+    if (mobileRuntime) {
+      setNavigationOpen(false);
+      setAssistantOpen(false);
     }
   }
 
@@ -2714,10 +2732,10 @@ export default function App() {
 
   function commandPaletteItems(): CommandPaletteItem[] {
     const items: CommandPaletteItem[] = [
-      { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => setAssistantOpen(true) },
+      { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => { if (mobileRuntime) setNavigationOpen(false); setAssistantOpen(true); } },
       { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", run: () => { setGenerationIntent("outline"); setGenerationOpen(true); } },
-      { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => { setNavigationView("courses"); setNavigationOpen(true); } },
-      { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => { setNavigationView("files"); setNavigationOpen(true); } },
+      { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => { if (mobileRuntime) setAssistantOpen(false); setNavigationView("courses"); setNavigationOpen(true); } },
+      { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => { if (mobileRuntime) setAssistantOpen(false); setNavigationView("files"); setNavigationOpen(true); } },
       { id: "command:settings", label: "模型 API 设置", section: "命令", keywords: "deepseek key 模型", run: () => setSettingsOpen(true) },
       { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: () => setPromptEditorOpen(true) },
       { id: "command:index", label: "构建项目索引", section: "命令", keywords: "rag 搜索 索引", run: () => void handleBuildIndex() },
@@ -2750,6 +2768,28 @@ export default function App() {
   ).length;
   const progressLabel = lessonFilesForProgress.length ? `${completedLessonCount}/${lessonFilesForProgress.length} 课已完成` : undefined;
   const activeDocumentTitle = activeOpenItem?.title ?? (project ? "学习工作台" : "CodeCourse");
+
+  function toggleMobileNavigation(view: "courses" | "files") {
+    const isCurrent = navigationOpen && !assistantOpen && navigationView === view;
+    setAssistantOpen(false);
+    if (isCurrent) {
+      setNavigationOpen(false);
+      return;
+    }
+    setNavigationView(view);
+    setNavigationOpen(true);
+  }
+
+  function toggleMobileAssistant(tab: "history" | "knowledge") {
+    const isCurrent = assistantOpen && !navigationOpen && qaUpperTab === tab;
+    setNavigationOpen(false);
+    if (isCurrent) {
+      setAssistantOpen(false);
+      return;
+    }
+    setQAUpperTab(tab);
+    setAssistantOpen(true);
+  }
 
   function openGeneration(intent: GenerationIntent) {
     setGenerationIntent(intent);
@@ -2808,7 +2848,7 @@ export default function App() {
             <div className="brand-text"><strong>CodeCourse</strong><span>{project?.name ?? "学习工作台"}</span></div>
           </div>
           <div className="topbar-workspace-actions">
-            <button className="project-switch" onClick={() => { setNavigationView("projects"); setNavigationOpen(true); }}>
+            <button className="project-switch" onClick={() => { setAssistantOpen(false); setNavigationView("projects"); setNavigationOpen(true); }}>
               <span>{project?.name ?? "选择项目"}</span><ChevronDown size={15} />
             </button>
             <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => setCommandPaletteOpen(true)} title="搜索" aria-label="搜索"><Search size={18} /></button>
@@ -2866,7 +2906,7 @@ export default function App() {
         <>{error ? <div className="error-bar">{error}</div> : null}{showBusy ? <div className="busy-bar">{taskMessage || "正在处理…"}</div> : null}</>
       )}
       <main
-        className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen ? "assistant-open" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
+        className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen ? "assistant-open" : ""} ${mobileRuntime && (navigationOpen || assistantOpen) ? "mobile-panel-open" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
         style={{
           gridTemplateColumns: [
             ...(mobileRuntime ? ["48px"] : []),
@@ -2877,12 +2917,12 @@ export default function App() {
         }}
       >
         {mobileRuntime ? <nav className="activity-rail" aria-label="学习导航">
-          <button className={navigationOpen && navigationView === "courses" ? "active" : ""} onClick={() => { setNavigationView("courses"); setNavigationOpen(navigationView !== "courses" || !navigationOpen); }} title="课程"><BookOpen size={18} /><span>课程</span></button>
-          <button className={navigationOpen && navigationView === "files" ? "active" : ""} onClick={() => { setNavigationView("files"); setNavigationOpen(navigationView !== "files" || !navigationOpen); }} title="源码"><FolderTree size={18} /><span>源码</span></button>
+          <button className={navigationOpen && !assistantOpen && navigationView === "courses" ? "active" : ""} onClick={() => toggleMobileNavigation("courses")} title="课程"><BookOpen size={18} /><span>课程</span></button>
+          <button className={navigationOpen && !assistantOpen && navigationView === "files" ? "active" : ""} onClick={() => toggleMobileNavigation("files")} title="源码"><FolderTree size={18} /><span>源码</span></button>
           <button className={`desktop-project-nav ${navigationOpen && navigationView === "projects" ? "active" : ""}`} onClick={() => { setNavigationView("projects"); setNavigationOpen(navigationView !== "projects" || !navigationOpen); }} title="项目"><PanelLeft size={18} /><span>项目</span></button>
           <span className="activity-rail-spacer" />
-          <button className={assistantOpen && qaUpperTab !== "knowledge" ? "active" : ""} onClick={() => { setQAUpperTab("history"); setAssistantOpen((open) => qaUpperTab === "knowledge" ? true : !open); }} title="AI 助手"><Bot size={18} /><span>助手</span></button>
-          <button className={`mobile-only ${assistantOpen && qaUpperTab === "knowledge" ? "active" : ""}`} onClick={() => { setQAUpperTab("knowledge"); setAssistantOpen(true); }} title="知识网络"><Sparkles size={18} /><span>网络</span></button>
+          <button className={assistantOpen && !navigationOpen && qaUpperTab === "history" ? "active" : ""} onClick={() => toggleMobileAssistant("history")} title="AI 助手"><Bot size={18} /><span>助手</span></button>
+          <button className={`mobile-only ${assistantOpen && !navigationOpen && qaUpperTab === "knowledge" ? "active" : ""}`} onClick={() => toggleMobileAssistant("knowledge")} title="知识网络"><Sparkles size={18} /><span>网络</span></button>
         </nav> : null}
         {navigationOpen ? (
           <>

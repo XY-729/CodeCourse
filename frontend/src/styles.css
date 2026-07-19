@@ -2899,9 +2899,9 @@ html.platform-android #root {
 }
 
 .platform-android .navigation-panel {
-  position: fixed;
+  position: absolute;
   z-index: 55;
-  inset: calc(52px + env(safe-area-inset-top)) 0 calc(60px + env(safe-area-inset-bottom)) 0;
+  inset: 0 0 calc(60px + env(safe-area-inset-bottom)) 0;
   width: 100% !important;
   max-width: none;
   border: 0;
@@ -2979,9 +2979,9 @@ html.platform-android #root {
 }
 
 .platform-android .assistant-drawer {
-  position: fixed;
+  position: absolute;
   z-index: 60;
-  inset: calc(52px + env(safe-area-inset-top)) 0 calc(60px + env(safe-area-inset-bottom)) 0;
+  inset: 0 0 calc(60px + env(safe-area-inset-bottom)) 0;
   width: 100% !important;
   max-width: none;
   transform: translateY(16px);
@@ -3013,7 +3013,12 @@ html.platform-android #root {
 }
 
 .platform-android .modal-backdrop {
+  z-index: 140;
   padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom));
+}
+
+.platform-android .mobile-panel-open .center-pane {
+  visibility: hidden;
 }
 
 .platform-android .settings-modal,
@@ -3033,6 +3038,24 @@ html.platform-android #root {
 .platform-android .settings-secret-row input,
 .platform-android .settings-secret-row .settings-paste-button {
   min-height: 44px;
+}
+
+.platform-android .settings-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto 44px;
+  gap: 6px;
+  padding: 10px;
+}
+
+.platform-android .settings-actions > button {
+  min-width: 0;
+  padding-inline: 9px;
+  white-space: nowrap;
+}
+
+.platform-android .settings-actions > button:last-child {
+  width: 44px;
+  padding: 0;
 }
 
 .platform-android .settings-secret-row input {

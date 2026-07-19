@@ -187,7 +187,7 @@ export default function LLMSettingsDialog({ open, onClose, onConfirm, onOpenExte
         <div className="settings-actions">
           <button type="button" className="secondary-button" onClick={() => onOpenExternal(DEEPSEEK_API_KEY_URL)}>
             <ExternalLink size={15} />
-            DeepSeek API Key
+            DeepSeek
           </button>
           <button type="button" className="secondary-button" onClick={runTest} disabled={testing || saving}>
             <TestTube2 size={15} />
