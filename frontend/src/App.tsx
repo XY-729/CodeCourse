@@ -16,6 +16,9 @@ import {
   generateFileLesson,
   generateOutlineLesson,
   generateOutline,
+  generateOutlineStream,
+  generateFileLessonStream,
+  generateOutlineLessonStream,
   getCourseContent,
   getCourseFiles,
   getGenerationTask,
@@ -76,6 +79,7 @@ import SelectionQuickBar from "./components/SelectionQuickBar";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
 import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolbar";
 import GenerationSheet from "./components/GenerationSheet";
+import TitleBar from "./components/TitleBar";
 import TaskFeedback from "./components/TaskFeedback";
 import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
@@ -486,6 +490,8 @@ export default function App() {
   const learningStatesRef = useRef<LearningState[]>([]);
   const learningSaveTimers = useRef<Map<string, number>>(new Map());
   const pendingLearningUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
+  const streamingContentRef = useRef<Map<string, string>>(new Map());
+  const abortControllerRef = useRef<AbortController | null>(null);
   const mobileRuntime = isAndroidRuntime();
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
@@ -495,6 +501,10 @@ export default function App() {
   const qaLoading = Boolean(activeQAGeneration);
   const anyQALoading = Object.keys(qaGenerations).length > 0;
   const showBusy = loading || isTaskRunning || anyQALoading;
+
+  useEffect(() => {
+    document.documentElement.classList.remove("app-starting");
+  }, []);
 
   useEffect(() => {
     learningStatesRef.current = learningStates;
@@ -627,28 +637,56 @@ export default function App() {
 
   useEffect(() => {
     if (!dragState) {
+      document.documentElement.style.removeProperty("--nav-width");
+      document.documentElement.style.removeProperty("--explain-width");
+      document.documentElement.style.removeProperty("--split-ratio");
+      document.documentElement.style.removeProperty("--split-dir");
+      document.documentElement.style.removeProperty("--sidebar-project-h");
+      document.documentElement.style.removeProperty("--sidebar-course-h");
+      document.documentElement.style.removeProperty("--qa-ask-h");
       return;
     }
     const currentDrag = dragState;
     function onMouseMove(event: globalThis.MouseEvent) {
       if (currentDrag.kind === "sidebar-width") {
-        setSidebarWidth(clamp(currentDrag.startWidth + event.clientX - currentDrag.startX, 240, 360));
+        const w = clamp(currentDrag.startWidth + event.clientX - currentDrag.startX, 240, 360);
+        document.documentElement.style.setProperty("--nav-width", `${w}px`);
       } else if (currentDrag.kind === "explain-width") {
-        setExplainWidth(clamp(currentDrag.startWidth - (event.clientX - currentDrag.startX), 340, 520));
+        const w = clamp(currentDrag.startWidth - (event.clientX - currentDrag.startX), 340, 520);
+        document.documentElement.style.setProperty("--explain-width", `${w}px`);
       } else if (currentDrag.kind === "sidebar-project") {
-        setSidebarProjectHeight(clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 96, 320));
+        const h = clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 96, 320);
+        document.documentElement.style.setProperty("--sidebar-project-h", `${h}px`);
       } else if (currentDrag.kind === "sidebar-course") {
-        setSidebarCourseHeight(clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420));
+        const h = clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420);
+        document.documentElement.style.setProperty("--sidebar-course-h", `${h}px`);
       } else if (currentDrag.kind === "qa-ask") {
-        setQAAskHeight(clamp(currentDrag.startHeight + currentDrag.startY - event.clientY, 230, 720));
+        const h = clamp(currentDrag.startHeight + currentDrag.startY - event.clientY, 230, 720);
+        document.documentElement.style.setProperty("--qa-ask-h", `${h}px`);
       } else if (currentDrag.kind === "split") {
         const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
         const nextRatio = currentDrag.startRatio + delta / Math.max(1, currentDrag.size);
-        setLayout((prev) => updateSplitRatio(prev, currentDrag.splitId, nextRatio));
+        document.documentElement.style.setProperty("--split-ratio", String(nextRatio));
+        document.documentElement.style.setProperty("--split-dir", String(currentDrag.direction));
       }
     }
     function onMouseUp(event: globalThis.MouseEvent) {
-      if (currentDrag.kind === "split") {
+      if (currentDrag.kind === "sidebar-width") {
+        const w = clamp(currentDrag.startWidth + event.clientX - currentDrag.startX, 240, 360);
+        setSidebarWidth(w);
+      } else if (currentDrag.kind === "explain-width") {
+        const w = clamp(currentDrag.startWidth - (event.clientX - currentDrag.startX), 340, 520);
+        setExplainWidth(w);
+      } else if (currentDrag.kind === "sidebar-project") {
+        const h = clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 96, 320);
+        setSidebarProjectHeight(h);
+      } else if (currentDrag.kind === "sidebar-course") {
+        const h = clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420);
+        setSidebarCourseHeight(h);
+      } else if (currentDrag.kind === "qa-ask") {
+        const h = clamp(currentDrag.startHeight + currentDrag.startY - event.clientY, 230, 720);
+        setQAAskHeight(h);
+      } else if (currentDrag.kind === "split") {
         const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
         const finalRatio = currentDrag.startRatio + delta / Math.max(1, currentDrag.size);
         if (finalRatio < 0.08 || finalRatio > 0.92) {
@@ -1303,21 +1341,23 @@ export default function App() {
     if (!outputPath) {
       return `qa/${recordId}`;
     }
+    // Normalize Windows backslashes to forward slashes
+    const normalized = outputPath.replace(/\\/g, "/");
     // If it's already a relative path, use as-is
-    if (!outputPath.startsWith('/') && !outputPath.includes('\\')) {
-      return outputPath;
+    if (!normalized.startsWith('/')) {
+      return normalized;
     }
     // Old absolute path: extract everything after "generated/{projectId}/"
     const marker = `generated/${projectId}/`;
-    const idx = outputPath.indexOf(marker);
+    const idx = normalized.indexOf(marker);
     if (idx !== -1) {
-      return outputPath.slice(idx + marker.length);
+      return normalized.slice(idx + marker.length);
     }
     // Fallback: try to extract relative path from any "generated/" prefix
-    const genIdx = outputPath.lastIndexOf('generated/');
+    const genIdx = normalized.lastIndexOf('generated/');
     if (genIdx !== -1) {
       // Skip past "generated/{id}/"
-      const after = outputPath.slice(genIdx + 'generated/'.length);
+      const after = normalized.slice(genIdx + 'generated/'.length);
       const slashIdx = after.indexOf('/');
       return slashIdx !== -1 ? after.slice(slashIdx + 1) : after;
     }
@@ -1746,11 +1786,81 @@ export default function App() {
       return;
     }
     setError("");
+    setGenerationOpen(false);
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
+
+    const filename = "outline.md";
+    setCourses((prev) => {
+      if (prev.some((c) => c.filename === filename)) return prev;
+      return [{ filename, title: "生成中…", group: "" }, ...prev];
+    });
+    streamingContentRef.current.set(filename, "");
+
+    openItemInGroup(activeGroupId, {
+      id: `course:${filename}`,
+      type: "course",
+      path: filename,
+      title: "生成中…",
+      content: "",
+    });
+    setTaskMessage("生成总纲中…");
+
     try {
-      const task = await generateOutline(project.id, buildScope(), generationInstructions);
-      await trackTask(task);
+      const streamedFilename = await generateOutlineStream(
+        project.id,
+        buildScope(),
+        generationInstructions,
+        {
+          onTaskCreated({ filename: fn }) {
+            if (fn !== filename) {
+              setCourses((prev) => {
+                if (prev.some((c) => c.filename === fn)) return prev;
+                return [...prev, { filename: fn, title: fn, group: "" }];
+              });
+            }
+          },
+          onFileCreated({ filename: fn }) {
+            setCourses((prev) => {
+              if (prev.some((c) => c.filename === fn)) return prev;
+              return [...prev, { filename: fn, title: fn, group: "" }];
+            });
+          },
+          onStage(_stage, label) {
+            setTaskMessage(label);
+          },
+          onDelta(text) {
+            const current = streamingContentRef.current.get(filename) ?? "";
+            const updated = current + text;
+            streamingContentRef.current.set(filename, updated);
+            setLayout((prev) =>
+              updateGroup(prev, activeGroupId, (g) => ({
+                ...g,
+                items: g.items.map((item) =>
+                  item.id === `course:${filename}` ? { ...item, content: updated } : item,
+                ),
+              })),
+            );
+          },
+          onCompleted({ cached }) {
+            setTaskMessage(cached ? "已缓存，无需重新生成" : "生成完成");
+            setToast("内容已生成");
+            streamingContentRef.current.delete(filename);
+          },
+          onError(message) {
+            throw new Error(message);
+          },
+        },
+        abortControllerRef.current.signal,
+      );
+      if (streamedFilename) {
+        await refreshCourses(project.id);
+        await openCourseInActiveGroup(project.id, streamedFilename);
+      }
     } catch (caught) {
+      if (caught instanceof Error && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "创建总纲任务失败");
+      streamingContentRef.current.delete(filename);
     }
   }
 
@@ -1766,11 +1876,69 @@ export default function App() {
       return;
     }
     setError("");
+    setGenerationOpen(false);
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
+
+    const pathParts = fileContent.path.split("/").filter(Boolean);
+    const baseFileName = pathParts[pathParts.length - 1] ?? fileContent.path;
+    const modeSuffix = nextMode === "brief" ? "_brief" : "_detailed";
+    const safeName = baseFileName.replace(/[^a-zA-Z0-9_\-.]/g, "_");
+    const filename = `lessons/${safeName}${modeSuffix}.md`;
+
+    setCourses((prev) => {
+      if (prev.some((c) => c.filename === filename)) return prev;
+      return [{ filename, title: "生成中…", group: "lessons" }, ...prev];
+    });
+    streamingContentRef.current.set(filename, "");
+
+    openItemInGroup(activeGroupId, {
+      id: `course:${filename}`,
+      type: "course",
+      path: filename,
+      title: `${baseFileName} ${label}`,
+      content: "",
+    });
+    setTaskMessage(`${label}生成中…`);
+
     try {
-      const task = await generateFileLesson(project.id, fileContent.path, nextMode, generationInstructions);
-      await trackTask(task);
+      const streamedFilename = await generateFileLessonStream(
+        project.id,
+        fileContent.path,
+        nextMode,
+        generationInstructions,
+        {
+          onStage(_stage, label) { setTaskMessage(label); },
+          onDelta(text) {
+            const current = streamingContentRef.current.get(filename) ?? "";
+            const updated = current + text;
+            streamingContentRef.current.set(filename, updated);
+            setLayout((prev) =>
+              updateGroup(prev, activeGroupId, (g) => ({
+                ...g,
+                items: g.items.map((item) =>
+                  item.id === `course:${filename}` ? { ...item, content: updated } : item,
+                ),
+              })),
+            );
+          },
+          onCompleted({ cached }) {
+            setTaskMessage(cached ? "已缓存，无需重新生成" : "生成完成");
+            setToast("内容已生成");
+            streamingContentRef.current.delete(filename);
+          },
+          onError(message) { throw new Error(message); },
+        },
+        abortControllerRef.current.signal,
+      );
+      if (streamedFilename) {
+        await refreshCourses(project.id);
+        await openCourseInActiveGroup(project.id, streamedFilename);
+      }
     } catch (caught) {
+      if (caught instanceof Error && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "创建文件课件任务失败");
+      streamingContentRef.current.delete(filename);
     }
   }
 
@@ -1781,20 +1949,74 @@ export default function App() {
     const ok = await confirmAction(
       `生成第 ${lessonNumber} 课`,
       isLearningPlanProject
-        ? `将分章节生成“${title}”的详细课件。本次操作最多调用 12 次模型 API，可能消耗较多 token；一次确认将授权完成整节课的规划、分章生成与遗漏补全。是否继续？`
-        : `将调用模型 API 生成“${title}”的详细课件，并使用已构建的项目索引作为代码上下文，可能消耗较多 token。是否继续？`,
+        ? `将分章节生成"${title}"的详细课件。本次操作最多调用 12 次模型 API，可能消耗较多 token；一次确认将授权完成整节课的规划、分章生成与遗漏补全。是否继续？`
+        : `将调用模型 API 生成"${title}"的详细课件，并使用已构建的项目索引作为代码上下文，可能消耗较多 token。是否继续？`,
       { confirmText: "生成" },
     );
     if (!ok) {
       return;
     }
     setError("");
+    setGenerationOpen(false);
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = new AbortController();
+
+    const filename = `lessons/lesson_${String(lessonNumber).padStart(2, "0")}.md`;
+
+    setCourses((prev) => {
+      if (prev.some((c) => c.filename === filename)) return prev;
+      return [{ filename, title: "生成中…", group: "lessons" }, ...prev];
+    });
+    streamingContentRef.current.set(filename, "");
+
+    openItemInGroup(activeGroupId, {
+      id: `course:${filename}`,
+      type: "course",
+      path: filename,
+      title: `第 ${lessonNumber} 课`,
+      content: "",
+    });
+    setTaskMessage(`第 ${lessonNumber} 课生成中…`);
+
     try {
-      const task = await generateOutlineLesson(project.id, lessonNumber, title, generationInstructions);
-      await trackTask(task);
+      const streamedFilename = await generateOutlineLessonStream(
+        project.id,
+        lessonNumber,
+        title,
+        generationInstructions,
+        {
+          onStage(_stage, label) { setTaskMessage(label); },
+          onDelta(text) {
+            const current = streamingContentRef.current.get(filename) ?? "";
+            const updated = current + text;
+            streamingContentRef.current.set(filename, updated);
+            setLayout((prev) =>
+              updateGroup(prev, activeGroupId, (g) => ({
+                ...g,
+                items: g.items.map((item) =>
+                  item.id === `course:${filename}` ? { ...item, content: updated } : item,
+                ),
+              })),
+            );
+          },
+          onCompleted({ cached }) {
+            setTaskMessage(cached ? "已缓存，无需重新生成" : "生成完成");
+            setToast("内容已生成");
+            streamingContentRef.current.delete(filename);
+          },
+          onError(message) { throw new Error(message); },
+        },
+        abortControllerRef.current.signal,
+      );
+      if (streamedFilename) {
+        await refreshCourses(project.id);
+        await openCourseInActiveGroup(project.id, streamedFilename);
+      }
       setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
+      if (caught instanceof Error && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "创建课件任务失败");
+      streamingContentRef.current.delete(filename);
     }
   }
 
@@ -2005,18 +2227,20 @@ export default function App() {
       : null;
     const ok = await confirmAction(
       "生成术语解释",
-      `将调用 ${llmSettings.model}，结合当前项目解释“${term.term_text}”，并把回答连接到${parent ? `“${qaTitle(parent)}”` : "当前课件"}。是否继续？`,
+      `将调用 ${llmSettings.model}，结合当前项目解释"${term.term_text}"，并把回答连接到${parent ? `"${qaTitle(parent)}"` : "当前课件"}。是否继续？`,
       { confirmText: "生成解释" },
     );
     if (!ok) return;
     setQAPanelError("");
+    setQAUpperTab("history");
+    setAssistantOpen(true);
     const generationKey = parent?.session_id ? `session:${parent.session_id}` : activeQAKey;
     try {
       const record = await runStreamingQuestion({
         source_type: term.source_type,
         source_path: term.source_path,
         selected_text: term.term_text,
-        question: `请结合当前项目，用适合初学者的方式解释“${term.term_text}”：它是什么、为什么会出现在这里，以及接下来应该看哪里。`,
+        question: `请结合当前项目，用适合初学者的方式解释"${term.term_text}"：它是什么、为什么会出现在这里，以及接下来应该看哪里。`,
         provider: llmSettings.provider,
         base_url: llmSettings.base_url,
         model: llmSettings.model,
@@ -2028,8 +2252,6 @@ export default function App() {
       setSelectedQA(record);
       setQASessionId(record.session_id ?? null);
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
-      setQAUpperTab("history");
-      setAssistantOpen(true);
       await Promise.all([
         refreshCourses(project.id),
         refreshQAHistory(project.id),
@@ -2044,7 +2266,7 @@ export default function App() {
 
   async function handleTermAction(term: DocumentTerm) {
     if (!project) return;
-    const action = await requestChoice("处理陌生术语", `“${term.term_text}”不需要继续提示时，可以标记为已认识或仅忽略这次识别。`, [
+    const action = await requestChoice("处理陌生术语", `"${term.term_text}"不需要继续提示时，可以标记为已认识或仅忽略这次识别。`, [
       { value: "known", label: "我认识", description: "记为已掌握，后续不再作为陌生术语强调" },
       { value: "dismiss", label: "忽略", description: "隐藏当前候选，不生成解释" },
     ]);
@@ -2689,9 +2911,11 @@ export default function App() {
     if (node.type === "group") {
       return renderGroup(node.group);
     }
+    const isDraggingThis = dragState?.kind === "split" && dragState.splitId === node.id;
+    const firstFlex = isDraggingThis ? `var(--split-ratio, ${node.ratio}) 1 0` : `${node.ratio} 1 0`;
     return (
       <div key={node.id} className={`split-node ${node.direction}`}>
-        <div className="split-child" style={{ flex: `${node.ratio} 1 0` }}>
+        <div className="split-child" style={{ flex: firstFlex }}>
           {renderLayoutNode(node.first)}
         </div>
         <div
@@ -2713,7 +2937,7 @@ export default function App() {
             });
           }}
         />
-        <div className="split-child" style={{ flex: `${1 - node.ratio} 1 0` }}>
+        <div className="split-child" style={{ flex: isDraggingThis ? `calc(1 - var(--split-ratio)) 1 0` : `${1 - node.ratio} 1 0` }}>
           {renderLayoutNode(node.second)}
         </div>
       </div>
@@ -2809,6 +3033,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <TitleBar />
       <input ref={archiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportArchive(file); }} />
       {!mobileRuntime ? (
         <DesktopToolbar
@@ -2907,9 +3132,9 @@ export default function App() {
         style={{
           gridTemplateColumns: [
             ...(mobileRuntime ? ["48px"] : []),
-            ...(navigationOpen ? [`${sidebarWidth}px`, "5px"] : []),
+            ...(navigationOpen ? [`var(--nav-width, ${sidebarWidth}px)`, "5px"] : []),
             "minmax(0, 1fr)",
-            ...(assistantOpen ? ["5px", `${explainWidth}px`] : []),
+            ...(assistantOpen ? ["5px", `var(--explain-width, ${explainWidth}px)`] : []),
           ].join(" "),
         }}
       >
@@ -2982,6 +3207,7 @@ export default function App() {
           question={qaQuestion}
           loading={qaLoading}
           loadingLabel={activeQAGeneration?.label}
+          streamContent={activeQAGeneration?.partial}
           history={qaHistory}
           historyQuery={qaHistoryQuery}
           favoriteOnly={qaFavoriteOnly}
@@ -3094,7 +3320,7 @@ export default function App() {
                 {isLearningPlanProject || scopeType === "learning_plan"
                   ? "根据下面的学习要求生成总纲。"
                   : scopeType === "files"
-                    ? selectedScopeFiles.length ? `已选择 ${selectedScopeFiles.length} 个文件。` : "请从左侧“源码”中选择文件。"
+                    ? selectedScopeFiles.length ? `已选择 ${selectedScopeFiles.length} 个文件。` : "请从左侧「源码」中选择文件。"
                     : "模型将结合项目结构、README 和关键文件生成学习总纲。"}
               </div>
               <label className="field-label">

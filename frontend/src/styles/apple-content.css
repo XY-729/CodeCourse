@@ -31,15 +31,22 @@ html:not(.platform-android) .continue-learning-card {
 html:not(.platform-android) .learning-progress-track { background: var(--apple-fill); }
 html:not(.platform-android) .learning-progress-track span { background: var(--apple-blue); }
 
+html:not(.platform-android) {
+  --reader-font-size: 16px;
+  --reader-code-font-size: 0.8125em;
+  --reader-line-height: 1.78;
+}
+
 html:not(.platform-android) .markdown-body {
   width: 100%;
   max-width: 860px;
   margin: 0 auto;
   padding: 42px clamp(28px, 6vw, 72px) 88px;
   color: var(--apple-text);
-  font-size: 16px;
-  line-height: 1.78;
+  font-size: var(--reader-font-size);
+  line-height: var(--reader-line-height);
   letter-spacing: 0;
+  scrollbar-gutter: stable;
 }
 
 html:not(.platform-android) .markdown-body h1,
@@ -51,13 +58,14 @@ html:not(.platform-android) .markdown-body h4 {
   letter-spacing: -0.012em;
 }
 
-html:not(.platform-android) .markdown-body h1 { margin: 0 0 28px; font-size: 32px; line-height: 1.18; }
-html:not(.platform-android) .markdown-body h2 { margin: 42px 0 16px; font-size: 23px; line-height: 1.25; }
-html:not(.platform-android) .markdown-body h3 { margin: 30px 0 12px; font-size: 18px; line-height: 1.35; }
+html:not(.platform-android) .markdown-body h1 { margin: 0 0 28px; font-size: 2em; line-height: 1.18; }
+html:not(.platform-android) .markdown-body h2 { margin: 42px 0 16px; font-size: 1.44em; line-height: 1.25; }
+html:not(.platform-android) .markdown-body h3 { margin: 30px 0 12px; font-size: 1.125em; line-height: 1.35; }
 html:not(.platform-android) .markdown-body p,
 html:not(.platform-android) .markdown-body li { color: color-mix(in srgb, var(--apple-text) 92%, var(--apple-text-secondary)); }
 html:not(.platform-android) .markdown-body a { color: var(--apple-blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 html:not(.platform-android) .markdown-body code {
+  font-size: var(--reader-code-font-size);
   border-radius: 5px;
   color: var(--apple-inline-code-text);
   background: var(--apple-inline-code-bg);

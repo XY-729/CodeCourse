@@ -387,17 +387,138 @@ export function generateFileLesson(projectId: number, path: string, mode: "brief
   });
 }
 
-export function importProjectArchive(file: File): Promise<Project> {
-  return request<Project>("/projects/import-archive", {
-    method: "POST",
-    body: file,
-  });
-}
-
 export function generateOutlineLesson(projectId: number, lessonNumber: number, title: string, instructions: string): Promise<GenerationTask> {
   return request<GenerationTask>(`/projects/${projectId}/lessons/outline`, {
     method: "POST",
     body: JSON.stringify({ lesson_number: lessonNumber, title, instructions }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Streaming generation
+// ---------------------------------------------------------------------------
+
+export type GenStreamHandlers = {
+  onTaskCreated?: (payload: { filename: string; task_id: number }) => void;
+  onDelta?: (text: string) => void;
+  onStage?: (stage: string, label: string) => void;
+  onFileCreated?: (payload: { filename: string }) => void;
+  onCompleted?: (payload: { filename: string; task_id: number; cached?: boolean }) => void;
+  onError?: (message: string) => void;
+};
+
+async function consumeGenStream(
+  response: Response,
+  handlers: GenStreamHandlers,
+): Promise<string | null> {
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(body.detail || response.statusText || "生成请求失败");
+  }
+  if (!response.body) throw new Error("当前运行环境不支持流式生成");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let lastFilename: string | null = null;
+
+  function consumeBlock(block: string) {
+    let eventName = "message";
+    const dataLines: string[] = [];
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+    }
+    if (!dataLines.length) return;
+    const data = JSON.parse(dataLines.join("\n"));
+    switch (eventName) {
+      case "task_created":
+        lastFilename = data.filename as string;
+        handlers.onTaskCreated?.({ filename: data.filename as string, task_id: data.task_id as number });
+        break;
+      case "file_created":
+        handlers.onFileCreated?.({ filename: data.filename as string });
+        break;
+      case "stage":
+        handlers.onStage?.(data.stage as string, data.label as string);
+        break;
+      case "delta":
+        handlers.onDelta?.(data.text as string);
+        break;
+      case "completed":
+        handlers.onCompleted?.({ filename: data.filename as string, task_id: data.task_id as number, cached: data.cached as boolean | undefined });
+        break;
+      case "error":
+        throw new Error(data.message as string || "生成失败");
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || "";
+    for (const block of blocks) consumeBlock(block);
+    if (done) break;
+  }
+  if (buffer.trim()) consumeBlock(buffer);
+  return lastFilename;
+}
+
+export async function generateOutlineStream(
+  projectId: number,
+  scope: LearningScope,
+  instructions: string,
+  handlers: GenStreamHandlers = {},
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const response = await fetch(httpApiUrl(`/projects/${projectId}/outline/generate/stream`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ scope, instructions }),
+    signal,
+  });
+  return consumeGenStream(response, handlers);
+}
+
+export async function generateFileLessonStream(
+  projectId: number,
+  path: string,
+  mode: "brief" | "detailed",
+  instructions: string,
+  handlers: GenStreamHandlers = {},
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const response = await fetch(httpApiUrl(`/projects/${projectId}/lessons/file/stream`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ path, mode, instructions }),
+    signal,
+  });
+  return consumeGenStream(response, handlers);
+}
+
+export async function generateOutlineLessonStream(
+  projectId: number,
+  lessonNumber: number,
+  title: string,
+  instructions: string,
+  handlers: GenStreamHandlers = {},
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const response = await fetch(httpApiUrl(`/projects/${projectId}/lessons/outline/stream`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({ lesson_number: lessonNumber, title, instructions }),
+    signal,
+  });
+  return consumeGenStream(response, handlers);
+}
+
+export function importProjectArchive(file: File): Promise<Project> {
+  return request<Project>("/projects/import-archive", {
+    method: "POST",
+    body: file,
   });
 }
 

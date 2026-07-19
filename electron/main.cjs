@@ -15,7 +15,11 @@ function projectRoot() {
 }
 
 function backendDir() {
-  return app.isPackaged ? path.join(process.resourcesPath, "backend") : path.join(projectRoot(), "backend");
+  if (!app.isPackaged) return path.join(projectRoot(), "backend");
+  const bundled = path.join(process.resourcesPath, "backend");
+  if (fs.existsSync(bundled)) return bundled;
+  // Fall back to the actual source project root (not inside asar)
+  return path.join(projectSourceRoot(), "backend");
 }
 
 function packagedBackendExecutable() {
@@ -44,10 +48,25 @@ function frontendIndex() {
   return path.join(projectRoot(), "frontend", "dist", "index.html");
 }
 
+function projectSourceRoot() {
+  // Derive the actual source project root from the exe path so we can find
+  // backend/.venv even when the app is packaged and __dirname is inside asar.
+  // packaged: .../github-project-learner/dist-desktop/win-unpacked/CodeCourse.exe
+  // dev:      node .../github-project-learner/electron/dev-runner.cjs
+  const exeDir = path.dirname(process.execPath);
+  const candidate = path.resolve(exeDir, "..", "..");
+  const venv = path.join(candidate, "backend", ".venv", "Scripts", "python.exe");
+  if (fs.existsSync(venv)) return candidate;
+  return projectRoot();
+}
+
 function pythonCandidates() {
   const configured = process.env.CODECOURSE_PYTHON;
   const candidates = [];
   if (configured) candidates.push({ command: configured, prefixArgs: [] });
+  // Auto-detect venv Python from the actual project source root
+  const venv = path.join(projectSourceRoot(), "backend", ".venv", "Scripts", "python.exe");
+  if (fs.existsSync(venv)) candidates.push({ command: venv, prefixArgs: [] });
   if (process.platform === "win32") {
     candidates.push({ command: "py", prefixArgs: ["-3"] });
     candidates.push({ command: "python", prefixArgs: [] });
@@ -124,22 +143,22 @@ async function startBackend() {
 
   if (app.isPackaged && process.platform === "win32") {
     const executable = packagedBackendExecutable();
-    if (!fs.existsSync(executable)) {
-      throw new Error(`未找到内置后端：${executable}`);
+    if (fs.existsSync(executable)) {
+      const child = spawn(executable, ["--host", "127.0.0.1", "--port", String(port), "--workspace", userData], {
+        cwd,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      child.stdout.pipe(logStream, { end: false });
+      child.stderr.pipe(logStream, { end: false });
+      await waitForHealth(port, child);
+      backendProcess = child;
+      apiBase = `http://127.0.0.1:${port}/api`;
+      process.env.CODECOURSE_API_BASE = apiBase;
+      return;
     }
-    const child = spawn(executable, ["--host", "127.0.0.1", "--port", String(port), "--workspace", userData], {
-      cwd,
-      env,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    child.stdout.pipe(logStream, { end: false });
-    child.stderr.pipe(logStream, { end: false });
-    await waitForHealth(port, child);
-    backendProcess = child;
-    apiBase = `http://127.0.0.1:${port}/api`;
-    process.env.CODECOURSE_API_BASE = apiBase;
-    return;
+    // No packaged backend.exe — fall through to Python source backend below
   }
 
   let lastError = null;
@@ -182,6 +201,8 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 720,
     title: "CodeCourse",
+    frame: false,
+    titleBarStyle: "hidden",
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c1c1e" : "#f5f5f7",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -189,6 +210,9 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+
+  window.on("maximize", () => window.webContents.send("codecourse:window-maximize-change", true));
+  window.on("unmaximize", () => window.webContents.send("codecourse:window-maximize-change", false));
 
   const devUrl = process.env.CODECOURSE_FRONTEND_URL;
   if (devUrl) {
@@ -227,6 +251,30 @@ ipcMain.handle("codecourse:open-external", async (_event, url) => {
   }
   await shell.openExternal(url);
   return true;
+});
+
+ipcMain.handle("codecourse:window-minimize", (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
+});
+
+ipcMain.handle("codecourse:window-maximize", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win?.isMaximized()) {
+    win.unmaximize();
+  } else {
+    win?.maximize();
+  }
+});
+
+ipcMain.handle("codecourse:window-close", (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close();
+});
+
+ipcMain.handle("codecourse:window-toggle-fullscreen", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) {
+    win.setFullScreen(!win.isFullScreen());
+  }
 });
 
 app.on("window-all-closed", () => {

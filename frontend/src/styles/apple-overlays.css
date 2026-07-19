@@ -1,7 +1,7 @@
 html:not(.platform-android) .apple-sheet-layer {
   position: fixed;
   z-index: 70;
-  inset: 46px 0 0;
+  inset: 78px 0 0;
   display: flex;
   justify-content: flex-end;
   background: rgba(0, 0, 0, 0.12);
@@ -58,7 +58,7 @@ html:not(.platform-android) .apple-sheet-footer { min-height: 58px; padding: 10p
 html:not(.platform-android) .apple-feedback-stack {
   position: fixed;
   z-index: 100;
-  top: 54px;
+  top: 86px;
   left: 50%;
   width: min(560px, calc(100vw - 32px));
   display: flex;
@@ -244,6 +244,34 @@ html:not(.platform-android) .context-menu {
   html:not(.platform-android) .command-palette-layer,
   html:not(.platform-android) .command-palette { transition: opacity 120ms ease; transform: none; }
   html:not(.platform-android) .command-palette-results button.active { transform: none; }
+}
+
+/* QA panel ask-bottom (sticky bar) */
+html:not(.platform-android) .qa-ask-bottom {
+  border-top-color: var(--apple-separator);
+  background: var(--apple-surface-muted);
+}
+
+html:not(.platform-android) .qa-ask-bottom .model-row select {
+  color: var(--apple-text);
+  background: var(--apple-surface);
+  border-color: var(--apple-separator-strong);
+}
+
+/* QA streaming card */
+html:not(.platform-android) .qa-stream-card {
+  border-color: var(--apple-separator);
+  background: var(--apple-surface-raised);
+}
+
+html:not(.platform-android) .qa-stream-card > header {
+  border-bottom-color: var(--apple-separator);
+  color: var(--apple-text);
+  background: var(--apple-surface-muted);
+}
+
+html:not(.platform-android) .qa-stream-body.markdown-body {
+  color: var(--apple-text);
 }
 
 @media (prefers-reduced-transparency: reduce) {

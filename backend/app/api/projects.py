@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import json as json_module
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.models.schemas import (
     CreateLearningPlanRequest,
@@ -25,6 +28,9 @@ from app.services.generation_service import (
     run_file_lesson_task,
     run_outline_lesson_task,
     run_outline_generation_task,
+    stream_outline_generation,
+    stream_file_lesson_generation,
+    stream_outline_lesson_generation,
 )
 from app.services.git_service import clone_or_reuse, repo_name_from_url, validate_git_url
 from app.services.index_service import build_project_index
@@ -222,6 +228,65 @@ def generate_outline_lesson(project_id: int, payload: GenerateOutlineLessonReque
             payload.instructions,
         )
     return _to_task_response(task)
+
+
+# ---------------------------------------------------------------------------
+# Streaming generation endpoints
+# ---------------------------------------------------------------------------
+
+def _sse_response(generator):
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _format_sse(event: dict) -> str:
+    event_type = event.get("event", "message")
+    data = json_module.dumps(event.get("data", {}), ensure_ascii=False)
+    return f"event: {event_type}\ndata: {data}\n\n"
+
+
+@router.post("/projects/{project_id}/outline/generate/stream")
+async def generate_outline_stream(project_id: int, payload: GenerateOutlineRequest):
+    async def generate():
+        try:
+            async for event in stream_outline_generation(project_id, payload.scope, payload.instructions):
+                yield _format_sse(event)
+        except asyncio.CancelledError:
+            yield _format_sse({"event": "error", "data": {"message": "生成已取消"}})
+        except Exception as exc:
+            yield _format_sse({"event": "error", "data": {"message": str(exc)}})
+    return _sse_response(generate())
+
+
+@router.post("/projects/{project_id}/lessons/file/stream")
+async def generate_file_lesson_stream(project_id: int, payload: GenerateFileLessonRequest):
+    async def generate():
+        try:
+            async for event in stream_file_lesson_generation(project_id, payload.path, payload.mode, payload.instructions):
+                yield _format_sse(event)
+        except asyncio.CancelledError:
+            yield _format_sse({"event": "error", "data": {"message": "生成已取消"}})
+        except Exception as exc:
+            yield _format_sse({"event": "error", "data": {"message": str(exc)}})
+    return _sse_response(generate())
+
+
+@router.post("/projects/{project_id}/lessons/outline/stream")
+async def generate_outline_lesson_stream(project_id: int, payload: GenerateOutlineLessonRequest):
+    async def generate():
+        try:
+            async for event in stream_outline_lesson_generation(
+                project_id, payload.lesson_number, payload.title, payload.instructions,
+            ):
+                yield _format_sse(event)
+        except asyncio.CancelledError:
+            yield _format_sse({"event": "error", "data": {"message": "生成已取消"}})
+        except Exception as exc:
+            yield _format_sse({"event": "error", "data": {"message": str(exc)}})
+    return _sse_response(generate())
 
 
 @router.get("/projects/{project_id}/tasks", response_model=list[GenerationTaskResponse])

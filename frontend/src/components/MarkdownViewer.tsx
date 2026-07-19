@@ -1,7 +1,8 @@
-import { Children, useEffect, useRef, useState } from "react";
+import { Children, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import hljs from "highlight.js";
 import type { DocumentTerm, HighlightRecord, KnowledgeLink } from "../api/client";
 import type { Annotation } from "../types";
 import { COLOR_VALUES } from "../types";
@@ -291,6 +292,42 @@ export default function MarkdownViewer({
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
   const [selectedText, setSelectedText] = useState("");
+  const [docFontSize, setDocFontSize] = useState(() => {
+    try {
+      const v = localStorage.getItem("codecourse.desktop.docFontSize");
+      if (v != null) return Math.max(8, Math.min(36, Number(v) || 16));
+    } catch { /* noop */ }
+    return 16;
+  });
+  const docFontSizeRef = useRef(docFontSize);
+  docFontSizeRef.current = docFontSize;
+
+  // Apply persisted doc font size on mount
+  useEffect(() => {
+    document.documentElement.style.setProperty("--reader-font-size", `${docFontSize}px`);
+  }, [docFontSize]);
+
+  // Ctrl+wheel zoom for Markdown viewer
+  const handleWheel = useCallback((event: WheelEvent) => {
+    if (!event.ctrlKey) return;
+    // Only intercept if the target is inside the markdown article
+    const article = articleRef.current;
+    if (!article || !article.contains(event.target as Node)) return;
+    event.preventDefault();
+    const delta = event.deltaY > 0 ? -1 : 1;
+    const next = Math.max(8, Math.min(36, docFontSizeRef.current + delta));
+    docFontSizeRef.current = next;
+    setDocFontSize(next);
+    document.documentElement.style.setProperty("--reader-font-size", `${next}px`);
+    try { localStorage.setItem("codecourse.desktop.docFontSize", String(next)); } catch { /* noop */ }
+  }, []);
+
+  useEffect(() => {
+    const article = articleRef.current;
+    if (!article) return;
+    article.addEventListener("wheel", handleWheel, { passive: false });
+    return () => article.removeEventListener("wheel", handleWheel);
+  }, [handleWheel]);
 
   useEffect(() => {
     const article = articleRef.current;
@@ -362,7 +399,26 @@ export default function MarkdownViewer({
     onContextMenu?.(event, text, sourcePath ?? title ?? "");
   }
 
-  const highlightedComponents = {
+  const highlightedComponents = useMemo(() => ({
+    code: ({ className, children, ...props }: { className?: string; children?: ReactNode; node?: unknown }) => {
+      const codeText = String(children ?? "").replace(/\n$/, "");
+      const lang = className?.replace(/^language-/, "") ?? "";
+      // Only highlight fenced code blocks (those with a language- class from markdown)
+      if (className?.startsWith("language-") && lang) {
+        try {
+          const validLang = hljs.getLanguage(lang) ? lang : undefined;
+          const result = validLang
+            ? hljs.highlight(codeText, { language: validLang, ignoreIllegals: true })
+            : hljs.highlightAuto(codeText);
+          return <code className={`hljs ${className}`} dangerouslySetInnerHTML={{ __html: result.value }} />;
+        } catch {
+          return <code className={className}>{children}</code>;
+        }
+      }
+      // Inline code — no className, render plainly
+      return <code>{children}</code>;
+    },
+    pre: ({ children }: { children?: ReactNode }) => <pre>{children}</pre>,
     a: ({ href, children }: { href?: string; children?: ReactNode }) => {
       const match = href?.match(/^https:\/\/codecourse\.local\/generate-lesson\/(\d+)\?title=(.*)$/);
       if (match && onGenerateLesson) {
@@ -408,7 +464,7 @@ export default function MarkdownViewer({
     em: ({ children }: { children?: ReactNode }) => (
       <em>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</em>
     ),
-  };
+  }), [highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText, onOpenKnowledgeLink, onGenerateTerm, onTermAction, onGenerateLesson]);
 
   return (
     <div className={`viewer markdown-viewer ${embedded ? "embedded" : ""}`}>

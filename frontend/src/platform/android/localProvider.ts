@@ -1,3 +1,4 @@
+import { CapacitorHttp, HttpResponse } from "@capacitor/core";
 import { CodeCourseSecureStore } from "../runtime";
 import type { CodeCourseProvider } from "../provider";
 import type {
@@ -384,20 +385,39 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const settings = { ...(await this.getLLMSettings()), ...override };
     const apiKey = (await CodeCourseSecureStore.get({ key: "llm_api_key" })).value;
     if (!settings.enabled || !apiKey) throw new Error("请先在模型 API 中配置并启用模型。");
-    const controller = new AbortController(); const timeout = window.setTimeout(() => controller.abort(), 240_000);
-    try {
-      const response = await fetch(`${settings.base_url.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model: settings.model, messages, temperature: 0.25 }), signal: controller.signal,
-      });
-      if (!response.ok) throw new Error(`模型调用失败（${response.status}）：${await response.text()}`);
-      const data = await response.json() as any;
-      const content = String(data.choices?.[0]?.message?.content || "").trim();
-      if (!content) throw new Error("模型返回了空内容。"); return content;
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw new Error("模型响应超时，请检查网络后重试。");
-      throw error;
-    } finally { window.clearTimeout(timeout); }
+
+    const url = `${settings.base_url.replace(/\/$/, "")}/chat/completions`;
+    const body = JSON.stringify({ model: settings.model, messages, temperature: 0.25 });
+
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response: HttpResponse = await CapacitorHttp.request({
+          method: "POST",
+          url,
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          data: body,
+          connectTimeout: 30_000,
+          readTimeout: 300_000,
+        });
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error(`模型调用失败（${response.status}）：${JSON.stringify(response.data)}`);
+        }
+        const content = String((response.data as any)?.choices?.[0]?.message?.content || "").trim();
+        if (!content) throw new Error("模型返回了空内容。");
+        return content;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        // Don't retry auth errors or empty responses
+        const msg = lastError.message;
+        if (msg.includes("模型返回了空内容") || msg.includes("请先在模型 API")) throw lastError;
+        if (attempt < 2) {
+          // Wait before retry: 1s, 2s
+          await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 1000));
+        }
+      }
+    }
+    throw lastError ?? new Error("模型调用失败");
   }
   private async testLLMSettings(): Promise<any> {
     await this.callLLM([{ role: "user", content: "只回答 OK" }]);
@@ -463,9 +483,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async projectContext(projectId: number, paths?: string[]): Promise<string> {
     const rows = await db.query<Row>(`SELECT path,language,is_key_file FROM project_files WHERE project_id=? ${paths?.length ? `AND path IN (${paths.map(() => "?").join(",")})` : ""} ORDER BY is_key_file DESC,path LIMIT 60`, [projectId, ...(paths || [])]);
     const blocks: string[] = [];
-    for (const row of rows.slice(0, 16)) {
+    for (const row of rows.slice(0, 8)) {
       const content = await readRepoFile(projectId, String(row.path));
-      blocks.push(`## ${row.path}\n\n${compactText(content, 5000)}`);
+      blocks.push(`## ${row.path}\n\n${compactText(content, 3000)}`);
     }
     return blocks.join("\n\n");
   }

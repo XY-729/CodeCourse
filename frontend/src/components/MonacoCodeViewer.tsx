@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import type { ViewerRange, ViewerSelection } from "./CodeViewer";
@@ -14,6 +14,21 @@ type Props = {
   onVisibleLineChange?: (line: number) => void;
 };
 
+const CODE_FONT_SIZE_KEY = "codecourse.desktop.codeFontSize";
+const CODE_FONT_SIZE_BOUNDS = { min: 8, max: 36 };
+
+function loadCodeFontSize(): number {
+  try {
+    const v = localStorage.getItem(CODE_FONT_SIZE_KEY);
+    if (v != null) return Math.max(CODE_FONT_SIZE_BOUNDS.min, Math.min(CODE_FONT_SIZE_BOUNDS.max, Number(v) || 14));
+  } catch { /* noop */ }
+  return 14;
+}
+
+function saveCodeFontSize(size: number) {
+  try { localStorage.setItem(CODE_FONT_SIZE_KEY, String(size)); } catch { /* noop */ }
+}
+
 function currentEditorTheme() {
   return document.documentElement.dataset.theme === "dark" ? "vs-dark" : "vs";
 }
@@ -24,6 +39,16 @@ export default function MonacoCodeViewer({ path, language, content, selectedRang
   const decorationIds = useRef<string[]>([]);
   const selectedRangeRef = useRef<ViewerRange | null>(selectedRange ?? null);
   const [editorTheme, setEditorTheme] = useState(currentEditorTheme);
+  const [codeFontSize, setCodeFontSize] = useState(loadCodeFontSize);
+  const fontSizeRef = useRef(codeFontSize);
+  fontSizeRef.current = codeFontSize;
+
+  const handleFontSizeChange = useCallback((size: number) => {
+    const clamped = Math.max(CODE_FONT_SIZE_BOUNDS.min, Math.min(CODE_FONT_SIZE_BOUNDS.max, Math.round(size)));
+    setCodeFontSize(clamped);
+    saveCodeFontSize(clamped);
+    fontSizeRef.current = clamped;
+  }, []);
 
   useEffect(() => {
     const updateTheme = () => setEditorTheme(currentEditorTheme());
@@ -73,7 +98,13 @@ export default function MonacoCodeViewer({ path, language, content, selectedRang
       if (!selectedText) return; event.event.preventDefault(); event.event.stopPropagation();
       onContextMenu?.({ clientX: event.event.browserEvent.clientX, clientY: event.event.browserEvent.clientY, selectedText, sourcePath: path });
     });
+    editor.onDidChangeConfiguration((event) => {
+      if (event.hasChanged(monaco.editor.EditorOption.fontSize)) {
+        const fs = editor.getOption(monaco.editor.EditorOption.fontSize);
+        handleFontSizeChange(fs);
+      }
+    });
   };
 
-  return <div className="viewer code-viewer"><div className="viewer-header"><span>{path ?? "代码"}</span><strong>{language}</strong></div><Editor height="100%" language={language} value={content} theme={editorTheme} onMount={handleMount} options={{ readOnly: true, minimap: { enabled: false }, fontSize: 14, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, renderValidationDecorations: "off", quickSuggestions: false, suggestOnTriggerCharacters: false }} /></div>;
+  return <div className="viewer code-viewer"><div className="viewer-header"><span>{path ?? "代码"}</span><strong>{language}</strong></div><Editor height="100%" language={language} value={content} theme={editorTheme} onMount={handleMount} options={{ readOnly: true, minimap: { enabled: false }, fontSize: codeFontSize, mouseWheelZoom: true, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, renderValidationDecorations: "off", quickSuggestions: false, suggestOnTriggerCharacters: false }} /></div>;
 }

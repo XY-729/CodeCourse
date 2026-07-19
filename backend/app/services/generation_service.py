@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Any, AsyncIterator, Optional
 from urllib.parse import quote
 
 from app.core.config import GENERATED_ROOT, PROMPT_VERSION
+from app.services.llm_client import stream_openai_compatible_chat
 from app.services.prompt_store import load_prompt, save_prompt
 from app.models.schemas import CourseFile, LearningScopeRequest
 from app.services.course_generator import (
@@ -1021,3 +1023,375 @@ def create_or_reuse_file_lesson_task(
         output_path=output_path,
     )
     return task, False
+
+
+# ---------------------------------------------------------------------------
+# Streaming generation helpers
+# ---------------------------------------------------------------------------
+
+def _sse_event(event: str, data: dict[str, Any]) -> dict[str, Any]:
+    return {"event": event, "data": data}
+
+
+def _incremental_open(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("", encoding="utf-8")
+
+
+def _incremental_append(path: Path, chunk: str) -> None:
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(chunk)
+
+
+async def _stream_and_accumulate(
+    settings: dict[str, str],
+    messages: list[dict[str, str]],
+    output_path: Path,
+    timeout: int = 120,
+) -> AsyncIterator[dict[str, Any]]:
+    """Stream LLM chunks as SSE delta events, appending each chunk to file."""
+    chunks: list[str] = []
+    async for chunk in stream_openai_compatible_chat(
+        settings["base_url"],
+        settings["api_key"],
+        settings["model"],
+        messages,
+        timeout=timeout,
+    ):
+        chunks.append(chunk)
+        _incremental_append(output_path, chunk)
+        yield _sse_event("delta", {"text": chunk})
+    yield _sse_event("accumulated", {"text": "".join(chunks)})
+
+
+def _learning_plan_lesson_messages(settings: dict[str, str], lesson_input: str, instructions: str) -> list[dict[str, str]]:
+    user_prompt = load_prompt("prompt.learning_plan.lesson").format(
+        model=settings["model"],
+        user_instructions=_clean_instructions(instructions) or "无",
+        lesson_input=lesson_input,
+    ) + term_metadata_instruction()
+    return [
+        {"role": "system", "content": load_prompt("prompt.system")},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Streaming outline generation
+# ---------------------------------------------------------------------------
+
+async def stream_outline_generation(
+    project_id: int,
+    scope: LearningScopeRequest,
+    instructions: str = "",
+) -> AsyncIterator[dict[str, Any]]:
+    from app.services.storage import (
+        GenerationTask,
+        create_generation_task,
+        find_completed_task,
+        get_project,
+        update_generation_task,
+        update_project_status,
+    )
+
+    project = get_project(project_id)
+    if project is None:
+        yield _sse_event("error", {"message": "Project not found"})
+        return
+    repo_root = Path(project.local_path).resolve()
+    settings = _llm_settings_or_error()
+    output_dir = project_course_dir(project_id)
+
+    # Build messages (reuse existing logic)
+    if scope.type == "learning_plan":
+        user_instructions = _clean_instructions(instructions)
+        prompt = load_prompt("prompt.learning_plan.outline").format(
+            model=settings["model"],
+            user_instructions=user_instructions or "无",
+        ) + term_metadata_instruction()
+        messages = [
+            {"role": "system", "content": load_prompt("prompt.system")},
+            {"role": "user", "content": prompt},
+        ]
+        filename = "outline.md"
+    else:
+        user_instructions = _clean_instructions(instructions)
+        prompt_input, _ = build_outline_input(repo_root, scope, instructions)
+        scope_text = _scope_to_text(scope)
+        outline_prompt = load_prompt("prompt.outline").format(
+            model=settings["model"],
+            scope_text=scope_text,
+            user_instructions=user_instructions or "无",
+            prompt_input=prompt_input,
+        ) + term_metadata_instruction()
+        messages = [
+            {"role": "system", "content": load_prompt("prompt.system")},
+            {"role": "user", "content": outline_prompt},
+        ]
+        filename = "outline.md"
+
+    # Create task
+    input_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()[:16]
+    cached = find_completed_task(project_id, "outline", input_hash, PROMPT_VERSION)
+    if cached and cached.output_path and Path(cached.output_path).exists():
+        yield _sse_event("completed", {
+            "filename": "outline.md",
+            "task_id": cached.id,
+            "cached": True,
+        })
+        return
+
+    task = create_generation_task(
+        project_id=project_id,
+        task_type="outline",
+        input_hash=input_hash,
+        prompt_version=PROMPT_VERSION,
+        source_path=None,
+        mode=None,
+        model=settings.get("model"),
+        output_path=output_dir,
+    )
+
+    output_path = output_dir / filename
+    _incremental_open(output_path)
+    update_generation_task(task.id, "running", stage_label="生成总纲中")
+    update_project_status(project_id, "generating_outline")
+
+    yield _sse_event("task_created", {"filename": filename, "task_id": task.id})
+    yield _sse_event("stage", {"stage": "generating", "label": "生成总纲中"})
+
+    try:
+        full_text = ""
+        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=120):
+            if event["event"] == "accumulated":
+                full_text = event["data"]["text"]
+            else:
+                yield event
+
+        content, model_terms = parse_term_metadata(full_text)
+
+        if scope.type == "learning_plan":
+            outline = _require_markdown(content)
+            _atomic_write(output_path, add_outline_lesson_links(outline))
+            register_document_terms(project_id, "course", filename, outline, model_terms)
+        else:
+            project_map, outline = _parse_outline_files(content)
+            _atomic_write(output_dir / "project_map.md", project_map)
+            _atomic_write(output_path, add_outline_lesson_links(outline))
+            register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
+            register_document_terms(project_id, "course", filename, outline, model_terms)
+            yield _sse_event("file_created", {"filename": "project_map.md"})
+
+        update_generation_task(task.id, "completed", output_path=output_dir)
+        update_project_status(project_id, "outline_ready")
+        yield _sse_event("completed", {"filename": filename, "task_id": task.id})
+
+    except asyncio.CancelledError:
+        update_generation_task(task.id, "failed", error_message="生成已取消", stage_label="已取消")
+        raise
+    except Exception as exc:
+        update_generation_task(task.id, "failed", error_message=str(exc), stage_label="生成失败")
+        update_project_status(project_id, "outline_failed")
+        yield _sse_event("error", {"message": str(exc)})
+
+
+# ---------------------------------------------------------------------------
+# Streaming file lesson generation
+# ---------------------------------------------------------------------------
+
+async def stream_file_lesson_generation(
+    project_id: int,
+    relative_path: str,
+    mode: str,
+    instructions: str = "",
+) -> AsyncIterator[dict[str, Any]]:
+    from app.services.storage import (
+        GenerationTask,
+        create_generation_task,
+        find_completed_task,
+        get_project,
+        update_generation_task,
+    )
+
+    project = get_project(project_id)
+    if project is None:
+        yield _sse_event("error", {"message": "Project not found"})
+        return
+    repo_root = Path(project.local_path).resolve()
+    settings = _llm_settings_or_error()
+
+    prompt_input, _, _ = build_file_lesson_input(project_id, repo_root, relative_path, mode, instructions)
+    user_instructions = _clean_instructions(instructions)
+    mode_label = "粗略介绍" if mode == "brief" else "详细分析"
+    expected = load_prompt(f"prompt.file_lesson.{mode}_expected")
+    user_prompt = load_prompt("prompt.file_lesson.template").format(
+        mode_label=mode_label,
+        relative_path=relative_path,
+        user_instructions=user_instructions or "无",
+        model=settings["model"],
+        expected=expected,
+        prompt_input=prompt_input,
+    ) + term_metadata_instruction()
+    messages = [
+        {"role": "system", "content": load_prompt("prompt.system")},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    input_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()[:16]
+    cached = find_completed_task(project_id, "file_lesson", input_hash, PROMPT_VERSION, source_path=relative_path, mode=mode)
+    if cached and cached.output_path and Path(cached.output_path).exists():
+        filename = cached.output_path.split("/")[-1] if cached.output_path else _safe_lesson_filename(relative_path, mode)
+        yield _sse_event("completed", {"filename": filename, "task_id": cached.id, "cached": True})
+        return
+
+    filename = _safe_lesson_filename(relative_path, mode)
+    output_path = project_course_dir(project_id) / filename
+    _incremental_open(output_path)
+
+    task = create_generation_task(
+        project_id=project_id,
+        task_type="file_lesson",
+        input_hash=input_hash,
+        prompt_version=PROMPT_VERSION,
+        source_path=relative_path,
+        mode=mode,
+        model=settings.get("model"),
+        output_path=output_path,
+    )
+    update_generation_task(task.id, "running", stage_label="生成课件中")
+
+    yield _sse_event("task_created", {"filename": filename, "task_id": task.id})
+    yield _sse_event("stage", {"stage": "generating", "label": "生成课件中"})
+
+    try:
+        full_text = ""
+        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=120):
+            if event["event"] == "accumulated":
+                full_text = event["data"]["text"]
+            else:
+                yield event
+
+        content, model_terms = parse_term_metadata(full_text)
+        lesson = _require_markdown(content)
+        if not lesson.lstrip().startswith("#"):
+            title = "粗略介绍" if mode == "brief" else "详细分析"
+            lesson = f"# {Path(relative_path).name} {title}\n\n{lesson}"
+        _atomic_write(output_path, lesson)
+        register_document_terms(project_id, "course", filename, lesson, model_terms)
+        update_generation_task(task.id, "completed", output_path=output_path)
+        yield _sse_event("completed", {"filename": filename, "task_id": task.id})
+
+    except asyncio.CancelledError:
+        update_generation_task(task.id, "failed", error_message="生成已取消", stage_label="已取消")
+        raise
+    except Exception as exc:
+        update_generation_task(task.id, "failed", error_message=str(exc), stage_label="生成失败")
+        yield _sse_event("error", {"message": str(exc)})
+
+
+# ---------------------------------------------------------------------------
+# Streaming outline lesson generation
+# ---------------------------------------------------------------------------
+
+async def stream_outline_lesson_generation(
+    project_id: int,
+    lesson_number: int,
+    requested_title: str,
+    instructions: str = "",
+) -> AsyncIterator[dict[str, Any]]:
+    from app.services.storage import (
+        GenerationTask,
+        create_generation_task,
+        find_completed_task,
+        get_project,
+        update_generation_task,
+        find_knowledge_node,
+        create_knowledge_node,
+    )
+
+    project = get_project(project_id)
+    if project is None:
+        yield _sse_event("error", {"message": "Project not found"})
+        return
+    repo_root = Path(project.local_path).resolve()
+    settings = _llm_settings_or_error()
+
+    lesson_title, lesson_input, outline_context = build_outline_lesson_input(
+        project_id, repo_root, lesson_number, requested_title, instructions,
+    )
+
+    filename = _outline_lesson_filename(lesson_number)
+    output_path = project_course_dir(project_id) / filename
+    _incremental_open(output_path)
+
+    if project.project_type == "learning_plan":
+        messages = _learning_plan_lesson_messages(settings, lesson_input, instructions)
+        task_type = "outline_lesson"
+    else:
+        prompt = load_prompt("prompt.outline_lesson").format(
+            lesson_number=lesson_number,
+            lesson_title=lesson_title,
+            user_instructions=_clean_instructions(instructions) or "无",
+            lesson_input=lesson_input,
+        ) + term_metadata_instruction()
+        messages = [
+            {"role": "system", "content": load_prompt("prompt.system")},
+            {"role": "user", "content": prompt},
+        ]
+        task_type = "outline_lesson"
+
+    input_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()[:16]
+    cached = find_completed_task(project_id, "outline_lesson", input_hash, PROMPT_VERSION, source_path=str(lesson_number))
+    if cached and cached.output_path and Path(cached.output_path).exists():
+        yield _sse_event("completed", {"filename": filename, "task_id": cached.id, "cached": True})
+        return
+
+    task = create_generation_task(
+        project_id=project_id,
+        task_type=task_type,
+        input_hash=input_hash,
+        prompt_version=PROMPT_VERSION,
+        source_path=str(lesson_number),
+        mode=None,
+        model=settings.get("model"),
+        output_path=output_path,
+    )
+    update_generation_task(task.id, "running", stage_label="生成课件中")
+
+    yield _sse_event("task_created", {"filename": filename, "task_id": task.id})
+    yield _sse_event("stage", {"stage": "generating", "label": "生成课件中"})
+
+    try:
+        full_text = ""
+        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=120):
+            if event["event"] == "accumulated":
+                full_text = event["data"]["text"]
+            else:
+                yield event
+
+        content, model_terms = parse_term_metadata(full_text)
+        lesson = _require_markdown(content)
+        if not lesson.lstrip().startswith("#"):
+            lesson = f"# 第 {lesson_number} 课：{lesson_title}\n\n{lesson}"
+        _atomic_write(output_path, lesson)
+        register_document_terms(project_id, "course", filename, lesson, model_terms)
+
+        node_title = f"第{lesson_number}课"
+        existing = find_knowledge_node(
+            project_id, node_type="course", title=node_title, ref_type="course", ref_path=filename,
+        )
+        if existing is None:
+            create_knowledge_node(
+                project_id=project_id, node_type="course", title=node_title,
+                ref_type="course", ref_path=filename, summary=lesson_title,
+            )
+
+        update_generation_task(task.id, "completed", output_path=output_path)
+        yield _sse_event("completed", {"filename": filename, "task_id": task.id})
+
+    except asyncio.CancelledError:
+        update_generation_task(task.id, "failed", error_message="生成已取消", stage_label="已取消")
+        raise
+    except Exception as exc:
+        update_generation_task(task.id, "failed", error_message=str(exc), stage_label="生成失败")
+        yield _sse_event("error", {"message": str(exc)})

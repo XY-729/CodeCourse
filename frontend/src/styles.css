@@ -835,10 +835,61 @@ button:disabled,
   overflow: hidden;
 }
 
-/* When the ask panel is dragged very short the textarea / model row / button
-   still need to be reachable, so the whole ask section gets its own scroll. */
-.qa-ask-section {
+/* When the ask panel is dragged very short the textarea / selection
+   still need to be reachable, but model row + ask button stay pinned. */
+.qa-ask-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+}
+
+.qa-ask-bottom {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-top: 1px solid #d5dbe3;
+  background: #fbfcfd;
+}
+
+.qa-ask-bottom .model-row {
+  margin-bottom: 8px;
+}
+
+.qa-ask-bottom .primary-button {
+  width: 100%;
+}
+
+/* Streaming answer card in QA panel */
+.qa-stream-card {
+  border: 1px solid #bdd7d1;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 6px;
+  background: #fafdfc;
+}
+
+.qa-stream-card > header {
+  min-height: 34px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 1px solid #cfe3de;
+  color: #28685e;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.qa-stream-card > header .spin {
+  flex: 0 0 auto;
+}
+
+.qa-stream-body.markdown-body {
+  max-height: 260px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.68;
+  overflow: auto;
+  color: #30343a;
 }
 
 .qa-section {

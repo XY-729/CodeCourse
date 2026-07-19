@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Sparkles, X } from "lucide-react";
 import type { GenerationTask, Project } from "../api/client";
 import type { GenerationIntent } from "./DesktopToolbar";
@@ -45,6 +46,11 @@ export default function GenerationSheet(props: Props) {
     onOpenPrompts,
     onGenerate,
   } = props;
+  useEffect(() => {
+    document.body.classList.toggle("has-sheet", open);
+    return () => document.body.classList.remove("has-sheet");
+  }, [open]);
+
   if (!open) return null;
   const copy = labels[intent];
   const learningPlan = project?.project_type === "learning_plan";

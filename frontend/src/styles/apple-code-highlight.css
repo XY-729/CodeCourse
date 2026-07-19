@@ -1,0 +1,76 @@
+/* Highlight.js token theme — desktop only */
+
+html:not(.platform-android) .markdown-body pre code.hljs {
+  color: var(--apple-code-text);
+  background: transparent;
+}
+
+/* Keywords */
+html:not(.platform-android) .markdown-body pre .hljs-keyword,
+html:not(.platform-android) .markdown-body pre .hljs-selector-tag,
+html:not(.platform-android) .markdown-body pre .hljs-literal,
+html:not(.platform-android) .markdown-body pre .hljs-type {
+  color: var(--hl-keyword);
+}
+
+/* Strings */
+html:not(.platform-android) .markdown-body pre .hljs-string,
+html:not(.platform-android) .markdown-body pre .hljs-regexp,
+html:not(.platform-android) .markdown-body pre .hljs-addition {
+  color: var(--hl-string);
+}
+
+/* Comments */
+html:not(.platform-android) .markdown-body pre .hljs-comment,
+html:not(.platform-android) .markdown-body pre .hljs-quote,
+html:not(.platform-android) .markdown-body pre .hljs-deletion {
+  color: var(--hl-comment);
+  font-style: italic;
+}
+
+/* Numbers */
+html:not(.platform-android) .markdown-body pre .hljs-number,
+html:not(.platform-android) .markdown-body pre .hljs-meta .hljs-string {
+  color: var(--hl-number);
+}
+
+/* Functions / titles */
+html:not(.platform-android) .markdown-body pre .hljs-title,
+html:not(.platform-android) .markdown-body pre .hljs-title.function_,
+html:not(.platform-android) .markdown-body pre .hljs-name {
+  color: var(--hl-function);
+}
+
+/* Built-ins */
+html:not(.platform-android) .markdown-body pre .hljs-built_in,
+html:not(.platform-android) .markdown-body pre .hljs-attr {
+  color: var(--hl-builtin);
+}
+
+/* Parameters */
+html:not(.platform-android) .markdown-body pre .hljs-params,
+html:not(.platform-android) .markdown-body pre .hljs-variable {
+  color: var(--hl-variable);
+}
+
+/* Meta / punctuation */
+html:not(.platform-android) .markdown-body pre .hljs-meta,
+html:not(.platform-android) .markdown-body pre .hljs-punctuation,
+html:not(.platform-android) .markdown-body pre .hljs-operator {
+  color: var(--hl-meta);
+}
+
+/* Emphasis */
+html:not(.platform-android) .markdown-body pre .hljs-emphasis {
+  font-style: italic;
+}
+html:not(.platform-android) .markdown-body pre .hljs-strong {
+  font-weight: 700;
+}
+
+/* Selection within code blocks — override for readability */
+html:not(.platform-android) .markdown-body pre .hljs ::selection,
+html:not(.platform-android) .markdown-body pre .hljs::selection {
+  color: #ffffff;
+  background: color-mix(in srgb, var(--apple-blue) 78%, transparent);
+}

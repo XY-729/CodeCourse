@@ -1,14 +1,31 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="app-starting">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f7faf8" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/logo.png" />
     <title>CodeCourse</title>
   </head>
   <body>
+    <script>
+      (function() {
+        var stored = localStorage.getItem("codecourse.theme");
+        var theme = (stored === "light" || stored === "dark")
+          ? stored
+          : window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        var bg = theme === "dark" ? "#1c1c1e" : "#f5f5f7";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.backgroundColor = bg;
+        document.body.style.backgroundColor = bg;
+        var mc = document.querySelector('meta[name="theme-color"]');
+        if (mc) mc.setAttribute("content", theme === "dark" ? "#090c12" : "#f7faf8");
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
