@@ -1064,12 +1064,17 @@ async def _stream_and_accumulate(
     yield _sse_event("accumulated", {"text": "".join(chunks)})
 
 
-def _learning_plan_lesson_messages(settings: dict[str, str], lesson_input: str, instructions: str) -> list[dict[str, str]]:
-    user_prompt = load_prompt("prompt.learning_plan.lesson").format(
-        model=settings["model"],
-        user_instructions=_clean_instructions(instructions) or "无",
-        lesson_input=lesson_input,
-    ) + term_metadata_instruction()
+def _learning_plan_lesson_messages(settings: dict[str, str], lesson_number: int, lesson_title: str, lesson_input: str, instructions: str) -> list[dict[str, str]]:
+    user_instructions = _clean_instructions(instructions) or "无"
+    user_prompt = f"""{load_prompt("prompt.learning_plan.lesson")}
+
+请为第 {lesson_number} 课"{lesson_title}"生成完整课件。
+
+用户补充要求：{user_instructions}
+
+学习材料：
+{lesson_input}
+""" + term_metadata_instruction()
     return [
         {"role": "system", "content": load_prompt("prompt.system")},
         {"role": "user", "content": user_prompt},
@@ -1325,7 +1330,7 @@ async def stream_outline_lesson_generation(
     _incremental_open(output_path)
 
     if project.project_type == "learning_plan":
-        messages = _learning_plan_lesson_messages(settings, lesson_input, instructions)
+        messages = _learning_plan_lesson_messages(settings, lesson_number, lesson_title, lesson_input, instructions)
         task_type = "outline_lesson"
     else:
         prompt = load_prompt("prompt.outline_lesson").format(
