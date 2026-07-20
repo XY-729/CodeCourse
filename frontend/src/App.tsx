@@ -1779,6 +1779,7 @@ export default function App() {
       setError("请先在文件树中选择至少一个文件。");
       return;
     }
+    handleDismissSelection();
     const ok = await confirmAction("生成 AI 总纲", "将调用模型 API 生成项目总纲，可能消耗 token。是否继续？", {
       confirmText: "生成",
     });
@@ -1868,6 +1869,7 @@ export default function App() {
     if (!project || !fileContent) {
       return;
     }
+    handleDismissSelection();
     const label = nextMode === "brief" ? "粗略介绍" : "详细分析";
     const ok = await confirmAction(`生成${label}`, `将调用模型 API 为 ${fileContent.path} 生成${label}，可能消耗 token。是否继续？`, {
       confirmText: "生成",
@@ -1946,6 +1948,7 @@ export default function App() {
     if (!project || isTaskRunning) {
       return;
     }
+    handleDismissSelection();
     const ok = await confirmAction(
       `生成第 ${lessonNumber} 课`,
       isLearningPlanProject
