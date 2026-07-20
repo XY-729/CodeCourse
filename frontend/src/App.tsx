@@ -1961,65 +1961,12 @@ export default function App() {
     }
     setError("");
     setGenerationOpen(false);
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = new AbortController();
-
-    const filename = `lessons/lesson_${String(lessonNumber).padStart(2, "0")}.md`;
-
-    setCourses((prev) => {
-      if (prev.some((c) => c.filename === filename)) return prev;
-      return [{ filename, title: "生成中…", group: "lessons" }, ...prev];
-    });
-    streamingContentRef.current.set(filename, "");
-
-    openItemInGroup(activeGroupId, {
-      id: `course:${filename}`,
-      type: "course",
-      path: filename,
-      title: `第 ${lessonNumber} 课`,
-      content: "",
-    });
-    setTaskMessage(`第 ${lessonNumber} 课生成中…`);
-
     try {
-      const streamedFilename = await generateOutlineLessonStream(
-        project.id,
-        lessonNumber,
-        title,
-        generationInstructions,
-        {
-          onStage(_stage, label) { setTaskMessage(label); },
-          onDelta(text) {
-            const current = streamingContentRef.current.get(filename) ?? "";
-            const updated = current + text;
-            streamingContentRef.current.set(filename, updated);
-            setLayout((prev) =>
-              updateGroup(prev, activeGroupId, (g) => ({
-                ...g,
-                items: g.items.map((item) =>
-                  item.id === `course:${filename}` ? { ...item, content: updated } : item,
-                ),
-              })),
-            );
-          },
-          onCompleted({ cached }) {
-            setTaskMessage(cached ? "已缓存，无需重新生成" : "生成完成");
-            setToast("内容已生成");
-            streamingContentRef.current.delete(filename);
-          },
-          onError(message) { throw new Error(message); },
-        },
-        abortControllerRef.current.signal,
-      );
-      if (streamedFilename) {
-        await refreshCourses(project.id);
-        await openCourseInActiveGroup(project.id, streamedFilename);
-      }
+      const task = await generateOutlineLesson(project.id, lessonNumber, title, generationInstructions);
+      await trackTask(task);
       setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
-      if (caught instanceof Error && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "创建课件任务失败");
-      streamingContentRef.current.delete(filename);
     }
   }
 

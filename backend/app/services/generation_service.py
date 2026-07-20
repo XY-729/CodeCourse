@@ -5,12 +5,24 @@ import hashlib
 import json
 import re
 import shutil
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 from urllib.parse import quote
 
 from app.core.config import GENERATED_ROOT, PROMPT_VERSION
 from app.services.llm_client import stream_openai_compatible_chat
+
+import datetime as _dt
+
+def _debug_dump(filename, text):
+    try:
+        debug_dir = Path(GENERATED_ROOT).parent / ".debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        (debug_dir / (ts + "_" + filename)).write_text(text, encoding="utf-8")
+    except Exception:
+        pass
 from app.services.prompt_store import load_prompt, save_prompt
 from app.models.schemas import CourseFile, LearningScopeRequest
 from app.services.course_generator import (
@@ -662,20 +674,24 @@ def _run_learning_plan_lesson_task(
         progress_total=12,
         stage_label="正在规划课件",
     )
-    planner_prompt = f"""{base_prompt}
+    planner_prompt = f"""你是一位课程设计师。现在要根据一份学习计划，为其中一课制定详细的章节规划。
 
-请先为第 {lesson_number} 课“{lesson_title}”制定章节计划。只输出一个 JSON 对象，不要输出 Markdown 或额外解释。
+本课名称：{lesson_title}
+本课是学习计划中的第 {lesson_number} 课。
 
-JSON 结构：
+你的任务：阅读下方学习材料中的“本课计划”，从中提取本课应该覆盖的全部知识内容，并将其组织为 4-10 个章节。每个章节必须列出明确的知识项（函数、API、语法、概念、公式或方法）。不能使用“其他相关知识”等笼统项。
+
+只输出一个 JSON 对象，不要输出 Markdown 或额外解释：
+
 {{
-  "lesson_title": "课程标题",
-  "position": "本课在学习路线中的位置",
-  "objectives": ["可验证目标"],
+  "lesson_title": "{lesson_title}",
+  "position": "本课在学习路线中的位置（从学习材料中的总纲推断）",
+  "objectives": ["3-5 条可验证的学习目标"],
   "sections": [
     {{
       "title": "章节标题",
       "items": [
-        {{"name": "必须逐项讲解的函数、API、语法、概念、公式或方法", "kind": "function 或 concept", "focus": "讲解重点"}}
+        {{"name": "具体的知识项名称", "kind": "function 或 concept", "focus": "讲解重点（可选，可为空字符串）"}}
       ]
     }}
   ],
@@ -684,13 +700,14 @@ JSON 结构：
   ]
 }}
 
-章节必须为 4-10 个。知识项应覆盖本课计划中出现的全部关键内容，不能用“其他相关知识”等笼统项。教材不确定时返回空数组，不编造页码、版次或书目。
+教材不确定时 textbooks 返回空数组。不编造页码、版次或书目。
 
 用户补充要求：{user_instructions}
 
 学习材料：
 {lesson_input}
 """
+    _debug_dump("L" + str(lesson_number) + "-planner-prompt.txt", planner_prompt)
     plan_content = call_openai_compatible_chat(
         settings["base_url"],
         settings["api_key"],
@@ -702,6 +719,7 @@ JSON 结构：
         timeout=180,
     )
     plan = _parse_lesson_plan(plan_content)
+    _debug_dump("L" + str(lesson_number) + "-plan-response.json", json.dumps(plan, ensure_ascii=False, indent=2))
     sections: list[dict] = plan["sections"]
     total_calls = 1 + len(sections)
     update_generation_task(
@@ -714,63 +732,52 @@ JSON 结构：
 
     staging_dir = project_course_dir(project_id) / ".tasks" / f"task-{task_id}"
     staging_dir.mkdir(parents=True, exist_ok=True)
-    generated_sections: list[str] = []
+    generated_sections = [""] * len(sections)
+    completed_count = 0
+
+    def _gen_section(idx, sec):
+        ls = "\n".join("-" + it.get("name", "") + "（类型：" + it.get("kind", "") + "；重点：" + (it.get("focus") or "完整讲清") + "）" for it in sec.get("items", []))
+        sp = base_prompt + "\n\n"
+        sp += "现在只生成第 " + str(lesson_number) + " 课“" + lesson_title + "”中的一个章节。\n\n"
+        sp += "章节标题：" + sec.get("title", "") + "\n"
+        sp += "本章必须逐项讲解：\n" + ls + "\n\n"
+        sp += "输出要求：\n"
+        sp += "- 直接以 `## " + sec.get("title", "") + "` 开始，只输出本章 Markdown。\n"
+        sp += "- 每个知识项必须以包含其完整名称的 `###` 小节单独展开。\n"
+        sp += "- 不能省略任何知识项，不能用一句定义代替讲解。\n"
+        sp += "- 不要输出教材原文长引文，不要声称访问了教材全文。\n\n"
+        sp += "用户补充要求：" + user_instructions + "\n\n"
+        sp += "学习材料：\n" + lesson_input + "\n"
+        if idx == 1:
+            _debug_dump("L" + str(lesson_number) + "-section-1-prompt.txt", sp)
+        c = call_openai_compatible_chat(
+            settings["base_url"], settings["api_key"], settings["model"],
+            [{"role": "system", "content": load_prompt("prompt.system")},
+             {"role": "user", "content": sp}], timeout=240)
+        md = _require_markdown(c)
+        if not md.lstrip().startswith("##"):
+            md = "## " + sec.get("title", "") + "\n\n" + md
+        _atomic_write(staging_dir / ("section-" + str(idx).zfill(2) + ".part"), md)
+        return idx, md.strip()
+
     try:
-        for index, section in enumerate(sections, start=1):
-            item_lines = "\n".join(
-                f"- {item['name']}（类型：{item['kind']}；重点：{item['focus'] or '完整讲清'}）"
-                for item in section["items"]
-            )
-            update_generation_task(
-                task_id,
-                "running",
-                progress_current=index,
-                progress_total=total_calls,
-                stage_label=f"正在生成 {index}/{len(sections)}：{section['title']}",
-            )
-            section_prompt = f"""{base_prompt}
-
-现在只生成第 {lesson_number} 课“{lesson_title}”中的一个章节。
-
-章节标题：{section['title']}
-本章必须逐项讲解：
-{item_lines}
-
-输出要求：
-- 直接以 `## {section['title']}` 开始，只输出本章 Markdown。
-- 每个知识项必须以包含其完整名称的 `###` 小节单独展开。
-- 不能省略任何知识项，不能用一句定义代替讲解。
-- 不要输出教材原文长引文，不要声称访问了教材全文。
-
-用户补充要求：{user_instructions}
-
-学习材料：
-{lesson_input}
-"""
-            content = call_openai_compatible_chat(
-                settings["base_url"],
-                settings["api_key"],
-                settings["model"],
-                [
-                    {"role": "system", "content": load_prompt("prompt.system")},
-                    {"role": "user", "content": section_prompt},
-                ],
-                timeout=240,
-            )
-            section_markdown = _require_markdown(content)
-            if not section_markdown.lstrip().startswith("##"):
-                section_markdown = f"## {section['title']}\n\n{section_markdown}"
-            _atomic_write(staging_dir / f"section-{index:02d}.part", section_markdown)
-            generated_sections.append(section_markdown.strip())
-            update_generation_task(
-                task_id,
-                "running",
-                progress_current=index + 1,
-                progress_total=total_calls,
-                stage_label=f"已完成 {index}/{len(sections)}：{section['title']}",
-            )
+        update_generation_task(task_id, "running",
+            progress_current=1, progress_total=total_calls,
+            stage_label="并发生成 " + str(len(sections)) + " 个章节中…")
+        max_workers = min(len(sections), 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_gen_section, i + 1, sec): i for i, sec in enumerate(sections)}
+            for future in as_completed(futures):
+                idx, md = future.result()
+                generated_sections[idx - 1] = md
+                completed_count += 1
+                st = sections[idx - 1].get("title", "")
+                update_generation_task(task_id, "running",
+                    progress_current=1 + completed_count, progress_total=total_calls,
+                    stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
 
         joined_sections = "\n\n".join(generated_sections)
+
         missing = _missing_lesson_items(joined_sections, sections)
         if missing:
             total_calls += 1
@@ -857,6 +864,9 @@ def run_outline_lesson_task(
             requested_title,
             instructions,
         )
+        _debug_dump("L" + str(lesson_number) + "-build-input.txt",
+                     "lesson_number=" + str(lesson_number) + "\nrequested_title=" + requested_title + "\n"
+                     "lesson_title=" + lesson_title + "\n\n=== lesson_input ===\n" + lesson_input)
         if project.project_type == "learning_plan":
             lesson_title, lesson = _run_learning_plan_lesson_task(
                 project_id,

@@ -1664,6 +1664,7 @@ button:disabled,
 }
 
 .knowledge-inline-link {
+  display: inline;
   border: 0;
   border-bottom: 1px solid #25766c;
   padding: 0 1px;
@@ -1679,6 +1680,7 @@ button:disabled,
 }
 
 .lesson-generate-link {
+  display: inline-block;
   border: 1px solid #25766c;
   border-radius: 5px;
   padding: 4px 9px;
