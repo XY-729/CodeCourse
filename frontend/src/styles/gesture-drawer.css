@@ -1,0 +1,23 @@
+:root {
+  --gesture-stroke: #16826b;
+}
+
+:root[data-theme="dark"] {
+  --gesture-stroke: #4c8dff;
+}
+
+.gesture-drawer-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  contain: strict;
+}
+
+html.gesture-drawing,
+html.gesture-drawing * {
+  cursor: crosshair !important;
+}
