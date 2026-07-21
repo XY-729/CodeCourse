@@ -598,27 +598,39 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     systemPrompt: string,
   ): Promise<{ filename: string; content: string }> {
     await db.run("UPDATE generation_tasks SET progress_current=0,progress_total=12,stage_label='正在规划课件',updated_at=? WHERE id=?", [now(), taskId]);
-    const planner = `${base}\n\n请先制定章节计划。只输出 JSON 对象，不要输出 Markdown 或解释。\n\nJSON 结构：\n{\n  "lesson_title": "课程标题",\n  "position": "本课在学习路线中的位置",\n  "objectives": ["可验证目标"],\n  "sections": [{"title": "章节标题", "items": [{"name": "必须逐项讲解的知识", "kind": "function 或 concept", "focus": "讲解重点"}]}],\n  "textbooks": [{"title": "确信存在的书名", "author": "作者", "topics": "相关章节主题"}]\n}\n\n章节必须为 4-10 个，覆盖总纲中本课的全部知识项。教材不确定时返回空数组，不得编造页码、版次或书目。`;
+    const plannerPrompt = `你是一位课程设计师。现在要根据一份学习计划，为其中一课制定详细的章节规划。\n\n本课名称：${payload.title}\n本课是学习计划中的第 ${payload.lesson_number} 课。\n\n你的任务：阅读下方学习材料中的"本课计划"，从中提取本课应该覆盖的全部知识内容，并将其组织为 4-10 个章节。每个章节必须列出明确的知识项（函数、API、语法、概念、公式或方法）。不能使用"其他相关知识"等笼统项。\n\n只输出一个 JSON 对象，不要输出 Markdown 或额外解释：\n\n{\n  "lesson_title": "${payload.title}",\n  "position": "本课在学习路线中的位置（从学习材料中的总纲推断）",\n  "objectives": ["3-5 条可验证的学习目标"],\n  "sections": [\n    {\n      "title": "章节标题",\n      "items": [\n        {"name": "具体的知识项名称", "kind": "function 或 concept", "focus": "讲解重点（可选，可为空字符串）"}\n      ]\n    }\n  ],\n  "textbooks": [{"title": "确信存在的书名", "author": "作者", "topics": "相关章节主题"}]\n}\n\n教材不确定时 textbooks 返回空数组。不编造页码、版次或书目。\n\n用户补充要求：${payload.instructions || "无"}\n\n学习材料：\n${base}`;
     const checkpoint = payload._checkpoint && typeof payload._checkpoint === "object" ? payload._checkpoint as { plan?: LessonPlan; generated?: string[] } : {};
     const plan = checkpoint.plan
       ? parseLessonPlan(JSON.stringify(checkpoint.plan))
-      : parseLessonPlan(await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: planner }]));
+      : parseLessonPlan(await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: plannerPrompt }]));
     let totalCalls = 1 + plan.sections.length;
     const generated: string[] = Array.isArray(checkpoint.generated) ? checkpoint.generated.slice(0, plan.sections.length).map(String) : [];
+    const remaining = plan.sections.slice(generated.length);
     const saveCheckpoint = async () => db.run("UPDATE generation_tasks SET payload_json=?,updated_at=? WHERE id=?", [JSON.stringify({ ...payload, _checkpoint: { plan, generated } }), now(), taskId]);
     if (!checkpoint.plan) await saveCheckpoint();
     await db.run("UPDATE generation_tasks SET progress_current=?,progress_total=?,stage_label=?,updated_at=? WHERE id=?", [1 + generated.length, totalCalls, generated.length ? `已恢复 ${generated.length}/${plan.sections.length} 个章节` : "章节计划已完成", now(), taskId]);
 
-    for (let index = generated.length; index < plan.sections.length; index += 1) {
-      const section = plan.sections[index];
-      const itemLines = section.items.map((item) => `- ${item.name}（类型：${item.kind}；重点：${item.focus}）`).join("\n");
-      await db.run("UPDATE generation_tasks SET progress_current=?,progress_total=?,stage_label=?,updated_at=? WHERE id=?", [index + 1, totalCalls, `正在生成 ${index + 1}/${plan.sections.length}：${section.title}`, now(), taskId]);
-      const sectionPrompt = `${base}\n\n现在只生成其中一个章节。\n\n章节标题：${section.title}\n本章必须逐项讲解：\n${itemLines}\n\n直接以 \`## ${section.title}\` 开始，只输出本章 Markdown。每个知识项必须以包含完整名称的 \`###\` 小节单独展开，不能省略或用一句定义代替。教学代码必须明确标注为教学示例，不得声称读过教材全文。`;
+    // Concurrent section generation (max 4 in parallel)
+    const genSection = async (sec: { title: string; items: Array<{ name: string; kind: string; focus?: string }> }, idx: number): Promise<string> => {
+      const itemLines = sec.items.map((item) => `- ${item.name}（类型：${item.kind}；重点：${item.focus || "完整讲清"}）`).join("\n");
+      const sectionPrompt = `${base}\n\n现在只生成第 ${payload.lesson_number} 课"${payload.title}"中的一个章节。\n\n章节标题：${sec.title}\n本章必须逐项讲解：\n${itemLines}\n\n输出要求：\n- 直接以 \`## ${sec.title}\` 开始，只输出本章 Markdown。\n- 每个知识项必须以包含其完整名称的 \`###\` 小节单独展开。\n- 不能省略任何知识项，不能用一句定义代替讲解。\n- 不要输出教材原文长引文，不要声称访问了教材全文。\n\n用户补充要求：${payload.instructions || "无"}\n\n学习材料：\n${base}`;
       let markdown = (await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: sectionPrompt }])).trim();
-      if (!markdown.startsWith("##")) markdown = `## ${section.title}\n\n${markdown}`;
-      generated.push(markdown);
+      if (!markdown.startsWith("##")) markdown = `## ${sec.title}\n\n${markdown}`;
+      generated[generated.length - remaining.length + idx] = markdown;
       await saveCheckpoint();
-      await db.run("UPDATE generation_tasks SET progress_current=?,stage_label=?,updated_at=? WHERE id=?", [index + 2, `已完成 ${index + 1}/${plan.sections.length}：${section.title}`, now(), taskId]);
+      return markdown;
+    };
+
+    // Concurrent section generation (batches of 4)
+    let completed = 0;
+    for (let batch = 0; batch < remaining.length; batch += 4) {
+      const batchSections = remaining.slice(batch, batch + 4).map((sec, i) => ({ sec, idx: batch + i }));
+      await Promise.all(batchSections.map(({ sec, idx }) =>
+        genSection(sec, idx).then(() => {
+          completed += 1;
+          return db.run("UPDATE generation_tasks SET progress_current=?,stage_label=?,updated_at=? WHERE id=?", [1 + completed, `已完成 ${completed}/${remaining.length}：${sec.title}`, now(), taskId]).catch(() => {});
+        })
+      ));
     }
 
     let body = generated.join("\n\n");
