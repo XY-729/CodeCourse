@@ -21,3 +21,65 @@ html.gesture-drawing,
 html.gesture-drawing * {
   cursor: crosshair !important;
 }
+
+.gesture-hint {
+  position: fixed;
+  z-index: 2147482990;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 7px 11px;
+  border: 1px solid color-mix(in srgb, var(--gesture-stroke) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface, #fff) 90%, transparent);
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.13);
+  color: var(--text-primary, #202124);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(12px);
+  animation: gesture-hint-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.gesture-hint-live {
+  right: auto;
+  bottom: auto;
+  transform: none;
+  max-width: min(240px, calc(100vw - 24px));
+  white-space: normal;
+  box-shadow:
+    0 8px 24px rgba(15, 23, 42, 0.16),
+    inset 0 1px rgba(255, 255, 255, 0.55);
+  animation: gesture-hint-live-in 120ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes gesture-hint-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 5px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@keyframes gesture-hint-live-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gesture-hint {
+    animation: none;
+  }
+}

@@ -81,6 +81,11 @@ export class GestureDrawer {
     return this.completedPath ? this.clonePath(this.completedPath) : null;
   }
 
+  /** Returns a snapshot for live recognition without exposing mutable state. */
+  getCurrentPath(): GesturePath {
+    return this.clonePath(this.currentPath);
+  }
+
   configure(options: GestureDrawerOptions): void {
     this.options = this.normalizeOptions({ ...this.options, ...options });
     if (this.drawing) this.scheduleDraw();

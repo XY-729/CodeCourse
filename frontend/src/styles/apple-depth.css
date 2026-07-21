@@ -1,0 +1,430 @@
+/* Desktop depth and interaction layer. Reading surfaces remain quiet; chrome carries the material effects. */
+html:not(.platform-android) .app-shell {
+  background: linear-gradient(180deg, var(--apple-canvas-top), var(--apple-canvas));
+}
+
+html:not(.platform-android) .apple-titlebar,
+html:not(.platform-android) .apple-toolbar {
+  border-color: var(--apple-glass-border);
+  background: var(--apple-toolbar);
+  box-shadow: var(--apple-inner-highlight), 0 5px 18px rgba(18, 48, 40, 0.07);
+}
+
+html:not(.platform-android)[data-theme="dark"] .apple-titlebar,
+html:not(.platform-android)[data-theme="dark"] .apple-toolbar {
+  box-shadow: var(--apple-inner-highlight), 0 7px 24px rgba(0, 0, 0, 0.28);
+}
+
+html:not(.platform-android) .navigation-panel {
+  border-right-color: var(--apple-glass-border);
+  background: var(--apple-sidebar);
+  box-shadow: var(--apple-inner-highlight), 8px 0 28px rgba(24, 61, 49, 0.06);
+}
+
+html:not(.platform-android) .assistant-drawer {
+  border-left-color: var(--apple-glass-border);
+  background: var(--apple-sidebar);
+  box-shadow: var(--apple-inner-highlight), -16px 0 42px rgba(20, 52, 42, 0.11);
+}
+
+html:not(.platform-android)[data-theme="dark"] .navigation-panel,
+html:not(.platform-android)[data-theme="dark"] .assistant-drawer {
+  box-shadow: var(--apple-inner-highlight), 12px 0 36px rgba(0, 0, 0, 0.26);
+}
+
+html:not(.platform-android) .center-pane,
+html:not(.platform-android) .reader-workspace {
+  background: var(--apple-surface-sunken);
+}
+
+html:not(.platform-android) .reader-pane {
+  background: var(--apple-surface);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-xs);
+  transition: outline-color 170ms ease, box-shadow 190ms var(--apple-ease-out);
+}
+
+html:not(.platform-android) .reader-pane.active {
+  outline-color: color-mix(in srgb, var(--apple-blue) 52%, transparent);
+  box-shadow: var(--apple-inner-highlight), 0 0 0 1px color-mix(in srgb, var(--apple-blue) 18%, transparent), var(--apple-shadow-sm);
+}
+
+html:not(.platform-android) .pane-tabs,
+html:not(.platform-android) .viewer-header,
+html:not(.platform-android) .reader-learning-toolbar,
+html:not(.platform-android) .qa-panel-tabs {
+  background: color-mix(in srgb, var(--apple-surface-muted) 78%, transparent);
+  box-shadow: inset 0 -1px 0 var(--apple-separator), var(--apple-inner-highlight);
+  backdrop-filter: blur(20px) saturate(165%);
+  -webkit-backdrop-filter: blur(20px) saturate(165%);
+}
+
+html:not(.platform-android) .pane-tab,
+html:not(.platform-android) .navigation-segmented button,
+html:not(.platform-android) .qa-panel-tabs button {
+  position: relative;
+  overflow: hidden;
+}
+
+html:not(.platform-android) .pane-tab:hover,
+html:not(.platform-android) .navigation-segmented button:hover,
+html:not(.platform-android) .qa-panel-tabs button:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--apple-shadow-xs);
+}
+
+html:not(.platform-android) .pane-tab.active,
+html:not(.platform-android) .navigation-segmented button.active,
+html:not(.platform-android) .qa-panel-tabs button.active {
+  border-color: var(--apple-glass-border);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-sm);
+}
+
+html:not(.platform-android) .pane-tab.active::after,
+html:not(.platform-android) .navigation-segmented button.active::after,
+html:not(.platform-android) .qa-panel-tabs button.active::after {
+  content: "";
+  position: absolute;
+  right: 18%;
+  bottom: 0;
+  left: 18%;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--apple-blue);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--apple-blue) 55%, transparent);
+  animation: apple-active-marker-in 190ms var(--apple-ease-out) both;
+}
+
+html:not(.platform-android) .apple-icon-button,
+html:not(.platform-android) .apple-toolbar-button,
+html:not(.platform-android) .apple-search-button,
+html:not(.platform-android) .primary-button,
+html:not(.platform-android) .secondary-button,
+html:not(.platform-android) .icon-button,
+html:not(.platform-android) .apple-primary-button,
+html:not(.platform-android) .apple-secondary-button {
+  transition: color 140ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 180ms var(--apple-ease-out), transform 120ms var(--apple-ease-out);
+}
+
+html:not(.platform-android) .apple-icon-button:hover:not(:disabled),
+html:not(.platform-android) .apple-toolbar-button:hover:not(:disabled),
+html:not(.platform-android) .apple-search-button:hover:not(:disabled),
+html:not(.platform-android) .secondary-button:hover:not(:disabled),
+html:not(.platform-android) .icon-button:hover:not(:disabled),
+html:not(.platform-android) .apple-secondary-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-sm);
+}
+
+html:not(.platform-android) .primary-button,
+html:not(.platform-android) .apple-primary-button {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.24), 0 5px 14px color-mix(in srgb, var(--apple-blue) 25%, transparent);
+}
+
+html:not(.platform-android) .primary-button:hover:not(:disabled),
+html:not(.platform-android) .apple-primary-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 8px 20px color-mix(in srgb, var(--apple-blue) 32%, transparent);
+}
+
+html:not(.platform-android) button:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.13);
+}
+
+html:not(.platform-android) .tree-row,
+html:not(.platform-android) .course-row,
+html:not(.platform-android) .project-row,
+html:not(.platform-android) .qa-history-row,
+html:not(.platform-android) .course-group-header {
+  position: relative;
+  transition: color 140ms ease, background-color 160ms ease, box-shadow 180ms ease, transform 160ms var(--apple-ease-out);
+}
+
+html:not(.platform-android) .tree-row:hover,
+html:not(.platform-android) .course-row:hover,
+html:not(.platform-android) .project-row:hover,
+html:not(.platform-android) .qa-history-row:hover,
+html:not(.platform-android) .course-group-header:hover {
+  transform: translateX(2px);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-xs);
+}
+
+html:not(.platform-android) .tree-row.selected,
+html:not(.platform-android) .course-row.selected,
+html:not(.platform-android) .project-row.selected,
+html:not(.platform-android) .qa-history-row.selected {
+  background: color-mix(in srgb, var(--apple-blue-soft) 82%, var(--apple-surface));
+  box-shadow: inset 3px 0 0 var(--apple-blue), var(--apple-inner-highlight), var(--apple-shadow-xs);
+}
+
+html:not(.platform-android) .continue-learning-card,
+html:not(.platform-android) .assistant-answer-card,
+html:not(.platform-android) .assistant-stream-card,
+html:not(.platform-android) .qa-stream-card {
+  border-color: var(--apple-glass-border);
+  background: var(--apple-surface-raised);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-md);
+}
+
+html:not(.platform-android) .continue-learning-copy strong,
+html:not(.platform-android) .reader-breadcrumb strong,
+html:not(.platform-android) .learning-empty-state h1 {
+  color: var(--apple-text);
+}
+
+html:not(.platform-android) .continue-learning-copy span,
+html:not(.platform-android) .continue-learning-card > small,
+html:not(.platform-android) .reader-breadcrumb,
+html:not(.platform-android) .lesson-position,
+html:not(.platform-android) .learning-empty-state p {
+  color: var(--apple-text-secondary);
+}
+
+html:not(.platform-android) .complete-button.completed {
+  border-color: color-mix(in srgb, var(--apple-green) 42%, var(--apple-separator));
+  color: var(--apple-green);
+  background: color-mix(in srgb, var(--apple-green) 13%, var(--apple-surface));
+}
+
+html:not(.platform-android) .navigation-resizer,
+html:not(.platform-android) .assistant-resizer,
+html:not(.platform-android) .split-resizer,
+html:not(.platform-android) .resize-handle-y {
+  position: relative;
+  background: var(--apple-surface-sunken);
+  transition: background-color 140ms ease, box-shadow 160ms ease;
+}
+
+html:not(.platform-android) .navigation-resizer:hover,
+html:not(.platform-android) .assistant-resizer:hover,
+html:not(.platform-android) .split-resizer:hover,
+html:not(.platform-android) .resize-handle-y:hover,
+html:not(.platform-android) .workbench.assistant-resizing .assistant-resizer {
+  background: color-mix(in srgb, var(--apple-blue) 30%, var(--apple-surface-sunken));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--apple-blue) 45%, transparent);
+}
+
+html:not(.platform-android) .drop-preview {
+  border-color: color-mix(in srgb, var(--apple-blue) 78%, white 12%);
+  border-radius: var(--apple-radius);
+  background: color-mix(in srgb, var(--apple-blue-soft) 72%, transparent);
+  box-shadow: inset 0 0 0 1px var(--apple-glass-border), 0 12px 34px color-mix(in srgb, var(--apple-blue) 22%, transparent);
+  backdrop-filter: blur(5px) saturate(150%);
+  animation: apple-drop-preview-in 150ms var(--apple-ease-out) both;
+}
+
+html:not(.platform-android) .markdown-viewer {
+  background: var(--apple-surface-sunken);
+}
+
+html:not(.platform-android) .markdown-body {
+  background: var(--apple-surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--apple-separator) 60%, transparent), 0 12px 40px rgba(20, 52, 42, 0.06);
+}
+
+html:not(.platform-android)[data-theme="dark"] .markdown-body {
+  box-shadow: 0 0 0 1px var(--apple-separator), 0 18px 52px rgba(0, 0, 0, 0.2);
+}
+
+html:not(.platform-android) .markdown-body pre {
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-md);
+}
+
+html:not(.platform-android) .markdown-body blockquote {
+  border-radius: 0 var(--apple-radius-sm) var(--apple-radius-sm) 0;
+  background: color-mix(in srgb, var(--apple-blue-soft) 48%, transparent);
+}
+
+html:not(.platform-android) .markdown-body table {
+  box-shadow: var(--apple-shadow-sm);
+}
+
+html:not(.platform-android) .knowledge-canvas-shell,
+html:not(.platform-android) .knowledge-canvas {
+  background-color: var(--apple-surface);
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--apple-separator) 24%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--apple-separator) 24%, transparent) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+html:not(.platform-android) .knowledge-node-label {
+  border: 1px solid var(--apple-glass-border);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-xs);
+  transition: transform 150ms var(--apple-ease-out), box-shadow 170ms ease, background-color 170ms ease;
+}
+
+html:not(.platform-android) .knowledge-node-label:hover,
+html:not(.platform-android) .knowledge-node-label.important,
+html:not(.platform-android) .knowledge-node-label.matched {
+  transform: translateY(-1px);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-sm);
+}
+
+html:not(.platform-android) .apple-popover,
+html:not(.platform-android) .apple-sheet,
+html:not(.platform-android) .app-dialog,
+html:not(.platform-android) .settings-modal,
+html:not(.platform-android) .prompt-editor,
+html:not(.platform-android) .command-palette,
+html:not(.platform-android) .selection-quick-bar,
+html:not(.platform-android) .context-menu {
+  border-color: var(--apple-glass-border);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-popover);
+}
+
+html:not(.platform-android) input,
+html:not(.platform-android) textarea,
+html:not(.platform-android) select {
+  transition: border-color 150ms ease, background-color 170ms ease, box-shadow 180ms ease;
+}
+
+html:not(.platform-android) input:hover,
+html:not(.platform-android) textarea:hover,
+html:not(.platform-android) select:hover {
+  border-color: var(--apple-separator-strong);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-xs);
+}
+
+html:not(.platform-android) ::selection {
+  color: #ffffff;
+  background: color-mix(in srgb, var(--apple-blue) 74%, transparent);
+}
+
+html:not(.platform-android) .temp-selection {
+  position: relative;
+  padding: 1px 2px;
+  border-radius: 4px;
+  color: inherit;
+  background: linear-gradient(105deg,
+    color-mix(in srgb, var(--apple-blue) 30%, transparent) 0%,
+    color-mix(in srgb, var(--apple-accent-secondary) 44%, transparent) 48%,
+    color-mix(in srgb, var(--apple-blue) 30%, transparent) 100%);
+  background-size: 220% 100%;
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--apple-blue) 62%, transparent), 0 0 12px color-mix(in srgb, var(--apple-blue) 16%, transparent);
+  animation: apple-selection-sweep 180ms var(--apple-ease-out) both;
+}
+
+html:not(.platform-android) .monaco-persistent-selection,
+html:not(.platform-android) .monaco-persistent-selection-inline {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--apple-blue) 34%, transparent) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--apple-blue) 34%, transparent), 0 0 10px color-mix(in srgb, var(--apple-blue) 14%, transparent);
+  animation: apple-monaco-selection-in 180ms var(--apple-ease-out) both;
+}
+
+html:not(.platform-android) .selection-quick-bar {
+  bottom: auto;
+  margin: 0;
+  transform: none;
+  background: color-mix(in srgb, var(--apple-surface-raised) 92%, transparent);
+  backdrop-filter: blur(24px) saturate(185%);
+  -webkit-backdrop-filter: blur(24px) saturate(185%);
+}
+
+html:not(.platform-android) .selection-quick-bar.anchored.top {
+  transform-origin: bottom center;
+  animation: apple-selection-bar-top-in 180ms var(--apple-ease-out) both;
+}
+
+html:not(.platform-android) .selection-quick-bar.anchored.bottom {
+  transform-origin: top center;
+  animation: apple-selection-bar-bottom-in 180ms var(--apple-ease-out) both;
+}
+
+html:not(.platform-android) .selection-quick-bar.fallback {
+  left: 50%;
+  top: auto;
+  bottom: 24px;
+  transform: translateX(-50%);
+}
+
+html:not(.platform-android) .selection-quick-bar button {
+  color: var(--apple-text-secondary);
+  transition: color 120ms ease, background-color 140ms ease, transform 100ms ease;
+}
+
+html:not(.platform-android) .selection-quick-bar button:hover {
+  color: var(--apple-text);
+  background: var(--apple-blue-soft);
+  transform: translateY(-1px);
+}
+
+@keyframes apple-active-marker-in {
+  from { opacity: 0; transform: scaleX(0.25); }
+  to { opacity: 1; transform: scaleX(1); }
+}
+
+@keyframes apple-drop-preview-in {
+  from { opacity: 0; transform: scale(0.985); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes apple-selection-sweep {
+  from { background-position: 100% 0; box-shadow: inset 0 -1px 0 transparent, 0 0 0 transparent; }
+  to { background-position: 0 0; }
+}
+
+@keyframes apple-monaco-selection-in {
+  from { opacity: 0.35; filter: brightness(1.35); }
+  to { opacity: 1; filter: brightness(1); }
+}
+
+@keyframes apple-selection-bar-top-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes apple-selection-bar-bottom-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html:not(.platform-android) .apple-titlebar,
+  html:not(.platform-android) .apple-toolbar,
+  html:not(.platform-android) .navigation-panel,
+  html:not(.platform-android) .assistant-drawer,
+  html:not(.platform-android) .selection-quick-bar {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--apple-surface);
+  }
+}
+
+@media (prefers-contrast: more) {
+  html:not(.platform-android) .reader-pane.active,
+  html:not(.platform-android) .temp-selection,
+  html:not(.platform-android) .monaco-persistent-selection-inline {
+    outline: 2px solid var(--apple-blue);
+    outline-offset: -1px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(.platform-android) .pane-tab,
+  html:not(.platform-android) .navigation-segmented button,
+  html:not(.platform-android) .qa-panel-tabs button,
+  html:not(.platform-android) .tree-row,
+  html:not(.platform-android) .course-row,
+  html:not(.platform-android) .project-row,
+  html:not(.platform-android) .qa-history-row,
+  html:not(.platform-android) .drop-preview,
+  html:not(.platform-android) .temp-selection,
+  html:not(.platform-android) .monaco-persistent-selection,
+  html:not(.platform-android) .monaco-persistent-selection-inline,
+  html:not(.platform-android) .selection-quick-bar {
+    animation: none;
+    transition-duration: 0ms;
+  }
+
+  html:not(.platform-android) .pane-tab:hover,
+  html:not(.platform-android) .tree-row:hover,
+  html:not(.platform-android) .course-row:hover,
+  html:not(.platform-android) .project-row:hover,
+  html:not(.platform-android) .qa-history-row:hover {
+    transform: none;
+  }
+}

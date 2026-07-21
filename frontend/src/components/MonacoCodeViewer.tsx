@@ -88,7 +88,17 @@ export default function MonacoCodeViewer({ path, language, content, selectedRang
       const model = editor.getModel(); if (!model || event.selection.isEmpty()) return;
       const selectedText = model.getValueInRange(event.selection).trim(); if (!selectedText) return;
       const range = { startLineNumber: event.selection.startLineNumber, startColumn: event.selection.startColumn, endLineNumber: event.selection.endLineNumber, endColumn: event.selection.endColumn };
-      setPersistentSelection(range); onSelectionChange?.({ sourceType: "file", sourcePath: path, selectedText, language, range });
+      const editorRect = editor.getDomNode()?.getBoundingClientRect();
+      const endPosition = editor.getScrolledVisiblePosition({ lineNumber: range.endLineNumber, column: range.endColumn });
+      const anchorRect = editorRect && endPosition ? {
+        left: editorRect.left + endPosition.left,
+        top: editorRect.top + endPosition.top,
+        right: editorRect.left + endPosition.left + 2,
+        bottom: editorRect.top + endPosition.top + endPosition.height,
+        width: 2,
+        height: endPosition.height,
+      } : undefined;
+      setPersistentSelection(range); onSelectionChange?.({ sourceType: "file", sourcePath: path, selectedText, language, range, anchorRect });
     });
     editor.onContextMenu((event) => {
       const model = editor.getModel(); if (!model) return;

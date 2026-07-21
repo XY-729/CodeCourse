@@ -8,6 +8,7 @@ import "./styles/apple-workbench.css";
 import "./styles/apple-content.css";
 import "./styles/apple-code-highlight.css";
 import "./styles/apple-overlays.css";
+import "./styles/apple-depth.css";
 import "./styles/android-experience.css";
 import "./styles/gesture-drawer.css";
 import { applyPlatformClass } from "./platform/runtime";

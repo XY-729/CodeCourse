@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef } from "react";
 import GestureDrawer, { type GestureDrawerOptions, type GesturePath } from "../gestures/GestureDrawer";
+import { recognizeGesture, type GestureShape } from "../gestures/GestureRecognizer";
 
 export const GESTURE_COMPLETE_EVENT = "codecourse:gesture-complete";
 
@@ -10,6 +11,7 @@ type Props = GestureDrawerOptions & {
 /** Bridges global right-button pointer events to the gesture-agnostic drawer. */
 export default function GestureLayer({ lineWidth = 4, opacity = 0.68, color, onGestureEnd }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const hintRef = useRef<HTMLDivElement | null>(null);
   const callbackRef = useRef(onGestureEnd);
 
   useEffect(() => {
@@ -25,7 +27,9 @@ export default function GestureLayer({ lineWidth = 4, opacity = 0.68, color, onG
     const drawer = new GestureDrawer(canvas, { lineWidth, opacity, color: resolveColor() });
     let activePointerId: number | null = null;
     let suppressContextMenu = false;
+    let suppressContextMenuPropagation = false;
     let suppressTimer: number | null = null;
+    let progressFrame: number | null = null;
 
     const resize = () => drawer.resize(window.innerWidth, window.innerHeight);
     const clearSuppressTimer = () => {
@@ -40,13 +44,70 @@ export default function GestureLayer({ lineWidth = 4, opacity = 0.68, color, onG
         suppressTimer = null;
       }, 1500);
     };
+    const pathLength = (path: GesturePath) => {
+      let traveled = 0;
+      for (let index = 1; index < path.points.length; index += 1) {
+        const previous = path.points[index - 1];
+        const point = path.points[index];
+        traveled += Math.hypot(point.x - previous.x, point.y - previous.y);
+      }
+      return traveled;
+    };
+    const hintLabel = (gesture: GestureShape) => {
+      const labels: Record<Exclude<GestureShape, "invalid">, string> = {
+        left: "← 松开：返回工作区",
+        right: "→ 松开：下一个文档",
+        up: "↑ 松开：恢复关闭的文档",
+        down: "↓ 松开：关闭当前文档",
+        "up-left": "↑← 松开：打开源码",
+        "up-right": "↑→ 松开：打开搜索",
+        "down-left": "↓← 松开：打开 AI 助手",
+        "down-right": "↓→ 松开：打开课程目录",
+      };
+      return gesture === "invalid" ? "继续绘制，松开取消" : labels[gesture];
+    };
+    const updateLiveHint = (path: GesturePath, initial = false) => {
+      const hint = hintRef.current;
+      const point = path.points[path.points.length - 1];
+      if (!hint || !point) return;
+
+      const traveled = pathLength(path);
+      hint.textContent = initial || traveled < 24
+        ? "右键拖动：绘制快捷手势"
+        : hintLabel(recognizeGesture(path));
+      hint.style.left = `${Math.min(Math.max(12, point.x + 16), Math.max(12, window.innerWidth - 250))}px`;
+      hint.style.top = `${Math.min(Math.max(12, point.y - 44), Math.max(12, window.innerHeight - 48))}px`;
+      hint.hidden = false;
+    };
+    const hideLiveHint = () => {
+      if (hintRef.current) hintRef.current.hidden = true;
+    };
+    const emitProgress = () => {
+      if (progressFrame !== null) return;
+      progressFrame = window.requestAnimationFrame(() => {
+        progressFrame = null;
+        updateLiveHint(drawer.getCurrentPath());
+      });
+    };
     const finish = () => {
       if (!drawer.isDrawing) return;
+      if (progressFrame !== null) {
+        window.cancelAnimationFrame(progressFrame);
+        progressFrame = null;
+      }
       const path = drawer.end();
+      let traveled = 0;
+      for (let index = 1; index < path.points.length; index += 1) {
+        const previous = path.points[index - 1];
+        const point = path.points[index];
+        traveled += Math.hypot(point.x - previous.x, point.y - previous.y);
+      }
+      suppressContextMenuPropagation = traveled >= 12;
       activePointerId = null;
       document.documentElement.classList.remove("gesture-drawing");
+      hideLiveHint();
 
-      // Both interfaces are intentionally generic so recognition can be added later.
+      // Drawing stays gesture-agnostic; consumers decide how to recognize the path.
       callbackRef.current?.(path);
       window.dispatchEvent(new CustomEvent<GesturePath>(GESTURE_COMPLETE_EVENT, { detail: path }));
       drawer.clear();
@@ -59,6 +120,7 @@ export default function GestureLayer({ lineWidth = 4, opacity = 0.68, color, onG
       activePointerId = event.pointerId;
       document.documentElement.classList.add("gesture-drawing");
       armContextMenuSuppression();
+      updateLiveHint(drawer.getCurrentPath(), true);
     };
     const handlePointerMove = (event: PointerEvent) => {
       if (activePointerId !== event.pointerId || !drawer.isDrawing) return;
@@ -69,6 +131,7 @@ export default function GestureLayer({ lineWidth = 4, opacity = 0.68, color, onG
 
       const samples = event.getCoalescedEvents?.() ?? [event];
       for (const sample of samples) drawer.move(sample.clientX, sample.clientY);
+      emitProgress();
     };
     const handlePointerUp = (event: PointerEvent) => {
       if (event.pointerId === activePointerId && event.button === 2) finish();
@@ -79,9 +142,13 @@ export default function GestureLayer({ lineWidth = 4, opacity = 0.68, color, onG
     const handleContextMenu = (event: MouseEvent) => {
       if (!suppressContextMenu) return;
       event.preventDefault();
+      if (suppressContextMenuPropagation) {
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
       suppressContextMenu = false;
+      suppressContextMenuPropagation = false;
       clearSuppressTimer();
-      // Do not stop propagation: existing CodeCourse selection menus may still respond.
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") finish();
@@ -99,6 +166,8 @@ export default function GestureLayer({ lineWidth = 4, opacity = 0.68, color, onG
 
     return () => {
       clearSuppressTimer();
+      if (progressFrame !== null) window.cancelAnimationFrame(progressFrame);
+      hideLiveHint();
       drawer.clear();
       document.documentElement.classList.remove("gesture-drawing");
       window.removeEventListener("resize", resize);
@@ -112,5 +181,16 @@ export default function GestureLayer({ lineWidth = 4, opacity = 0.68, color, onG
     };
   }, [color, lineWidth, opacity]);
 
-  return <canvas ref={canvasRef} className="gesture-drawer-canvas" aria-hidden="true" />;
+  return (
+    <Fragment>
+      <canvas ref={canvasRef} className="gesture-drawer-canvas" aria-hidden="true" />
+      <div
+        ref={hintRef}
+        className="gesture-hint gesture-hint-live gesture-live-hint"
+        role="status"
+        aria-live="polite"
+        hidden
+      />
+    </Fragment>
+  );
 }

@@ -81,6 +81,9 @@ import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolb
 import GenerationSheet from "./components/GenerationSheet";
 import TitleBar from "./components/TitleBar";
 import TaskFeedback from "./components/TaskFeedback";
+import { GESTURE_COMPLETE_EVENT } from "./components/GestureLayer";
+import type { GesturePath } from "./gestures/GestureDrawer";
+import { recognizeGesture } from "./gestures/GestureRecognizer";
 import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
 
@@ -144,6 +147,7 @@ type DropPayload = {
 
 type SelectionAnchor = SelectionSummary & {
   range?: ViewerRange;
+  anchorRect?: ViewerSelection["anchorRect"];
 };
 
 type DialogResolver = (value: string | boolean | null) => void;
@@ -167,6 +171,7 @@ const MAX_GROUPS = 9;
 const ROOT_GROUP_ID = "group-1";
 const ASSISTANT_WIDTH_STORAGE_KEY = "codecourse.assistantWidth";
 const THEME_STORAGE_KEY = "codecourse.theme";
+const LAST_PROJECT_STORAGE_KEY = "codecourse.lastProjectId";
 const WORKBENCH_STORAGE_VERSION = 1;
 const MIN_READER_WIDTH = 520;
 
@@ -470,6 +475,7 @@ export default function App() {
   const [learningStates, setLearningStates] = useState<LearningState[]>([]);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [gestureHint, setGestureHint] = useState<{ id: number; text: string } | null>(null);
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
@@ -497,6 +503,7 @@ export default function App() {
   const pendingLearningUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
   const streamingContentRef = useRef<Map<string, string>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
+  const closedItemsRef = useRef<Array<{ groupId: string; item: OpenItem }>>([]);
   const mobileRuntime = isAndroidRuntime();
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
@@ -526,6 +533,16 @@ export default function App() {
     const timer = window.setTimeout(() => setToast(""), 2400);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (!gestureHint) return;
+    const timer = window.setTimeout(() => setGestureHint(null), 1400);
+    return () => window.clearTimeout(timer);
+  }, [gestureHint]);
+
+  useEffect(() => {
+    closedItemsRef.current = [];
+  }, [project?.id]);
 
   useEffect(() => {
     if (!project || loading) return;
@@ -599,6 +616,126 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [appDialog, commandPaletteOpen]);
+
+  useEffect(() => {
+    function dismissTransientSurfaces() {
+      if (appDialog) closeAppDialog(null);
+      setSettingsOpen(false);
+      setPromptEditorOpen(false);
+      setGenerationOpen(false);
+      setMoreMenuOpen(false);
+      setCommandPaletteOpen(false);
+      setContextMenu(null);
+      setQAHighlightDraft(null);
+      setDropPreview(null);
+      setDragState(null);
+      setEditingCourseItemId(null);
+      setToast("");
+    }
+
+    function pathLength(path: GesturePath) {
+      let traveled = 0;
+      for (let index = 1; index < path.points.length; index += 1) {
+        const previous = path.points[index - 1];
+        const point = path.points[index];
+        traveled += Math.hypot(point.x - previous.x, point.y - previous.y);
+      }
+      return traveled;
+    }
+
+    function onGestureComplete(event: Event) {
+      const path = (event as CustomEvent<GesturePath>).detail;
+      const gesture = recognizeGesture(path);
+      const showGestureHint = (text: string) => setGestureHint({ id: Date.now(), text });
+      if (gesture === "invalid") {
+        if (pathLength(path) >= 28) showGestureHint("未识别手势，未执行操作");
+        else setGestureHint(null);
+        return;
+      }
+
+      if (gesture === "left") {
+        dismissTransientSurfaces();
+        setNavigationOpen(false);
+        setAssistantOpen(false);
+        setSelection(null);
+        setSelectionAnchor(null);
+        showGestureHint("← 返回工作区");
+        return;
+      }
+
+      if (gesture === "right") {
+        const group = findGroup(layout, activeGroupId);
+        if (!group || group.items.length === 0) {
+          showGestureHint("没有可切换的文档");
+          return;
+        }
+        const activeIndex = group.items.findIndex((item) => item.id === group.activeItemId);
+        const nextIndex = activeIndex >= 0 ? (activeIndex + 1) % group.items.length : 0;
+        const nextItem = group.items[nextIndex];
+        activateItem(activeGroupId, nextItem);
+        showGestureHint(group.items.length === 1 ? "→ 当前仅有一个文档" : "→ 下一个文档");
+        return;
+      }
+
+      if (gesture === "up") {
+        const closed = closedItemsRef.current.pop();
+        if (!closed) {
+          showGestureHint("↑ 没有最近关闭的文档");
+          return;
+        }
+        const targetGroupId = findGroup(layout, closed.groupId) ? closed.groupId : activeGroupId;
+        openItemInGroup(targetGroupId, closed.item);
+        showGestureHint(`↑ 已恢复：${closed.item.title}`);
+        return;
+      }
+
+      if (gesture === "down") {
+        const group = findGroup(layout, activeGroupId);
+        const activeItem = group?.items.find((item) => item.id === group.activeItemId);
+        if (!group || !activeItem) {
+          showGestureHint("没有可关闭的文档");
+          return;
+        }
+        rememberClosedItem(activeGroupId, activeItem);
+        const nextGroup = closeItem(group, activeItem.id);
+        setLayout((current) => updateGroup(current, activeGroupId, () => nextGroup));
+        const nextItem = nextGroup.items.find((item) => item.id === nextGroup.activeItemId);
+        if (nextItem) {
+          applyActiveItem(nextItem);
+          touchOpenItem(nextItem);
+        } else {
+          setFileContent(null);
+          setSelectedCourse(null);
+        }
+        showGestureHint("↓ 关闭当前文档");
+        return;
+      }
+
+      dismissTransientSurfaces();
+      if (gesture === "up-left") {
+        setAssistantOpen(false);
+        setNavigationView("files");
+        setNavigationOpen(true);
+        showGestureHint("↑← 打开源码");
+      } else if (gesture === "up-right") {
+        setCommandPaletteOpen(true);
+        showGestureHint("↑→ 打开搜索");
+      } else if (gesture === "down-right") {
+        setAssistantOpen(false);
+        setNavigationView("courses");
+        setNavigationOpen(true);
+        showGestureHint("↓→ 打开课程目录");
+      } else if (gesture === "down-left") {
+        setNavigationOpen(false);
+        setQAUpperTab("history");
+        setAssistantOpen(true);
+        showGestureHint("↓← 打开 AI 助手");
+      }
+    }
+
+    window.addEventListener(GESTURE_COMPLETE_EVENT, onGestureComplete);
+    return () => window.removeEventListener(GESTURE_COMPLETE_EVENT, onGestureComplete);
+  }, [activeGroupId, appDialog, layout, project?.id, qaHistory]);
 
   useEffect(() => {
     return () => {
@@ -904,8 +1041,17 @@ export default function App() {
     try {
       const nextProjects = await listProjects();
       setProjects(nextProjects);
-      if (!project && nextProjects.length > 0) {
-        await openProject(nextProjects[0]);
+      if (nextProjects.length === 0) {
+        window.localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
+      } else if (!project) {
+        const rememberedId = Number(window.localStorage.getItem(LAST_PROJECT_STORAGE_KEY));
+        const rememberedProject = Number.isSafeInteger(rememberedId) && rememberedId > 0
+          ? nextProjects.find((entry) => entry.id === rememberedId)
+          : null;
+        if (!rememberedProject && window.localStorage.getItem(LAST_PROJECT_STORAGE_KEY)) {
+          window.localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
+        }
+        await openProject(rememberedProject ?? nextProjects[0]);
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "加载项目列表失败");
@@ -1215,7 +1361,15 @@ export default function App() {
     applyActiveItem(item);
   }
 
+  function rememberClosedItem(groupId: string, item: OpenItem) {
+    const withoutDuplicate = closedItemsRef.current.filter((entry) => entry.item.id !== item.id);
+    closedItemsRef.current = [...withoutDuplicate, { groupId, item: { ...item } }].slice(-12);
+  }
+
   function closeItemInGroup(groupId: string, itemId: string) {
+    const group = findGroup(layout, groupId);
+    const item = group?.items.find((entry) => entry.id === itemId);
+    if (item) rememberClosedItem(groupId, item);
     setLayout((prev) => updateGroup(prev, groupId, (group) => closeItem(group, itemId)));
   }
 
@@ -1503,6 +1657,7 @@ export default function App() {
     try {
       const freshProject = await getProject(nextProject.id);
       setProject(freshProject);
+      window.localStorage.setItem(LAST_PROJECT_STORAGE_KEY, String(freshProject.id));
       const [nextTree, nextCourses, tasks, settings, nextIndexStatus, nextLearningStates, nextQARecords] = await Promise.all([
         getTree(freshProject.id),
         getCourseFiles(freshProject.id),
@@ -1995,6 +2150,9 @@ export default function App() {
     try {
       await deleteProject(nextProject.id);
       window.localStorage.removeItem(workbenchStorageKey(nextProject.id));
+      if (window.localStorage.getItem(LAST_PROJECT_STORAGE_KEY) === String(nextProject.id)) {
+        window.localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
+      }
       const remaining = await listProjects();
       setProjects(remaining);
       if (project?.id === nextProject.id) {
@@ -2046,6 +2204,7 @@ export default function App() {
       selectedText: nextText,
       language: nextSelection.language,
       range: nextSelection.range,
+      anchorRect: nextSelection.anchorRect,
     });
   }
 
@@ -3067,6 +3226,11 @@ export default function App() {
         toast={toast}
         onDismissError={() => setError("")}
       />
+      {gestureHint ? (
+        <div key={gestureHint.id} className="gesture-hint" role="status" aria-live="polite">
+          {gestureHint.text}
+        </div>
+      ) : null}
       <main
         className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen ? "assistant-open" : ""} ${mobileRuntime && (navigationOpen || assistantOpen) ? "mobile-panel-open" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
         style={{
@@ -3327,6 +3491,7 @@ export default function App() {
       {selectionAnchor?.selectedText && !contextMenu ? (
         <SelectionQuickBar
           canHighlight={selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa"}
+          anchorRect={selectionAnchor.anchorRect}
           onAsk={() => {
             setSelection({ ...selectionAnchor });
             setQAUpperTab("history");

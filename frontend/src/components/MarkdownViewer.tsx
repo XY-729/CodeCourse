@@ -362,11 +362,20 @@ export default function MarkdownViewer({
     const anchorNode = selection.anchorNode;
     const focusNode = selection.focusNode;
     if (anchorNode && focusNode && article.contains(anchorNode) && article.contains(focusNode)) {
+      const rect = selection.rangeCount > 0 ? selection.getRangeAt(0).getBoundingClientRect() : null;
       setSelectedText(text);
       onSelectionChange?.({
         sourceType,
         sourcePath: sourcePath ?? title,
         selectedText: text,
+        anchorRect: rect && rect.width + rect.height > 0 ? {
+          left: rect.left,
+          top: rect.top,
+          right: rect.right,
+          bottom: rect.bottom,
+          width: rect.width,
+          height: rect.height,
+        } : undefined,
       });
     }
   }

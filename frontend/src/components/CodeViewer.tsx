@@ -5,7 +5,8 @@ import MobileCodeViewer from "./MobileCodeViewer";
 const MonacoCodeViewer = lazy(() => import("./MonacoCodeViewer"));
 
 export type ViewerRange = { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
-export type ViewerSelection = { sourceType: "file" | "course" | "qa"; sourcePath: string | null; selectedText: string; language?: string; range?: ViewerRange };
+export type ViewerAnchorRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
+export type ViewerSelection = { sourceType: "file" | "course" | "qa"; sourcePath: string | null; selectedText: string; language?: string; range?: ViewerRange; anchorRect?: ViewerAnchorRect };
 type Props = { path: string | null; language: string; content: string; selectedRange?: ViewerRange | null; onSelectionChange?: (selection: ViewerSelection) => void; onContextMenu?: (payload: { clientX: number; clientY: number; selectedText: string; sourcePath: string | null }) => void; initialLine?: number; onVisibleLineChange?: (line: number) => void };
 
 export default function CodeViewer(props: Props) {
