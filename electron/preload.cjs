@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("codecourseDesktop", {
   windowMaximize: () => ipcRenderer.invoke("codecourse:window-maximize"),
   windowClose: () => ipcRenderer.invoke("codecourse:window-close"),
   windowToggleFullscreen: () => ipcRenderer.invoke("codecourse:window-toggle-fullscreen"),
+  toggleDevTools: () => ipcRenderer.invoke("codecourse:toggle-devtools"),
   onWindowMaximizeChange: (callback) => {
     ipcRenderer.on("codecourse:window-maximize-change", (_event, isMaximized) => callback(isMaximized));
   },

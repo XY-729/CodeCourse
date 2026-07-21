@@ -214,6 +214,16 @@ function createWindow() {
   window.on("maximize", () => window.webContents.send("codecourse:window-maximize-change", true));
   window.on("unmaximize", () => window.webContents.send("codecourse:window-maximize-change", false));
 
+  window.webContents.on("before-input-event", (_event, input) => {
+    if (input.type === "keyDown" && (input.key === "F12" || (input.control && input.shift && input.key === "I"))) {
+      if (window.webContents.isDevToolsOpened()) {
+        window.webContents.closeDevTools();
+      } else {
+        window.webContents.openDevTools({ mode: "detach" });
+      }
+    }
+  });
+
   const devUrl = process.env.CODECOURSE_FRONTEND_URL;
   if (devUrl) {
     window.loadURL(devUrl);
@@ -274,6 +284,15 @@ ipcMain.handle("codecourse:window-toggle-fullscreen", (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (win) {
     win.setFullScreen(!win.isFullScreen());
+  }
+});
+
+ipcMain.handle("codecourse:toggle-devtools", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win?.webContents.isDevToolsOpened()) {
+    win.webContents.closeDevTools();
+  } else {
+    win?.webContents.openDevTools({ mode: "detach" });
   }
 });
 

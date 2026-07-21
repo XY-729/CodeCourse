@@ -119,7 +119,7 @@ export default function DesktopToolbar(props: Props) {
             aria-haspopup="menu"
             aria-expanded={menu === "projects"}
           >
-            <img src="./logo.png" alt="" />
+            <img src="./logo.ico" alt="" />
             <span>{project?.name ?? "选择项目"}</span>
             <ChevronDown size={13} />
           </button>

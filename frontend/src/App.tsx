@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { DragEvent, MouseEvent } from "react";
 import { BookOpen, Bot, ChevronDown, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
 import {
@@ -449,6 +449,8 @@ export default function App() {
 
   const [selection, setSelection] = useState<SelectionSummary | null>(null);
   const [qaQuestion, setQAQuestion] = useState("");
+  const [qaQuestionInput, setQAQuestionInput] = useState("");
+  const qaQuestionTimerRef = useRef<number | null>(null);
   const [qaGenerations, setQAGenerations] = useState<Record<string, QAGenerationState>>({});
   const [qaDraftId, setQADraftId] = useState(1);
   const [qaHistory, setQAHistory] = useState<QARecord[]>([]);
@@ -482,6 +484,9 @@ export default function App() {
   const [editingCourseItemId, setEditingCourseItemId] = useState<string | null>(null);
   const [appDialog, setAppDialog] = useState<AppDialogState | null>(null);
   const [appDialogValue, setAppDialogValue] = useState("");
+  const [appDialogSkipKey, setAppDialogSkipKey] = useState<string | null>(null);
+  const [appDialogSkipChecked, setAppDialogSkipChecked] = useState(false);
+  const appDialogSkipCheckedRef = useRef(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialTheme);
 
   const idCounter = useRef(1);
@@ -594,6 +599,12 @@ export default function App() {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [appDialog, commandPaletteOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (qaQuestionTimerRef.current != null) clearTimeout(qaQuestionTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!mobileRuntime) {
@@ -759,7 +770,13 @@ export default function App() {
     });
   }
 
-  async function confirmAction(title: string, message: string, options?: { confirmText?: string; danger?: boolean }) {
+  async function confirmAction(title: string, message: string, options?: { confirmText?: string; danger?: boolean; skipKey?: string }) {
+    if (options?.skipKey && window.localStorage.getItem(`codecourse.noshow.${options.skipKey}`) === "true") {
+      return true;
+    }
+    setAppDialogSkipKey(options?.skipKey ?? null);
+    setAppDialogSkipChecked(false);
+    appDialogSkipCheckedRef.current = false;
     const result = await openAppDialog({
       kind: "confirm",
       title,
@@ -793,19 +810,47 @@ export default function App() {
     return typeof result === "string" ? result : null;
   }
 
+  function handleAppDialogSkipChange(checked: boolean) {
+    setAppDialogSkipChecked(checked);
+    appDialogSkipCheckedRef.current = checked;
+  }
+
   function closeAppDialog(value: string | boolean | null) {
     const resolver = dialogResolverRef.current;
     dialogResolverRef.current = null;
     setAppDialog(null);
     setAppDialogValue("");
+    setAppDialogSkipKey(null);
+    setAppDialogSkipChecked(false);
+    appDialogSkipCheckedRef.current = false;
     resolver?.(value);
   }
+
+  function clearQAQuestionInput() {
+    if (qaQuestionTimerRef.current != null) {
+      clearTimeout(qaQuestionTimerRef.current);
+      qaQuestionTimerRef.current = null;
+    }
+    setQAQuestionInput("");
+    setQAQuestion("");
+  }
+
+  const handleQAQuestionChange = useCallback((value: string) => {
+    setQAQuestionInput(value);
+    if (qaQuestionTimerRef.current != null) clearTimeout(qaQuestionTimerRef.current);
+    qaQuestionTimerRef.current = window.setTimeout(() => {
+      setQAQuestion(value);
+    }, 300);
+  }, []);
 
   function handleAppDialogConfirm() {
     if (!appDialog) {
       return;
     }
     if (appDialog.kind === "confirm") {
+      if (appDialogSkipCheckedRef.current && appDialogSkipKey) {
+        window.localStorage.setItem(`codecourse.noshow.${appDialogSkipKey}`, "true");
+      }
       closeAppDialog(true);
       return;
     }
@@ -1324,12 +1369,14 @@ export default function App() {
     void refreshDocumentTerms("course", filename, projectId);
     setSelectedCourse(filename);
     setFileContent(null);
+    const matchingQA = qaHistory.find((record) => _normalizeOutputPath(record.output_path, record.id, projectId) === filename);
     openItemInGroup(activeGroupId, {
       id: `course:${filename}`,
       type: "course",
       path: filename,
       title: courses.find((file) => file.filename === filename)?.title ?? filename,
       content: content.content,
+      qaRecordId: matchingQA?.id,
     });
     if (mobileRuntime) {
       setNavigationOpen(false);
@@ -1781,7 +1828,7 @@ export default function App() {
     }
     handleDismissSelection();
     const ok = await confirmAction("生成 AI 总纲", "将调用模型 API 生成项目总纲，可能消耗 token。是否继续？", {
-      confirmText: "生成",
+      confirmText: "生成", skipKey: "confirm.outline",
     });
     if (!ok) {
       return;
@@ -1872,7 +1919,7 @@ export default function App() {
     handleDismissSelection();
     const label = nextMode === "brief" ? "粗略介绍" : "详细分析";
     const ok = await confirmAction(`生成${label}`, `将调用模型 API 为 ${fileContent.path} 生成${label}，可能消耗 token。是否继续？`, {
-      confirmText: "生成",
+      confirmText: "生成", skipKey: "confirm.file_lesson",
     });
     if (!ok) {
       return;
@@ -1954,7 +2001,7 @@ export default function App() {
       isLearningPlanProject
         ? `将分章节生成"${title}"的详细课件。本次操作最多调用 12 次模型 API，可能消耗较多 token；一次确认将授权完成整节课的规划、分章生成与遗漏补全。是否继续？`
         : `将调用模型 API 生成"${title}"的详细课件，并使用已构建的项目索引作为代码上下文，可能消耗较多 token。是否继续？`,
-      { confirmText: "生成" },
+      { confirmText: "生成", skipKey: "confirm.outline_lesson" },
     );
     if (!ok) {
       return;
@@ -2101,7 +2148,7 @@ export default function App() {
       return;
     }
     const ok = await confirmAction("AI 助手询问", `将调用模型 API 使用 ${llmSettings.model} 回答当前问题，可能消耗 token。是否继续？`, {
-      confirmText: "询问",
+      confirmText: "询问", skipKey: "confirm.ask",
     });
     if (!ok) {
       return;
@@ -2178,7 +2225,7 @@ export default function App() {
     const ok = await confirmAction(
       "生成术语解释",
       `将调用 ${llmSettings.model}，结合当前项目解释"${term.term_text}"，并把回答连接到${parent ? `"${qaTitle(parent)}"` : "当前课件"}。是否继续？`,
-      { confirmText: "生成解释" },
+      { confirmText: "生成解释", skipKey: "confirm.term" },
     );
     if (!ok) return;
     setQAPanelError("");
@@ -2833,6 +2880,16 @@ export default function App() {
             <Suspense fallback={<div className="viewer-loading">正在加载知识网络…</div>}><KnowledgeGraphViewer
               projectId={project.id}
               refreshKey={knowledgeRefreshKey}
+              focusRef={(() => {
+                const item = getActiveOpenItem();
+                if (item && item.type !== "knowledge_graph") {
+                  if (item.qaRecordId) return { ref_type: "qa", ref_id: item.qaRecordId };
+                  if (item.type === "course") return { ref_type: "course", ref_path: item.path };
+                  if (item.type === "file") return { ref_type: "file", ref_path: item.path };
+                }
+                if (selectedQA) return { ref_type: "qa", ref_id: selectedQA.id };
+                return null;
+              })()}
               onRequestText={requestText}
               onConfirm={confirmAction}
               onContentChanged={async () => {
@@ -3020,7 +3077,7 @@ export default function App() {
       ) : (
         <header className="topbar mobile-topbar">
           <div className="brand">
-            <img src="/logo.png" alt="CodeCourse logo" className="brand-logo" />
+            <img src="/logo.ico" alt="CodeCourse logo" className="brand-logo" />
             <div className="brand-text"><strong>CodeCourse</strong><span>{project?.name ?? "学习工作台"}</span></div>
           </div>
           <div className="topbar-workspace-actions">
@@ -3155,6 +3212,7 @@ export default function App() {
           selection={selection}
           contextSummary={buildAssistantContextSummary()}
           question={qaQuestion}
+          questionInput={qaQuestionInput}
           loading={qaLoading}
           loadingLabel={activeQAGeneration?.label}
           streamContent={activeQAGeneration?.partial}
@@ -3173,6 +3231,16 @@ export default function App() {
               projectId={project.id}
               refreshKey={knowledgeRefreshKey}
               compact
+              focusRef={(() => {
+                const item = getActiveOpenItem();
+                if (item) {
+                  if (item.qaRecordId) return { ref_type: "qa", ref_id: item.qaRecordId };
+                  if (item.type === "course") return { ref_type: "course", ref_path: item.path };
+                  if (item.type === "file") return { ref_type: "file", ref_path: item.path };
+                }
+                if (selectedQA) return { ref_type: "qa", ref_id: selectedQA.id };
+                return null;
+              })()}
               onRequestText={requestText}
               onConfirm={confirmAction}
               onContentChanged={async () => {
@@ -3192,7 +3260,7 @@ export default function App() {
             /></Suspense>
           ) : null}
           onAskResizeStart={(event: MouseEvent<HTMLDivElement>) => setDragState({ kind: "qa-ask", startY: event.clientY, startHeight: qaAskHeight })}
-          onQuestionChange={setQAQuestion}
+          onQuestionChange={handleQAQuestionChange}
           onSelectionTextChange={handleSelectionTextChange}
           onClearSelection={handleClearSelection}
           onAsk={handleAsk}
@@ -3344,6 +3412,8 @@ export default function App() {
       <AppDialog
         state={appDialog}
         value={appDialogValue}
+        skipChecked={appDialogSkipChecked}
+        onSkipChange={handleAppDialogSkipChange}
         onValueChange={setAppDialogValue}
         onCancel={() => closeAppDialog(null)}
         onConfirm={handleAppDialogConfirm}

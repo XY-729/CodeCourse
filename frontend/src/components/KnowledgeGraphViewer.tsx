@@ -20,6 +20,7 @@ type Props = {
   compact?: boolean;
   onRequestText?: (options: { title: string; label?: string; initialValue?: string; placeholder?: string; confirmText?: string }) => Promise<string | null>;
   onConfirm?: (title: string, message: string, options?: { confirmText?: string; danger?: boolean }) => Promise<boolean>;
+  focusRef?: { ref_type: string; ref_path?: string; ref_id?: number } | null;
 };
 
 type RelationType = "explains" | "parent_of" | "related_to" | "references";
@@ -801,7 +802,7 @@ function createCompactOverviewLayout(cy: Core, graph: KnowledgeGraph) {
 }
 
 
-export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compact = false, onRequestText, onConfirm, onOpenQA, onOpenCourse, onOpenFile, onContentChanged }: Props) {
+export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compact = false, onRequestText, onConfirm, onOpenQA, onOpenCourse, onOpenFile, onContentChanged, focusRef }: Props) {
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const labelLayerRef = useRef<HTMLDivElement | null>(null);
@@ -929,6 +930,35 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       setFocusedNodeId(null);
     }
   }, [graph, viewMode, focusedNodeId]);
+
+  const focusRefKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = focusRef ? `${focusRef.ref_type}:${focusRef.ref_id ?? focusRef.ref_path ?? ""}` : null;
+    if (key === focusRefKeyRef.current) return;
+
+    if (!focusRef || graph.nodes.length === 0) return;
+
+    const match = graph.nodes.find((node) => {
+      const typeMatch = node.node_type === focusRef.ref_type || node.ref_type === focusRef.ref_type;
+      if (!typeMatch) return false;
+      if (focusRef.ref_id != null && node.ref_id === focusRef.ref_id) return true;
+      if (focusRef.ref_path != null && node.ref_path === focusRef.ref_path) return true;
+      return false;
+    });
+
+    if (match) {
+      focusRefKeyRef.current = key;
+      const cy = cyRef.current;
+      if (viewModeRef.current === "overview" && cy) {
+        const positions = new Map<number, { x: number; y: number }>();
+        cy.nodes().forEach((item) => { positions.set(Number(item.data("nodeId")), { ...item.position() }); });
+        overviewPositionsRef.current = positions;
+      }
+      setViewMode("focus");
+      setFocusedNodeId(match.id);
+      setFocusDepth(1);
+    }
+  }, [focusRef, graph]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1166,7 +1196,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       setViewMode("focus");
       setFocusedNodeId(nodeId);
       setFocusDepth(1);
-      setMessage(found ? `已聚焦：${found.title}` : "已聚焦节点");
+            setMessage(found ? `已聚焦：${found.title}` : "已聚焦节点");
     });
 
     cy.on("tap", "edge", (event) => {
