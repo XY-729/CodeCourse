@@ -15,6 +15,39 @@ import {
 
 type Row = Record<string, any>;
 
+function addOutlineLessonLinks(outline: string): string {
+  const START = "<!-- CODECOURSE_LESSON_LINKS_START -->";
+  const END = "<!-- CODECOURSE_LESSON_LINKS_END -->";
+  const HEADING_RE = /^###\s*第\s*(\d+)\s*课\s*[：:]\s*(.+?)\s*$/gm;
+  const TABLE_RE = /^\|\s*(\d+)\s*\|\s*([^|]+?)\s*\|/gm;
+
+  // Remove existing lesson links section
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const cleaned = outline.replace(new RegExp(`\\n?${esc(START)}.*?${esc(END)}\\n?`, "s"), "\n").trimEnd();
+
+  // Extract lessons from headings or table
+  const lessons: [number, string][] = [];
+  for (const m of cleaned.matchAll(HEADING_RE)) {
+    lessons.push([Number(m[1]), m[2].trim()]);
+  }
+  if (!lessons.length) {
+    for (const m of cleaned.matchAll(TABLE_RE)) {
+      const t = m[2].trim();
+      if (t && t !== "课程名称" && t !== "课程") lessons.push([Number(m[1]), t]);
+    }
+  }
+
+  if (!lessons.length) return cleaned + "\n";
+
+  const lines = [START, "## 按课生成课件", "> 课件按需生成。点击一节课后会请求模型，并优先使用项目索引中的相关代码片段。", ""];
+  for (const [n, t] of lessons) {
+    lines.push(`- [生成第 ${n} 课：${t}](https://codecourse.local/generate-lesson/${n}?title=${encodeURIComponent(t)})`);
+  }
+  lines.push(END, "");
+
+  return cleaned + "\n\n" + lines.join("\n");
+}
+
 type LessonPlanItem = {
   name: string;
   kind: "function" | "concept";
@@ -506,6 +539,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if (project.project_type === "repository" && content.includes("## FILE:")) {
       const outlinePart = content.match(/## FILE:\s*outline\.md\s*([\s\S]*)/i)?.[1]?.trim(); if (outlinePart) content = outlinePart;
     }
+    content = addOutlineLessonLinks(content);
     return { filename: "outline.md", content };
   }
   private async generateFileLesson(projectId: number, payload: any): Promise<{ filename: string; content: string }> {

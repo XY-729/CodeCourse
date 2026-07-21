@@ -44,9 +44,11 @@ type Props = {
   onValueChange: (value: string) => void;
   onCancel: () => void;
   onConfirm: () => void;
+  skipChecked?: boolean;
+  onSkipChange?: (checked: boolean) => void;
 };
 
-export default function AppDialog({ state, value, onValueChange, onCancel, onConfirm }: Props) {
+export default function AppDialog({ state, value, onValueChange, onCancel, onConfirm, skipChecked, onSkipChange }: Props) {
   if (!state) {
     return null;
   }
@@ -65,6 +67,13 @@ export default function AppDialog({ state, value, onValueChange, onCancel, onCon
       <form className="app-dialog" onSubmit={submit}>
         <div className="app-dialog-title">{state.title}</div>
         {"message" in state && state.message ? <p className="app-dialog-message">{state.message}</p> : null}
+
+        {state.kind === "confirm" && onSkipChange ? (
+          <label className="app-dialog-skip">
+            <input type="checkbox" checked={skipChecked ?? false} onChange={(event) => onSkipChange(event.target.checked)} />
+            <span>不再提示</span>
+          </label>
+        ) : null}
 
         {state.kind === "input" ? (
           <label className="app-dialog-field">

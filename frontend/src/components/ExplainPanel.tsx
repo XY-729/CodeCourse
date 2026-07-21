@@ -22,6 +22,7 @@ type Props = {
   selection: SelectionSummary | null;
   contextSummary: AssistantContextSummary | null;
   question: string;
+  questionInput?: string;
   loading: boolean;
   loadingLabel?: string;
   streamContent?: string;
@@ -71,7 +72,7 @@ function recordTitle(record: QARecord) {
 
 export default function ExplainPanel(props: Props) {
   const {
-    selection, contextSummary, question, loading, loadingLabel, streamContent, history, historyQuery, favoriteOnly,
+    selection, contextSummary, question, questionInput, loading, loadingLabel, streamContent, history, historyQuery, favoriteOnly,
     selectedRecord, settings, panelError, askHeight, upperTab, onUpperTabChange, knowledgeContent,
     knowledgeDisabled, onAskResizeStart, onQuestionChange, onSelectionTextChange, onClearSelection,
     onAsk, onNewConversation, onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord,
@@ -163,7 +164,7 @@ export default function ExplainPanel(props: Props) {
               <span>{selectedRecord ? `继续：${recordTitle(selectedRecord)}` : "新问题"}</span>
               <button className="icon-button" type="button" onClick={onNewConversation} title="新对话" aria-label="新对话"><Plus size={15} /></button>
             </div>
-            <textarea value={question} onChange={(event) => onQuestionChange(event.target.value)} placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"} disabled={loading} />
+            <textarea value={questionInput ?? question} onChange={(event) => onQuestionChange(event.target.value)} placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"} disabled={loading} />
           </div>
         </div>
 

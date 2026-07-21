@@ -7,7 +7,7 @@ const DEEPSEEK_API_KEY_URL = "https://platform.deepseek.com/api_keys";
 type Props = {
   open: boolean;
   onClose: () => void;
-  onConfirm: (title: string, message: string, options?: { confirmText?: string; danger?: boolean }) => Promise<boolean>;
+  onConfirm: (title: string, message: string, options?: { confirmText?: string; danger?: boolean; skipKey?: string }) => Promise<boolean>;
   onOpenExternal: (url: string) => void;
 };
 
@@ -64,7 +64,7 @@ export default function LLMSettingsDialog({ open, onClose, onConfirm, onOpenExte
 
   async function runTest() {
     const ok = await onConfirm("测试模型 API", "将调用模型 API 做连通性测试，可能消耗少量 token。是否继续？", {
-      confirmText: "测试",
+      confirmText: "测试", skipKey: "confirm.test_api",
     });
     if (!ok) {
       return;
