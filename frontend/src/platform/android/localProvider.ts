@@ -309,7 +309,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async createLearningPlan(name: string): Promise<Project> {
     const clean = String(name || "").trim(); if (!clean) throw new Error("请输入学习计划名称。");
     const stamp = now();
-    const id = await db.run("INSERT INTO projects(name,url,status,project_type,created_at,updated_at) VALUES(?,?,?,?,?,?)", [clean, "", "learning_plan", "learning_plan", stamp, stamp]);
+    const id = await db.run("INSERT INTO projects(name,url,status,project_type,created_at,updated_at) VALUES(?,?,?,?,?,?)", [clean, "", "scanned", "learning_plan", stamp, stamp]);
+    const placeholder = `# ${clean}\n\n> 点击"生成 AI 总纲"开始构建学习路线。\n`;
+    await writeGeneratedFileAtomic(id, "outline.md", placeholder);
+    await this.upsertCourse(id, "outline.md", placeholder, "总纲");
     return this.getProject(id);
   }
   private async importRepository(url: string): Promise<Project> {
