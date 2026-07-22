@@ -41,6 +41,36 @@ export default function MobileCodeViewer({ path, language, content, selectedRang
 
   useEffect(() => () => window.cancelAnimationFrame(scrollFrameRef.current), []);
 
+  // Listen for native text selection changes instead of onPointerUp.
+  // onPointerUp fires during the gesture lifecycle and can disrupt the
+  // Android WebView long-press detection, preventing drag handles.
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+    function handleSelectionChange() {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed) return;
+      if (!container?.contains(sel.anchorNode) && !container?.contains(sel.focusNode)) return;
+      const selectedText = sel.toString().trim();
+      if (!selectedText) return;
+      const anchor = sel.anchorNode
+        ? (sel.anchorNode.nodeType === Node.TEXT_NODE ? sel.anchorNode.parentElement : sel.anchorNode as Element)?.closest<HTMLElement>("[data-line]")
+        : null;
+      const focus = sel.focusNode
+        ? (sel.focusNode.nodeType === Node.TEXT_NODE ? sel.focusNode.parentElement : sel.focusNode as Element)?.closest<HTMLElement>("[data-line]")
+        : null;
+      if (!anchor || !focus) return;
+      const start = Number(anchor?.dataset.line || 1);
+      const end = Number(focus?.dataset.line || start);
+      onSelectionChange?.({
+        sourceType: "file", sourcePath: path, selectedText, language,
+        range: { startLineNumber: Math.min(start, end), startColumn: 1, endLineNumber: Math.max(start, end), endColumn: 1 },
+      });
+    }
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => document.removeEventListener("selectionchange", handleSelectionChange);
+  }, [path, language, onSelectionChange]);
+
   function captureVisibleLine() {
     if (scrollFrameRef.current) return;
     scrollFrameRef.current = window.requestAnimationFrame(() => {
@@ -61,29 +91,6 @@ export default function MobileCodeViewer({ path, language, content, selectedRang
     scrollRef.current?.querySelector<HTMLElement>(`[data-line="${matches[next]}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
-  function captureSelection() {
-    // Read the current native selection and forward to the app.
-    // Does NOT open AI — the app's handleSelection on mobile only saves state.
-    // The context menu / "Ask" flow is triggered separately via handleContextMenuOpen.
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
-    const selectedText = selection.toString().trim();
-    if (!selectedText) return;
-    const anchor = selection.anchorNode
-      ? (selection.anchorNode.nodeType === Node.TEXT_NODE ? selection.anchorNode.parentElement : selection.anchorNode as Element)?.closest<HTMLElement>("[data-line]")
-      : null;
-    const focus = selection.focusNode
-      ? (selection.focusNode.nodeType === Node.TEXT_NODE ? selection.focusNode.parentElement : selection.focusNode as Element)?.closest<HTMLElement>("[data-line]")
-      : null;
-    if (!anchor || !focus) return;
-    const start = Number(anchor?.dataset.line || 1);
-    const end = Number(focus?.dataset.line || start);
-    onSelectionChange?.({
-      sourceType: "file", sourcePath: path, selectedText, language,
-      range: { startLineNumber: Math.min(start, end), startColumn: 1, endLineNumber: Math.max(start, end), endColumn: 1 },
-    });
-  }
-
   return <div className="viewer mobile-code-viewer">
     <div className="viewer-header">
       <span>{path ?? "代码"}</span>
@@ -100,7 +107,7 @@ export default function MobileCodeViewer({ path, language, content, selectedRang
       <button className="icon-button" onClick={() => moveMatch(1)} disabled={!matches.length}><ChevronDown size={15} /></button>
       <button className="icon-button" onClick={() => { setSearchOpen(false); setQuery(""); }}><X size={15} /></button>
     </div> : null}
-    <div ref={scrollRef} className="mobile-code-scroll" onScroll={captureVisibleLine} onPointerUp={captureSelection}>
+    <div ref={scrollRef} className="mobile-code-scroll" onScroll={captureVisibleLine}>
       {plainLines.map((line, index) => {
         const lineNumber = index + 1;
         const anchored = selectedRange && lineNumber >= selectedRange.startLineNumber && lineNumber <= selectedRange.endLineNumber;
