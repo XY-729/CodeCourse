@@ -1,6 +1,7 @@
 import { ChevronRight, File, Folder, Star } from "lucide-react";
 import { useState } from "react";
 import type { TreeNode } from "../api/client";
+import { setCodeCourseDragImage } from "../utils/dragImage";
 
 type Props = {
   node: TreeNode;
@@ -57,6 +58,7 @@ function TreeItem({
           }
           event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "file", path: node.path }));
           event.dataTransfer.effectAllowed = "copy";
+          setCodeCourseDragImage(event.dataTransfer, node.name);
           onDragItem?.("file", node.path);
         }}
       >

@@ -28,6 +28,7 @@ type Props = {
   onDeleteCourse?: (file: CourseFile) => void;
   learningStates?: LearningState[];
   onContinueLearning?: (filename: string) => void;
+  onDragItem?: (kind: "file" | "course", path: string) => void;
   onViewChange?: (view: Extract<NavigationView, "courses" | "files">) => void;
 };
 
@@ -54,6 +55,7 @@ export default function Sidebar({
   onDeleteCourse,
   learningStates = [],
   onContinueLearning,
+  onDragItem,
   onViewChange,
 }: Props) {
   if (view === "projects") {
@@ -110,6 +112,7 @@ export default function Sidebar({
               fileSelectionMode={fileSelectionMode}
               onSelect={onSelectFile}
               onOpenFile={onOpenFile}
+              onDragItem={onDragItem}
             />
           ) : <div className="empty">选择项目后查看源码</div>}
         </div>
@@ -160,7 +163,7 @@ export default function Sidebar({
             </section>
           ) : null;
         })()}
-        {courses.length ? <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDelete={onDeleteCourse} learningStates={learningStates} /> : (
+        {courses.length ? <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDragItem={onDragItem} onDelete={onDeleteCourse} learningStates={learningStates} /> : (
           <div className="empty">还没有课程内容</div>
         )}
       </div>

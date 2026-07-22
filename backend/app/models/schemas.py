@@ -9,6 +9,10 @@ class ImportProjectRequest(BaseModel):
     url: str = Field(min_length=5, max_length=500)
 
 
+class ImportLocalProjectRequest(BaseModel):
+    path: str = Field(min_length=1, max_length=4000)
+
+
 class CreateLearningPlanRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
 

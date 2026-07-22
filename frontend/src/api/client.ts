@@ -1,13 +1,6 @@
 import { httpApiUrl, providerRequest } from "../platform/provider";
 import { isAndroidRuntime } from "../platform/runtime";
 
-declare global {
-  interface Window {
-    codecourseDesktop?: { apiBase?: string; openExternal?: (url: string) => void };
-    __CODECOURSE_API_BASE__?: string;
-  }
-}
-
 export type Project = {
   id: number;
   name: string;
@@ -303,6 +296,13 @@ export function importProject(url: string): Promise<Project> {
   });
 }
 
+export function importLocalProject(path: string): Promise<Project> {
+  return request<Project>("/projects/import-local", {
+    method: "POST",
+    body: JSON.stringify({ path }),
+  });
+}
+
 export function createLearningPlan(name: string): Promise<Project> {
   return request<Project>("/projects/learning-plan", {
     method: "POST",
@@ -516,7 +516,7 @@ export async function generateOutlineLessonStream(
 }
 
 export function importProjectArchive(file: File): Promise<Project> {
-  return request<Project>("/projects/import-archive", {
+  return request<Project>(`/projects/import-archive?filename=${encodeURIComponent(file.name)}`, {
     method: "POST",
     body: file,
   });

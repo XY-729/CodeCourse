@@ -30,6 +30,7 @@ import {
   getTree,
   importProject,
   importProjectArchive,
+  importLocalProject,
   listGenerationTasks,
   listHighlights,
   listKnowledgeLinks,
@@ -86,11 +87,13 @@ import type { GesturePath } from "./gestures/GestureDrawer";
 import { recognizeGesture } from "./gestures/GestureRecognizer";
 import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
+import { setCodeCourseDragImage } from "./utils/dragImage";
 
 const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewer"));
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
+type MobileSurface = "navigation" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts";
 type OpenItemType = "file" | "course" | "qa" | "knowledge_graph";
 type SplitDirection = "row" | "column";
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -130,19 +133,49 @@ type SplitNode = {
 
 type LayoutNode = GroupNode | SplitNode;
 
+type LayoutBounds = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+};
+
+type SplitBoundarySnapshot = {
+  bounds: LayoutBounds;
+  position: number;
+};
+
 type DragState =
   | { kind: "sidebar-width"; startX: number; startWidth: number }
   | { kind: "explain-width"; startX: number; startWidth: number }
   | { kind: "sidebar-project"; startY: number; startHeight: number }
   | { kind: "sidebar-course"; startY: number; startHeight: number }
   | { kind: "qa-ask"; startY: number; startHeight: number }
-  | { kind: "split"; splitId: string; direction: SplitDirection; startX: number; startY: number; startRatio: number; size: number };
+  | {
+      kind: "split";
+      splitId: string;
+      direction: SplitDirection;
+      startX: number;
+      startY: number;
+      startBoundary: number;
+      minBoundary: number;
+      maxBoundary: number;
+      rootBounds: LayoutBounds;
+      rootElement: HTMLDivElement;
+      splitElements: Map<string, HTMLDivElement>;
+      frozenPanes: HTMLDivElement[];
+      indicator: HTMLDivElement;
+      layoutSnapshot: LayoutNode;
+      boundaries: Map<string, SplitBoundarySnapshot>;
+    };
 
 type DropPayload = {
   kind?: string;
   path?: string;
   filename?: string;
   qaId?: number;
+  itemId?: string;
+  sourceGroupId?: string;
 };
 
 type SelectionAnchor = SelectionSummary & {
@@ -174,6 +207,7 @@ const THEME_STORAGE_KEY = "codecourse.theme";
 const LAST_PROJECT_STORAGE_KEY = "codecourse.lastProjectId";
 const WORKBENCH_STORAGE_VERSION = 1;
 const MIN_READER_WIDTH = 520;
+const MIN_SPLIT_TRACK_SIZE = 8;
 
 function getInitialTheme(): ThemeMode {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
@@ -281,6 +315,71 @@ function findGroup(node: LayoutNode, groupId: string): EditorGroup | null {
   return findGroup(node.first, groupId) ?? findGroup(node.second, groupId);
 }
 
+function findOpenItem(node: LayoutNode, itemId: string): OpenItem | null {
+  if (node.type === "group") {
+    return node.group.items.find((item) => item.id === itemId) ?? null;
+  }
+  return findOpenItem(node.first, itemId) ?? findOpenItem(node.second, itemId);
+}
+
+function findGroupIdForItem(node: LayoutNode, itemId: string): string | null {
+  if (node.type === "group") return node.group.items.some((item) => item.id === itemId) ? node.group.id : null;
+  return findGroupIdForItem(node.first, itemId) ?? findGroupIdForItem(node.second, itemId);
+}
+
+function dropPayloadItemId(payload: DropPayload): string | null {
+  if (payload.kind === "tab" && payload.itemId) return payload.itemId;
+  if (payload.kind === "file" && payload.path) return `file:${payload.path}`;
+  if (payload.kind === "course" && payload.filename) return `course:${payload.filename}`;
+  if (payload.kind === "qa" && payload.qaId) return `qa:${payload.qaId}`;
+  if (payload.kind === "knowledge_graph" || payload.kind === "knowledge") return "knowledge:graph";
+  return null;
+}
+
+function calculateSplitRatios(
+  node: LayoutNode,
+  bounds: LayoutBounds,
+  snapshots: Map<string, SplitBoundarySnapshot>,
+  targetSplitId: string,
+  targetPosition: number,
+  ratios: Map<string, number>,
+) {
+  if (node.type === "group") return;
+  const span = node.direction === "row" ? bounds.right - bounds.left : bounds.bottom - bounds.top;
+  const start = node.direction === "row" ? bounds.left : bounds.top;
+  const storedPosition = snapshots.get(node.id)?.position ?? start + span * node.ratio;
+  const requestedPosition = node.id === targetSplitId ? targetPosition : storedPosition;
+  const position = clamp(requestedPosition, start + 1, start + Math.max(1, span - 1));
+  ratios.set(node.id, clamp((position - start) / Math.max(1, span), 0.001, 0.999));
+  const [firstBounds, secondBounds] = splitChildBounds(bounds, node.direction, position);
+  calculateSplitRatios(node.first, firstBounds, snapshots, targetSplitId, targetPosition, ratios);
+  calculateSplitRatios(node.second, secondBounds, snapshots, targetSplitId, targetPosition, ratios);
+}
+
+function removeGroupFromLayout(node: LayoutNode, groupId: string): LayoutNode | null {
+  if (node.type === "group") return node.group.id === groupId ? null : node;
+  const first = removeGroupFromLayout(node.first, groupId);
+  const second = removeGroupFromLayout(node.second, groupId);
+  if (!first) return second;
+  if (!second) return first;
+  return { ...node, first, second };
+}
+
+function equalizeLayout(node: LayoutNode): LayoutNode {
+  if (node.type === "group") return node;
+  return { ...node, ratio: 0.5, first: equalizeLayout(node.first), second: equalizeLayout(node.second) };
+}
+
+function collectLayoutItems(node: LayoutNode): OpenItem[] {
+  if (node.type === "group") return node.group.items;
+  return [...collectLayoutItems(node.first), ...collectLayoutItems(node.second)];
+}
+
+function dropPayloadCacheKey(projectId: number, payload: DropPayload): string | null {
+  const itemId = dropPayloadItemId(payload);
+  return itemId ? `${projectId}:${itemId}` : null;
+}
+
 function hasGroup(node: LayoutNode, groupId: string): boolean {
   return Boolean(findGroup(node, groupId));
 }
@@ -314,17 +413,79 @@ function updateEveryGroup(node: LayoutNode, updater: (group: EditorGroup) => Edi
   };
 }
 
-function updateSplitRatio(node: LayoutNode, splitId: string, ratio: number): LayoutNode {
-  if (node.type === "group") {
-    return node;
+function splitChildBounds(bounds: LayoutBounds, direction: SplitDirection, position: number): [LayoutBounds, LayoutBounds] {
+  if (direction === "row") {
+    return [
+      { ...bounds, right: position },
+      { ...bounds, left: position },
+    ];
   }
-  if (node.id === splitId) {
-    return { ...node, ratio: clamp(ratio, 0.03, 0.97) };
-  }
+  return [
+    { ...bounds, bottom: position },
+    { ...bounds, top: position },
+  ];
+}
+
+function captureSplitBoundaries(
+  node: LayoutNode,
+  bounds: LayoutBounds,
+  result = new Map<string, SplitBoundarySnapshot>(),
+): Map<string, SplitBoundarySnapshot> {
+  if (node.type === "group") return result;
+  const span = node.direction === "row" ? bounds.right - bounds.left : bounds.bottom - bounds.top;
+  const start = node.direction === "row" ? bounds.left : bounds.top;
+  const position = start + span * node.ratio;
+  result.set(node.id, { bounds, position });
+  const [firstBounds, secondBounds] = splitChildBounds(bounds, node.direction, position);
+  captureSplitBoundaries(node.first, firstBounds, result);
+  captureSplitBoundaries(node.second, secondBounds, result);
+  return result;
+}
+
+function findSplitNode(node: LayoutNode, splitId: string): SplitNode | null {
+  if (node.type === "group") return null;
+  if (node.id === splitId) return node;
+  return findSplitNode(node.first, splitId) ?? findSplitNode(node.second, splitId);
+}
+
+function adjacentLeafBounds(
+  node: LayoutNode,
+  bounds: LayoutBounds,
+  direction: SplitDirection,
+  edge: "first" | "second",
+  snapshots: Map<string, SplitBoundarySnapshot>,
+): LayoutBounds {
+  if (node.type === "group" || node.direction !== direction) return bounds;
+  const snapshot = snapshots.get(node.id);
+  if (!snapshot) return bounds;
+  const [firstBounds, secondBounds] = splitChildBounds(bounds, direction, snapshot.position);
+  return edge === "first"
+    ? adjacentLeafBounds(node.first, firstBounds, direction, edge, snapshots)
+    : adjacentLeafBounds(node.second, secondBounds, direction, edge, snapshots);
+}
+
+function rebuildLayoutFromBoundaries(
+  node: LayoutNode,
+  bounds: LayoutBounds,
+  snapshots: Map<string, SplitBoundarySnapshot>,
+  targetSplitId: string,
+  targetPosition: number,
+  ratios: Map<string, number>,
+): LayoutNode {
+  if (node.type === "group") return node;
+  const span = node.direction === "row" ? bounds.right - bounds.left : bounds.bottom - bounds.top;
+  const start = node.direction === "row" ? bounds.left : bounds.top;
+  const storedPosition = snapshots.get(node.id)?.position ?? start + span * node.ratio;
+  const requestedPosition = node.id === targetSplitId ? targetPosition : storedPosition;
+  const position = clamp(requestedPosition, start + 1, start + Math.max(1, span - 1));
+  const ratio = clamp((position - start) / Math.max(1, span), 0.001, 0.999);
+  ratios.set(node.id, ratio);
+  const [firstBounds, secondBounds] = splitChildBounds(bounds, node.direction, position);
   return {
     ...node,
-    first: updateSplitRatio(node.first, splitId, ratio),
-    second: updateSplitRatio(node.second, splitId, ratio),
+    ratio,
+    first: rebuildLayoutFromBoundaries(node.first, firstBounds, snapshots, targetSplitId, targetPosition, ratios),
+    second: rebuildLayoutFromBoundaries(node.second, secondBounds, snapshots, targetSplitId, targetPosition, ratios),
   };
 }
 
@@ -450,7 +611,9 @@ export default function App() {
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [layout, setLayout] = useState<LayoutNode>(() => createInitialLayout());
   const [activeGroupId, setActiveGroupId] = useState(ROOT_GROUP_ID);
-  const [dropPreview, setDropPreview] = useState<{ groupId: string; zone: DropZone } | null>(null);
+  const [deferredEditorMounts, setDeferredEditorMounts] = useState<Set<string>>(() => new Set());
+  const dropPreviewRef = useRef<{ groupId: string; zone: DropZone; element: HTMLDivElement } | null>(null);
+  const [desktopDropActive, setDesktopDropActive] = useState(false);
 
   const [selection, setSelection] = useState<SelectionSummary | null>(null);
   const [qaQuestion, setQAQuestion] = useState("");
@@ -476,6 +639,8 @@ export default function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [gestureHint, setGestureHint] = useState<{ id: number; text: string } | null>(null);
+  const [gestureGuideOpen, setGestureGuideOpen] = useState(false);
+  const [workspaceMenuGroupId, setWorkspaceMenuGroupId] = useState<string | null>(null);
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
@@ -498,12 +663,16 @@ export default function App() {
   const idCounter = useRef(1);
   const dialogResolverRef = useRef<DialogResolver | null>(null);
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
+  const desktopDragDepthRef = useRef(0);
   const learningStatesRef = useRef<LearningState[]>([]);
   const learningSaveTimers = useRef<Map<string, number>>(new Map());
   const pendingLearningUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
   const streamingContentRef = useRef<Map<string, string>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
+  const dropPrefetchRef = useRef<Map<string, Promise<OpenItem | null>>>(new Map());
+  const layoutHistoryRef = useRef<LayoutNode[]>([]);
   const closedItemsRef = useRef<Array<{ groupId: string; item: OpenItem }>>([]);
+  const activeOpenItemRef = useRef<OpenItem | null>(null);
   const mobileRuntime = isAndroidRuntime();
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
@@ -514,9 +683,58 @@ export default function App() {
   const anyQALoading = Object.keys(qaGenerations).length > 0;
   const showBusy = loading || isTaskRunning || anyQALoading;
 
+  const clearDropPreview = useCallback(() => {
+    const current = dropPreviewRef.current;
+    if (!current) return;
+    current.element.className = "drop-preview";
+    dropPreviewRef.current = null;
+  }, []);
+
+  const showDropPreview = useCallback((pane: HTMLElement, groupId: string, zone: DropZone) => {
+    const current = dropPreviewRef.current;
+    if (current?.groupId === groupId && current.zone === zone && current.element.isConnected) return;
+    if (current) current.element.className = "drop-preview";
+    const element = pane.querySelector<HTMLDivElement>(":scope > .drop-preview");
+    if (!element) return;
+    element.className = `drop-preview ${zone} visible`;
+    dropPreviewRef.current = { groupId, zone, element };
+  }, []);
+
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    const active = isTaskRunning || anyQALoading;
+    const label = anyQALoading
+      ? (activeQAGeneration?.label || "正在生成 AI 回答")
+      : (activeTask ? taskStatusMessage(activeTask) : "正在生成学习内容");
+    void CodeCourseNative.setGenerationActive({ active, label }).catch(() => undefined);
+  }, [activeQAGeneration?.label, activeTask, anyQALoading, isTaskRunning, mobileRuntime]);
+
   useEffect(() => {
     document.documentElement.classList.remove("app-starting");
   }, []);
+
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    function handleNativeSelectionAsk(event: Event) {
+      const text = String((event as CustomEvent<{ text?: string }>).detail?.text ?? "").trim().slice(0, 20000);
+      const item = activeOpenItemRef.current;
+      if (!text || !item || !["file", "course", "qa"].includes(item.type)) return;
+      const sourceType: ViewerSelection["sourceType"] = item.type === "file"
+        ? "file"
+        : item.type === "qa" || item.qaRecordId
+          ? "qa"
+          : "course";
+      handleSelection({
+        sourceType,
+        sourcePath: item.path,
+        selectedText: text,
+        language: item.language,
+      });
+      openAssistant("history");
+    }
+    window.addEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
+    return () => window.removeEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
+  }, [mobileRuntime]);
 
   useEffect(() => {
     learningStatesRef.current = learningStates;
@@ -525,7 +743,7 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeMode === "dark" ? "#090c12" : "#f7faf8");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeMode === "dark" ? "#08111f" : "#edf4f1");
   }, [themeMode]);
 
   useEffect(() => {
@@ -539,6 +757,15 @@ export default function App() {
     const timer = window.setTimeout(() => setGestureHint(null), 1400);
     return () => window.clearTimeout(timer);
   }, [gestureHint]);
+
+  useEffect(() => {
+    if (!gestureGuideOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setGestureGuideOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [gestureGuideOpen]);
 
   useEffect(() => {
     closedItemsRef.current = [];
@@ -593,9 +820,30 @@ export default function App() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        void handleImportRequest();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === ",") {
+        event.preventDefault();
+        openSettings();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setCommandPaletteOpen((open) => !open);
+        if (mobileRuntime) toggleMobileCommandPalette();
+        else setCommandPaletteOpen((open) => !open);
         return;
       }
       if (event.key !== "Escape") {
@@ -615,7 +863,75 @@ export default function App() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [appDialog, commandPaletteOpen]);
+  }, [appDialog, commandPaletteOpen, mobileRuntime]);
+
+  useEffect(() => {
+    if (mobileRuntime || !window.codecourseDesktop?.onShortcut) return;
+    return window.codecourseDesktop.onShortcut((action) => {
+      if (action === "new-project") void handleImportRequest();
+      else if (action === "settings") openSettings();
+      else setCommandPaletteOpen(true);
+    });
+  }, [mobileRuntime]);
+
+  useEffect(() => {
+    if (mobileRuntime || !window.codecourseDesktop?.getPathForFile) return;
+
+    const isExternalFileDrag = (event: globalThis.DragEvent) => (
+      Array.from(event.dataTransfer?.types ?? []).includes("Files")
+      && !Array.from(event.dataTransfer?.types ?? []).includes("application/codecourse-item")
+    );
+    const onDragEnter = (event: globalThis.DragEvent) => {
+      if (!isExternalFileDrag(event)) return;
+      event.preventDefault();
+      desktopDragDepthRef.current += 1;
+      setDesktopDropActive(true);
+    };
+    const onDragOver = (event: globalThis.DragEvent) => {
+      if (!isExternalFileDrag(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    };
+    const onDragLeave = (event: globalThis.DragEvent) => {
+      if (!isExternalFileDrag(event)) return;
+      desktopDragDepthRef.current = Math.max(0, desktopDragDepthRef.current - 1);
+      if (desktopDragDepthRef.current === 0) setDesktopDropActive(false);
+    };
+    const onDrop = (event: globalThis.DragEvent) => {
+      if (!isExternalFileDrag(event)) return;
+      event.preventDefault();
+      desktopDragDepthRef.current = 0;
+      setDesktopDropActive(false);
+      const file = event.dataTransfer?.files?.[0];
+      if (!file) return;
+      const localPath = window.codecourseDesktop?.getPathForFile?.(file) ?? "";
+      if (localPath) void handleImportLocalPath(localPath);
+      else if (file.name.toLowerCase().endsWith(".zip")) void handleImportArchive(file);
+      else setError("请拖入本地项目文件夹或 ZIP 压缩包");
+    };
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [mobileRuntime]);
+
+  useEffect(() => {
+    if (mobileRuntime) return;
+    window.addEventListener("dragend", clearDropPreview, true);
+    window.addEventListener("drop", clearDropPreview, true);
+    window.addEventListener("blur", clearDropPreview);
+    return () => {
+      window.removeEventListener("dragend", clearDropPreview, true);
+      window.removeEventListener("drop", clearDropPreview, true);
+      window.removeEventListener("blur", clearDropPreview);
+    };
+  }, [clearDropPreview, mobileRuntime]);
 
   useEffect(() => {
     function dismissTransientSurfaces() {
@@ -627,7 +943,9 @@ export default function App() {
       setCommandPaletteOpen(false);
       setContextMenu(null);
       setQAHighlightDraft(null);
-      setDropPreview(null);
+      setWorkspaceMenuGroupId(null);
+      setGestureGuideOpen(false);
+      clearDropPreview();
       setDragState(null);
       setEditingCourseItemId(null);
       setToast("");
@@ -654,12 +972,12 @@ export default function App() {
       }
 
       if (gesture === "left") {
-        dismissTransientSurfaces();
-        setNavigationOpen(false);
-        setAssistantOpen(false);
-        setSelection(null);
-        setSelectionAnchor(null);
-        showGestureHint("← 返回工作区");
+        if (layoutHistoryRef.current.length === 0) {
+          showGestureHint("← 没有可撤销的布局调整");
+          return;
+        }
+        undoWorkspaceLayout();
+        showGestureHint("← 已撤销工作区布局调整");
         return;
       }
 
@@ -735,7 +1053,7 @@ export default function App() {
 
     window.addEventListener(GESTURE_COMPLETE_EVENT, onGestureComplete);
     return () => window.removeEventListener(GESTURE_COMPLETE_EVENT, onGestureComplete);
-  }, [activeGroupId, appDialog, layout, project?.id, qaHistory]);
+  }, [activeGroupId, appDialog, clearDropPreview, layout, project?.id, qaHistory]);
 
   useEffect(() => {
     return () => {
@@ -766,6 +1084,8 @@ export default function App() {
           setAssistantOpen(false);
         } else if (navigationOpen) {
           setNavigationOpen(false);
+        } else if (isTaskRunning) {
+          void CodeCourseNative.moveToBackground().catch(() => NativeApp.exitApp());
         } else {
           void NativeApp.exitApp();
         }
@@ -781,44 +1101,81 @@ export default function App() {
       disposed = true;
       removeListener?.();
     };
-  }, [appDialog, assistantOpen, generationOpen, mobileRuntime, moreMenuOpen, navigationOpen, promptEditorOpen, settingsOpen]);
+  }, [appDialog, assistantOpen, generationOpen, isTaskRunning, mobileRuntime, moreMenuOpen, navigationOpen, promptEditorOpen, settingsOpen]);
 
   useEffect(() => {
     if (!dragState) {
       document.documentElement.style.removeProperty("--nav-width");
       document.documentElement.style.removeProperty("--explain-width");
-      document.documentElement.style.removeProperty("--split-ratio");
-      document.documentElement.style.removeProperty("--split-dir");
       document.documentElement.style.removeProperty("--sidebar-project-h");
       document.documentElement.style.removeProperty("--sidebar-course-h");
       document.documentElement.style.removeProperty("--qa-ask-h");
       return;
     }
     const currentDrag = dragState;
-    function onMouseMove(event: globalThis.MouseEvent) {
+    let frame = 0;
+    let splitCommitted = false;
+    let latestX = "startX" in currentDrag ? currentDrag.startX : 0;
+    let latestY = "startY" in currentDrag ? currentDrag.startY : 0;
+
+    function clearLiveSplitPreview() {
+      if (currentDrag.kind !== "split") return;
+      currentDrag.splitElements.forEach((element) => element.style.removeProperty("--split-ratio"));
+    }
+
+    function applyDragFrame() {
+      frame = 0;
       if (currentDrag.kind === "sidebar-width") {
-        const w = clamp(currentDrag.startWidth + event.clientX - currentDrag.startX, 240, 360);
+        const w = clamp(currentDrag.startWidth + latestX - currentDrag.startX, 240, 360);
         document.documentElement.style.setProperty("--nav-width", `${w}px`);
       } else if (currentDrag.kind === "explain-width") {
-        const w = clamp(currentDrag.startWidth - (event.clientX - currentDrag.startX), 340, 520);
+        const w = clamp(currentDrag.startWidth - (latestX - currentDrag.startX), 340, 520);
         document.documentElement.style.setProperty("--explain-width", `${w}px`);
       } else if (currentDrag.kind === "sidebar-project") {
-        const h = clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 96, 320);
+        const h = clamp(currentDrag.startHeight + latestY - currentDrag.startY, 96, 320);
         document.documentElement.style.setProperty("--sidebar-project-h", `${h}px`);
       } else if (currentDrag.kind === "sidebar-course") {
-        const h = clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420);
+        const h = clamp(currentDrag.startHeight - (latestY - currentDrag.startY), 120, 420);
         document.documentElement.style.setProperty("--sidebar-course-h", `${h}px`);
       } else if (currentDrag.kind === "qa-ask") {
-        const h = clamp(currentDrag.startHeight + currentDrag.startY - event.clientY, 230, 720);
+        const h = clamp(currentDrag.startHeight + currentDrag.startY - latestY, 230, 720);
         document.documentElement.style.setProperty("--qa-ask-h", `${h}px`);
       } else if (currentDrag.kind === "split") {
-        const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
-        const nextRatio = currentDrag.startRatio + delta / Math.max(1, currentDrag.size);
-        document.documentElement.style.setProperty("--split-ratio", String(nextRatio));
-        document.documentElement.style.setProperty("--split-dir", String(currentDrag.direction));
+        const delta = currentDrag.direction === "row" ? latestX - currentDrag.startX : latestY - currentDrag.startY;
+        const nextBoundary = clamp(
+          currentDrag.startBoundary + delta,
+          currentDrag.minBoundary,
+          currentDrag.maxBoundary,
+        );
+        const offset = nextBoundary - currentDrag.startBoundary;
+        const ratios = new Map<string, number>();
+        calculateSplitRatios(
+          currentDrag.layoutSnapshot,
+          currentDrag.rootBounds,
+          currentDrag.boundaries,
+          currentDrag.splitId,
+          nextBoundary,
+          ratios,
+        );
+        ratios.forEach((ratio, splitId) => {
+          currentDrag.splitElements.get(splitId)?.style.setProperty("--split-ratio", String(ratio));
+        });
+        currentDrag.indicator.style.transform = currentDrag.direction === "row"
+          ? `translate3d(${offset}px, 0, 0)`
+          : `translate3d(0, ${offset}px, 0)`;
       }
     }
+
+    function onMouseMove(event: globalThis.MouseEvent) {
+      latestX = event.clientX;
+      latestY = event.clientY;
+      if (!frame) frame = window.requestAnimationFrame(applyDragFrame);
+    }
     function onMouseUp(event: globalThis.MouseEvent) {
+      latestX = event.clientX;
+      latestY = event.clientY;
+      if (frame) window.cancelAnimationFrame(frame);
+      applyDragFrame();
       if (currentDrag.kind === "sidebar-width") {
         const w = clamp(currentDrag.startWidth + event.clientX - currentDrag.startX, 240, 360);
         setSidebarWidth(w);
@@ -836,9 +1193,25 @@ export default function App() {
         setQAAskHeight(h);
       } else if (currentDrag.kind === "split") {
         const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
-        const finalRatio = currentDrag.startRatio + delta / Math.max(1, currentDrag.size);
-        if (finalRatio < 0.08 || finalRatio > 0.92) {
-          collapseSplitById(currentDrag.splitId, finalRatio < 0.08 ? "first" : "second");
+        const requestedBoundary = currentDrag.startBoundary + delta;
+        if (requestedBoundary < currentDrag.minBoundary) {
+          collapseSplitById(currentDrag.splitId, "first");
+        } else if (requestedBoundary > currentDrag.maxBoundary) {
+          collapseSplitById(currentDrag.splitId, "second");
+        } else {
+          const finalBoundary = clamp(requestedBoundary, currentDrag.minBoundary, currentDrag.maxBoundary);
+          const ratios = new Map<string, number>();
+          const finalLayout = rebuildLayoutFromBoundaries(
+            currentDrag.layoutSnapshot,
+            currentDrag.rootBounds,
+            currentDrag.boundaries,
+            currentDrag.splitId,
+            finalBoundary,
+            ratios,
+          );
+          splitCommitted = true;
+          commitLayoutChange(() => finalLayout);
+          window.requestAnimationFrame(() => window.requestAnimationFrame(clearLiveSplitPreview));
         }
       }
       setDragState(null);
@@ -847,9 +1220,15 @@ export default function App() {
     window.addEventListener("mouseup", onMouseUp);
     document.body.classList.add(currentDrag.kind === "split" && currentDrag.direction === "row" ? "resizing-x" : currentDrag.kind.includes("width") ? "resizing-x" : "resizing-y");
     return () => {
+      if (frame) window.cancelAnimationFrame(frame);
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
       document.body.classList.remove("resizing-x", "resizing-y");
+      if (currentDrag.kind === "split") {
+        currentDrag.indicator.remove();
+        currentDrag.frozenPanes.forEach((pane) => pane.style.removeProperty("--drag-pane-width"));
+        if (!splitCommitted) clearLiveSplitPreview();
+      }
     };
   }, [dragState]);
 
@@ -1006,8 +1385,76 @@ export default function App() {
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  function commitLayoutChange(updater: (current: LayoutNode) => LayoutNode) {
+    setLayout((current) => {
+      const next = updater(current);
+      if (next === current) return current;
+      layoutHistoryRef.current = [...layoutHistoryRef.current.slice(-19), current];
+      return next;
+    });
+  }
+
+  function undoWorkspaceLayout() {
+    const previous = layoutHistoryRef.current.pop();
+    if (!previous) {
+      setToast("没有可撤销的工作区调整");
+      return;
+    }
+    setLayout(previous);
+    const nextActiveGroupId = hasGroup(previous, activeGroupId) ? activeGroupId : firstGroupId(previous);
+    setActiveGroupId(nextActiveGroupId);
+    const group = findGroup(previous, nextActiveGroupId);
+    const item = group?.items.find((entry) => entry.id === group.activeItemId);
+    if (item) applyActiveItem(item);
+    setWorkspaceMenuGroupId(null);
+    setToast("已撤销工作区调整");
+  }
+
+  function equalizeWorkspaceLayout() {
+    commitLayoutChange(equalizeLayout);
+    setWorkspaceMenuGroupId(null);
+  }
+
+  function closeWorkspaceGroup(groupId: string) {
+    if (countGroups(layout) <= 1) return;
+    commitLayoutChange((current) => removeGroupFromLayout(current, groupId) ?? current);
+    if (activeGroupId === groupId) {
+      const next = removeGroupFromLayout(layout, groupId);
+      if (next) {
+        const nextGroupId = firstGroupId(next);
+        setActiveGroupId(nextGroupId);
+        const nextGroup = findGroup(next, nextGroupId);
+        const nextItem = nextGroup?.items.find((item) => item.id === nextGroup.activeItemId);
+        if (nextItem) applyActiveItem(nextItem);
+      }
+    }
+    setWorkspaceMenuGroupId(null);
+  }
+
+  function mergeWorkspaceGroups(groupId: string) {
+    const target = findGroup(layout, groupId);
+    if (!target || countGroups(layout) <= 1) return;
+    const seen = new Set<string>();
+    const items = [...target.items, ...collectLayoutItems(layout)].filter((item) => {
+      if (seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
+    const merged: LayoutNode = {
+      type: "group",
+      group: {
+        id: groupId,
+        items,
+        activeItemId: target.activeItemId ?? items.at(-1)?.id ?? null,
+      },
+    };
+    commitLayoutChange(() => merged);
+    setActiveGroupId(groupId);
+    setWorkspaceMenuGroupId(null);
+  }
+
   function collapseSplitById(splitId: string, removeSide: "first" | "second") {
-    setLayout((prev) => {
+    commitLayoutChange((prev) => {
       if (countGroups(prev) <= 1) {
         return prev;
       }
@@ -1344,6 +1791,21 @@ export default function App() {
     touchOpenItem(item);
   }
 
+  function deferEditorMount(groupId: string, itemId: string) {
+    const mountKey = `${groupId}:${itemId}`;
+    setDeferredEditorMounts((current) => new Set(current).add(mountKey));
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        setDeferredEditorMounts((current) => {
+          if (!current.has(mountKey)) return current;
+          const next = new Set(current);
+          next.delete(mountKey);
+          return next;
+        });
+      });
+    });
+  }
+
   function splitGroupWithItem(groupId: string, zone: DropZone, item: OpenItem) {
     const meta = splitMeta(zone);
     if (!meta || countGroups(layout) >= MAX_GROUPS) {
@@ -1356,9 +1818,38 @@ export default function App() {
     const newGroupId = nextId("group");
     const newGroup = createGroup(newGroupId);
     newGroup.group = openItem(newGroup.group, item);
-    setLayout((prev) => splitGroup(prev, groupId, meta.direction, meta.placement, newGroup, nextId("split")));
+    deferEditorMount(newGroupId, item.id);
+    commitLayoutChange((prev) => splitGroup(prev, groupId, meta.direction, meta.placement, newGroup, nextId("split")));
     setActiveGroupId(newGroupId);
     applyActiveItem(item);
+  }
+
+  function moveTabToGroup(payload: DropPayload, targetGroupId: string, zone: DropZone, item: OpenItem) {
+    const sourceGroupId = payload.sourceGroupId ?? findGroupIdForItem(layout, item.id);
+    if (zone === "center" && sourceGroupId === targetGroupId) {
+      activateItem(targetGroupId, item);
+      return;
+    }
+    const meta = splitMeta(zone);
+    const canSplit = Boolean(meta && countGroups(layout) < MAX_GROUPS);
+    const newGroupId = canSplit ? nextId("group") : targetGroupId;
+    if (canSplit) deferEditorMount(newGroupId, item.id);
+    commitLayoutChange((current) => {
+      let next = current;
+      if (sourceGroupId && hasGroup(next, sourceGroupId)) {
+        next = updateGroup(next, sourceGroupId, (group) => closeItem(group, item.id));
+      }
+      if (!canSplit || !meta) {
+        return updateGroup(next, targetGroupId, (group) => openItem(group, item));
+      }
+      const group = createGroup(newGroupId);
+      group.group = openItem(group.group, item);
+      return splitGroup(next, targetGroupId, meta.direction, meta.placement, group, nextId("split"));
+    });
+    setActiveGroupId(newGroupId);
+    applyActiveItem(item);
+    touchOpenItem(item);
+    if (meta && !canSplit) setToast(`最多支持 ${MAX_GROUPS} 个工作区，标签已移入当前工作区`);
   }
 
   function rememberClosedItem(groupId: string, item: OpenItem) {
@@ -1497,6 +1988,34 @@ export default function App() {
       };
     }
     return null;
+  }
+
+  function prefetchDropItem(kind: "file" | "course", path: string) {
+    if (!project) return;
+    const payload: DropPayload = kind === "file"
+      ? { kind, path }
+      : { kind, filename: path };
+    const key = dropPayloadCacheKey(project.id, payload);
+    if (!key || dropPrefetchRef.current.has(key)) return;
+    const request = buildOpenItem(payload).catch(() => null);
+    dropPrefetchRef.current.set(key, request);
+    window.setTimeout(() => {
+      if (dropPrefetchRef.current.get(key) === request) dropPrefetchRef.current.delete(key);
+    }, 15000);
+  }
+
+  async function resolveDropItem(payload: DropPayload): Promise<OpenItem | null> {
+    if (!project) return null;
+    const key = dropPayloadCacheKey(project.id, payload);
+    if (key) {
+      const request = dropPrefetchRef.current.get(key);
+      if (request) {
+        dropPrefetchRef.current.delete(key);
+        const prefetched = await request;
+        if (prefetched) return prefetched;
+      }
+    }
+    return buildOpenItem(payload);
   }
 
   async function openFileInActiveGroup(projectId: number, path: string, initialLine?: number) {
@@ -1654,6 +2173,8 @@ export default function App() {
   async function openProject(nextProject: Project) {
     setError("");
     setLoading(true);
+    layoutHistoryRef.current = [];
+    setWorkspaceMenuGroupId(null);
     try {
       const freshProject = await getProject(nextProject.id);
       setProject(freshProject);
@@ -1958,6 +2479,7 @@ export default function App() {
     if (nextTask.status === "completed") {
       setTaskMessage("生成完成");
       setToast("内容已生成");
+      notifyTaskCompleted("CodeCourse 生成完成", `${taskLabel(nextTask)}已经可以阅读。`);
       const preferred = nextTask.task_type === "file_lesson" || nextTask.task_type === "outline_lesson"
         ? nextCourses.find((item) => item.filename === nextTask.output_path?.split("/").slice(-2).join("/"))
         : nextCourses.find((item) => item.filename === "outline.md");
@@ -2062,6 +2584,7 @@ export default function App() {
           onCompleted({ cached }) {
             setTaskMessage(cached ? "已缓存，无需重新生成" : "生成完成");
             setToast("内容已生成");
+            notifyTaskCompleted("CodeCourse 生成完成", `${baseFileName} ${label}已经可以阅读。`);
             streamingContentRef.current.delete(filename);
           },
           onError(message) { throw new Error(message); },
@@ -2189,8 +2712,10 @@ export default function App() {
 
   function handleSelection(nextSelection: ViewerSelection) {
     const nextText = nextSelection.selectedText.slice(0, 20000);
-    if (nextText.trim()) {
-      setAssistantOpen(true);
+    // Keep Android's native selection handles alive until the learner decides
+    // to ask. Switching surfaces here collapses the initial text selection.
+    if (!mobileRuntime && nextText.trim()) {
+      openAssistant("history");
     }
     setSelection({
       sourceType: nextSelection.sourceType,
@@ -2280,6 +2805,7 @@ export default function App() {
         refreshKnowledgeLinks(project.id),
       ]);
       setKnowledgeRefreshKey((value) => value + 1);
+      notifyTaskCompleted("CodeCourse 回答完成", record.display_title || "AI 助手已经完成回答。");
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
     }
@@ -2303,12 +2829,12 @@ export default function App() {
       setSelectedQA(record);
       setQASessionId(record.session_id ?? null);
       setQAUpperTab("history");
-      setAssistantOpen(true);
+      openAssistant("history");
       return;
     }
     if (!llmSettings?.enabled || !llmSettings.has_api_key) {
       setQAPanelError("请先配置模型 API。 ");
-      setSettingsOpen(true);
+      openSettings();
       return;
     }
     const parent = term.source_type === "qa"
@@ -2321,8 +2847,7 @@ export default function App() {
     );
     if (!ok) return;
     setQAPanelError("");
-    setQAUpperTab("history");
-    setAssistantOpen(true);
+    openAssistant("history");
     const generationKey = parent?.session_id ? `session:${parent.session_id}` : activeQAKey;
     try {
       const record = await runStreamingQuestion({
@@ -2495,7 +3020,7 @@ export default function App() {
   ) {
     const path = sourcePath ?? "";
     const text = selectedText.slice(0, 20000);
-    setAssistantOpen(true);
+    openAssistant("history");
     setSelection({
       sourceType,
       sourcePath: path || null,
@@ -2701,6 +3226,8 @@ export default function App() {
   async function handleGroupDrop(event: DragEvent<HTMLElement>, groupId: string) {
     event.preventDefault();
     event.stopPropagation();
+    const zone = detectDropZone(event);
+    clearDropPreview();
     if (!project) {
       return;
     }
@@ -2708,14 +3235,30 @@ export default function App() {
     if (!raw) {
       return;
     }
-    const zone = dropPreview?.groupId === groupId ? dropPreview.zone : detectDropZone(event);
-    setDropPreview(null);
     try {
-      const item = await buildOpenItem(JSON.parse(raw) as DropPayload);
+      const payload = JSON.parse(raw) as DropPayload;
+      event.dataTransfer.dropEffect = payload.kind === "tab" ? "move" : "copy";
+      const existingItemId = dropPayloadItemId(payload);
+      const existingItem = existingItemId
+        ? payload.kind === "tab" && payload.sourceGroupId
+          ? findGroup(layout, payload.sourceGroupId)?.items.find((entry) => entry.id === existingItemId) ?? null
+          : findOpenItem(layout, existingItemId)
+        : null;
+      // Two frames guarantee the cleared overlay is painted before a new
+      // Monaco/Markdown tree starts mounting.
+      await new Promise<void>((resolve) => {
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+      });
+      const item = existingItem ? { ...existingItem } : await resolveDropItem(payload);
       if (!item) {
         return;
       }
+      if (payload.kind === "tab") {
+        moveTabToGroup(payload, groupId, zone, item);
+        return;
+      }
       if (zone === "center") {
+        deferEditorMount(groupId, item.id);
         openItemInGroup(groupId, item);
       } else {
         splitGroupWithItem(groupId, zone, item);
@@ -2736,7 +3279,7 @@ export default function App() {
 
   function renderGroup(group: EditorGroup) {
     const activeItem = group.items.find((item) => item.id === group.activeItemId) ?? null;
-    const previewZone = dropPreview?.groupId === group.id ? dropPreview.zone : null;
+    const editorMountDeferred = activeItem ? deferredEditorMounts.has(`${group.id}:${activeItem.id}`) : false;
     const lessonFiles = courses.filter((file) => isLessonPath(file.filename)).sort((a, b) => a.filename.localeCompare(b.filename));
     const lessonIndex = activeItem?.type === "course" ? lessonFiles.findIndex((file) => file.filename === activeItem.path) : -1;
     const activeLearningType: LearningState["source_type"] | null = activeItem?.type === "file" ? "file" : activeItem?.type === "qa" || activeItem?.qaRecordId ? "qa" : activeItem?.type === "course" ? "course" : null;
@@ -2748,15 +3291,19 @@ export default function App() {
       <section
         key={group.id}
         className={`reader-pane ${activeGroupId === group.id ? "active" : ""}`}
-        onClick={() => setActiveGroupId(group.id)}
+        onClick={() => {
+          setActiveGroupId(group.id);
+          if (workspaceMenuGroupId) setWorkspaceMenuGroupId(null);
+        }}
         onDragOver={(event) => {
           event.preventDefault();
           event.stopPropagation();
-          setDropPreview({ groupId: group.id, zone: detectDropZone(event) });
+          const zone = detectDropZone(event);
+          showDropPreview(event.currentTarget, group.id, zone);
         }}
         onDragLeave={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-            setDropPreview((prev) => (prev?.groupId === group.id ? null : prev));
+            if (dropPreviewRef.current?.groupId === group.id) clearDropPreview();
           }
         }}
         onDrop={(event) => handleGroupDrop(event, group.id)}
@@ -2769,6 +3316,20 @@ export default function App() {
               className={`pane-tab ${item.id === group.activeItemId ? "active" : ""}`}
               onClick={() => activateItem(group.id, item)}
               title={item.path}
+              draggable={!mobileRuntime && item.type !== "knowledge_graph"}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("application/codecourse-tab", item.id);
+                event.dataTransfer.setData(
+                  "application/codecourse-item",
+                  JSON.stringify({ kind: "tab", itemId: item.id, sourceGroupId: group.id }),
+                );
+                setCodeCourseDragImage(event.dataTransfer, item.title);
+              }}
+              onDragEnd={(event) => {
+                clearDropPreview();
+                void handleTabDragEnd(event, group.id, item);
+              }}
             >
               <span>{item.dirty ? `${item.title} *` : item.title}</span>
               <X
@@ -2781,7 +3342,28 @@ export default function App() {
             </button>
           ))}
         </div>
+        <div className="pane-workspace-actions" onClick={(event) => event.stopPropagation()}>
+            <button
+              className="icon-button pane-workspace-menu-button"
+              onClick={() => setWorkspaceMenuGroupId((current) => current === group.id ? null : group.id)}
+              title="工作区选项"
+              aria-label="工作区选项"
+              aria-expanded={workspaceMenuGroupId === group.id}
+            >
+              <MoreHorizontal size={15} />
+            </button>
+            {workspaceMenuGroupId === group.id ? (
+              <div className="pane-workspace-menu" role="menu">
+                <button type="button" role="menuitem" onClick={undoWorkspaceLayout} disabled={layoutHistoryRef.current.length === 0}>撤销布局调整</button>
+                <button type="button" role="menuitem" onClick={equalizeWorkspaceLayout} disabled={countGroups(layout) <= 1}>平均分配工作区</button>
+                <button type="button" role="menuitem" onClick={() => mergeWorkspaceGroups(group.id)} disabled={countGroups(layout) <= 1}>合并全部到当前组</button>
+                <div className="pane-workspace-menu-separator" />
+                <button type="button" role="menuitem" className="danger" onClick={() => closeWorkspaceGroup(group.id)} disabled={countGroups(layout) <= 1}>关闭当前工作区</button>
+              </div>
+            ) : null}
+        </div>
         <div className="pane-body">
+          {editorMountDeferred ? <div className="viewer-loading deferred-editor-loading">正在准备工作区…</div> : null}
           {activeItem?.type === "course" && lessonIndex >= 0 ? (
             <ReaderLearningToolbar
               title={activeItem.title}
@@ -2793,13 +3375,13 @@ export default function App() {
               onToggleComplete={() => void toggleLessonComplete(activeItem.path)}
             />
           ) : null}
-          {activeItem?.type === "file" ? (
+          {!editorMountDeferred && activeItem?.type === "file" ? (
             <CodeViewer
               path={activeItem.path}
               language={activeItem.language ?? "plaintext"}
               content={activeItem.content}
               selectedRange={
-                selectionAnchor?.sourceType === "file" && selectionAnchor.sourcePath === activeItem.path
+                !mobileRuntime && selectionAnchor?.sourceType === "file" && selectionAnchor.sourcePath === activeItem.path
                   ? selectionAnchor.range ?? null
                   : null
               }
@@ -2809,7 +3391,7 @@ export default function App() {
               onVisibleLineChange={(line) => queueLearningUpdate("file", activeItem.path, "line", line)}
             />
           ) : null}
-          {activeItem?.type === "course" ? (
+          {!editorMountDeferred && activeItem?.type === "course" ? (
             editingCourseItemId === activeItem.id ? (
               <div className="viewer qa-editor-view">
                 <div className="viewer-header">
@@ -2880,7 +3462,7 @@ export default function App() {
                 documentTerms={documentTermsBySource[`${activeItem.qaRecordId ? "qa" : "course"}:${activeItem.path}`] ?? []}
                 annotations={annotations.filter((ann) => ann.courseFile === activeItem.path)}
                 tempSelectedText={
-                  selectionAnchor?.sourceType === (activeItem.qaRecordId ? "qa" : "course") && selectionAnchor.sourcePath === activeItem.path
+                  !mobileRuntime && selectionAnchor?.sourceType === (activeItem.qaRecordId ? "qa" : "course") && selectionAnchor.sourcePath === activeItem.path
                     ? selectionAnchor.selectedText
                     : null
                 }
@@ -2906,7 +3488,7 @@ export default function App() {
               />
             )
           ) : null}
-          {activeItem?.type === "qa" ? (
+          {!editorMountDeferred && activeItem?.type === "qa" ? (
             <div className="viewer qa-editor-view">
               <div className="viewer-header">
                 <span>{activeItem.dirty ? `${activeItem.title} *` : activeItem.title}</span>
@@ -2968,7 +3550,7 @@ export default function App() {
             </div>
           ) : null}
           {!activeItem ? <div className="empty-state">点击或拖拽文件/课件到这里阅读</div> : null}
-          {activeItem?.type === "knowledge_graph" && project ? (
+          {!editorMountDeferred && activeItem?.type === "knowledge_graph" && project ? (
             <Suspense fallback={<div className="viewer-loading">正在加载知识网络…</div>}><KnowledgeGraphViewer
               projectId={project.id}
               refreshKey={knowledgeRefreshKey}
@@ -3001,7 +3583,7 @@ export default function App() {
             /></Suspense>
           ) : null}
         </div>
-        {previewZone ? <div className={`drop-preview ${previewZone}`} /> : null}
+        <div className="drop-preview" aria-hidden="true" />
       </section>
     );
   }
@@ -3010,33 +3592,84 @@ export default function App() {
     if (node.type === "group") {
       return renderGroup(node.group);
     }
-    const isDraggingThis = dragState?.kind === "split" && dragState.splitId === node.id;
-    const firstFlex = isDraggingThis ? `var(--split-ratio, ${node.ratio}) 1 0` : `${node.ratio} 1 0`;
     return (
-      <div key={node.id} className={`split-node ${node.direction}`}>
-        <div className="split-child" style={{ flex: firstFlex }}>
+      <div key={node.id} className={`split-node ${node.direction}`} data-split-id={node.id}>
+        <div className="split-child first" style={{ flex: `var(--split-ratio, ${node.ratio}) 1 0` }}>
           {renderLayoutNode(node.first)}
         </div>
         <div
           className={`split-resizer ${node.direction}`}
           onDoubleClick={() => collapseSplitById(node.id, node.ratio < 0.5 ? "first" : "second")}
           onMouseDown={(event) => {
-            const rect = event.currentTarget.parentElement?.getBoundingClientRect();
-            if (!rect) {
+            event.preventDefault();
+            const element = event.currentTarget.parentElement as HTMLDivElement | null;
+            const rootElement = element?.closest(".reader-workspace") as HTMLDivElement | null;
+            const rootRect = rootElement?.getBoundingClientRect();
+            if (!element || !rootElement || !rootRect) {
               return;
             }
+            const rootBounds: LayoutBounds = {
+              left: rootRect.left,
+              top: rootRect.top,
+              right: rootRect.right,
+              bottom: rootRect.bottom,
+            };
+            const boundaries = captureSplitBoundaries(layout, rootBounds);
+            const splitElements = new Map<string, HTMLDivElement>();
+            rootElement.querySelectorAll<HTMLDivElement>(".split-node[data-split-id]").forEach((splitElement) => {
+              const splitId = splitElement.dataset.splitId;
+              if (splitId) splitElements.set(splitId, splitElement);
+            });
+            const frozenPanes = Array.from(rootElement.querySelectorAll<HTMLDivElement>(".reader-pane"));
+            frozenPanes.forEach((pane) => {
+              pane.style.setProperty("--drag-pane-width", `${pane.getBoundingClientRect().width}px`);
+            });
+            const targetNode = findSplitNode(layout, node.id);
+            const targetSnapshot = boundaries.get(node.id);
+            if (!targetNode || !targetSnapshot) return;
+            const [firstBounds, secondBounds] = splitChildBounds(
+              targetSnapshot.bounds,
+              node.direction,
+              targetSnapshot.position,
+            );
+            const previousPane = adjacentLeafBounds(targetNode.first, firstBounds, node.direction, "second", boundaries);
+            const nextPane = adjacentLeafBounds(targetNode.second, secondBounds, node.direction, "first", boundaries);
+            const rawMin = node.direction === "row" ? previousPane.left : previousPane.top;
+            const rawMax = node.direction === "row" ? nextPane.right : nextPane.bottom;
+            const safeInset = Math.min(MIN_SPLIT_TRACK_SIZE, Math.max(2, (rawMax - rawMin) / 3));
+            const indicator = document.createElement("div");
+            indicator.className = `split-drag-indicator ${node.direction}`;
+            indicator.setAttribute("aria-hidden", "true");
+            if (node.direction === "row") {
+              indicator.style.left = `${targetSnapshot.position - 1}px`;
+              indicator.style.top = `${targetSnapshot.bounds.top}px`;
+              indicator.style.height = `${targetSnapshot.bounds.bottom - targetSnapshot.bounds.top}px`;
+            } else {
+              indicator.style.left = `${targetSnapshot.bounds.left}px`;
+              indicator.style.top = `${targetSnapshot.position - 1}px`;
+              indicator.style.width = `${targetSnapshot.bounds.right - targetSnapshot.bounds.left}px`;
+            }
+            document.body.appendChild(indicator);
             setDragState({
               kind: "split",
               splitId: node.id,
               direction: node.direction,
               startX: event.clientX,
               startY: event.clientY,
-              startRatio: node.ratio,
-              size: node.direction === "row" ? rect.width : rect.height,
+              startBoundary: targetSnapshot.position,
+              minBoundary: rawMin + safeInset,
+              maxBoundary: rawMax - safeInset,
+              rootBounds,
+              rootElement,
+              splitElements,
+              frozenPanes,
+              indicator,
+              layoutSnapshot: layout,
+              boundaries,
             });
           }}
         />
-        <div className="split-child" style={{ flex: isDraggingThis ? `calc(1 - var(--split-ratio)) 1 0` : `${1 - node.ratio} 1 0` }}>
+        <div className="split-child second" style={{ flex: `calc(1 - var(--split-ratio, ${node.ratio})) 1 0` }}>
           {renderLayoutNode(node.second)}
         </div>
       </div>
@@ -3056,12 +3689,12 @@ export default function App() {
 
   function commandPaletteItems(): CommandPaletteItem[] {
     const items: CommandPaletteItem[] = [
-      { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => { if (mobileRuntime) setNavigationOpen(false); setAssistantOpen(true); } },
-      { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", run: () => { setGenerationIntent("outline"); setGenerationOpen(true); } },
-      { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => { if (mobileRuntime) setAssistantOpen(false); setNavigationView("courses"); setNavigationOpen(true); } },
-      { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => { if (mobileRuntime) setAssistantOpen(false); setNavigationView("files"); setNavigationOpen(true); } },
-      { id: "command:settings", label: "模型 API 设置", section: "命令", keywords: "deepseek key 模型", run: () => setSettingsOpen(true) },
-      { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: () => setPromptEditorOpen(true) },
+      { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => openAssistant("history") },
+      { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", run: () => openGeneration("outline") },
+      { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => openMobileNavigation("courses") },
+      { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => openMobileNavigation("files") },
+      { id: "command:settings", label: "模型 API 设置", section: "命令", keywords: "deepseek key 模型", run: openSettings },
+      { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: openPrompts },
       { id: "command:index", label: "构建项目索引", section: "命令", keywords: "rag 搜索 索引", run: () => void handleBuildIndex() },
       { id: "command:reset-progress", label: "重置学习进度", section: "命令", keywords: "清除 完成 阅读位置", run: () => void handleResetLearningProgress() },
     ];
@@ -3081,6 +3714,7 @@ export default function App() {
   }
 
   const activeOpenItem = getActiveOpenItem();
+  activeOpenItemRef.current = activeOpenItem;
   const activeLessonMatch = activeOpenItem?.type === "course" ? activeOpenItem.path.match(/^lessons\/lesson_(\d+)\.md$/i) : null;
   const activeLessonNumber = activeLessonMatch ? Number(activeLessonMatch[1]) : null;
   const activeLessonTitle = activeOpenItem && activeLessonNumber
@@ -3093,29 +3727,114 @@ export default function App() {
   const progressLabel = lessonFilesForProgress.length ? `${completedLessonCount}/${lessonFilesForProgress.length} 课已完成` : undefined;
   const activeDocumentTitle = activeOpenItem?.title ?? (project ? "学习工作台" : "CodeCourse");
 
-  function toggleMobileNavigation(view: "courses" | "files") {
-    const isCurrent = navigationOpen && !assistantOpen && navigationView === view;
-    setAssistantOpen(false);
-    if (isCurrent) {
-      setNavigationOpen(false);
+  function closeMobileWorkspaceSurfaces(except?: MobileSurface) {
+    if (!mobileRuntime) return;
+    if (except !== "navigation") setNavigationOpen(false);
+    if (except !== "assistant") setAssistantOpen(false);
+    if (except !== "generation") setGenerationOpen(false);
+    if (except !== "more") setMoreMenuOpen(false);
+    if (except !== "command") setCommandPaletteOpen(false);
+    if (except !== "settings") setSettingsOpen(false);
+    if (except !== "prompts") setPromptEditorOpen(false);
+  }
+
+  async function handleTabDragEnd(event: DragEvent<HTMLButtonElement>, groupId: string, item: OpenItem) {
+    if (mobileRuntime || item.type === "knowledge_graph" || !window.codecourseDesktop?.detachTab) return;
+    const outsideWindow = event.clientX <= 1
+      || event.clientY <= 1
+      || event.clientX >= window.innerWidth - 1
+      || event.clientY >= window.innerHeight - 1;
+    if (event.dataTransfer.dropEffect !== "none" || !outsideWindow) return;
+    const detached = await window.codecourseDesktop.detachTab({
+      type: item.type,
+      path: item.path,
+      title: item.title,
+      content: item.content,
+      language: item.language,
+    });
+    if (detached) closeItemInGroup(groupId, item.id);
+  }
+
+  async function handleImportLocalPath(path: string) {
+    setLoading(true);
+    setError("");
+    setTaskMessage("正在导入本地项目");
+    try {
+      const imported = await importLocalProject(path);
+      await loadProjects();
+      await openProject(imported);
+      setToast("本地项目已导入");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "导入本地项目失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function notifyTaskCompleted(title: string, body: string) {
+    if (mobileRuntime) {
+      void CodeCourseNative.notifyCompletion({ label: body }).catch(() => undefined);
       return;
     }
+    void window.codecourseDesktop?.notify?.({ title, body });
+  }
+
+  function openMobileNavigation(view: NavigationView) {
+    closeMobileWorkspaceSurfaces("navigation");
     setNavigationView(view);
     setNavigationOpen(true);
   }
 
-  function toggleMobileAssistant(tab: "history" | "knowledge") {
-    const isCurrent = assistantOpen && !navigationOpen && qaUpperTab === tab;
-    setNavigationOpen(false);
+  function toggleMobileNavigation(view: "courses" | "files") {
+    const isCurrent = navigationOpen && !assistantOpen && navigationView === view;
     if (isCurrent) {
-      setAssistantOpen(false);
+      closeMobileWorkspaceSurfaces();
+      setNavigationOpen(false);
       return;
     }
+    openMobileNavigation(view);
+  }
+
+  function openAssistant(tab: "history" | "knowledge") {
+    closeMobileWorkspaceSurfaces("assistant");
     setQAUpperTab(tab);
     setAssistantOpen(true);
   }
 
+  function toggleMobileAssistant(tab: "history" | "knowledge") {
+    const isCurrent = assistantOpen && !navigationOpen && qaUpperTab === tab;
+    if (isCurrent) {
+      closeMobileWorkspaceSurfaces();
+      setAssistantOpen(false);
+      return;
+    }
+    openAssistant(tab);
+  }
+
+  function openSettings() {
+    closeMobileWorkspaceSurfaces("settings");
+    setSettingsOpen(true);
+  }
+
+  function openPrompts() {
+    closeMobileWorkspaceSurfaces("prompts");
+    setPromptEditorOpen(true);
+  }
+
+  function toggleMobileCommandPalette() {
+    const next = !commandPaletteOpen;
+    closeMobileWorkspaceSurfaces(next ? "command" : undefined);
+    setCommandPaletteOpen(next);
+  }
+
+  function toggleMobileMoreMenu() {
+    const next = !moreMenuOpen;
+    closeMobileWorkspaceSurfaces(next ? "more" : undefined);
+    setMoreMenuOpen(next);
+  }
+
   function openGeneration(intent: GenerationIntent) {
+    closeMobileWorkspaceSurfaces("generation");
     setGenerationIntent(intent);
     setGenerationOpen(true);
   }
@@ -3163,6 +3882,7 @@ export default function App() {
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenPrompts={() => setPromptEditorOpen(true)}
+          onOpenGestureGuide={() => setGestureGuideOpen(true)}
           onBuildIndex={() => void handleBuildIndex()}
           onToggleTheme={() => setThemeMode((current) => current === "dark" ? "light" : "dark")}
         />
@@ -3173,12 +3893,12 @@ export default function App() {
             <div className="brand-text"><strong>CodeCourse</strong><span>{project?.name ?? "学习工作台"}</span></div>
           </div>
           <div className="topbar-workspace-actions">
-            <button className="project-switch" onClick={() => { setAssistantOpen(false); setNavigationView("projects"); setNavigationOpen(true); }}>
+            <button className="project-switch" onClick={() => openMobileNavigation("projects")}>
               <span>{project?.name ?? "选择项目"}</span><ChevronDown size={15} />
             </button>
-            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => setCommandPaletteOpen(true)} title="搜索" aria-label="搜索"><Search size={18} /></button>
-            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => { setGenerationIntent(activeLessonNumber ? "lesson" : "outline"); setGenerationOpen(true); }} disabled={!project} title="生成学习内容" aria-label="生成学习内容"><Sparkles size={18} /></button>
-            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => setMoreMenuOpen((open) => !open)} title="更多" aria-label="更多"><MoreHorizontal size={18} /></button>
+            <button className="icon-button header-icon-button mobile-topbar-action" onClick={toggleMobileCommandPalette} title="搜索" aria-label="搜索"><Search size={18} /></button>
+            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => openGeneration(activeLessonNumber ? "lesson" : "outline")} disabled={!project} title="生成学习内容" aria-label="生成学习内容"><Sparkles size={18} /></button>
+            <button className="icon-button header-icon-button mobile-topbar-action" onClick={toggleMobileMoreMenu} title="更多" aria-label="更多"><MoreHorizontal size={18} /></button>
           </div>
         </header>
       )}
@@ -3194,11 +3914,11 @@ export default function App() {
               导入本地 ZIP
             </button>
             <div className="more-menu-divider" />
-            <button type="button" role="menuitem" onClick={() => { setSettingsOpen(true); setMoreMenuOpen(false); }}>
+            <button type="button" role="menuitem" onClick={openSettings}>
               <Bot size={15} />
               模型 API
             </button>
-            <button type="button" role="menuitem" onClick={() => { setPromptEditorOpen(true); setMoreMenuOpen(false); }}>
+            <button type="button" role="menuitem" onClick={openPrompts}>
               <Sparkles size={15} />
               提示词编辑
             </button>
@@ -3226,9 +3946,43 @@ export default function App() {
         toast={toast}
         onDismissError={() => setError("")}
       />
+      {desktopDropActive ? (
+        <div className="desktop-import-drop" role="status" aria-live="polite">
+          <div>
+            <FileArchive size={28} />
+            <strong>松开以导入项目</strong>
+            <span>支持本地文件夹或 ZIP 压缩包</span>
+          </div>
+        </div>
+      ) : null}
       {gestureHint ? (
         <div key={gestureHint.id} className="gesture-hint" role="status" aria-live="polite">
           {gestureHint.text}
+        </div>
+      ) : null}
+      {gestureGuideOpen && !mobileRuntime ? (
+        <div className="gesture-guide-layer" onMouseDown={() => setGestureGuideOpen(false)}>
+          <section className="gesture-guide-card" role="dialog" aria-modal="true" aria-labelledby="gesture-guide-title" onMouseDown={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <h2 id="gesture-guide-title">鼠标手势</h2>
+                <p>按住鼠标右键划动，松开后执行操作。</p>
+              </div>
+              <button className="icon-button" onClick={() => setGestureGuideOpen(false)} title="关闭" aria-label="关闭手势指南"><X size={17} /></button>
+            </header>
+            <div className="gesture-guide-grid">
+              <div><kbd>↖</kbd><strong>源码</strong><span>打开源码导航</span></div>
+              <div><kbd>↑</kbd><strong>恢复文档</strong><span>恢复最近关闭的文档</span></div>
+              <div><kbd>↗</kbd><strong>搜索</strong><span>打开命令与内容搜索</span></div>
+              <div><kbd>←</kbd><strong>撤销布局</strong><span>撤销工作区调整</span></div>
+              <div className="gesture-guide-center"><span>右键</span><strong>按住划动</strong></div>
+              <div><kbd>→</kbd><strong>下一文档</strong><span>切换当前组标签</span></div>
+              <div><kbd>↙</kbd><strong>AI 助手</strong><span>打开问答历史</span></div>
+              <div><kbd>↓</kbd><strong>关闭文档</strong><span>关闭当前标签</span></div>
+              <div><kbd>↘</kbd><strong>课程</strong><span>打开课程导航</span></div>
+            </div>
+            <footer>短划不会触发操作；未识别的轨迹会直接取消。</footer>
+          </section>
         </div>
       ) : null}
       <main
@@ -3245,7 +3999,7 @@ export default function App() {
         {mobileRuntime ? <nav className="activity-rail" aria-label="学习导航">
           <button className={navigationOpen && !assistantOpen && navigationView === "courses" ? "active" : ""} onClick={() => toggleMobileNavigation("courses")} title="课程"><BookOpen size={18} /><span>课程</span></button>
           <button className={navigationOpen && !assistantOpen && navigationView === "files" ? "active" : ""} onClick={() => toggleMobileNavigation("files")} title="源码"><FolderTree size={18} /><span>源码</span></button>
-          <button className={`desktop-project-nav ${navigationOpen && navigationView === "projects" ? "active" : ""}`} onClick={() => { setNavigationView("projects"); setNavigationOpen(navigationView !== "projects" || !navigationOpen); }} title="项目"><PanelLeft size={18} /><span>项目</span></button>
+          <button className={`desktop-project-nav ${navigationOpen && navigationView === "projects" ? "active" : ""}`} onClick={() => navigationOpen && navigationView === "projects" ? closeMobileWorkspaceSurfaces() : openMobileNavigation("projects")} title="项目"><PanelLeft size={18} /><span>项目</span></button>
           <span className="activity-rail-spacer" />
           <button className={assistantOpen && !navigationOpen && qaUpperTab === "history" ? "active" : ""} onClick={() => toggleMobileAssistant("history")} title="AI 助手"><Bot size={18} /><span>助手</span></button>
           <button className={`mobile-only ${assistantOpen && !navigationOpen && qaUpperTab === "knowledge" ? "active" : ""}`} onClick={() => toggleMobileAssistant("knowledge")} title="知识网络"><Sparkles size={18} /><span>网络</span></button>
@@ -3275,6 +4029,7 @@ export default function App() {
               onDeleteCourse={handleDeleteCourse}
               learningStates={learningStates}
               onContinueLearning={(filename) => void openCourseInActiveGroup(project!.id, filename)}
+              onDragItem={prefetchDropItem}
               onViewChange={mobileRuntime ? undefined : (view) => setNavigationView(view)}
             />
           </>
@@ -3321,6 +4076,7 @@ export default function App() {
           panelError={qaPanelError}
           askHeight={qaAskHeight}
           upperTab={qaUpperTab}
+          mobileMode={mobileRuntime}
           onUpperTabChange={setQAUpperTab}
           knowledgeDisabled={!project}
           knowledgeContent={project ? (
@@ -3372,7 +4128,7 @@ export default function App() {
           onDeleteRecord={handleDeleteQA}
           onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={openSettings}
           onClose={() => setAssistantOpen(false)}
         />
         </div>
@@ -3394,12 +4150,11 @@ export default function App() {
             if (nextScope !== "files") {
               setSelectedScopeFiles([]);
             } else {
-              setNavigationView("files");
-              setNavigationOpen(true);
+              openMobileNavigation("files");
             }
           }}
           onInstructionsChange={setGenerationInstructions}
-          onOpenPrompts={() => setPromptEditorOpen(true)}
+          onOpenPrompts={openPrompts}
           onGenerate={runSelectedGeneration}
         />
       ) : generationOpen ? (
@@ -3420,8 +4175,7 @@ export default function App() {
                     if (nextScope !== "files") {
                       setSelectedScopeFiles([]);
                     } else {
-                      setNavigationView("files");
-                      setNavigationOpen(true);
+                      openMobileNavigation("files");
                     }
                   }}
                   disabled={!project || isTaskRunning || isLearningPlanProject}
@@ -3494,8 +4248,7 @@ export default function App() {
           anchorRect={selectionAnchor.anchorRect}
           onAsk={() => {
             setSelection({ ...selectionAnchor });
-            setQAUpperTab("history");
-            setAssistantOpen(true);
+            openAssistant("history");
           }}
           onHighlight={() => {
             if (selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa") {

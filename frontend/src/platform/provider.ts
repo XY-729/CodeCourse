@@ -8,10 +8,14 @@ class HttpProvider implements CodeCourseProvider {
   constructor(private readonly apiBase: string) {}
 
   async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const hasBody = init?.body != null;
+    const body = init?.body;
+    const hasBody = body != null;
+    const isBinaryBody = typeof Blob !== "undefined" && body instanceof Blob;
+    const isFormBody = typeof FormData !== "undefined" && body instanceof FormData;
     const response = await fetch(`${this.apiBase}${path}`, {
       headers: {
-        ...(hasBody ? { "Content-Type": "application/json" } : {}),
+        ...(hasBody && !isBinaryBody && !isFormBody ? { "Content-Type": "application/json" } : {}),
+        ...(isBinaryBody && body.type ? { "Content-Type": body.type } : {}),
         ...init?.headers,
       },
       ...init,

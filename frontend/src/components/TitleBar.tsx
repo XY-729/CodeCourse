@@ -6,7 +6,7 @@ type DesktopAPI = {
   windowMaximize: () => void;
   windowClose: () => void;
   windowToggleFullscreen: () => void;
-  onWindowMaximizeChange: (callback: (isMaximized: boolean) => void) => void;
+  onWindowMaximizeChange: (callback: (isMaximized: boolean) => void) => (() => void) | void;
 };
 
 const api: DesktopAPI | undefined = (window as any).codecourseDesktop;
@@ -16,7 +16,7 @@ export default function TitleBar() {
 
   useEffect(() => {
     if (!api?.onWindowMaximizeChange) return;
-    api.onWindowMaximizeChange(setIsMaximized);
+    return api.onWindowMaximizeChange(setIsMaximized);
   }, []);
 
   if (!api?.windowMinimize) return null;

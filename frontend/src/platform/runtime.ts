@@ -7,7 +7,12 @@ type SecureStorePlugin = {
 };
 
 export const CodeCourseSecureStore = registerPlugin<SecureStorePlugin>("CodeCourseSecureStore");
-export const CodeCourseNative = registerPlugin<{ openExternal(options: { url: string }): Promise<void> }>("CodeCourseNative");
+export const CodeCourseNative = registerPlugin<{
+  openExternal(options: { url: string }): Promise<void>;
+  setGenerationActive(options: { active: boolean; label?: string }): Promise<void>;
+  notifyCompletion(options: { label: string }): Promise<void>;
+  moveToBackground(): Promise<void>;
+}>("CodeCourseNative");
 
 export function isNativeAndroidRuntime(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";

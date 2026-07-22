@@ -46,7 +46,27 @@ html:not(.platform-android) .markdown-body {
   font-size: var(--reader-font-size);
   line-height: var(--reader-line-height);
   letter-spacing: 0;
+}
+
+html:not(.platform-android) .markdown-scroll-viewport {
   scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+/* A workspace document keeps a stable line measure. The viewport consumes
+   outer whitespace first, then clips/scrolls the fixed page instead of
+   reflowing every paragraph while a horizontal divider is moving. */
+html:not(.platform-android) .reader-pane > .pane-body > .markdown-viewer:not(.embedded) > .markdown-scroll-viewport > .markdown-body {
+  width: 860px;
+  min-width: 860px;
+  max-width: none;
+  padding-inline: 64px;
+}
+
+/* Embedded answers live in the narrow inspector and remain responsive. */
+html:not(.platform-android) .markdown-viewer.embedded .markdown-body {
+  width: 100%;
+  min-width: 0;
 }
 
 html:not(.platform-android) .markdown-body h1,

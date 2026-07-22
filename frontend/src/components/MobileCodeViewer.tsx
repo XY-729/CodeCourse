@@ -29,7 +29,7 @@ type Props = {
   onVisibleLineChange?: (line: number) => void;
 };
 
-export default function MobileCodeViewer({ path, language, content, selectedRange, onSelectionChange, initialLine, onVisibleLineChange }: Props) {
+export default function MobileCodeViewer({ path, language, content, selectedRange, initialLine, onVisibleLineChange }: Props) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrollFrameRef = useRef(0);
   const visibleLineCallbackRef = useRef(onVisibleLineChange);
@@ -84,15 +84,7 @@ export default function MobileCodeViewer({ path, language, content, selectedRang
     scrollRef.current?.querySelector<HTMLElement>(`[data-line="${matches[next]}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
   }
 
-  function captureSelection() {
-    const selection = window.getSelection(); const selectedText = selection?.toString().trim() || ""; if (!selectedText || !selection?.anchorNode || !selection.focusNode) return;
-    const anchor = (selection.anchorNode.nodeType === Node.TEXT_NODE ? selection.anchorNode.parentElement : selection.anchorNode as Element)?.closest<HTMLElement>("[data-line]");
-    const focus = (selection.focusNode.nodeType === Node.TEXT_NODE ? selection.focusNode.parentElement : selection.focusNode as Element)?.closest<HTMLElement>("[data-line]");
-    const start = Number(anchor?.dataset.line || 1); const end = Number(focus?.dataset.line || start);
-    onSelectionChange?.({ sourceType: "file", sourcePath: path, selectedText, language, range: { startLineNumber: Math.min(start, end), startColumn: 1, endLineNumber: Math.max(start, end), endColumn: 1 } });
-  }
-
-  return <div className="viewer mobile-code-viewer"><div className="viewer-header"><span>{path ?? "代码"}</span><div className="viewer-actions"><strong>{language}</strong><button className="icon-button" onClick={() => setSearchOpen((open) => !open)} title="在文件中搜索"><Search size={15} /></button></div></div>{searchOpen ? <div className="mobile-code-search"><Search size={14} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setActiveMatch(0); }} placeholder="搜索当前文件" /><span>{matches.length ? `${activeMatch + 1}/${matches.length}` : "0/0"}</span><button className="icon-button" onClick={() => moveMatch(-1)} disabled={!matches.length} title="上一个"><ChevronUp size={15} /></button><button className="icon-button" onClick={() => moveMatch(1)} disabled={!matches.length} title="下一个"><ChevronDown size={15} /></button><button className="icon-button" onClick={() => { setSearchOpen(false); setQuery(""); }} title="关闭搜索"><X size={15} /></button></div> : null}<div ref={scrollRef} className="mobile-code-scroll" onScroll={captureVisibleLine} onPointerUp={captureSelection}>{lines.map((line, index) => {
+  return <div className="viewer mobile-code-viewer"><div className="viewer-header"><span>{path ?? "代码"}</span><div className="viewer-actions"><strong>{language}</strong><button className="icon-button" onClick={() => setSearchOpen((open) => !open)} title="在文件中搜索"><Search size={15} /></button></div></div>{searchOpen ? <div className="mobile-code-search"><Search size={14} /><input autoFocus value={query} onChange={(event) => { setQuery(event.target.value); setActiveMatch(0); }} placeholder="搜索当前文件" /><span>{matches.length ? `${activeMatch + 1}/${matches.length}` : "0/0"}</span><button className="icon-button" onClick={() => moveMatch(-1)} disabled={!matches.length} title="上一个"><ChevronUp size={15} /></button><button className="icon-button" onClick={() => moveMatch(1)} disabled={!matches.length} title="下一个"><ChevronDown size={15} /></button><button className="icon-button" onClick={() => { setSearchOpen(false); setQuery(""); }} title="关闭搜索"><X size={15} /></button></div> : null}<div ref={scrollRef} className="mobile-code-scroll" onScroll={captureVisibleLine}>{lines.map((line, index) => {
     const lineNumber = index + 1;
     const anchored = selectedRange && lineNumber >= selectedRange.startLineNumber && lineNumber <= selectedRange.endLineNumber;
     const matched = matchSet.has(lineNumber);

@@ -4,7 +4,7 @@ import asyncio
 import json as json_module
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from app.models.schemas import (
@@ -13,6 +13,7 @@ from app.models.schemas import (
     GenerateOutlineLessonRequest,
     GenerateOutlineRequest,
     GenerationTaskResponse,
+    ImportLocalProjectRequest,
     ImportProjectRequest,
     ProjectActionResponse,
     ProjectResponse,
@@ -33,6 +34,7 @@ from app.services.generation_service import (
     stream_outline_lesson_generation,
 )
 from app.services.git_service import clone_or_reuse, repo_name_from_url, validate_git_url
+from app.services.local_import_service import import_local_archive, import_local_directory
 from app.services.index_service import build_project_index
 from app.services.code_intelligence import remove_structural_project_data
 from app.services.scanner import scan_tree
@@ -120,6 +122,44 @@ def import_project(payload: ImportProjectRequest, background_tasks: BackgroundTa
     response = _to_project_response(project)
     response.course_files = [item.filename for item in course_files]
     return response
+
+
+def _persist_local_project(name: str, root: Path, source_url: str, background_tasks: BackgroundTasks) -> ProjectResponse:
+    project = upsert_project(name, source_url, root, "scanned")
+    course_files = generate_rule_course(project.id, root)
+    background_tasks.add_task(_run_index_build, project.id)
+    response = _to_project_response(project)
+    response.course_files = [item.filename for item in course_files]
+    return response
+
+
+@router.post("/projects/import-local", response_model=ProjectResponse)
+def import_local_project(payload: ImportLocalProjectRequest, background_tasks: BackgroundTasks) -> ProjectResponse:
+    source = Path(payload.path).expanduser()
+    if source.suffix.lower() == ".zip":
+        name, root, source_url = import_local_archive(payload.path)
+    else:
+        name, root, source_url = import_local_directory(payload.path)
+    return _persist_local_project(name, root, source_url, background_tasks)
+
+
+@router.post("/projects/import-archive", response_model=ProjectResponse)
+async def import_uploaded_archive(request: Request, background_tasks: BackgroundTasks, filename: str = "project.zip") -> ProjectResponse:
+    from tempfile import NamedTemporaryFile
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="ZIP file is empty")
+    if len(body) > 250 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="ZIP upload exceeds the 250 MB limit")
+    with NamedTemporaryFile(suffix=".zip", delete=False) as temporary:
+        temporary.write(body)
+        temporary_path = temporary.name
+    try:
+        name, root, source_url = import_local_archive(temporary_path, filename)
+        return _persist_local_project(name, root, source_url, background_tasks)
+    finally:
+        Path(temporary_path).unlink(missing_ok=True)
 
 
 def _safe_plan_dir_name(name: str) -> str:

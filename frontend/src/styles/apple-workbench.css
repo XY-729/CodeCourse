@@ -543,3 +543,43 @@ html:not(.platform-android) .resize-handle-y:hover { background: color-mix(in sr
   html:not(.platform-android) .pane-tab.active,
   html:not(.platform-android) .navigation-segmented button.active { transform: none; }
 }
+html:not(.platform-android) .detached-document-shell {
+  display: grid;
+  grid-template-rows: 30px 48px minmax(0, 1fr);
+  height: 100dvh;
+  min-width: 0;
+  overflow: hidden;
+}
+
+html:not(.platform-android) .detached-document-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--apple-separator);
+  background: var(--apple-toolbar);
+}
+
+html:not(.platform-android) .detached-document-header strong,
+html:not(.platform-android) .detached-document-header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html:not(.platform-android) .detached-document-header span {
+  color: var(--apple-text-secondary);
+  font-size: 12px;
+}
+
+html:not(.platform-android) .detached-document-body {
+  min-height: 0;
+  overflow: hidden;
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .detached-document-body > .viewer,
+html:not(.platform-android) .detached-document-body > .code-viewer {
+  height: 100%;
+}

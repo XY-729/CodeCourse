@@ -23,21 +23,34 @@
   "devDependencies": {
     "@capacitor/cli": "8.4.2",
     "electron": "^31.7.7",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "rcedit": "5.0.2"
   },
   "build": {
     "appId": "com.codecourse.app",
     "productName": "CodeCourse",
     "icon": "resources/icon.ico",
+    "afterPack": "electron/after-pack.cjs",
     "directories": {
       "output": "dist-desktop"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "XY-729",
+        "repo": "CodeCourse"
+      }
+    ],
     "files": [
       "electron/**/*",
       "frontend/dist/**/*",
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "resources/icon.ico",
+        "to": "icon.ico"
+      },
       {
         "from": "dist-backend/backend",
         "to": "backend"
@@ -60,7 +73,7 @@
         "portable"
       ],
       "icon": "resources/icon.ico",
-      "signAndEditExecutable": true
+      "signAndEditExecutable": false
     },
     "linux": {
       "target": [
@@ -83,6 +96,7 @@
     "@capacitor/filesystem": "8.1.2",
     "@capacitor/network": "8.0.1",
     "@capacitor/preferences": "8.0.1",
+    "electron-updater": "^6.8.9",
     "highlight.js": "11.11.1",
     "jszip": "3.10.1"
   }

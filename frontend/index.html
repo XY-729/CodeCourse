@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
-    <meta name="theme-color" content="#f7faf8" />
+    <meta name="theme-color" content="#edf4f1" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/logo.png" />
     <title>CodeCourse</title>
@@ -18,12 +18,12 @@
           : window.matchMedia("(prefers-color-scheme: dark)").matches
             ? "dark"
             : "light";
-        var bg = theme === "dark" ? "#1c1c1e" : "#f5f5f7";
+        var bg = theme === "dark" ? "#08111f" : "#edf4f1";
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.backgroundColor = bg;
         document.body.style.backgroundColor = bg;
         var mc = document.querySelector('meta[name="theme-color"]');
-        if (mc) mc.setAttribute("content", theme === "dark" ? "#090c12" : "#f7faf8");
+        if (mc) mc.setAttribute("content", theme === "dark" ? "#08111f" : "#edf4f1");
       })();
     </script>
     <div id="root"></div>

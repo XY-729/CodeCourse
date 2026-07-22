@@ -4,7 +4,7 @@
   "webDir": "frontend/dist",
   "android": {
     "allowMixedContent": false,
-    "backgroundColor": "#f7faf8"
+    "backgroundColor": "#edf4f1"
   },
   "plugins": {
     "CapacitorHttp": {

@@ -1,6 +1,7 @@
 import { BookOpen, Check, ChevronDown, ChevronRight, Circle, Trash2 } from "lucide-react";
 import { useState, type CSSProperties } from "react";
 import type { CourseFile, LearningState } from "../api/client";
+import { setCodeCourseDragImage } from "../utils/dragImage";
 
 type Props = {
   files: CourseFile[];
@@ -67,6 +68,7 @@ export default function CourseList({ files, selected, onSelect, onDragItem, onDe
                       JSON.stringify({ kind: "course", filename: file.filename }),
                     );
                     event.dataTransfer.effectAllowed = "copy";
+                    setCodeCourseDragImage(event.dataTransfer, file.title);
                     onDragItem?.("course", file.filename);
                   }}
                 >

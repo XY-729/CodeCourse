@@ -34,6 +34,7 @@ type Props = {
   panelError: string;
   askHeight: number;
   upperTab: AssistantTab;
+  mobileMode?: boolean;
   onUpperTabChange: (value: AssistantTab) => void;
   knowledgeContent?: ReactNode;
   knowledgeDisabled?: boolean;
@@ -73,7 +74,7 @@ function recordTitle(record: QARecord) {
 export default function ExplainPanel(props: Props) {
   const {
     selection, contextSummary, question, questionInput, loading, loadingLabel, streamContent, history, historyQuery, favoriteOnly,
-    selectedRecord, settings, panelError, askHeight, upperTab, onUpperTabChange, knowledgeContent,
+    selectedRecord, settings, panelError, askHeight, upperTab, mobileMode = false, onUpperTabChange, knowledgeContent,
     knowledgeDisabled, onAskResizeStart, onQuestionChange, onSelectionTextChange, onClearSelection,
     onAsk, onNewConversation, onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord,
     onOpenRecord, onDeleteRecord, onRenameRecord, onToggleFavorite, onOpenSettings, onClose,
@@ -81,29 +82,51 @@ export default function ExplainPanel(props: Props) {
   const selectedLength = selection?.selectedText.length ?? 0;
   const modelReady = Boolean(settings?.enabled && settings.has_api_key);
 
+  const mobileKnowledge = mobileMode && upperTab === "knowledge";
+  const mobileAssistant = mobileMode && upperTab === "history";
+
   return (
-    <aside className="explain-panel qa-panel" style={{ gridTemplateRows: `minmax(0, 1fr) 6px var(--qa-ask-h, ${askHeight}px)` }}>
+    <aside
+      className={`explain-panel qa-panel ${mobileKnowledge ? "mobile-knowledge-only" : ""} ${mobileAssistant ? "mobile-assistant-only" : ""}`}
+      style={{ gridTemplateRows: mobileKnowledge ? "minmax(0, 1fr) 0 0" : mobileAssistant ? "auto 0 minmax(0, 1fr)" : `minmax(0, 1fr) 6px var(--qa-ask-h, ${askHeight}px)` }}
+    >
       <section className="qa-history-section">
         <div className="qa-panel-tabs">
-          <div className="qa-panel-mode-tabs">
-            <button className={upperTab === "history" ? "active" : ""} onClick={() => onUpperTabChange("history")}>历史</button>
-            <button
-              className={upperTab === "knowledge" ? "active" : ""}
-              onClick={() => onUpperTabChange("knowledge")}
-              disabled={knowledgeDisabled}
-              draggable={!knowledgeDisabled}
-              onDragStart={(event) => {
-                event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "knowledge_graph" }));
-                event.dataTransfer.effectAllowed = "copy";
-              }}
-            >知识网络</button>
-          </div>
+          {mobileMode ? <strong className="mobile-panel-title">{mobileKnowledge ? "知识网络" : "AI 助手"}</strong> : (
+            <div className="qa-panel-mode-tabs">
+              <button className={upperTab === "history" ? "active" : ""} onClick={() => onUpperTabChange("history")}>历史</button>
+              <button
+                className={upperTab === "knowledge" ? "active" : ""}
+                onClick={() => onUpperTabChange("knowledge")}
+                disabled={knowledgeDisabled}
+                draggable={!knowledgeDisabled}
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "knowledge_graph" }));
+                  event.dataTransfer.effectAllowed = "copy";
+                }}
+              >知识网络</button>
+            </div>
+          )}
           {onClose ? <button className="icon-button panel-close" onClick={onClose} title="关闭 AI 助手" aria-label="关闭 AI 助手"><X size={16} /></button> : null}
         </div>
 
         <div className={`qa-upper-view ${upperTab}`} key={upperTab}>
           {upperTab === "knowledge" ? (
             <div className="qa-knowledge-slot">{knowledgeContent ?? <div className="empty small">请选择项目后查看知识网络</div>}</div>
+          ) : mobileAssistant ? (
+            <>
+              {loading && streamContent ? (
+                <div className="qa-stream-card mobile-current-answer">
+                  <header><Loader2 size={14} className="spin" /> <span>{loadingLabel || "生成中…"}</span></header>
+                  <div className="qa-stream-body markdown-body">{streamContent}</div>
+                </div>
+              ) : selectedRecord ? (
+                <button className="mobile-current-answer-card" type="button" onClick={() => onOpenRecord(selectedRecord)}>
+                  <strong>{recordTitle(selectedRecord)}</strong>
+                  <span>{selectedRecord.answer_md.replace(/[#>*`_\-]+/g, " ").replace(/\s+/g, " ").trim()}</span>
+                </button>
+              ) : null}
+            </>
           ) : (
             <>
               {loading && streamContent ? (

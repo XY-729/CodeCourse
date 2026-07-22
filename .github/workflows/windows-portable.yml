@@ -42,11 +42,17 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: CodeCourse-windows
-          path: dist-desktop/*.exe
+          path: |
+            dist-desktop/*.exe
+            dist-desktop/*.blockmap
+            dist-desktop/latest.yml
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist-desktop/*.exe
+          files: |
+            dist-desktop/*.exe
+            dist-desktop/*.blockmap
+            dist-desktop/latest.yml

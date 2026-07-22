@@ -27,6 +27,34 @@ body.resizing-y {
   user-select: none;
 }
 
+body.resizing-x .pane-body,
+body.resizing-y .pane-body {
+  pointer-events: none;
+}
+
+body.resizing-x .reader-pane,
+body.resizing-y .reader-pane,
+body.resizing-x .split-child,
+body.resizing-y .split-child {
+  transition: none !important;
+}
+
+body.resizing-x .split-node,
+body.resizing-y .split-node {
+  contain: layout paint;
+}
+
+body.resizing-x .reader-pane .pane-body {
+  overflow: hidden;
+}
+
+body.resizing-x .reader-pane .pane-body > .viewer,
+body.resizing-x .reader-pane .pane-body > .markdown-scroll-viewport {
+  flex: 0 0 var(--drag-pane-width);
+  width: var(--drag-pane-width);
+  max-width: none;
+}
+
 button,
 input,
 select,
@@ -499,9 +527,21 @@ button:disabled,
 }
 
 .split-child {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: flex;
+  overflow: hidden;
+}
+
+/* Later editor groups always paint above earlier groups. A narrow group clips
+   its own document instead of letting the left document cover its neighbour. */
+.split-node.row > .split-child.first {
+  z-index: 1;
+}
+
+.split-node.row > .split-child.second {
+  z-index: 2;
 }
 
 .split-resizer {
@@ -527,6 +567,46 @@ button:disabled,
   background: #9dcac1;
 }
 
+.split-drag-indicator {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  border-radius: 999px;
+  background: #4f8df7;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.72), 0 0 16px rgba(79, 141, 247, 0.5);
+  will-change: transform;
+}
+
+.split-drag-indicator.row {
+  width: 3px;
+}
+
+.split-drag-indicator.column {
+  height: 3px;
+}
+
+.codecourse-drag-image {
+  position: fixed;
+  left: -10000px;
+  top: -10000px;
+  z-index: -1;
+  display: flex;
+  align-items: center;
+  max-width: 320px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--apple-blue, #25766c) 42%, transparent);
+  border-radius: 8px;
+  color: var(--apple-text, #17212b);
+  background: color-mix(in srgb, var(--apple-surface, #fff) 94%, transparent);
+  box-shadow: 0 10px 30px rgba(18, 35, 52, 0.18);
+  font: 600 13px/1.35 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 .reader-pane {
   position: relative;
   flex: 1;
@@ -547,8 +627,15 @@ button:disabled,
   position: absolute;
   pointer-events: none;
   z-index: 10;
+  opacity: 0;
+  visibility: hidden;
   border: 2px solid #25766c;
   background: rgba(37, 118, 108, 0.16);
+}
+
+.drop-preview.visible {
+  opacity: 1;
+  visibility: visible;
 }
 
 .drop-preview.center {
@@ -589,7 +676,7 @@ button:disabled,
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px;
+  padding: 5px 44px 5px 8px;
   overflow-x: auto;
   overflow-y: hidden;
   border-bottom: 1px solid #d5dbe3;
@@ -677,10 +764,80 @@ button:disabled,
   min-height: 0;
 }
 
-.markdown-body {
+.pane-workspace-actions {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 24;
+}
+
+.pane-workspace-menu-button {
+  width: 28px;
+  height: 28px;
+  background: color-mix(in srgb, var(--apple-surface, #fff) 92%, transparent);
+  box-shadow: 0 2px 8px rgba(18, 35, 52, 0.08);
+}
+
+.pane-workspace-menu {
+  position: absolute;
+  top: 32px;
+  right: 0;
+  width: 190px;
+  padding: 5px;
+  border: 1px solid var(--apple-glass-border, #d5dbe3);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--apple-surface, #fff) 96%, transparent);
+  box-shadow: 0 14px 36px rgba(18, 35, 52, 0.18);
+  backdrop-filter: blur(18px) saturate(1.2);
+}
+
+.pane-workspace-menu button {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--apple-text, #18212f);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pane-workspace-menu button:hover:not(:disabled) {
+  background: var(--apple-blue-soft, #e8f1ff);
+}
+
+.pane-workspace-menu button.danger {
+  color: #c23b35;
+}
+
+.pane-workspace-menu button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.pane-workspace-menu-separator {
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--apple-separator, #d5dbe3);
+}
+
+.deferred-editor-loading {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.markdown-scroll-viewport {
+  flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
+}
+
+.markdown-body {
+  min-height: 100%;
+  overflow: visible;
   padding: 24px 34px 48px;
   line-height: 1.72;
 }

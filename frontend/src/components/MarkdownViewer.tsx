@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import hljs from "highlight.js";
 import type { DocumentTerm, HighlightRecord, KnowledgeLink } from "../api/client";
+import { isAndroidRuntime } from "../platform/runtime";
 import type { Annotation } from "../types";
 import { COLOR_VALUES } from "../types";
 import type { ViewerSelection } from "./CodeViewer";
@@ -291,6 +292,7 @@ export default function MarkdownViewer({
   onScrollRatioChange,
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
+  const androidRuntime = isAndroidRuntime();
   const [selectedText, setSelectedText] = useState("");
   const [docFontSize, setDocFontSize] = useState(() => {
     try {
@@ -346,7 +348,7 @@ export default function MarkdownViewer({
     onScrollRatioChange(maxScroll > 0 ? article.scrollTop / maxScroll : 0);
   }
 
-  function captureSelection() {
+  const captureSelection = useCallback(() => {
     const article = articleRef.current;
     const selection = window.getSelection();
     if (!article || !selection) {
@@ -378,7 +380,7 @@ export default function MarkdownViewer({
         } : undefined,
       });
     }
-  }
+  }, [onSelectionChange, sourcePath, sourceType, title]);
 
   function handleContextMenu(event: React.MouseEvent) {
     const article = articleRef.current;
@@ -486,15 +488,17 @@ export default function MarkdownViewer({
       </div> : null}
       <article
         ref={articleRef}
-        className="markdown-body"
-        onMouseUp={captureSelection}
+        className="markdown-scroll-viewport"
+        onMouseUp={androidRuntime ? undefined : captureSelection}
         onKeyUp={captureSelection}
         onContextMenu={handleContextMenu}
         onScroll={reportScroll}
       >
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={highlightedComponents}>
-          {content}
-        </ReactMarkdown>
+        <div className="markdown-body">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={highlightedComponents}>
+            {content}
+          </ReactMarkdown>
+        </div>
       </article>
     </div>
   );

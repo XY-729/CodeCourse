@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import DetachedDocumentWindow from "./components/DetachedDocumentWindow";
 import GestureLayer from "./components/GestureLayer";
 import "./styles.css";
 import "./styles/apple-tokens.css";
@@ -19,12 +20,13 @@ applyPlatformClass();
 // Sync theme-color as a fallback in case the meta tag moved.
 const observedTheme = document.documentElement.dataset.theme;
 if (observedTheme === "dark" || observedTheme === "light") {
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", observedTheme === "dark" ? "#090c12" : "#f7faf8");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", observedTheme === "dark" ? "#08111f" : "#edf4f1");
 }
+
+const detachedWindow = new URLSearchParams(window.location.search).has("detached");
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
-    <GestureLayer />
+    {detachedWindow ? <DetachedDocumentWindow /> : <><App /><GestureLayer /></>}
   </React.StrictMode>,
 );

@@ -7,6 +7,7 @@ import {
   FileText,
   FolderPlus,
   MoreHorizontal,
+  MousePointer2,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
@@ -46,6 +47,7 @@ type Props = {
   onOpenCommandPalette: () => void;
   onOpenSettings: () => void;
   onOpenPrompts: () => void;
+  onOpenGestureGuide: () => void;
   onBuildIndex: () => void;
   onToggleTheme: () => void;
 };
@@ -78,6 +80,7 @@ export default function DesktopToolbar(props: Props) {
     onOpenCommandPalette,
     onOpenSettings,
     onOpenPrompts,
+    onOpenGestureGuide,
     onBuildIndex,
     onToggleTheme,
   } = props;
@@ -215,6 +218,7 @@ export default function DesktopToolbar(props: Props) {
               <button onClick={() => { setMenu(null); onOpenSettings(); }}><Bot size={15} />模型 API</button>
               <button onClick={() => { setMenu(null); onOpenPrompts(); }}><Sparkles size={15} />提示词编辑</button>
               <button onClick={() => { setMenu(null); onBuildIndex(); }} disabled={indexDisabled}><RefreshCw size={15} />{indexLabel}</button>
+              <button onClick={() => { setMenu(null); onOpenGestureGuide(); }}><MousePointer2 size={15} />鼠标手势指南</button>
               <div className="apple-popover-divider" />
               <button onClick={() => { setMenu(null); onOpenCommandPalette(); }}><Settings2 size={15} />命令面板 <kbd>Ctrl K</kbd></button>
             </div>
