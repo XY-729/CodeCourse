@@ -2656,7 +2656,9 @@ export default function App() {
   ) {
     const path = sourcePath ?? "";
     const text = selectedText.slice(0, 20000);
-    openAssistant("history");
+    if (!mobileRuntime) {
+      openAssistant("history");
+    }
     setSelection({
       sourceType,
       sourcePath: path || null,

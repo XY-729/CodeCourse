@@ -651,7 +651,15 @@ html.platform-android .mobile-line-number {
   color: #8a9892;
   border-right-color: var(--mobile-line);
   background: #f1f6f4;
+  user-select: none;
+  -webkit-user-select: none;
 }
+
+html.platform-android .mobile-code-line code {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 
 html.platform-android .mobile-code-viewer .hljs-keyword,
 html.platform-android .mobile-code-viewer .hljs-selector-tag { color: #7b3fc2; }
