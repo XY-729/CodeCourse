@@ -88,8 +88,23 @@ class CodeChunk:
     end_line: int
     chunk_type: str
     symbol_name: Optional[str]
+    qualified_name: Optional[str]
+    parent_symbol: Optional[str]
+    symbol_kind: Optional[str]
+    signature: Optional[str]
+    docstring: Optional[str]
     content: str
     content_hash: str
+    token_count: int
+    start_byte: int
+    end_byte: int
+    fragment_index: int
+    fragment_count: int
+    parse_status: str
+    parser: str
+    match_fields: Optional[str]
+    chunk_version: int
+    generation: int
     created_at: str
 
 
@@ -367,6 +382,26 @@ def init_storage() -> None:
         if "generation" not in chunk_cols:
             conn.execute("ALTER TABLE code_chunks ADD COLUMN generation INTEGER NOT NULL DEFAULT 1")
             conn.commit()
+        # AST chunk fields migration
+        ast_chunk_migrations = {
+            "qualified_name": "TEXT",
+            "parent_symbol": "TEXT",
+            "symbol_kind": "TEXT",
+            "signature": "TEXT",
+            "docstring": "TEXT",
+            "token_count": "INTEGER NOT NULL DEFAULT 0",
+            "start_byte": "INTEGER NOT NULL DEFAULT 0",
+            "end_byte": "INTEGER NOT NULL DEFAULT 0",
+            "fragment_index": "INTEGER NOT NULL DEFAULT 0",
+            "fragment_count": "INTEGER NOT NULL DEFAULT 0",
+            "parse_status": "TEXT NOT NULL DEFAULT 'fallback'",
+            "parser": "TEXT NOT NULL DEFAULT 'line-based'",
+            "match_fields": "TEXT",
+            "chunk_version": "INTEGER NOT NULL DEFAULT 1",
+        }
+        for col_name, col_def in ast_chunk_migrations.items():
+            if col_name not in chunk_cols:
+                conn.execute(f"ALTER TABLE code_chunks ADD COLUMN {col_name} {col_def}")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS indexed_files (
@@ -384,6 +419,12 @@ def init_storage() -> None:
             )
             """
         )
+        # Migration: add is_stale and last_error to indexed_files
+        if_cols = [row[1] for row in conn.execute("PRAGMA table_info(indexed_files)").fetchall()]
+        if "is_stale" not in if_cols:
+            conn.execute("ALTER TABLE indexed_files ADD COLUMN is_stale INTEGER NOT NULL DEFAULT 0")
+        if "last_error" not in if_cols:
+            conn.execute("ALTER TABLE indexed_files ADD COLUMN last_error TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS project_indexes (
@@ -435,6 +476,8 @@ def init_storage() -> None:
             "chunk_algorithm_version": "INTEGER",
             "ignore_rules_version": "INTEGER",
             "structural_engine_version": "INTEGER",
+            "structural_index_schema_version": "INTEGER",
+            "parser_grammar_version": "INTEGER",
         }
         for column, definition in index_migrations.items():
             if column not in index_cols:
@@ -743,6 +786,11 @@ def _row_to_qa_session(row: sqlite3.Row) -> QASession:
 
 
 def _row_to_code_chunk(row: sqlite3.Row) -> CodeChunk:
+    def _opt(key: str, default=None):
+        if key in row.keys():
+            return row[key]
+        return default
+
     return CodeChunk(
         id=row["id"],
         project_id=row["project_id"],
@@ -751,9 +799,24 @@ def _row_to_code_chunk(row: sqlite3.Row) -> CodeChunk:
         start_line=row["start_line"],
         end_line=row["end_line"],
         chunk_type=row["chunk_type"],
-        symbol_name=row["symbol_name"],
+        symbol_name=row["symbol_name"] if "symbol_name" in row.keys() else None,
+        qualified_name=_opt("qualified_name"),
+        parent_symbol=_opt("parent_symbol"),
+        symbol_kind=_opt("symbol_kind"),
+        signature=_opt("signature"),
+        docstring=_opt("docstring"),
         content=row["content"],
         content_hash=row["content_hash"],
+        token_count=_opt("token_count", 0),
+        start_byte=_opt("start_byte", 0),
+        end_byte=_opt("end_byte", 0),
+        fragment_index=_opt("fragment_index", 0),
+        fragment_count=_opt("fragment_count", 0),
+        parse_status=_opt("parse_status", "fallback"),
+        parser=_opt("parser", "line-based"),
+        match_fields=_opt("match_fields"),
+        chunk_version=_opt("chunk_version", 1),
+        generation=_opt("generation", 1),
         created_at=row["created_at"],
     )
 
@@ -1298,6 +1361,12 @@ def set_project_index_status(
     last_good_index_at: Optional[str] = None,
     active_generation: Optional[int] = None,
     building_generation: Optional[int] = None,
+    structural_engine_version: Optional[int] = None,
+    ignore_rules_version: Optional[int] = None,
+    chunk_algorithm_version: Optional[int] = None,
+    index_schema_version: Optional[int] = None,
+    structural_index_schema_version: Optional[int] = None,
+    parser_grammar_version: Optional[int] = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
@@ -1324,6 +1393,12 @@ def set_project_index_status(
             "failed_files": failed_files if failed_files is not None else previous.get("failed_files", 0),
             "active_generation": active_generation if active_generation is not None else previous.get("active_generation", 0),
             "building_generation": building_generation if building_generation is not None else previous.get("building_generation"),
+            "structural_engine_version": structural_engine_version if structural_engine_version is not None else previous.get("structural_engine_version"),
+            "ignore_rules_version": ignore_rules_version if ignore_rules_version is not None else previous.get("ignore_rules_version"),
+            "chunk_algorithm_version": chunk_algorithm_version if chunk_algorithm_version is not None else previous.get("chunk_algorithm_version"),
+            "index_schema_version": index_schema_version if index_schema_version is not None else previous.get("index_schema_version"),
+            "structural_index_schema_version": structural_index_schema_version if structural_index_schema_version is not None else previous.get("structural_index_schema_version"),
+            "parser_grammar_version": parser_grammar_version if parser_grammar_version is not None else previous.get("parser_grammar_version"),
         }
         conn.execute(
             """
@@ -1334,11 +1409,15 @@ def set_project_index_status(
                 stage, progress_current, progress_total,
                 processed_files, unchanged_files, added_files, updated_files,
                 deleted_files, skipped_files, failed_files,
-                active_generation, building_generation, started_at, finished_at, duration_ms,
+                active_generation, building_generation,
+                structural_engine_version, ignore_rules_version,
+                chunk_algorithm_version, index_schema_version,
+                structural_index_schema_version, parser_grammar_version,
+                started_at, finished_at, duration_ms,
                 updated_at
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id) DO UPDATE SET
                 status = excluded.status,
                 chunk_count = excluded.chunk_count,
@@ -1363,6 +1442,12 @@ def set_project_index_status(
                 failed_files = COALESCE(excluded.failed_files, project_indexes.failed_files),
                 active_generation = COALESCE(excluded.active_generation, project_indexes.active_generation),
                 building_generation = COALESCE(excluded.building_generation, project_indexes.building_generation),
+                structural_engine_version = COALESCE(excluded.structural_engine_version, project_indexes.structural_engine_version),
+                ignore_rules_version = COALESCE(excluded.ignore_rules_version, project_indexes.ignore_rules_version),
+                chunk_algorithm_version = COALESCE(excluded.chunk_algorithm_version, project_indexes.chunk_algorithm_version),
+                index_schema_version = COALESCE(excluded.index_schema_version, project_indexes.index_schema_version),
+                structural_index_schema_version = COALESCE(excluded.structural_index_schema_version, project_indexes.structural_index_schema_version),
+                parser_grammar_version = COALESCE(excluded.parser_grammar_version, project_indexes.parser_grammar_version),
                 started_at = excluded.started_at,
                 finished_at = excluded.finished_at,
                 duration_ms = excluded.duration_ms,
@@ -1380,6 +1465,9 @@ def set_project_index_status(
                 values["updated_files"], values["deleted_files"], values["skipped_files"],
                 values["failed_files"],
                 values["active_generation"], values["building_generation"],
+                values["structural_engine_version"], values["ignore_rules_version"],
+                values["chunk_algorithm_version"], values["index_schema_version"],
+                values["structural_index_schema_version"], values["parser_grammar_version"],
                 started_at, finished_at, duration_ms,
                 now,
             ),
@@ -1411,6 +1499,12 @@ DEFAULT_INDEX_STATUS_FIELDS: dict[str, object] = {
     "failed_files": 0,
     "active_generation": 0,
     "building_generation": None,
+    "structural_engine_version": None,
+    "ignore_rules_version": None,
+    "chunk_algorithm_version": None,
+    "index_schema_version": None,
+    "structural_index_schema_version": None,
+    "parser_grammar_version": None,
     "started_at": None,
     "finished_at": None,
     "duration_ms": None,
@@ -1465,9 +1559,15 @@ def write_chunks_to_generation(project_id: int, generation: int, chunks: list[di
                 """
                 INSERT INTO code_chunks (
                     project_id, path, language, start_line, end_line, chunk_type,
-                    symbol_name, content, content_hash, generation, created_at
+                    symbol_name, qualified_name, parent_symbol, symbol_kind,
+                    signature, docstring,
+                    content, content_hash,
+                    token_count, start_byte, end_byte,
+                    fragment_index, fragment_count,
+                    parse_status, parser, match_fields, chunk_version,
+                    generation, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project_id,
@@ -1475,21 +1575,44 @@ def write_chunks_to_generation(project_id: int, generation: int, chunks: list[di
                     str(chunk["language"]),
                     int(chunk["start_line"]),
                     int(chunk["end_line"]),
-                    str(chunk["chunk_type"]),
+                    str(chunk.get("chunk_type", "line_fallback")),
                     chunk.get("symbol_name"),
+                    chunk.get("qualified_name"),
+                    chunk.get("parent_symbol"),
+                    chunk.get("symbol_kind"),
+                    str(chunk.get("signature")) if chunk.get("signature") else None,
+                    chunk.get("docstring"),
                     str(chunk["content"]),
-                    str(chunk["content_hash"]),
+                    str(chunk.get("content_hash", "")),
+                    int(chunk.get("token_count", 0)),
+                    int(chunk.get("start_byte", 0)),
+                    int(chunk.get("end_byte", 0)),
+                    int(chunk.get("fragment_index", 0)),
+                    int(chunk.get("fragment_count", 0)),
+                    str(chunk.get("parse_status", "fallback")),
+                    str(chunk.get("parser", "line-based")),
+                    str(chunk.get("match_fields")) if chunk.get("match_fields") else None,
+                    int(chunk.get("chunk_version", 1)),
                     generation,
                     now,
                 ),
             )
             chunk_id = int(cursor.lastrowid)
+            # FTS: include all searchable fields
+            fts_content = " ".join(filter(None, [
+                str(chunk.get("symbol_name") or ""),
+                str(chunk.get("qualified_name") or ""),
+                str(chunk.get("parent_symbol") or ""),
+                str(chunk.get("signature") or ""),
+                str(chunk.get("docstring") or ""),
+                str(chunk["content"]),
+            ]))
             conn.execute(
                 """
                 INSERT INTO code_chunks_fts (chunk_id, project_id, path, symbol_name, content)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (chunk_id, project_id, str(chunk["path"]), chunk.get("symbol_name"), str(chunk["content"])),
+                (chunk_id, project_id, str(chunk["path"]), chunk.get("symbol_name"), fts_content),
             )
         conn.commit()
 
@@ -1549,24 +1672,51 @@ def copy_unchanged_chunks(project_id: int, old_generation: int, new_generation: 
     return count
 
 
-def activate_generation(project_id: int, generation: int) -> None:
-    """Switch active_generation to the given generation in a transaction."""
+def activate_generation(
+    project_id: int,
+    generation: int,
+    *,
+    status: Optional[str] = None,
+    text_status: Optional[str] = None,
+    stage: Optional[str] = None,
+    last_good_index_at: Optional[str] = None,
+    chunk_count: Optional[int] = None,
+) -> None:
+    """Switch active_generation and optionally update status fields in one transaction."""
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         existing = conn.execute(
             "SELECT project_id FROM project_indexes WHERE project_id = ?", (project_id,)
         ).fetchone()
         if existing:
+            # Build SET clause dynamically for provided fields
+            sets = [
+                "active_generation = ?",
+                "building_generation = NULL",
+                "last_good_generation = active_generation",
+            ]
+            params: list[object] = [generation]
+            if status is not None:
+                sets.append("status = ?")
+                params.append(status)
+            if text_status is not None:
+                sets.append("text_status = ?")
+                params.append(text_status)
+            if stage is not None:
+                sets.append("stage = ?")
+                params.append(stage)
+            if last_good_index_at is not None:
+                sets.append("last_good_index_at = ?")
+                params.append(last_good_index_at)
+            if chunk_count is not None:
+                sets.append("chunk_count = ?")
+                params.append(chunk_count)
+            sets.append("updated_at = ?")
+            params.append(now)
+            params.append(project_id)
             conn.execute(
-                """
-                UPDATE project_indexes
-                SET active_generation = ?,
-                    building_generation = NULL,
-                    last_good_generation = active_generation,
-                    updated_at = ?
-                WHERE project_id = ?
-                """,
-                (generation, now, project_id),
+                f"UPDATE project_indexes SET {', '.join(sets)} WHERE project_id = ?",
+                params,
             )
         else:
             conn.execute(
@@ -1603,7 +1753,7 @@ def clean_generation(project_id: int, generation: int) -> int:
 def get_all_indexed_files(project_id: int) -> list[dict[str, object]]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT relative_path, file_size, mtime_ns, content_hash, language, chunk_version "
+            "SELECT relative_path, file_size, mtime_ns, content_hash, language, chunk_version, is_stale, last_error "
             "FROM indexed_files WHERE project_id = ?",
             (project_id,),
         ).fetchall()
@@ -1639,14 +1789,16 @@ def upsert_indexed_files_batch(project_id: int, records: list[dict[str, object]]
         for rec in records:
             conn.execute(
                 """
-                INSERT INTO indexed_files (project_id, relative_path, file_size, mtime_ns, content_hash, language, chunk_version, indexed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO indexed_files (project_id, relative_path, file_size, mtime_ns, content_hash, language, chunk_version, is_stale, last_error, indexed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
                 ON CONFLICT(project_id, relative_path) DO UPDATE SET
                     file_size = excluded.file_size,
                     mtime_ns = excluded.mtime_ns,
                     content_hash = excluded.content_hash,
                     language = excluded.language,
                     chunk_version = excluded.chunk_version,
+                    is_stale = 0,
+                    last_error = NULL,
                     indexed_at = excluded.indexed_at
                 """,
                 (
@@ -1659,6 +1811,20 @@ def upsert_indexed_files_batch(project_id: int, records: list[dict[str, object]]
                     int(rec.get("chunk_version", 1)),
                     now,
                 ),
+            )
+        conn.commit()
+
+
+def mark_indexed_files_stale(project_id: int, paths: list[str], error: str = "") -> None:
+    """Mark files as needing re-indexing on next build, without changing content_hash."""
+    if not paths:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        for path in paths:
+            conn.execute(
+                "UPDATE indexed_files SET is_stale = 1, last_error = ?, indexed_at = ? WHERE project_id = ? AND relative_path = ?",
+                (error[:500] if error else None, now, project_id, path),
             )
         conn.commit()
 
@@ -1719,25 +1885,33 @@ def search_code_chunks(project_id: int, query: str, source_path: Optional[str] =
                 WHERE code_chunks_fts MATCH ? AND c.project_id = ?
                   AND c.generation = ?
                 ORDER BY
+                    CASE WHEN c.qualified_name = ? THEN 0 ELSE 1 END,
+                    CASE WHEN c.symbol_name = ? THEN 0 ELSE 1 END,
                     CASE WHEN c.path = ? THEN 0 ELSE 1 END,
                     rank,
                     c.path,
                     c.start_line
                 LIMIT ?
                 """,
-                (fts_query, project_id, active_gen, source_path or "", limit),
+                (fts_query, project_id, active_gen, query, query, source_path or "", limit),
             ).fetchall()
         except sqlite3.OperationalError:
             like = f"%{terms[0]}%"
             rows = conn.execute(
                 """
                 SELECT * FROM code_chunks
-                WHERE project_id = ? AND (content LIKE ? OR path LIKE ? OR COALESCE(symbol_name, '') LIKE ?)
+                WHERE project_id = ?
+                  AND (content LIKE ? OR path LIKE ? OR COALESCE(symbol_name, '') LIKE ?
+                       OR COALESCE(qualified_name, '') LIKE ?)
                   AND generation = ?
-                ORDER BY CASE WHEN path = ? THEN 0 ELSE 1 END, path, start_line
+                ORDER BY
+                    CASE WHEN qualified_name = ? THEN 0 ELSE 1 END,
+                    CASE WHEN symbol_name = ? THEN 0 ELSE 1 END,
+                    CASE WHEN path = ? THEN 0 ELSE 1 END,
+                    path, start_line
                 LIMIT ?
                 """,
-                (project_id, like, like, like, active_gen, source_path or "", limit),
+                (project_id, like, like, like, like, active_gen, query, query, source_path or "", limit),
             ).fetchall()
         return [_row_to_code_chunk(row) for row in rows]
 

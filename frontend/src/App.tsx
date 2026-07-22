@@ -268,10 +268,27 @@ function indexStatusMessage(status: ProjectIndexStatus | null): string {
     return `基础索引已完成${degraded}`;
   }
   if (status.status === "failed") {
-    const stillOk = (status.degraded_reason || "").includes("仍在使用")
-      ? "，当前仍在使用上一版索引"
-      : "";
-    return `索引失败${stillOk}`;
+    if (status.active_generation && (status.active_generation > 1)) {
+      return "新版索引构建失败，当前仍在使用上一版索引。";
+    }
+    return "索引失败";
+  }
+  if (status.status === "building" && status.active_generation && (status.active_generation > 0)) {
+    const buildGen = status.building_generation ? ` gen ${status.building_generation}` : "";
+    return `正在构建新版索引${buildGen}，搜索仍使用 gen ${status.active_generation}。`;
+  }
+  if (status.status === "completed") {
+    const parts: string[] = [status.chunk_count ? `${status.chunk_count} 个片段` : ""];
+    if (status.active_generation) parts.push(`gen ${status.active_generation}`);
+    if (status.degraded_reason) parts.push(`(${status.degraded_reason.slice(0, 40)})`);
+    if (status.failed_files) parts.push(`${status.failed_files} 个文件失败`);
+    if (status.last_good_index_at) {
+      try {
+        const d = new Date(status.last_good_index_at);
+        parts.push(d.toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }));
+      } catch { /* ignore */ }
+    }
+    return parts.join(" · ") || "索引完成";
   }
   return `${status.status} · ${status.chunk_count} 个文本片段`;
 }

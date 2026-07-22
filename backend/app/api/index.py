@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 
 from app.models.schemas import ProjectIndexStatusResponse, ProjectSearchRequest, ProjectSearchResult
 from app.services.index_service import build_project_index, index_status, search_project
@@ -53,15 +53,19 @@ def _status_response(project_id: int) -> ProjectIndexStatusResponse:
     )
 
 
-def _run_build(project_id: int) -> None:
+def _run_build(project_id: int, force_verify: bool = False) -> None:
     try:
-        build_project_index(project_id)
+        build_project_index(project_id, force_verify=force_verify)
     except Exception as exc:
         set_project_index_status(project_id, "failed", 0, str(exc), text_status="failed")
 
 
 @router.post("/{project_id}/index/build", response_model=ProjectIndexStatusResponse)
-def build_index(project_id: int, background_tasks: BackgroundTasks) -> ProjectIndexStatusResponse:
+def build_index(
+    project_id: int,
+    background_tasks: BackgroundTasks,
+    force_verify: bool = Query(False, description="Force full SHA-256 content verification for all files"),
+) -> ProjectIndexStatusResponse:
     _require_project(project_id)
     current = index_status(project_id)
     if current.get("status") == "building":
@@ -76,7 +80,7 @@ def build_index(project_id: int, background_tasks: BackgroundTasks) -> ProjectIn
         degraded_reason=None,
         stage="queued",
     )
-    background_tasks.add_task(_run_build, project_id)
+    background_tasks.add_task(_run_build, project_id, force_verify)
     return _status_response(project_id)
 
 
