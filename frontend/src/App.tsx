@@ -271,16 +271,57 @@ function taskStatusMessage(task: GenerationTask): string {
 
 function indexStatusMessage(status: ProjectIndexStatus | null): string {
   if (!status) return "索引未构建";
+  const stageLabel: Record<string, string> = {
+    scanning: "正在扫描文件",
+    comparing: "正在对比文件变化",
+    building_text_index: "正在构建文本索引",
+    building_structural_index: "正在分析调用关系",
+    switching_generation: "正在切换索引版本",
+    cleaning_old_generation: "正在清理旧索引",
+    completed: "索引完成",
+    failed: "索引失败",
+    cancelled: "索引已取消",
+  };
+  if (status.stage && stageLabel[status.stage]) {
+    const parts = [stageLabel[status.stage]];
+    if (status.progress_total && status.progress_total > 0) {
+      parts.push(`(${status.progress_current}/${status.progress_total})`);
+    }
+    return parts.join(" ");
+  }
   if (status.text_status === "building") return "正在构建基础索引";
   if (status.structural_status === "building") return "基础索引完成，正在分析调用关系";
   if (status.structural_status === "completed") {
     const graphSize = status.node_count ? ` · ${status.node_count} 个结构节点` : "";
     return `结构索引已完成${graphSize}`;
   }
-  if (status.text_status === "completed" && status.structural_status && status.structural_status !== "not_built") {
-    return "基础索引已完成 · 结构分析不可用";
+  if (status.text_status === "completed") {
+    const degraded = status.degraded_reason ? `（${status.degraded_reason.slice(0, 60)}）` : "";
+    return `基础索引已完成${degraded}`;
   }
-  if (status.status === "failed") return "索引失败";
+  if (status.status === "failed") {
+    if (status.active_generation && (status.active_generation > 1)) {
+      return "新版索引构建失败，当前仍在使用上一版索引。";
+    }
+    return "索引失败";
+  }
+  if (status.status === "building" && status.active_generation && (status.active_generation > 0)) {
+    const buildGen = status.building_generation ? ` gen ${status.building_generation}` : "";
+    return `正在构建新版索引${buildGen}，搜索仍使用 gen ${status.active_generation}。`;
+  }
+  if (status.status === "completed") {
+    const parts: string[] = [status.chunk_count ? `${status.chunk_count} 个片段` : ""];
+    if (status.active_generation) parts.push(`gen ${status.active_generation}`);
+    if (status.degraded_reason) parts.push(`(${status.degraded_reason.slice(0, 40)})`);
+    if (status.failed_files) parts.push(`${status.failed_files} 个文件失败`);
+    if (status.last_good_index_at) {
+      try {
+        const d = new Date(status.last_good_index_at);
+        parts.push(d.toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }));
+      } catch { /* ignore */ }
+    }
+    return parts.join(" · ") || "索引完成";
+  }
   return `${status.status} · ${status.chunk_count} 个文本片段`;
 }
 
@@ -920,7 +961,6 @@ export default function App() {
       window.removeEventListener("drop", onDrop);
     };
   }, [mobileRuntime]);
-
   useEffect(() => {
     if (mobileRuntime) return;
     window.addEventListener("dragend", clearDropPreview, true);

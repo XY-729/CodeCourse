@@ -685,24 +685,107 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async buildIndex(projectId: number): Promise<ProjectIndexStatus> {
     if (this.runningIndexes.has(projectId)) return this.indexStatus(projectId);
     this.runningIndexes.add(projectId);
-    await this.setSetting(`index.${projectId}.status`, JSON.stringify({ status: "building", chunk_count: 0, updated_at: now() }));
+    await this.setSetting(`index.${projectId}.status`, JSON.stringify({ status: "building", chunk_count: 0, updated_at: now(), stage: "scanning" }));
     try {
-      await db.run("DELETE FROM code_chunks WHERE project_id=?", [projectId]); await db.run("DELETE FROM code_chunks_fts WHERE project_id=?", [projectId]);
-      const files = await db.query<Row>("SELECT path,language FROM project_files WHERE project_id=? ORDER BY path", [projectId]); let count = 0;
+      const files = await db.query<Row>("SELECT path,language FROM project_files WHERE project_id=? ORDER BY path", [projectId]);
+      const existingRows = await db.query<Row>("SELECT relative_path, file_size, mtime_ns, content_hash, language FROM indexed_files WHERE project_id=?", [projectId]);
+      const existingMap = new Map<string, Row>();
+      for (const row of existingRows) existingMap.set(String(row.relative_path), row);
+
+      const newPaths: string[] = [];
+      const modifiedPaths: string[] = [];
+      const unchangedPaths: string[] = [];
+
       for (const file of files) {
-        const content = await readRepoFile(projectId, file.path); const lines = content.split("\n");
+        const existing = existingMap.get(String(file.path));
+        if (!existing) {
+          newPaths.push(file.path);
+        } else {
+          // Android files have no mtime_ns; we rely on content hash stored in indexed_files
+          unchangedPaths.push(file.path);
+        }
+      }
+      const existingPaths = new Set(existingMap.keys());
+      const currentPaths = new Set(files.map((f) => String(f.path)));
+      const stalePaths = [...existingPaths].filter((p) => !currentPaths.has(p));
+
+      // Get next generation
+      const genRow = (await db.query<Row>("SELECT COALESCE(MAX(generation), 0) AS mx FROM code_chunks WHERE project_id=?", [projectId]))[0];
+      const newGen = Number(genRow.mx) + 1;
+      const activeGen = newGen > 1 ? newGen - 1 : 0;
+
+      await this.setSetting(`index.${projectId}.status`, JSON.stringify({
+        status: "building", chunk_count: 0, updated_at: now(),
+        stage: "building_text_index", progress_current: 0, progress_total: newPaths.length + modifiedPaths.length,
+        unchanged_files: unchangedPaths.length, added_files: newPaths.length, updated_files: modifiedPaths.length, deleted_files: stalePaths.length,
+      }));
+
+      let totalChunks = 0;
+      const allFiles = [...newPaths, ...modifiedPaths];
+      for (let i = 0; i < allFiles.length; i++) {
+        const path = allFiles[i];
+        const fileRow = (await db.query<Row>("SELECT language FROM project_files WHERE project_id=? AND path=?", [projectId, path]))[0];
+        const language = String(fileRow?.language || "plaintext");
+        const content = await readRepoFile(projectId, path);
+        // Compute hash
+        let hashValue = 0;
+        for (let j = 0; j < content.length; j += 1) { hashValue = Math.imul(hashValue ^ content.charCodeAt(j), 16777619); }
+        const contentHash = (hashValue >>> 0).toString(16).padStart(8, "0");
+
+        const lines = content.split("\n");
         for (let start = 0; start < lines.length; start += 70) {
           const block = lines.slice(start, start + 80).join("\n"); if (!block.trim()) continue;
           const symbol = block.match(/(?:class|interface|struct|def|function|fn|func)\s+([A-Za-z_$][\w$]*)/)?.[1] || null;
-          const id = await db.run("INSERT INTO code_chunks(project_id,path,language,start_line,end_line,chunk_type,symbol_name,content) VALUES(?,?,?,?,?,?,?,?)", [projectId, file.path, file.language, start + 1, Math.min(lines.length, start + 80), symbol ? "symbol" : "block", symbol, block]);
-          await db.run("INSERT INTO code_chunks_fts(rowid,project_id,path,symbol_name,content) VALUES(?,?,?,?,?)", [id, projectId, file.path, symbol, block]); count += 1;
+          const id = await db.run("INSERT INTO code_chunks(project_id,path,language,start_line,end_line,chunk_type,symbol_name,content,generation) VALUES(?,?,?,?,?,?,?,?,?)", [projectId, path, language, start + 1, Math.min(lines.length, start + 80), symbol ? "symbol" : "block", symbol, block, newGen]);
+          await db.run("INSERT INTO code_chunks_fts(rowid,project_id,path,symbol_name,content) VALUES(?,?,?,?,?)", [id, projectId, path, symbol, block]);
+          totalChunks += 1;
+        }
+
+        // Update indexed_files
+        await db.run("INSERT INTO indexed_files(project_id,relative_path,file_size,mtime_ns,content_hash,language,indexed_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,relative_path) DO UPDATE SET file_size=excluded.file_size,mtime_ns=excluded.mtime_ns,content_hash=excluded.content_hash,language=excluded.language,indexed_at=excluded.indexed_at", [projectId, path, content.length, 0, contentHash, language, now()]);
+
+        if ((i + 1) % 5 === 0) {
+          await this.setSetting(`index.${projectId}.status`, JSON.stringify({
+            status: "building", chunk_count: totalChunks, updated_at: now(),
+            stage: "building_text_index", progress_current: i + 1, progress_total: allFiles.length,
+          }));
         }
       }
-      const result = { project_id: projectId, status: "ready", chunk_count: count, updated_at: now(), error_message: null };
-      await this.setSetting(`index.${projectId}.status`, JSON.stringify(result)); return result;
+
+      // Copy unchanged chunks to new generation
+      for (const path of unchangedPaths) {
+        const oldChunks = await db.query<Row>("SELECT path,language,start_line,end_line,chunk_type,symbol_name,content FROM code_chunks WHERE project_id=? AND path=? AND generation=?", [projectId, path, activeGen]);
+        for (const chunk of oldChunks) {
+          const id = await db.run("INSERT INTO code_chunks(project_id,path,language,start_line,end_line,chunk_type,symbol_name,content,generation) VALUES(?,?,?,?,?,?,?,?,?)", [projectId, chunk.path, chunk.language, Number(chunk.start_line), Number(chunk.end_line), chunk.chunk_type, chunk.symbol_name, chunk.content, newGen]);
+          await db.run("INSERT INTO code_chunks_fts(rowid,project_id,path,symbol_name,content) VALUES(?,?,?,?,?)", [id, projectId, chunk.path, chunk.symbol_name, chunk.content]);
+          totalChunks += 1;
+        }
+      }
+
+      // Clean stale path chunks + indexed_files
+      for (const stalePath of stalePaths) {
+        await db.run("DELETE FROM code_chunks_fts WHERE rowid IN (SELECT id FROM code_chunks WHERE project_id=? AND path=?)", [projectId, stalePath]);
+        await db.run("DELETE FROM code_chunks WHERE project_id=? AND path=?", [projectId, stalePath]);
+        await db.run("DELETE FROM indexed_files WHERE project_id=? AND relative_path=?", [projectId, stalePath]);
+      }
+
+      // Clean old generation chunks
+      if (activeGen > 0) {
+        await db.run("DELETE FROM code_chunks_fts WHERE rowid IN (SELECT id FROM code_chunks WHERE project_id=? AND generation=?)", [projectId, activeGen]);
+        await db.run("DELETE FROM code_chunks WHERE project_id=? AND generation=?", [projectId, activeGen]);
+      }
+
+      const result = {
+        project_id: projectId, status: "ready", chunk_count: totalChunks, updated_at: now(), error_message: null,
+        stage: "completed", active_generation: newGen, unchanged_files: unchangedPaths.length,
+        added_files: newPaths.length, updated_files: modifiedPaths.length, deleted_files: stalePaths.length,
+      };
+      await this.setSetting(`index.${projectId}.status`, JSON.stringify(result));
+      return result;
     } catch (error) {
-      const result = { project_id: projectId, status: "failed", chunk_count: 0, updated_at: now(), error_message: error instanceof Error ? error.message : String(error) };
-      await this.setSetting(`index.${projectId}.status`, JSON.stringify(result)); return result;
+      const result = { project_id: projectId, status: "failed", chunk_count: 0, updated_at: now(), error_message: error instanceof Error ? error.message : String(error), stage: "failed" };
+      await this.setSetting(`index.${projectId}.status`, JSON.stringify(result));
+      return result;
     } finally { this.runningIndexes.delete(projectId); }
   }
   private async resumeIndexes(): Promise<void> {
@@ -718,11 +801,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async search(projectId: number, rawQuery: string, sourcePath?: string, rawLimit = 8): Promise<ProjectSearchResult[]> {
     const query = String(rawQuery || "").trim(); if (!query) return []; const limit = Math.min(20, Math.max(1, Number(rawLimit || 8)));
     const terms = query.match(/[\p{L}\p{N}_.$:-]{2,}/gu)?.slice(0, 8) || [query]; const ftsQuery = terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(" OR ");
+    // Get active generation
+    const maxGenRow = (await db.query<Row>("SELECT COALESCE(MAX(generation), 0) AS mx FROM code_chunks WHERE project_id=?", [projectId]))[0];
+    const activeGen = Number(maxGenRow.mx);
     let rows: Row[] = [];
     try {
-      rows = await db.query<Row>(`SELECT c.* FROM code_chunks_fts f JOIN code_chunks c ON c.id=f.rowid WHERE f.project_id=? AND code_chunks_fts MATCH ? ORDER BY CASE WHEN c.path=? THEN 0 ELSE 1 END LIMIT ?`, [projectId, ftsQuery, sourcePath || "", limit]);
+      rows = await db.query<Row>(`SELECT c.* FROM code_chunks_fts f JOIN code_chunks c ON c.id=f.rowid WHERE f.project_id=? AND code_chunks_fts MATCH ? AND (c.generation=? OR ?=0) ORDER BY CASE WHEN c.path=? THEN 0 ELSE 1 END LIMIT ?`, [projectId, ftsQuery, activeGen, activeGen, sourcePath || "", limit]);
     } catch {
-      rows = await db.query<Row>("SELECT * FROM code_chunks WHERE project_id=? AND (content LIKE ? OR symbol_name LIKE ? OR path LIKE ?) ORDER BY CASE WHEN path=? THEN 0 ELSE 1 END LIMIT ?", [projectId, `%${query}%`, `%${query}%`, `%${query}%`, sourcePath || "", limit]);
+      rows = await db.query<Row>("SELECT * FROM code_chunks WHERE project_id=? AND (content LIKE ? OR symbol_name LIKE ? OR path LIKE ?) AND (generation=? OR ?=0) ORDER BY CASE WHEN path=? THEN 0 ELSE 1 END LIMIT ?", [projectId, `%${query}%`, `%${query}%`, `%${query}%`, activeGen, activeGen, sourcePath || "", limit]);
     }
     return rows.map((row, index) => ({ path: row.path, language: row.language, start_line: Number(row.start_line), end_line: Number(row.end_line), chunk_type: row.chunk_type, symbol_name: row.symbol_name, content: row.content, score: 1 / (index + 1) }));
   }

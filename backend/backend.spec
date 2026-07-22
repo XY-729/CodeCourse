@@ -12,6 +12,9 @@ sys.path.insert(0, str(BACKEND_ROOT))
 hiddenimports = []
 hiddenimports += collect_submodules("app")
 hiddenimports += collect_submodules("uvicorn")
+hiddenimports += collect_submodules("tree_sitter")
+hiddenimports += collect_submodules("tree_sitter_javascript")
+hiddenimports += collect_submodules("tree_sitter_typescript")
 
 a = Analysis(
     [str(BACKEND_ROOT / "desktop_entry.py")],

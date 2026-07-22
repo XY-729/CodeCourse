@@ -322,6 +322,22 @@ class ProjectIndexStatusResponse(BaseModel):
     engine: Optional[str] = None
     degraded_reason: Optional[str] = None
     indexed_fingerprint: Optional[str] = None
+    stage: Optional[str] = None
+    progress_current: int = 0
+    progress_total: int = 0
+    processed_files: int = 0
+    unchanged_files: int = 0
+    added_files: int = 0
+    updated_files: int = 0
+    deleted_files: int = 0
+    skipped_files: int = 0
+    failed_files: int = 0
+    active_generation: int = 0
+    building_generation: Optional[int] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    duration_ms: Optional[int] = None
+    last_good_index_at: Optional[str] = None
 
 
 class ProjectSearchRequest(BaseModel):

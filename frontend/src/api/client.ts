@@ -189,6 +189,22 @@ export type ProjectIndexStatus = {
   engine?: string | null;
   degraded_reason?: string | null;
   indexed_fingerprint?: string | null;
+  stage?: string | null;
+  progress_current?: number;
+  progress_total?: number;
+  processed_files?: number;
+  unchanged_files?: number;
+  added_files?: number;
+  updated_files?: number;
+  deleted_files?: number;
+  skipped_files?: number;
+  failed_files?: number;
+  active_generation?: number;
+  building_generation?: number | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  duration_ms?: number | null;
+  last_good_index_at?: string | null;
 };
 
 export type LearningState = {
