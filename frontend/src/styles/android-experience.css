@@ -697,6 +697,15 @@ html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-comment { col
 html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-type,
 html.platform-android[data-theme="dark"] .mobile-code-viewer .hljs-built_in { color: #68cbd5; }
 
+/* Inline term spans — selectable text, not interactive buttons, so Android
+   long-press can create a native Range across term boundaries. */
+html.platform-android .document-term {
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: auto;
+  cursor: text;
+}
+
 /* Assistant and knowledge views */
 html.platform-android .assistant-thread-view,
 html.platform-android .assistant-card-stack,

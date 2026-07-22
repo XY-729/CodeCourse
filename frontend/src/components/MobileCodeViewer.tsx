@@ -41,35 +41,10 @@ export default function MobileCodeViewer({ path, language, content, selectedRang
 
   useEffect(() => () => window.cancelAnimationFrame(scrollFrameRef.current), []);
 
-  // Listen for native text selection changes instead of onPointerUp.
-  // onPointerUp fires during the gesture lifecycle and can disrupt the
-  // Android WebView long-press detection, preventing drag handles.
-  useEffect(() => {
-    const container = scrollRef.current;
-    if (!container) return;
-    function handleSelectionChange() {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed) return;
-      if (!container?.contains(sel.anchorNode) && !container?.contains(sel.focusNode)) return;
-      const selectedText = sel.toString().trim();
-      if (!selectedText) return;
-      const anchor = sel.anchorNode
-        ? (sel.anchorNode.nodeType === Node.TEXT_NODE ? sel.anchorNode.parentElement : sel.anchorNode as Element)?.closest<HTMLElement>("[data-line]")
-        : null;
-      const focus = sel.focusNode
-        ? (sel.focusNode.nodeType === Node.TEXT_NODE ? sel.focusNode.parentElement : sel.focusNode as Element)?.closest<HTMLElement>("[data-line]")
-        : null;
-      if (!anchor || !focus) return;
-      const start = Number(anchor?.dataset.line || 1);
-      const end = Number(focus?.dataset.line || start);
-      onSelectionChange?.({
-        sourceType: "file", sourcePath: path, selectedText, language,
-        range: { startLineNumber: Math.min(start, end), startColumn: 1, endLineNumber: Math.max(start, end), endColumn: 1 },
-      });
-    }
-    document.addEventListener("selectionchange", handleSelectionChange);
-    return () => document.removeEventListener("selectionchange", handleSelectionChange);
-  }, [path, language, onSelectionChange]);
+  // Android relies entirely on native WebView ActionMode for text selection.
+  // No onPointerUp / selectionchange listener — React state updates during
+  // selection would re-render <code> children and destroy the native Range.
+  // MainActivity reads window.getSelection() when the user taps "Ask".
 
   function captureVisibleLine() {
     if (scrollFrameRef.current) return;

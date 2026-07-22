@@ -1,6 +1,7 @@
 package com.codecourse.app;
 
 import android.os.Bundle;
+import android.util.Log;
 import android.view.ActionMode;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -12,6 +13,7 @@ import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     private static final int ASK_SELECTION_MENU_ID = 0xCC01;
+    private static final String SELECTION_TAG = "CCSelection";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -31,6 +33,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onActionModeStarted(ActionMode mode) {
+        Log.d(SELECTION_TAG, "ActionMode started, type=" + mode.getType());
         super.onActionModeStarted(mode);
         Menu menu = mode.getMenu();
         if (menu.findItem(ASK_SELECTION_MENU_ID) != null) {
@@ -52,6 +55,12 @@ public class MainActivity extends BridgeActivity {
             webView.evaluateJavascript(script, ignored -> mode.finish());
             return true;
         });
+    }
+
+    @Override
+    public void onActionModeFinished(ActionMode mode) {
+        Log.d(SELECTION_TAG, "ActionMode finished, type=" + mode.getType());
+        super.onActionModeFinished(mode);
     }
 
     private void applyFullscreen() {

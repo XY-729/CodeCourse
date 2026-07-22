@@ -151,21 +151,37 @@ function applyKnowledgeLinksToText(
       continue;
     }
     const links = groupedLinks.get(term) ?? [];
-    result.push(
-      <button
-        key={`${keyPrefix}-knowledge-${index}`}
-        className="knowledge-inline-link"
-        type="button"
-        title={`打开 ${term} 的回答`}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onOpenKnowledgeLink(term, links);
-        }}
-      >
-        {term}
-      </button>,
-    );
+    if (isAndroidRuntime()) {
+      result.push(
+        <span
+          key={`${keyPrefix}-knowledge-${index}`}
+          className="knowledge-inline-link document-term"
+          data-knowledge-term={term}
+          onClick={() => {
+            if (window.getSelection() && !window.getSelection()?.isCollapsed) return;
+            onOpenKnowledgeLink(term, links);
+          }}
+        >
+          {term}
+        </span>,
+      );
+    } else {
+      result.push(
+        <button
+          key={`${keyPrefix}-knowledge-${index}`}
+          className="knowledge-inline-link"
+          type="button"
+          title={`打开 ${term} 的回答`}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onOpenKnowledgeLink(term, links);
+          }}
+        >
+          {term}
+        </button>,
+      );
+    }
     index += term.length;
   }
   return result;
@@ -196,28 +212,44 @@ function applyTermCandidatesToText(
       index += 1;
       continue;
     }
-    result.push(
-      <button
-        key={`${keyPrefix}-term-${term.id}-${index}`}
-        className={term.status === "linked" ? "knowledge-inline-link" : "term-candidate-link"}
-        type="button"
-        title={term.status === "linked" ? `打开“${term.term_text}”的解释` : `生成“${term.term_text}”的解释；右键可标记为已认识或忽略`}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          onGenerateTerm(term);
-        }}
-        onContextMenu={isAndroidRuntime() ? undefined : (event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (term.status === "candidate") {
-            onTermAction?.(term);
-          }
-        }}
-      >
-        {term.term_text}
-      </button>,
-    );
+    if (isAndroidRuntime()) {
+      result.push(
+        <span
+          key={`${keyPrefix}-term-${term.id}-${index}`}
+          className={`document-term document-term-${term.status} ${term.status === "linked" ? "knowledge-inline-link" : "term-candidate-link"}`}
+          data-term-id={term.id}
+          onClick={() => {
+            if (window.getSelection() && !window.getSelection()?.isCollapsed) return;
+            onGenerateTerm(term);
+          }}
+        >
+          {term.term_text}
+        </span>,
+      );
+    } else {
+      result.push(
+        <button
+          key={`${keyPrefix}-term-${term.id}-${index}`}
+          className={term.status === "linked" ? "knowledge-inline-link" : "term-candidate-link"}
+          type="button"
+          title={term.status === "linked" ? `打开"${term.term_text}"的解释` : `生成"${term.term_text}"的解释；右键可标记为已认识或忽略`}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onGenerateTerm(term);
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (term.status === "candidate") {
+              onTermAction?.(term);
+            }
+          }}
+        >
+          {term.term_text}
+        </button>,
+      );
+    }
     index += term.term_text.length;
   }
   return result;
@@ -293,6 +325,9 @@ export default function MarkdownViewer({
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
   const androidRuntime = isAndroidRuntime();
+  // Never inject <mark> temp-selection elements on Android — they would
+  // destroy the native Range and collapse the drag handles.
+  const effectiveTempSelectedText = androidRuntime ? null : tempSelectedText;
   const [selectedText, setSelectedText] = useState("");
   const [docFontSize, setDocFontSize] = useState(() => {
     try {
@@ -349,6 +384,9 @@ export default function MarkdownViewer({
   }
 
   const captureSelection = useCallback(() => {
+    // Android relies entirely on native WebView ActionMode. React state
+    // updates during selection would mutate the DOM and destroy the Range.
+    if (androidRuntime) return;
     const article = articleRef.current;
     const selection = window.getSelection();
     if (!article || !selection) {
@@ -382,21 +420,9 @@ export default function MarkdownViewer({
     }
   }, [onSelectionChange, sourcePath, sourceType, title]);
 
-  // On Android, use selectionchange (not mouseup) so dragging the handles
-  // re-fires as the range changes. rAF debounce avoids DOM thrashing mid-gesture.
-  useEffect(() => {
-    if (!androidRuntime) return;
-    let frameId = 0;
-    const handleSelectionChange = () => {
-      cancelAnimationFrame(frameId);
-      frameId = requestAnimationFrame(() => captureSelection());
-    };
-    document.addEventListener("selectionchange", handleSelectionChange);
-    return () => {
-      cancelAnimationFrame(frameId);
-      document.removeEventListener("selectionchange", handleSelectionChange);
-    };
-  }, [androidRuntime, captureSelection]);
+  // Android relies entirely on native WebView ActionMode for text selection.
+  // No JS listener during selection — React state updates would mutate the DOM
+  // and invalidate the native Range, destroying the drag handles.
 
   function handleContextMenu(event: React.MouseEvent) {
     const article = articleRef.current;
@@ -462,36 +488,36 @@ export default function MarkdownViewer({
       return <a href={href}>{children}</a>;
     },
     p: ({ children }: { children?: ReactNode }) => (
-      <p>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</p>
+      <p>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</p>
     ),
     li: ({ children }: { children?: ReactNode }) => (
-      <li>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</li>
+      <li>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</li>
     ),
     td: ({ children }: { children?: ReactNode }) => (
-      <td>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</td>
+      <td>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</td>
     ),
     th: ({ children }: { children?: ReactNode }) => (
-      <th>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</th>
+      <th>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</th>
     ),
     h1: ({ children }: { children?: ReactNode }) => (
-      <h1>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</h1>
+      <h1>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</h1>
     ),
     h2: ({ children }: { children?: ReactNode }) => (
-      <h2>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</h2>
+      <h2>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</h2>
     ),
     h3: ({ children }: { children?: ReactNode }) => (
-      <h3>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</h3>
+      <h3>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</h3>
     ),
     h4: ({ children }: { children?: ReactNode }) => (
-      <h4>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</h4>
+      <h4>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</h4>
     ),
     strong: ({ children }: { children?: ReactNode }) => (
-      <strong>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</strong>
+      <strong>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</strong>
     ),
     em: ({ children }: { children?: ReactNode }) => (
-      <em>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</em>
+      <em>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction)}</em>
     ),
-  }), [highlights, knowledgeLinks, documentTerms, annotations, tempSelectedText, onOpenKnowledgeLink, onGenerateTerm, onTermAction, onGenerateLesson]);
+  }), [highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText, onOpenKnowledgeLink, onGenerateTerm, onTermAction, onGenerateLesson]);
 
   return (
     <div className={`viewer markdown-viewer ${embedded ? "embedded" : ""}`}>
@@ -506,7 +532,7 @@ export default function MarkdownViewer({
         ref={articleRef}
         className="markdown-scroll-viewport"
         onMouseUp={androidRuntime ? undefined : captureSelection}
-        onKeyUp={captureSelection}
+        onKeyUp={androidRuntime ? undefined : captureSelection}
         onContextMenu={androidRuntime ? undefined : handleContextMenu}
         onScroll={reportScroll}
       >
