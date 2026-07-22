@@ -207,7 +207,7 @@ function applyTermCandidatesToText(
           event.stopPropagation();
           onGenerateTerm(term);
         }}
-        onContextMenu={(event) => {
+        onContextMenu={isAndroidRuntime() ? undefined : (event) => {
           event.preventDefault();
           event.stopPropagation();
           if (term.status === "candidate") {
@@ -382,6 +382,22 @@ export default function MarkdownViewer({
     }
   }, [onSelectionChange, sourcePath, sourceType, title]);
 
+  // On Android, use selectionchange (not mouseup) so dragging the handles
+  // re-fires as the range changes. rAF debounce avoids DOM thrashing mid-gesture.
+  useEffect(() => {
+    if (!androidRuntime) return;
+    let frameId = 0;
+    const handleSelectionChange = () => {
+      cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => captureSelection());
+    };
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => {
+      cancelAnimationFrame(frameId);
+      document.removeEventListener("selectionchange", handleSelectionChange);
+    };
+  }, [androidRuntime, captureSelection]);
+
   function handleContextMenu(event: React.MouseEvent) {
     const article = articleRef.current;
     if (!article || !article.contains(event.target as Node)) {
@@ -491,7 +507,7 @@ export default function MarkdownViewer({
         className="markdown-scroll-viewport"
         onMouseUp={androidRuntime ? undefined : captureSelection}
         onKeyUp={captureSelection}
-        onContextMenu={handleContextMenu}
+        onContextMenu={androidRuntime ? undefined : handleContextMenu}
         onScroll={reportScroll}
       >
         <div className="markdown-body">
