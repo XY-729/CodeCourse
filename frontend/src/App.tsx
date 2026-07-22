@@ -30,6 +30,7 @@ import {
   getTree,
   importProject,
   importProjectArchive,
+  importLocalProject,
   listGenerationTasks,
   listHighlights,
   listKnowledgeLinks,
@@ -91,6 +92,7 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
+type MobileSurface = "navigation" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts";
 type OpenItemType = "file" | "course" | "qa" | "knowledge_graph";
 type SplitDirection = "row" | "column";
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -237,16 +239,40 @@ function taskStatusMessage(task: GenerationTask): string {
 
 function indexStatusMessage(status: ProjectIndexStatus | null): string {
   if (!status) return "索引未构建";
+  const stageLabel: Record<string, string> = {
+    scanning: "正在扫描文件",
+    comparing: "正在对比文件变化",
+    building_text_index: "正在构建文本索引",
+    building_structural_index: "正在分析调用关系",
+    switching_generation: "正在切换索引版本",
+    cleaning_old_generation: "正在清理旧索引",
+    completed: "索引完成",
+    failed: "索引失败",
+    cancelled: "索引已取消",
+  };
+  if (status.stage && stageLabel[status.stage]) {
+    const parts = [stageLabel[status.stage]];
+    if (status.progress_total && status.progress_total > 0) {
+      parts.push(`(${status.progress_current}/${status.progress_total})`);
+    }
+    return parts.join(" ");
+  }
   if (status.text_status === "building") return "正在构建基础索引";
   if (status.structural_status === "building") return "基础索引完成，正在分析调用关系";
   if (status.structural_status === "completed") {
     const graphSize = status.node_count ? ` · ${status.node_count} 个结构节点` : "";
     return `结构索引已完成${graphSize}`;
   }
-  if (status.text_status === "completed" && status.structural_status && status.structural_status !== "not_built") {
-    return "基础索引已完成 · 结构分析不可用";
+  if (status.text_status === "completed") {
+    const degraded = status.degraded_reason ? `（${status.degraded_reason.slice(0, 60)}）` : "";
+    return `基础索引已完成${degraded}`;
   }
-  if (status.status === "failed") return "索引失败";
+  if (status.status === "failed") {
+    const stillOk = (status.degraded_reason || "").includes("仍在使用")
+      ? "，当前仍在使用上一版索引"
+      : "";
+    return `索引失败${stillOk}`;
+  }
   return `${status.status} · ${status.chunk_count} 个文本片段`;
 }
 
@@ -451,6 +477,7 @@ export default function App() {
   const [layout, setLayout] = useState<LayoutNode>(() => createInitialLayout());
   const [activeGroupId, setActiveGroupId] = useState(ROOT_GROUP_ID);
   const [dropPreview, setDropPreview] = useState<{ groupId: string; zone: DropZone } | null>(null);
+  const [desktopDropActive, setDesktopDropActive] = useState(false);
 
   const [selection, setSelection] = useState<SelectionSummary | null>(null);
   const [qaQuestion, setQAQuestion] = useState("");
@@ -498,12 +525,14 @@ export default function App() {
   const idCounter = useRef(1);
   const dialogResolverRef = useRef<DialogResolver | null>(null);
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
+  const desktopDragDepthRef = useRef(0);
   const learningStatesRef = useRef<LearningState[]>([]);
   const learningSaveTimers = useRef<Map<string, number>>(new Map());
   const pendingLearningUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
   const streamingContentRef = useRef<Map<string, string>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
   const closedItemsRef = useRef<Array<{ groupId: string; item: OpenItem }>>([]);
+  const activeOpenItemRef = useRef<OpenItem | null>(null);
   const mobileRuntime = isAndroidRuntime();
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
@@ -515,8 +544,40 @@ export default function App() {
   const showBusy = loading || isTaskRunning || anyQALoading;
 
   useEffect(() => {
+    if (!mobileRuntime) return;
+    const active = isTaskRunning || anyQALoading;
+    const label = anyQALoading
+      ? (activeQAGeneration?.label || "正在生成 AI 回答")
+      : (activeTask ? taskStatusMessage(activeTask) : "正在生成学习内容");
+    void CodeCourseNative.setGenerationActive({ active, label }).catch(() => undefined);
+  }, [activeQAGeneration?.label, activeTask, anyQALoading, isTaskRunning, mobileRuntime]);
+
+  useEffect(() => {
     document.documentElement.classList.remove("app-starting");
   }, []);
+
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    function handleNativeSelectionAsk(event: Event) {
+      const text = String((event as CustomEvent<{ text?: string }>).detail?.text ?? "").trim().slice(0, 20000);
+      const item = activeOpenItemRef.current;
+      if (!text || !item || !["file", "course", "qa"].includes(item.type)) return;
+      const sourceType: ViewerSelection["sourceType"] = item.type === "file"
+        ? "file"
+        : item.type === "qa" || item.qaRecordId
+          ? "qa"
+          : "course";
+      handleSelection({
+        sourceType,
+        sourcePath: item.path,
+        selectedText: text,
+        language: item.language,
+      });
+      openAssistant("history");
+    }
+    window.addEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
+    return () => window.removeEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
+  }, [mobileRuntime]);
 
   useEffect(() => {
     learningStatesRef.current = learningStates;
@@ -525,7 +586,7 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeMode === "dark" ? "#090c12" : "#f7faf8");
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeMode === "dark" ? "#08111f" : "#edf4f1");
   }, [themeMode]);
 
   useEffect(() => {
@@ -593,9 +654,30 @@ export default function App() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        void handleImportRequest();
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key === ",") {
+        event.preventDefault();
+        openSettings();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setCommandPaletteOpen((open) => !open);
+        if (mobileRuntime) toggleMobileCommandPalette();
+        else setCommandPaletteOpen((open) => !open);
         return;
       }
       if (event.key !== "Escape") {
@@ -615,7 +697,63 @@ export default function App() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [appDialog, commandPaletteOpen]);
+  }, [appDialog, commandPaletteOpen, mobileRuntime]);
+
+  useEffect(() => {
+    if (mobileRuntime || !window.codecourseDesktop?.onShortcut) return;
+    return window.codecourseDesktop.onShortcut((action) => {
+      if (action === "new-project") void handleImportRequest();
+      else if (action === "settings") openSettings();
+      else setCommandPaletteOpen(true);
+    });
+  }, [mobileRuntime]);
+
+  useEffect(() => {
+    if (mobileRuntime || !window.codecourseDesktop?.getPathForFile) return;
+
+    const isExternalFileDrag = (event: globalThis.DragEvent) => (
+      Array.from(event.dataTransfer?.types ?? []).includes("Files")
+      && !Array.from(event.dataTransfer?.types ?? []).includes("application/codecourse-item")
+    );
+    const onDragEnter = (event: globalThis.DragEvent) => {
+      if (!isExternalFileDrag(event)) return;
+      event.preventDefault();
+      desktopDragDepthRef.current += 1;
+      setDesktopDropActive(true);
+    };
+    const onDragOver = (event: globalThis.DragEvent) => {
+      if (!isExternalFileDrag(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    };
+    const onDragLeave = (event: globalThis.DragEvent) => {
+      if (!isExternalFileDrag(event)) return;
+      desktopDragDepthRef.current = Math.max(0, desktopDragDepthRef.current - 1);
+      if (desktopDragDepthRef.current === 0) setDesktopDropActive(false);
+    };
+    const onDrop = (event: globalThis.DragEvent) => {
+      if (!isExternalFileDrag(event)) return;
+      event.preventDefault();
+      desktopDragDepthRef.current = 0;
+      setDesktopDropActive(false);
+      const file = event.dataTransfer?.files?.[0];
+      if (!file) return;
+      const localPath = window.codecourseDesktop?.getPathForFile?.(file) ?? "";
+      if (localPath) void handleImportLocalPath(localPath);
+      else if (file.name.toLowerCase().endsWith(".zip")) void handleImportArchive(file);
+      else setError("请拖入本地项目文件夹或 ZIP 压缩包");
+    };
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [mobileRuntime]);
 
   useEffect(() => {
     function dismissTransientSurfaces() {
@@ -766,6 +904,8 @@ export default function App() {
           setAssistantOpen(false);
         } else if (navigationOpen) {
           setNavigationOpen(false);
+        } else if (isTaskRunning) {
+          void CodeCourseNative.moveToBackground().catch(() => NativeApp.exitApp());
         } else {
           void NativeApp.exitApp();
         }
@@ -781,7 +921,7 @@ export default function App() {
       disposed = true;
       removeListener?.();
     };
-  }, [appDialog, assistantOpen, generationOpen, mobileRuntime, moreMenuOpen, navigationOpen, promptEditorOpen, settingsOpen]);
+  }, [appDialog, assistantOpen, generationOpen, isTaskRunning, mobileRuntime, moreMenuOpen, navigationOpen, promptEditorOpen, settingsOpen]);
 
   useEffect(() => {
     if (!dragState) {
@@ -1958,6 +2098,7 @@ export default function App() {
     if (nextTask.status === "completed") {
       setTaskMessage("生成完成");
       setToast("内容已生成");
+      notifyTaskCompleted("CodeCourse 生成完成", `${taskLabel(nextTask)}已经可以阅读。`);
       const preferred = nextTask.task_type === "file_lesson" || nextTask.task_type === "outline_lesson"
         ? nextCourses.find((item) => item.filename === nextTask.output_path?.split("/").slice(-2).join("/"))
         : nextCourses.find((item) => item.filename === "outline.md");
@@ -2062,6 +2203,7 @@ export default function App() {
           onCompleted({ cached }) {
             setTaskMessage(cached ? "已缓存，无需重新生成" : "生成完成");
             setToast("内容已生成");
+            notifyTaskCompleted("CodeCourse 生成完成", `${baseFileName} ${label}已经可以阅读。`);
             streamingContentRef.current.delete(filename);
           },
           onError(message) { throw new Error(message); },
@@ -2189,8 +2331,10 @@ export default function App() {
 
   function handleSelection(nextSelection: ViewerSelection) {
     const nextText = nextSelection.selectedText.slice(0, 20000);
-    if (nextText.trim()) {
-      setAssistantOpen(true);
+    // Keep Android's native selection handles alive until the learner decides
+    // to ask. Switching surfaces here collapses the initial text selection.
+    if (!mobileRuntime && nextText.trim()) {
+      openAssistant("history");
     }
     setSelection({
       sourceType: nextSelection.sourceType,
@@ -2280,6 +2424,7 @@ export default function App() {
         refreshKnowledgeLinks(project.id),
       ]);
       setKnowledgeRefreshKey((value) => value + 1);
+      notifyTaskCompleted("CodeCourse 回答完成", record.display_title || "AI 助手已经完成回答。");
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
     }
@@ -2303,12 +2448,12 @@ export default function App() {
       setSelectedQA(record);
       setQASessionId(record.session_id ?? null);
       setQAUpperTab("history");
-      setAssistantOpen(true);
+      openAssistant("history");
       return;
     }
     if (!llmSettings?.enabled || !llmSettings.has_api_key) {
       setQAPanelError("请先配置模型 API。 ");
-      setSettingsOpen(true);
+      openSettings();
       return;
     }
     const parent = term.source_type === "qa"
@@ -2321,8 +2466,7 @@ export default function App() {
     );
     if (!ok) return;
     setQAPanelError("");
-    setQAUpperTab("history");
-    setAssistantOpen(true);
+    openAssistant("history");
     const generationKey = parent?.session_id ? `session:${parent.session_id}` : activeQAKey;
     try {
       const record = await runStreamingQuestion({
@@ -2495,7 +2639,7 @@ export default function App() {
   ) {
     const path = sourcePath ?? "";
     const text = selectedText.slice(0, 20000);
-    setAssistantOpen(true);
+    openAssistant("history");
     setSelection({
       sourceType,
       sourcePath: path || null,
@@ -2769,6 +2913,12 @@ export default function App() {
               className={`pane-tab ${item.id === group.activeItemId ? "active" : ""}`}
               onClick={() => activateItem(group.id, item)}
               title={item.path}
+              draggable={!mobileRuntime && item.type !== "knowledge_graph"}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("application/codecourse-tab", item.id);
+              }}
+              onDragEnd={(event) => void handleTabDragEnd(event, group.id, item)}
             >
               <span>{item.dirty ? `${item.title} *` : item.title}</span>
               <X
@@ -2799,7 +2949,7 @@ export default function App() {
               language={activeItem.language ?? "plaintext"}
               content={activeItem.content}
               selectedRange={
-                selectionAnchor?.sourceType === "file" && selectionAnchor.sourcePath === activeItem.path
+                !mobileRuntime && selectionAnchor?.sourceType === "file" && selectionAnchor.sourcePath === activeItem.path
                   ? selectionAnchor.range ?? null
                   : null
               }
@@ -2880,7 +3030,7 @@ export default function App() {
                 documentTerms={documentTermsBySource[`${activeItem.qaRecordId ? "qa" : "course"}:${activeItem.path}`] ?? []}
                 annotations={annotations.filter((ann) => ann.courseFile === activeItem.path)}
                 tempSelectedText={
-                  selectionAnchor?.sourceType === (activeItem.qaRecordId ? "qa" : "course") && selectionAnchor.sourcePath === activeItem.path
+                  !mobileRuntime && selectionAnchor?.sourceType === (activeItem.qaRecordId ? "qa" : "course") && selectionAnchor.sourcePath === activeItem.path
                     ? selectionAnchor.selectedText
                     : null
                 }
@@ -3056,12 +3206,12 @@ export default function App() {
 
   function commandPaletteItems(): CommandPaletteItem[] {
     const items: CommandPaletteItem[] = [
-      { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => { if (mobileRuntime) setNavigationOpen(false); setAssistantOpen(true); } },
-      { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", run: () => { setGenerationIntent("outline"); setGenerationOpen(true); } },
-      { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => { if (mobileRuntime) setAssistantOpen(false); setNavigationView("courses"); setNavigationOpen(true); } },
-      { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => { if (mobileRuntime) setAssistantOpen(false); setNavigationView("files"); setNavigationOpen(true); } },
-      { id: "command:settings", label: "模型 API 设置", section: "命令", keywords: "deepseek key 模型", run: () => setSettingsOpen(true) },
-      { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: () => setPromptEditorOpen(true) },
+      { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => openAssistant("history") },
+      { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", run: () => openGeneration("outline") },
+      { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => openMobileNavigation("courses") },
+      { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => openMobileNavigation("files") },
+      { id: "command:settings", label: "模型 API 设置", section: "命令", keywords: "deepseek key 模型", run: openSettings },
+      { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: openPrompts },
       { id: "command:index", label: "构建项目索引", section: "命令", keywords: "rag 搜索 索引", run: () => void handleBuildIndex() },
       { id: "command:reset-progress", label: "重置学习进度", section: "命令", keywords: "清除 完成 阅读位置", run: () => void handleResetLearningProgress() },
     ];
@@ -3081,6 +3231,7 @@ export default function App() {
   }
 
   const activeOpenItem = getActiveOpenItem();
+  activeOpenItemRef.current = activeOpenItem;
   const activeLessonMatch = activeOpenItem?.type === "course" ? activeOpenItem.path.match(/^lessons\/lesson_(\d+)\.md$/i) : null;
   const activeLessonNumber = activeLessonMatch ? Number(activeLessonMatch[1]) : null;
   const activeLessonTitle = activeOpenItem && activeLessonNumber
@@ -3093,29 +3244,114 @@ export default function App() {
   const progressLabel = lessonFilesForProgress.length ? `${completedLessonCount}/${lessonFilesForProgress.length} 课已完成` : undefined;
   const activeDocumentTitle = activeOpenItem?.title ?? (project ? "学习工作台" : "CodeCourse");
 
-  function toggleMobileNavigation(view: "courses" | "files") {
-    const isCurrent = navigationOpen && !assistantOpen && navigationView === view;
-    setAssistantOpen(false);
-    if (isCurrent) {
-      setNavigationOpen(false);
+  function closeMobileWorkspaceSurfaces(except?: MobileSurface) {
+    if (!mobileRuntime) return;
+    if (except !== "navigation") setNavigationOpen(false);
+    if (except !== "assistant") setAssistantOpen(false);
+    if (except !== "generation") setGenerationOpen(false);
+    if (except !== "more") setMoreMenuOpen(false);
+    if (except !== "command") setCommandPaletteOpen(false);
+    if (except !== "settings") setSettingsOpen(false);
+    if (except !== "prompts") setPromptEditorOpen(false);
+  }
+
+  async function handleTabDragEnd(event: DragEvent<HTMLButtonElement>, groupId: string, item: OpenItem) {
+    if (mobileRuntime || item.type === "knowledge_graph" || !window.codecourseDesktop?.detachTab) return;
+    const outsideWindow = event.clientX <= 1
+      || event.clientY <= 1
+      || event.clientX >= window.innerWidth - 1
+      || event.clientY >= window.innerHeight - 1;
+    if (event.dataTransfer.dropEffect !== "none" || !outsideWindow) return;
+    const detached = await window.codecourseDesktop.detachTab({
+      type: item.type,
+      path: item.path,
+      title: item.title,
+      content: item.content,
+      language: item.language,
+    });
+    if (detached) closeItemInGroup(groupId, item.id);
+  }
+
+  async function handleImportLocalPath(path: string) {
+    setLoading(true);
+    setError("");
+    setTaskMessage("正在导入本地项目");
+    try {
+      const imported = await importLocalProject(path);
+      await loadProjects();
+      await openProject(imported);
+      setToast("本地项目已导入");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "导入本地项目失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function notifyTaskCompleted(title: string, body: string) {
+    if (mobileRuntime) {
+      void CodeCourseNative.notifyCompletion({ label: body }).catch(() => undefined);
       return;
     }
+    void window.codecourseDesktop?.notify?.({ title, body });
+  }
+
+  function openMobileNavigation(view: NavigationView) {
+    closeMobileWorkspaceSurfaces("navigation");
     setNavigationView(view);
     setNavigationOpen(true);
   }
 
-  function toggleMobileAssistant(tab: "history" | "knowledge") {
-    const isCurrent = assistantOpen && !navigationOpen && qaUpperTab === tab;
-    setNavigationOpen(false);
+  function toggleMobileNavigation(view: "courses" | "files") {
+    const isCurrent = navigationOpen && !assistantOpen && navigationView === view;
     if (isCurrent) {
-      setAssistantOpen(false);
+      closeMobileWorkspaceSurfaces();
+      setNavigationOpen(false);
       return;
     }
+    openMobileNavigation(view);
+  }
+
+  function openAssistant(tab: "history" | "knowledge") {
+    closeMobileWorkspaceSurfaces("assistant");
     setQAUpperTab(tab);
     setAssistantOpen(true);
   }
 
+  function toggleMobileAssistant(tab: "history" | "knowledge") {
+    const isCurrent = assistantOpen && !navigationOpen && qaUpperTab === tab;
+    if (isCurrent) {
+      closeMobileWorkspaceSurfaces();
+      setAssistantOpen(false);
+      return;
+    }
+    openAssistant(tab);
+  }
+
+  function openSettings() {
+    closeMobileWorkspaceSurfaces("settings");
+    setSettingsOpen(true);
+  }
+
+  function openPrompts() {
+    closeMobileWorkspaceSurfaces("prompts");
+    setPromptEditorOpen(true);
+  }
+
+  function toggleMobileCommandPalette() {
+    const next = !commandPaletteOpen;
+    closeMobileWorkspaceSurfaces(next ? "command" : undefined);
+    setCommandPaletteOpen(next);
+  }
+
+  function toggleMobileMoreMenu() {
+    const next = !moreMenuOpen;
+    closeMobileWorkspaceSurfaces(next ? "more" : undefined);
+    setMoreMenuOpen(next);
+  }
+
   function openGeneration(intent: GenerationIntent) {
+    closeMobileWorkspaceSurfaces("generation");
     setGenerationIntent(intent);
     setGenerationOpen(true);
   }
@@ -3173,12 +3409,12 @@ export default function App() {
             <div className="brand-text"><strong>CodeCourse</strong><span>{project?.name ?? "学习工作台"}</span></div>
           </div>
           <div className="topbar-workspace-actions">
-            <button className="project-switch" onClick={() => { setAssistantOpen(false); setNavigationView("projects"); setNavigationOpen(true); }}>
+            <button className="project-switch" onClick={() => openMobileNavigation("projects")}>
               <span>{project?.name ?? "选择项目"}</span><ChevronDown size={15} />
             </button>
-            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => setCommandPaletteOpen(true)} title="搜索" aria-label="搜索"><Search size={18} /></button>
-            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => { setGenerationIntent(activeLessonNumber ? "lesson" : "outline"); setGenerationOpen(true); }} disabled={!project} title="生成学习内容" aria-label="生成学习内容"><Sparkles size={18} /></button>
-            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => setMoreMenuOpen((open) => !open)} title="更多" aria-label="更多"><MoreHorizontal size={18} /></button>
+            <button className="icon-button header-icon-button mobile-topbar-action" onClick={toggleMobileCommandPalette} title="搜索" aria-label="搜索"><Search size={18} /></button>
+            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => openGeneration(activeLessonNumber ? "lesson" : "outline")} disabled={!project} title="生成学习内容" aria-label="生成学习内容"><Sparkles size={18} /></button>
+            <button className="icon-button header-icon-button mobile-topbar-action" onClick={toggleMobileMoreMenu} title="更多" aria-label="更多"><MoreHorizontal size={18} /></button>
           </div>
         </header>
       )}
@@ -3194,11 +3430,11 @@ export default function App() {
               导入本地 ZIP
             </button>
             <div className="more-menu-divider" />
-            <button type="button" role="menuitem" onClick={() => { setSettingsOpen(true); setMoreMenuOpen(false); }}>
+            <button type="button" role="menuitem" onClick={openSettings}>
               <Bot size={15} />
               模型 API
             </button>
-            <button type="button" role="menuitem" onClick={() => { setPromptEditorOpen(true); setMoreMenuOpen(false); }}>
+            <button type="button" role="menuitem" onClick={openPrompts}>
               <Sparkles size={15} />
               提示词编辑
             </button>
@@ -3226,6 +3462,15 @@ export default function App() {
         toast={toast}
         onDismissError={() => setError("")}
       />
+      {desktopDropActive ? (
+        <div className="desktop-import-drop" role="status" aria-live="polite">
+          <div>
+            <FileArchive size={28} />
+            <strong>松开以导入项目</strong>
+            <span>支持本地文件夹或 ZIP 压缩包</span>
+          </div>
+        </div>
+      ) : null}
       {gestureHint ? (
         <div key={gestureHint.id} className="gesture-hint" role="status" aria-live="polite">
           {gestureHint.text}
@@ -3245,7 +3490,7 @@ export default function App() {
         {mobileRuntime ? <nav className="activity-rail" aria-label="学习导航">
           <button className={navigationOpen && !assistantOpen && navigationView === "courses" ? "active" : ""} onClick={() => toggleMobileNavigation("courses")} title="课程"><BookOpen size={18} /><span>课程</span></button>
           <button className={navigationOpen && !assistantOpen && navigationView === "files" ? "active" : ""} onClick={() => toggleMobileNavigation("files")} title="源码"><FolderTree size={18} /><span>源码</span></button>
-          <button className={`desktop-project-nav ${navigationOpen && navigationView === "projects" ? "active" : ""}`} onClick={() => { setNavigationView("projects"); setNavigationOpen(navigationView !== "projects" || !navigationOpen); }} title="项目"><PanelLeft size={18} /><span>项目</span></button>
+          <button className={`desktop-project-nav ${navigationOpen && navigationView === "projects" ? "active" : ""}`} onClick={() => navigationOpen && navigationView === "projects" ? closeMobileWorkspaceSurfaces() : openMobileNavigation("projects")} title="项目"><PanelLeft size={18} /><span>项目</span></button>
           <span className="activity-rail-spacer" />
           <button className={assistantOpen && !navigationOpen && qaUpperTab === "history" ? "active" : ""} onClick={() => toggleMobileAssistant("history")} title="AI 助手"><Bot size={18} /><span>助手</span></button>
           <button className={`mobile-only ${assistantOpen && !navigationOpen && qaUpperTab === "knowledge" ? "active" : ""}`} onClick={() => toggleMobileAssistant("knowledge")} title="知识网络"><Sparkles size={18} /><span>网络</span></button>
@@ -3321,6 +3566,7 @@ export default function App() {
           panelError={qaPanelError}
           askHeight={qaAskHeight}
           upperTab={qaUpperTab}
+          mobileMode={mobileRuntime}
           onUpperTabChange={setQAUpperTab}
           knowledgeDisabled={!project}
           knowledgeContent={project ? (
@@ -3372,7 +3618,7 @@ export default function App() {
           onDeleteRecord={handleDeleteQA}
           onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={openSettings}
           onClose={() => setAssistantOpen(false)}
         />
         </div>
@@ -3394,12 +3640,11 @@ export default function App() {
             if (nextScope !== "files") {
               setSelectedScopeFiles([]);
             } else {
-              setNavigationView("files");
-              setNavigationOpen(true);
+              openMobileNavigation("files");
             }
           }}
           onInstructionsChange={setGenerationInstructions}
-          onOpenPrompts={() => setPromptEditorOpen(true)}
+          onOpenPrompts={openPrompts}
           onGenerate={runSelectedGeneration}
         />
       ) : generationOpen ? (
@@ -3420,8 +3665,7 @@ export default function App() {
                     if (nextScope !== "files") {
                       setSelectedScopeFiles([]);
                     } else {
-                      setNavigationView("files");
-                      setNavigationOpen(true);
+                      openMobileNavigation("files");
                     }
                   }}
                   disabled={!project || isTaskRunning || isLearningPlanProject}
@@ -3494,8 +3738,7 @@ export default function App() {
           anchorRect={selectionAnchor.anchorRect}
           onAsk={() => {
             setSelection({ ...selectionAnchor });
-            setQAUpperTab("history");
-            setAssistantOpen(true);
+            openAssistant("history");
           }}
           onHighlight={() => {
             if (selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa") {

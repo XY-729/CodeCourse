@@ -213,6 +213,20 @@ export class MobileDatabase {
           chunk_type TEXT NOT NULL DEFAULT 'block',
           symbol_name TEXT,
           content TEXT NOT NULL,
+          generation INTEGER NOT NULL DEFAULT 1,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+        CREATE TABLE IF NOT EXISTS indexed_files (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id INTEGER NOT NULL,
+          relative_path TEXT NOT NULL,
+          file_size INTEGER NOT NULL,
+          mtime_ns INTEGER NOT NULL DEFAULT 0,
+          content_hash TEXT,
+          language TEXT NOT NULL,
+          chunk_version INTEGER NOT NULL DEFAULT 1,
+          indexed_at TEXT NOT NULL,
+          UNIQUE(project_id, relative_path) ON CONFLICT REPLACE,
           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
         );
       `,

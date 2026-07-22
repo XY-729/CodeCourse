@@ -1,5 +1,5 @@
 import { CapacitorHttp, HttpResponse } from "@capacitor/core";
-import { CodeCourseSecureStore } from "../runtime";
+import { CodeCourseNative, CodeCourseSecureStore } from "../runtime";
 import type { CodeCourseProvider } from "../provider";
 import type {
   CourseFile, GenerationTask, HighlightRecord, KnowledgeEdge, KnowledgeGraph, KnowledgeLink, KnowledgeNode,
@@ -69,6 +69,7 @@ type LessonPlan = {
 
 const db = new MobileDatabase();
 const DEFAULT_MODEL = { provider: "deepseek", base_url: "https://api.deepseek.com", model: "deepseek-chat", enabled: false };
+const MOBILE_LESSON_CONCURRENCY = 4;
 const KNOWN_TECH_TERMS = ["FastAPI", "Pydantic", "Uvicorn", "React", "TypeScript", "JavaScript", "Electron", "SQLite", "FTS5", "Cytoscape", "Monaco", "Tree-sitter", "Docker", "CMake", "Cargo", "WebSocket", "REST", "RAG", "LLM", "API", "Git", "依赖注入", "异步任务", "全文检索", "知识图谱", "调用关系", "路由", "中间件"];
 const STOP_TERMS = new Set(["markdown", "github", "codecourse", "readme", "todo", "true", "false", "null", "项目", "文件", "代码", "课件", "回答", "问题", "学习", "用户", "模型", "内容"]);
 
@@ -501,6 +502,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
   private async runTask(taskId: number): Promise<void> {
     if (this.runningTasks.has(taskId)) return; this.runningTasks.add(taskId);
+    void CodeCourseNative.setGenerationActive({
+      active: true,
+      label: `正在生成学习内容（${this.runningTasks.size} 个任务）`,
+    }).catch(() => {});
     try {
       const task = (await db.query<Row>("SELECT * FROM generation_tasks WHERE id=?", [taskId]))[0]; if (!task) return;
       const payload = JSON.parse(task.payload_json || "{}");
@@ -514,7 +519,17 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await db.run("UPDATE generation_tasks SET status='completed',progress_current=progress_total,stage_label='已完成',output_path=?,updated_at=? WHERE id=?", [output.filename, now(), taskId]);
     } catch (error) {
       await db.run("UPDATE generation_tasks SET status='failed',stage_label='生成失败',error_message=?,updated_at=? WHERE id=?", [error instanceof Error ? error.message : String(error), now(), taskId]);
-    } finally { this.runningTasks.delete(taskId); }
+    } finally {
+      this.runningTasks.delete(taskId);
+      if (this.runningTasks.size === 0) {
+        void CodeCourseNative.setGenerationActive({ active: false }).catch(() => {});
+      } else {
+        void CodeCourseNative.setGenerationActive({
+          active: true,
+          label: `正在生成学习内容（${this.runningTasks.size} 个任务）`,
+        }).catch(() => {});
+      }
+    }
   }
   private async projectContext(projectId: number, paths?: string[]): Promise<string> {
     const rows = await db.query<Row>(`SELECT path,language,is_key_file FROM project_files WHERE project_id=? ${paths?.length ? `AND path IN (${paths.map(() => "?").join(",")})` : ""} ORDER BY is_key_file DESC,path LIMIT 60`, [projectId, ...(paths || [])]);
@@ -582,18 +597,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         model: settings.model,
         lesson_input: lessonInput,
       });
-    if (project.project_type === "learning_plan") {
-      return this.generateLearningPlanLesson(projectId, payload, taskId, base, prompts["prompt.system"] || "你是学习课程设计师。");
-    }
-    await db.run("UPDATE generation_tasks SET progress_total=2,stage_label='规划课件章节',updated_at=? WHERE id=?", [now(), taskId]);
-    const plan = await this.callLLM([{ role: "system", content: prompts["prompt.system"] || "你是学习课程设计师。" }, { role: "user", content: `${base}\n\n先列出本课必须逐项讲解的章节计划。` }]);
-    await db.run("UPDATE generation_tasks SET progress_current=1,stage_label='生成完整课件',updated_at=? WHERE id=?", [now(), taskId]);
-    let content = await this.callLLM([{ role: "system", content: prompts["prompt.system"] || "你是学习课程设计师。" }, { role: "user", content: `${base}\n\n章节计划：\n${plan}\n\n逐项展开，给出例子、常见错误、练习和教材参照。` }]);
-    if (!content.startsWith("#")) content = `# 第 ${payload.lesson_number} 课：${payload.title}\n\n${content}`;
-    return { filename: `lessons/lesson_${String(payload.lesson_number).padStart(2, "0")}.md`, content };
+    return this.generateDetailedLesson(projectId, payload, taskId, base, prompts["prompt.system"] || "你是学习课程设计师。");
   }
 
-  private async generateLearningPlanLesson(
+  private async generateDetailedLesson(
     projectId: number,
     payload: any,
     taskId: number,
@@ -601,39 +608,55 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     systemPrompt: string,
   ): Promise<{ filename: string; content: string }> {
     await db.run("UPDATE generation_tasks SET progress_current=0,progress_total=12,stage_label='正在规划课件',updated_at=? WHERE id=?", [now(), taskId]);
-    const plannerPrompt = `你是一位课程设计师。现在要根据一份学习计划，为其中一课制定详细的章节规划。\n\n本课名称：${payload.title}\n本课是学习计划中的第 ${payload.lesson_number} 课。\n\n你的任务：阅读下方学习材料中的"本课计划"，从中提取本课应该覆盖的全部知识内容，并将其组织为 4-10 个章节。每个章节必须列出明确的知识项（函数、API、语法、概念、公式或方法）。不能使用"其他相关知识"等笼统项。\n\n只输出一个 JSON 对象，不要输出 Markdown 或额外解释：\n\n{\n  "lesson_title": "${payload.title}",\n  "position": "本课在学习路线中的位置（从学习材料中的总纲推断）",\n  "objectives": ["3-5 条可验证的学习目标"],\n  "sections": [\n    {\n      "title": "章节标题",\n      "items": [\n        {"name": "具体的知识项名称", "kind": "function 或 concept", "focus": "讲解重点（可选，可为空字符串）"}\n      ]\n    }\n  ],\n  "textbooks": [{"title": "确信存在的书名", "author": "作者", "topics": "相关章节主题"}]\n}\n\n教材不确定时 textbooks 返回空数组。不编造页码、版次或书目。\n\n用户补充要求：${payload.instructions || "无"}\n\n学习材料：\n${base}`;
+    const plannerPrompt = `你是一位课程设计师。现在要根据课程材料，为其中一课制定详细的章节规划。\n\n本课名称：${payload.title}\n本课是课程路线中的第 ${payload.lesson_number} 课。\n\n你的任务：阅读下方课程材料，从中提取本课应该覆盖的全部知识内容，并将其组织为 4-10 个章节。每个章节必须列出明确的知识项（函数、API、语法、概念、公式或方法）。不能使用"其他相关知识"等笼统项。\n\n只输出一个 JSON 对象，不要输出 Markdown 或额外解释：\n\n{\n  "lesson_title": "${payload.title}",\n  "position": "本课在学习路线中的位置（从课程材料推断）",\n  "objectives": ["3-5 条可验证的学习目标"],\n  "sections": [\n    {\n      "title": "章节标题",\n      "items": [\n        {"name": "具体的知识项名称", "kind": "function 或 concept", "focus": "讲解重点（可选，可为空字符串）"}\n      ]\n    }\n  ],\n  "textbooks": [{"title": "确信存在的书名", "author": "作者", "topics": "相关章节主题"}]\n}\n\n教材不确定时 textbooks 返回空数组。不编造页码、版次或书目。\n\n用户补充要求：${payload.instructions || "无"}\n\n课程材料：\n${base}`;
     const checkpoint = payload._checkpoint && typeof payload._checkpoint === "object" ? payload._checkpoint as { plan?: LessonPlan; generated?: string[] } : {};
     const plan = checkpoint.plan
       ? parseLessonPlan(JSON.stringify(checkpoint.plan))
       : parseLessonPlan(await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: plannerPrompt }]));
     let totalCalls = 1 + plan.sections.length;
-    const generated: string[] = Array.isArray(checkpoint.generated) ? checkpoint.generated.slice(0, plan.sections.length).map(String) : [];
+    const generated: string[] = [];
+    if (Array.isArray(checkpoint.generated)) {
+      for (let index = 0; index < plan.sections.length; index += 1) {
+        const value = checkpoint.generated[index];
+        if (typeof value !== "string" || !value.trim()) break;
+        generated.push(value);
+      }
+    }
+    const completedBeforeRun = generated.length;
     const remaining = plan.sections.slice(generated.length);
     const saveCheckpoint = async () => db.run("UPDATE generation_tasks SET payload_json=?,updated_at=? WHERE id=?", [JSON.stringify({ ...payload, _checkpoint: { plan, generated } }), now(), taskId]);
     if (!checkpoint.plan) await saveCheckpoint();
     await db.run("UPDATE generation_tasks SET progress_current=?,progress_total=?,stage_label=?,updated_at=? WHERE id=?", [1 + generated.length, totalCalls, generated.length ? `已恢复 ${generated.length}/${plan.sections.length} 个章节` : "章节计划已完成", now(), taskId]);
 
-    // Concurrent section generation (max 4 in parallel)
-    const genSection = async (sec: { title: string; items: Array<{ name: string; kind: string; focus?: string }> }, idx: number): Promise<string> => {
+    const genSection = async (sec: { title: string; items: Array<{ name: string; kind: string; focus?: string }> }): Promise<string> => {
       const itemLines = sec.items.map((item) => `- ${item.name}（类型：${item.kind}；重点：${item.focus || "完整讲清"}）`).join("\n");
       const sectionPrompt = `${base}\n\n现在只生成第 ${payload.lesson_number} 课"${payload.title}"中的一个章节。\n\n章节标题：${sec.title}\n本章必须逐项讲解：\n${itemLines}\n\n输出要求：\n- 直接以 \`## ${sec.title}\` 开始，只输出本章 Markdown。\n- 每个知识项必须以包含其完整名称的 \`###\` 小节单独展开。\n- 不能省略任何知识项，不能用一句定义代替讲解。\n- 不要输出教材原文长引文，不要声称访问了教材全文。\n\n用户补充要求：${payload.instructions || "无"}\n\n学习材料：\n${base}`;
       let markdown = (await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: sectionPrompt }])).trim();
       if (!markdown.startsWith("##")) markdown = `## ${sec.title}\n\n${markdown}`;
-      generated[generated.length - remaining.length + idx] = markdown;
-      await saveCheckpoint();
       return markdown;
     };
 
-    // Concurrent section generation (batches of 4)
-    let completed = 0;
-    for (let batch = 0; batch < remaining.length; batch += 4) {
-      const batchSections = remaining.slice(batch, batch + 4).map((sec, i) => ({ sec, idx: batch + i }));
-      await Promise.all(batchSections.map(({ sec, idx }) =>
-        genSection(sec, idx).then(() => {
-          completed += 1;
-          return db.run("UPDATE generation_tasks SET progress_current=?,stage_label=?,updated_at=? WHERE id=?", [1 + completed, `已完成 ${completed}/${remaining.length}：${sec.title}`, now(), taskId]).catch(() => {});
-        })
-      ));
+    // Calls run concurrently, but results and checkpoints are committed in source order.
+    for (let batchStart = 0; batchStart < remaining.length; batchStart += MOBILE_LESSON_CONCURRENCY) {
+      const batchSections = remaining.slice(batchStart, batchStart + MOBILE_LESSON_CONCURRENCY);
+      await db.run("UPDATE generation_tasks SET stage_label=?,updated_at=? WHERE id=?", [
+        `并发生成 ${completedBeforeRun + batchStart + 1}-${completedBeforeRun + batchStart + batchSections.length}/${plan.sections.length}`,
+        now(),
+        taskId,
+      ]);
+      const results = await Promise.allSettled(batchSections.map((section) => genSection(section)));
+      const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+      if (failed) throw failed.reason;
+      for (const result of results) {
+        if (result.status === "fulfilled") generated.push(result.value);
+      }
+      await saveCheckpoint();
+      await db.run("UPDATE generation_tasks SET progress_current=?,stage_label=?,updated_at=? WHERE id=?", [
+        1 + generated.length,
+        `已完成 ${generated.length}/${plan.sections.length} 个章节`,
+        now(),
+        taskId,
+      ]);
     }
 
     let body = generated.join("\n\n");
@@ -662,24 +685,107 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async buildIndex(projectId: number): Promise<ProjectIndexStatus> {
     if (this.runningIndexes.has(projectId)) return this.indexStatus(projectId);
     this.runningIndexes.add(projectId);
-    await this.setSetting(`index.${projectId}.status`, JSON.stringify({ status: "building", chunk_count: 0, updated_at: now() }));
+    await this.setSetting(`index.${projectId}.status`, JSON.stringify({ status: "building", chunk_count: 0, updated_at: now(), stage: "scanning" }));
     try {
-      await db.run("DELETE FROM code_chunks WHERE project_id=?", [projectId]); await db.run("DELETE FROM code_chunks_fts WHERE project_id=?", [projectId]);
-      const files = await db.query<Row>("SELECT path,language FROM project_files WHERE project_id=? ORDER BY path", [projectId]); let count = 0;
+      const files = await db.query<Row>("SELECT path,language FROM project_files WHERE project_id=? ORDER BY path", [projectId]);
+      const existingRows = await db.query<Row>("SELECT relative_path, file_size, mtime_ns, content_hash, language FROM indexed_files WHERE project_id=?", [projectId]);
+      const existingMap = new Map<string, Row>();
+      for (const row of existingRows) existingMap.set(String(row.relative_path), row);
+
+      const newPaths: string[] = [];
+      const modifiedPaths: string[] = [];
+      const unchangedPaths: string[] = [];
+
       for (const file of files) {
-        const content = await readRepoFile(projectId, file.path); const lines = content.split("\n");
+        const existing = existingMap.get(String(file.path));
+        if (!existing) {
+          newPaths.push(file.path);
+        } else {
+          // Android files have no mtime_ns; we rely on content hash stored in indexed_files
+          unchangedPaths.push(file.path);
+        }
+      }
+      const existingPaths = new Set(existingMap.keys());
+      const currentPaths = new Set(files.map((f) => String(f.path)));
+      const stalePaths = [...existingPaths].filter((p) => !currentPaths.has(p));
+
+      // Get next generation
+      const genRow = (await db.query<Row>("SELECT COALESCE(MAX(generation), 0) AS mx FROM code_chunks WHERE project_id=?", [projectId]))[0];
+      const newGen = Number(genRow.mx) + 1;
+      const activeGen = newGen > 1 ? newGen - 1 : 0;
+
+      await this.setSetting(`index.${projectId}.status`, JSON.stringify({
+        status: "building", chunk_count: 0, updated_at: now(),
+        stage: "building_text_index", progress_current: 0, progress_total: newPaths.length + modifiedPaths.length,
+        unchanged_files: unchangedPaths.length, added_files: newPaths.length, updated_files: modifiedPaths.length, deleted_files: stalePaths.length,
+      }));
+
+      let totalChunks = 0;
+      const allFiles = [...newPaths, ...modifiedPaths];
+      for (let i = 0; i < allFiles.length; i++) {
+        const path = allFiles[i];
+        const fileRow = (await db.query<Row>("SELECT language FROM project_files WHERE project_id=? AND path=?", [projectId, path]))[0];
+        const language = String(fileRow?.language || "plaintext");
+        const content = await readRepoFile(projectId, path);
+        // Compute hash
+        let hashValue = 0;
+        for (let j = 0; j < content.length; j += 1) { hashValue = Math.imul(hashValue ^ content.charCodeAt(j), 16777619); }
+        const contentHash = (hashValue >>> 0).toString(16).padStart(8, "0");
+
+        const lines = content.split("\n");
         for (let start = 0; start < lines.length; start += 70) {
           const block = lines.slice(start, start + 80).join("\n"); if (!block.trim()) continue;
           const symbol = block.match(/(?:class|interface|struct|def|function|fn|func)\s+([A-Za-z_$][\w$]*)/)?.[1] || null;
-          const id = await db.run("INSERT INTO code_chunks(project_id,path,language,start_line,end_line,chunk_type,symbol_name,content) VALUES(?,?,?,?,?,?,?,?)", [projectId, file.path, file.language, start + 1, Math.min(lines.length, start + 80), symbol ? "symbol" : "block", symbol, block]);
-          await db.run("INSERT INTO code_chunks_fts(rowid,project_id,path,symbol_name,content) VALUES(?,?,?,?,?)", [id, projectId, file.path, symbol, block]); count += 1;
+          const id = await db.run("INSERT INTO code_chunks(project_id,path,language,start_line,end_line,chunk_type,symbol_name,content,generation) VALUES(?,?,?,?,?,?,?,?,?)", [projectId, path, language, start + 1, Math.min(lines.length, start + 80), symbol ? "symbol" : "block", symbol, block, newGen]);
+          await db.run("INSERT INTO code_chunks_fts(rowid,project_id,path,symbol_name,content) VALUES(?,?,?,?,?)", [id, projectId, path, symbol, block]);
+          totalChunks += 1;
+        }
+
+        // Update indexed_files
+        await db.run("INSERT INTO indexed_files(project_id,relative_path,file_size,mtime_ns,content_hash,language,indexed_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(project_id,relative_path) DO UPDATE SET file_size=excluded.file_size,mtime_ns=excluded.mtime_ns,content_hash=excluded.content_hash,language=excluded.language,indexed_at=excluded.indexed_at", [projectId, path, content.length, 0, contentHash, language, now()]);
+
+        if ((i + 1) % 5 === 0) {
+          await this.setSetting(`index.${projectId}.status`, JSON.stringify({
+            status: "building", chunk_count: totalChunks, updated_at: now(),
+            stage: "building_text_index", progress_current: i + 1, progress_total: allFiles.length,
+          }));
         }
       }
-      const result = { project_id: projectId, status: "ready", chunk_count: count, updated_at: now(), error_message: null };
-      await this.setSetting(`index.${projectId}.status`, JSON.stringify(result)); return result;
+
+      // Copy unchanged chunks to new generation
+      for (const path of unchangedPaths) {
+        const oldChunks = await db.query<Row>("SELECT path,language,start_line,end_line,chunk_type,symbol_name,content FROM code_chunks WHERE project_id=? AND path=? AND generation=?", [projectId, path, activeGen]);
+        for (const chunk of oldChunks) {
+          const id = await db.run("INSERT INTO code_chunks(project_id,path,language,start_line,end_line,chunk_type,symbol_name,content,generation) VALUES(?,?,?,?,?,?,?,?,?)", [projectId, chunk.path, chunk.language, Number(chunk.start_line), Number(chunk.end_line), chunk.chunk_type, chunk.symbol_name, chunk.content, newGen]);
+          await db.run("INSERT INTO code_chunks_fts(rowid,project_id,path,symbol_name,content) VALUES(?,?,?,?,?)", [id, projectId, chunk.path, chunk.symbol_name, chunk.content]);
+          totalChunks += 1;
+        }
+      }
+
+      // Clean stale path chunks + indexed_files
+      for (const stalePath of stalePaths) {
+        await db.run("DELETE FROM code_chunks_fts WHERE rowid IN (SELECT id FROM code_chunks WHERE project_id=? AND path=?)", [projectId, stalePath]);
+        await db.run("DELETE FROM code_chunks WHERE project_id=? AND path=?", [projectId, stalePath]);
+        await db.run("DELETE FROM indexed_files WHERE project_id=? AND relative_path=?", [projectId, stalePath]);
+      }
+
+      // Clean old generation chunks
+      if (activeGen > 0) {
+        await db.run("DELETE FROM code_chunks_fts WHERE rowid IN (SELECT id FROM code_chunks WHERE project_id=? AND generation=?)", [projectId, activeGen]);
+        await db.run("DELETE FROM code_chunks WHERE project_id=? AND generation=?", [projectId, activeGen]);
+      }
+
+      const result = {
+        project_id: projectId, status: "ready", chunk_count: totalChunks, updated_at: now(), error_message: null,
+        stage: "completed", active_generation: newGen, unchanged_files: unchangedPaths.length,
+        added_files: newPaths.length, updated_files: modifiedPaths.length, deleted_files: stalePaths.length,
+      };
+      await this.setSetting(`index.${projectId}.status`, JSON.stringify(result));
+      return result;
     } catch (error) {
-      const result = { project_id: projectId, status: "failed", chunk_count: 0, updated_at: now(), error_message: error instanceof Error ? error.message : String(error) };
-      await this.setSetting(`index.${projectId}.status`, JSON.stringify(result)); return result;
+      const result = { project_id: projectId, status: "failed", chunk_count: 0, updated_at: now(), error_message: error instanceof Error ? error.message : String(error), stage: "failed" };
+      await this.setSetting(`index.${projectId}.status`, JSON.stringify(result));
+      return result;
     } finally { this.runningIndexes.delete(projectId); }
   }
   private async resumeIndexes(): Promise<void> {
@@ -695,11 +801,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async search(projectId: number, rawQuery: string, sourcePath?: string, rawLimit = 8): Promise<ProjectSearchResult[]> {
     const query = String(rawQuery || "").trim(); if (!query) return []; const limit = Math.min(20, Math.max(1, Number(rawLimit || 8)));
     const terms = query.match(/[\p{L}\p{N}_.$:-]{2,}/gu)?.slice(0, 8) || [query]; const ftsQuery = terms.map((term) => `"${term.replace(/"/g, '""')}"`).join(" OR ");
+    // Get active generation
+    const maxGenRow = (await db.query<Row>("SELECT COALESCE(MAX(generation), 0) AS mx FROM code_chunks WHERE project_id=?", [projectId]))[0];
+    const activeGen = Number(maxGenRow.mx);
     let rows: Row[] = [];
     try {
-      rows = await db.query<Row>(`SELECT c.* FROM code_chunks_fts f JOIN code_chunks c ON c.id=f.rowid WHERE f.project_id=? AND code_chunks_fts MATCH ? ORDER BY CASE WHEN c.path=? THEN 0 ELSE 1 END LIMIT ?`, [projectId, ftsQuery, sourcePath || "", limit]);
+      rows = await db.query<Row>(`SELECT c.* FROM code_chunks_fts f JOIN code_chunks c ON c.id=f.rowid WHERE f.project_id=? AND code_chunks_fts MATCH ? AND (c.generation=? OR ?=0) ORDER BY CASE WHEN c.path=? THEN 0 ELSE 1 END LIMIT ?`, [projectId, ftsQuery, activeGen, activeGen, sourcePath || "", limit]);
     } catch {
-      rows = await db.query<Row>("SELECT * FROM code_chunks WHERE project_id=? AND (content LIKE ? OR symbol_name LIKE ? OR path LIKE ?) ORDER BY CASE WHEN path=? THEN 0 ELSE 1 END LIMIT ?", [projectId, `%${query}%`, `%${query}%`, `%${query}%`, sourcePath || "", limit]);
+      rows = await db.query<Row>("SELECT * FROM code_chunks WHERE project_id=? AND (content LIKE ? OR symbol_name LIKE ? OR path LIKE ?) AND (generation=? OR ?=0) ORDER BY CASE WHEN path=? THEN 0 ELSE 1 END LIMIT ?", [projectId, `%${query}%`, `%${query}%`, `%${query}%`, activeGen, activeGen, sourcePath || "", limit]);
     }
     return rows.map((row, index) => ({ path: row.path, language: row.language, start_line: Number(row.start_line), end_line: Number(row.end_line), chunk_type: row.chunk_type, symbol_name: row.symbol_name, content: row.content, score: 1 / (index + 1) }));
   }

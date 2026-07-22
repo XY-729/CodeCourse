@@ -174,6 +174,19 @@ class LearningAnchor:
 
 
 @dataclass
+class IndexedFile:
+    id: int
+    project_id: int
+    relative_path: str
+    file_size: int
+    mtime_ns: int
+    content_hash: Optional[str]
+    language: str
+    chunk_version: int
+    indexed_at: str
+
+
+@dataclass
 class LearningState:
     id: int
     project_id: int
@@ -349,6 +362,28 @@ def init_storage() -> None:
             )
             """
         )
+        # Migration: add generation column to code_chunks
+        chunk_cols = [row[1] for row in conn.execute("PRAGMA table_info(code_chunks)").fetchall()]
+        if "generation" not in chunk_cols:
+            conn.execute("ALTER TABLE code_chunks ADD COLUMN generation INTEGER NOT NULL DEFAULT 1")
+            conn.commit()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS indexed_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                file_size INTEGER NOT NULL,
+                mtime_ns INTEGER NOT NULL,
+                content_hash TEXT,
+                language TEXT NOT NULL,
+                chunk_version INTEGER NOT NULL DEFAULT 1,
+                indexed_at TEXT NOT NULL,
+                UNIQUE(project_id, relative_path),
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            )
+            """
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS project_indexes (
@@ -379,6 +414,27 @@ def init_storage() -> None:
             "degraded_reason": "TEXT",
             "indexed_fingerprint": "TEXT",
             "structural_project_name": "TEXT",
+            "active_generation": "INTEGER NOT NULL DEFAULT 0",
+            "building_generation": "INTEGER",
+            "last_good_generation": "INTEGER",
+            "stage": "TEXT",
+            "progress_current": "INTEGER NOT NULL DEFAULT 0",
+            "progress_total": "INTEGER NOT NULL DEFAULT 0",
+            "processed_files": "INTEGER NOT NULL DEFAULT 0",
+            "unchanged_files": "INTEGER NOT NULL DEFAULT 0",
+            "added_files": "INTEGER NOT NULL DEFAULT 0",
+            "updated_files": "INTEGER NOT NULL DEFAULT 0",
+            "deleted_files": "INTEGER NOT NULL DEFAULT 0",
+            "skipped_files": "INTEGER NOT NULL DEFAULT 0",
+            "failed_files": "INTEGER NOT NULL DEFAULT 0",
+            "started_at": "TEXT",
+            "finished_at": "TEXT",
+            "duration_ms": "INTEGER",
+            "last_good_index_at": "TEXT",
+            "index_schema_version": "INTEGER",
+            "chunk_algorithm_version": "INTEGER",
+            "ignore_rules_version": "INTEGER",
+            "structural_engine_version": "INTEGER",
         }
         for column, definition in index_migrations.items():
             if column not in index_cols:
@@ -394,6 +450,27 @@ def init_storage() -> None:
             END
             """
         )
+        # Clean up interrupted builds: if building_generation is set but status is not building,
+        # the previous session crashed; mark as failed and clean the incomplete generation
+        interrupted = conn.execute(
+            "SELECT project_id, building_generation, active_generation FROM project_indexes "
+            "WHERE status = 'building' OR building_generation IS NOT NULL"
+        ).fetchall()
+        for row in interrupted:
+            pid = row["project_id"]
+            bg = row["building_generation"]
+            ag = row["active_generation"] or 0
+            if row["status"] == "building" or (bg and bg > ag):
+                # Previous build was interrupted
+                if bg and bg > 0:
+                    conn.execute("DELETE FROM code_chunks WHERE project_id = ? AND generation = ?", (pid, bg))
+                conn.execute(
+                    "UPDATE project_indexes SET status = 'failed', building_generation = NULL, "
+                    "stage = 'cancelled', error_message = '上次构建过程异常退出，已清理未完成索引。' "
+                    "WHERE project_id = ?",
+                    (pid,),
+                )
+        conn.commit()
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS knowledge_nodes (
@@ -852,8 +929,9 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM qa_records WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM qa_sessions WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM highlights WHERE project_id = ?", (project_id,))
-        conn.execute("DELETE FROM code_chunks WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM code_chunks_fts WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM code_chunks WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM indexed_files WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM project_indexes WHERE project_id = ?", (project_id,))
         cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
@@ -1204,29 +1282,63 @@ def set_project_index_status(
     degraded_reason: Optional[str] = None,
     indexed_fingerprint: Optional[str] = None,
     structural_project_name: Optional[str] = None,
+    stage: Optional[str] = None,
+    progress_current: Optional[int] = None,
+    progress_total: Optional[int] = None,
+    processed_files: Optional[int] = None,
+    unchanged_files: Optional[int] = None,
+    added_files: Optional[int] = None,
+    updated_files: Optional[int] = None,
+    deleted_files: Optional[int] = None,
+    skipped_files: Optional[int] = None,
+    failed_files: Optional[int] = None,
+    started_at: Optional[str] = None,
+    finished_at: Optional[str] = None,
+    duration_ms: Optional[int] = None,
+    last_good_index_at: Optional[str] = None,
+    active_generation: Optional[int] = None,
+    building_generation: Optional[int] = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
         existing = conn.execute("SELECT * FROM project_indexes WHERE project_id = ?", (project_id,)).fetchone()
         previous = dict(existing) if existing else {}
-        values = {
+        values: dict[str, object] = {
             "text_status": text_status if text_status is not None else previous.get("text_status", "not_built"),
             "structural_status": structural_status if structural_status is not None else previous.get("structural_status", "not_built"),
             "node_count": node_count if node_count is not None else previous.get("node_count", 0),
             "edge_count": edge_count if edge_count is not None else previous.get("edge_count", 0),
             "engine": engine if engine is not None else previous.get("engine"),
-            "degraded_reason": degraded_reason,
+            "degraded_reason": degraded_reason if degraded_reason is not None else previous.get("degraded_reason"),
             "indexed_fingerprint": indexed_fingerprint if indexed_fingerprint is not None else previous.get("indexed_fingerprint"),
             "structural_project_name": structural_project_name if structural_project_name is not None else previous.get("structural_project_name"),
+            "stage": stage if stage is not None else previous.get("stage"),
+            "progress_current": progress_current if progress_current is not None else previous.get("progress_current", 0),
+            "progress_total": progress_total if progress_total is not None else previous.get("progress_total", 0),
+            "processed_files": processed_files if processed_files is not None else previous.get("processed_files", 0),
+            "unchanged_files": unchanged_files if unchanged_files is not None else previous.get("unchanged_files", 0),
+            "added_files": added_files if added_files is not None else previous.get("added_files", 0),
+            "updated_files": updated_files if updated_files is not None else previous.get("updated_files", 0),
+            "deleted_files": deleted_files if deleted_files is not None else previous.get("deleted_files", 0),
+            "skipped_files": skipped_files if skipped_files is not None else previous.get("skipped_files", 0),
+            "failed_files": failed_files if failed_files is not None else previous.get("failed_files", 0),
+            "active_generation": active_generation if active_generation is not None else previous.get("active_generation", 0),
+            "building_generation": building_generation if building_generation is not None else previous.get("building_generation"),
         }
         conn.execute(
             """
             INSERT INTO project_indexes (
                 project_id, status, chunk_count, text_status, structural_status,
                 node_count, edge_count, engine, degraded_reason, indexed_fingerprint,
-                structural_project_name, error_message, updated_at
+                structural_project_name, error_message,
+                stage, progress_current, progress_total,
+                processed_files, unchanged_files, added_files, updated_files,
+                deleted_files, skipped_files, failed_files,
+                active_generation, building_generation, started_at, finished_at, duration_ms,
+                updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id) DO UPDATE SET
                 status = excluded.status,
                 chunk_count = excluded.chunk_count,
@@ -1239,64 +1351,123 @@ def set_project_index_status(
                 indexed_fingerprint = excluded.indexed_fingerprint,
                 structural_project_name = excluded.structural_project_name,
                 error_message = excluded.error_message,
+                stage = COALESCE(excluded.stage, project_indexes.stage),
+                progress_current = COALESCE(excluded.progress_current, project_indexes.progress_current),
+                progress_total = COALESCE(excluded.progress_total, project_indexes.progress_total),
+                processed_files = COALESCE(excluded.processed_files, project_indexes.processed_files),
+                unchanged_files = COALESCE(excluded.unchanged_files, project_indexes.unchanged_files),
+                added_files = COALESCE(excluded.added_files, project_indexes.added_files),
+                updated_files = COALESCE(excluded.updated_files, project_indexes.updated_files),
+                deleted_files = COALESCE(excluded.deleted_files, project_indexes.deleted_files),
+                skipped_files = COALESCE(excluded.skipped_files, project_indexes.skipped_files),
+                failed_files = COALESCE(excluded.failed_files, project_indexes.failed_files),
+                active_generation = COALESCE(excluded.active_generation, project_indexes.active_generation),
+                building_generation = COALESCE(excluded.building_generation, project_indexes.building_generation),
+                started_at = excluded.started_at,
+                finished_at = excluded.finished_at,
+                duration_ms = excluded.duration_ms,
                 updated_at = excluded.updated_at
             """,
             (
-                project_id,
-                status,
-                chunk_count,
-                values["text_status"],
-                values["structural_status"],
-                values["node_count"],
-                values["edge_count"],
-                values["engine"],
-                values["degraded_reason"],
-                values["indexed_fingerprint"],
-                values["structural_project_name"],
+                project_id, status, chunk_count,
+                values["text_status"], values["structural_status"],
+                values["node_count"], values["edge_count"],
+                values["engine"], values["degraded_reason"],
+                values["indexed_fingerprint"], values["structural_project_name"],
                 error_message,
+                values["stage"], values["progress_current"], values["progress_total"],
+                values["processed_files"], values["unchanged_files"], values["added_files"],
+                values["updated_files"], values["deleted_files"], values["skipped_files"],
+                values["failed_files"],
+                values["active_generation"], values["building_generation"],
+                started_at, finished_at, duration_ms,
                 now,
             ),
         )
         conn.commit()
 
 
+DEFAULT_INDEX_STATUS_FIELDS: dict[str, object] = {
+    "status": "not_built",
+    "chunk_count": 0,
+    "text_status": "not_built",
+    "structural_status": "not_built",
+    "node_count": 0,
+    "edge_count": 0,
+    "engine": None,
+    "degraded_reason": None,
+    "indexed_fingerprint": None,
+    "structural_project_name": None,
+    "error_message": None,
+    "stage": None,
+    "progress_current": 0,
+    "progress_total": 0,
+    "processed_files": 0,
+    "unchanged_files": 0,
+    "added_files": 0,
+    "updated_files": 0,
+    "deleted_files": 0,
+    "skipped_files": 0,
+    "failed_files": 0,
+    "active_generation": 0,
+    "building_generation": None,
+    "started_at": None,
+    "finished_at": None,
+    "duration_ms": None,
+    "last_good_index_at": None,
+    "updated_at": None,
+}
+
+
 def get_project_index_status(project_id: int) -> dict[str, object]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM project_indexes WHERE project_id = ?", (project_id,)).fetchone()
         if not row:
-            return {
-                "project_id": project_id,
-                "status": "not_built",
-                "chunk_count": 0,
-                "text_status": "not_built",
-                "structural_status": "not_built",
-                "node_count": 0,
-                "edge_count": 0,
-                "engine": None,
-                "degraded_reason": None,
-                "indexed_fingerprint": None,
-                "structural_project_name": None,
-                "error_message": None,
-                "updated_at": None,
-            }
+            return {"project_id": project_id, **DEFAULT_INDEX_STATUS_FIELDS}
         result = dict(row)
         result["project_id"] = project_id
         return result
 
 
 def replace_code_chunks(project_id: int, chunks: list[dict[str, object]]) -> int:
+    """Legacy full-rebuild entry point. Uses generation-based write for safety."""
+    gen = get_next_generation(project_id)
+    write_chunks_to_generation(project_id, gen, chunks)
+    activate_generation(project_id, gen)
+    return len(chunks)
+
+
+def get_active_generation(project_id: int) -> int:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT active_generation FROM project_indexes WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        return int(row["active_generation"]) if row and row["active_generation"] else 0
+
+
+def get_next_generation(project_id: int) -> int:
+    """Reserve the next generation number for this project."""
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT COALESCE(MAX(generation), 0) AS max_gen FROM code_chunks WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        return int(existing["max_gen"]) + 1 if existing else 1
+
+
+def write_chunks_to_generation(project_id: int, generation: int, chunks: list[dict[str, object]]) -> None:
+    """Write chunks for a specific generation. Does NOT switch active generation."""
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
-        conn.execute("DELETE FROM code_chunks WHERE project_id = ?", (project_id,))
-        conn.execute("DELETE FROM code_chunks_fts WHERE project_id = ?", (project_id,))
         for chunk in chunks:
             cursor = conn.execute(
                 """
                 INSERT INTO code_chunks (
                     project_id, path, language, start_line, end_line, chunk_type,
-                    symbol_name, content, content_hash, created_at
+                    symbol_name, content, content_hash, generation, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project_id,
@@ -1308,6 +1479,7 @@ def replace_code_chunks(project_id: int, chunks: list[dict[str, object]]) -> int
                     chunk.get("symbol_name"),
                     str(chunk["content"]),
                     str(chunk["content_hash"]),
+                    generation,
                     now,
                 ),
             )
@@ -1320,7 +1492,200 @@ def replace_code_chunks(project_id: int, chunks: list[dict[str, object]]) -> int
                 (chunk_id, project_id, str(chunk["path"]), chunk.get("symbol_name"), str(chunk["content"])),
             )
         conn.commit()
-    return len(chunks)
+
+
+def copy_unchanged_chunks(project_id: int, old_generation: int, new_generation: int, unchanged_paths: set[str]) -> int:
+    """Copy chunks for unchanged files from the old generation to the new one."""
+    if not unchanged_paths or old_generation == 0 or old_generation == new_generation:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    count = 0
+    with _connect() as conn:
+        for path in unchanged_paths:
+            old_chunks = conn.execute(
+                """
+                SELECT path, language, start_line, end_line, chunk_type,
+                       symbol_name, content, content_hash
+                FROM code_chunks
+                WHERE project_id = ? AND path = ? AND generation = ?
+                ORDER BY start_line
+                """,
+                (project_id, path, old_generation),
+            ).fetchall()
+            for chunk in old_chunks:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO code_chunks (
+                        project_id, path, language, start_line, end_line, chunk_type,
+                        symbol_name, content, content_hash, generation, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        project_id,
+                        chunk["path"],
+                        chunk["language"],
+                        int(chunk["start_line"]),
+                        int(chunk["end_line"]),
+                        chunk["chunk_type"],
+                        chunk["symbol_name"],
+                        chunk["content"],
+                        chunk["content_hash"],
+                        new_generation,
+                        now,
+                    ),
+                )
+                chunk_id = int(cursor.lastrowid)
+                sym = chunk["symbol_name"] if isinstance(chunk, dict) else (chunk["symbol_name"] if "symbol_name" in chunk.keys() else None)
+                conn.execute(
+                    """
+                    INSERT INTO code_chunks_fts (chunk_id, project_id, path, symbol_name, content)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (chunk_id, project_id, chunk["path"], sym, chunk["content"]),
+                )
+                count += 1
+        conn.commit()
+    return count
+
+
+def activate_generation(project_id: int, generation: int) -> None:
+    """Switch active_generation to the given generation in a transaction."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        existing = conn.execute(
+            "SELECT project_id FROM project_indexes WHERE project_id = ?", (project_id,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """
+                UPDATE project_indexes
+                SET active_generation = ?,
+                    building_generation = NULL,
+                    last_good_generation = active_generation,
+                    updated_at = ?
+                WHERE project_id = ?
+                """,
+                (generation, now, project_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO project_indexes (project_id, status, chunk_count, text_status,
+                    structural_status, active_generation, updated_at)
+                VALUES (?, 'not_built', 0, 'not_built', 'not_built', ?, ?)
+                """,
+                (project_id, generation, now),
+            )
+        conn.commit()
+
+
+def clean_generation(project_id: int, generation: int) -> int:
+    """Delete all chunks belonging to a given (old) generation."""
+    with _connect() as conn:
+        chunk_rows = conn.execute(
+            "SELECT id FROM code_chunks WHERE project_id = ? AND generation = ?",
+            (project_id, generation),
+        ).fetchall()
+        deleted = len(chunk_rows)
+        conn.execute(
+            "DELETE FROM code_chunks_fts WHERE chunk_id IN (SELECT id FROM code_chunks WHERE project_id = ? AND generation = ?)",
+            (project_id, generation),
+        )
+        conn.execute(
+            "DELETE FROM code_chunks WHERE project_id = ? AND generation = ?",
+            (project_id, generation),
+        )
+        conn.commit()
+    return deleted
+
+
+def get_all_indexed_files(project_id: int) -> list[dict[str, object]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT relative_path, file_size, mtime_ns, content_hash, language, chunk_version "
+            "FROM indexed_files WHERE project_id = ?",
+            (project_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def upsert_indexed_file(project_id: int, relative_path: str, file_size: int, mtime_ns: int, content_hash: Optional[str], language: str, chunk_version: int = 1) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO indexed_files (project_id, relative_path, file_size, mtime_ns, content_hash, language, chunk_version, indexed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, relative_path) DO UPDATE SET
+                file_size = excluded.file_size,
+                mtime_ns = excluded.mtime_ns,
+                content_hash = excluded.content_hash,
+                language = excluded.language,
+                chunk_version = excluded.chunk_version,
+                indexed_at = excluded.indexed_at
+            """,
+            (project_id, relative_path, file_size, mtime_ns, content_hash, language, chunk_version, now),
+        )
+        conn.commit()
+
+
+def upsert_indexed_files_batch(project_id: int, records: list[dict[str, object]]) -> None:
+    """Batch upsert indexed_files records for performance."""
+    if not records:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        for rec in records:
+            conn.execute(
+                """
+                INSERT INTO indexed_files (project_id, relative_path, file_size, mtime_ns, content_hash, language, chunk_version, indexed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(project_id, relative_path) DO UPDATE SET
+                    file_size = excluded.file_size,
+                    mtime_ns = excluded.mtime_ns,
+                    content_hash = excluded.content_hash,
+                    language = excluded.language,
+                    chunk_version = excluded.chunk_version,
+                    indexed_at = excluded.indexed_at
+                """,
+                (
+                    project_id,
+                    str(rec["relative_path"]),
+                    int(rec["file_size"]),
+                    int(rec["mtime_ns"]),
+                    rec.get("content_hash"),
+                    str(rec["language"]),
+                    int(rec.get("chunk_version", 1)),
+                    now,
+                ),
+            )
+        conn.commit()
+
+
+def delete_stale_indexed_files(project_id: int, stale_paths: set[str]) -> int:
+    """Delete indexed_files records and associated chunks for paths no longer on disk."""
+    if not stale_paths:
+        return 0
+    with _connect() as conn:
+        # Delete FTS entries for the stale paths' chunks
+        placeholders = ",".join("?" for _ in stale_paths)
+        params = [project_id] + list(stale_paths)
+        conn.execute(
+            f"DELETE FROM code_chunks_fts WHERE chunk_id IN "
+            f"(SELECT id FROM code_chunks WHERE project_id = ? AND path IN ({placeholders}))",
+            params,
+        )
+        conn.execute(
+            f"DELETE FROM code_chunks WHERE project_id = ? AND path IN ({placeholders})",
+            params,
+        )
+        cursor = conn.execute(
+            f"DELETE FROM indexed_files WHERE project_id = ? AND relative_path IN ({placeholders})",
+            params,
+        )
+        conn.commit()
+        return cursor.rowcount
 
 
 def list_code_chunks(project_id: int, path: Optional[str] = None, limit: int = 20) -> list[CodeChunk]:
@@ -1338,6 +1703,9 @@ def list_code_chunks(project_id: int, path: Optional[str] = None, limit: int = 2
 
 def search_code_chunks(project_id: int, query: str, source_path: Optional[str] = None, limit: int = 8) -> list[CodeChunk]:
     terms = [item.strip() for item in re_split_search_terms(query) if item.strip()]
+    active_gen = get_active_generation(project_id)
+    if active_gen == 0:
+        return []
     if not terms:
         return list_code_chunks(project_id, source_path, limit)
     fts_query = " OR ".join(terms[:12])
@@ -1349,6 +1717,7 @@ def search_code_chunks(project_id: int, query: str, source_path: Optional[str] =
                 FROM code_chunks_fts
                 JOIN code_chunks c ON c.id = code_chunks_fts.chunk_id
                 WHERE code_chunks_fts MATCH ? AND c.project_id = ?
+                  AND c.generation = ?
                 ORDER BY
                     CASE WHEN c.path = ? THEN 0 ELSE 1 END,
                     rank,
@@ -1356,7 +1725,7 @@ def search_code_chunks(project_id: int, query: str, source_path: Optional[str] =
                     c.start_line
                 LIMIT ?
                 """,
-                (fts_query, project_id, source_path or "", limit),
+                (fts_query, project_id, active_gen, source_path or "", limit),
             ).fetchall()
         except sqlite3.OperationalError:
             like = f"%{terms[0]}%"
@@ -1364,10 +1733,11 @@ def search_code_chunks(project_id: int, query: str, source_path: Optional[str] =
                 """
                 SELECT * FROM code_chunks
                 WHERE project_id = ? AND (content LIKE ? OR path LIKE ? OR COALESCE(symbol_name, '') LIKE ?)
+                  AND generation = ?
                 ORDER BY CASE WHEN path = ? THEN 0 ELSE 1 END, path, start_line
                 LIMIT ?
                 """,
-                (project_id, like, like, like, source_path or "", limit),
+                (project_id, like, like, like, active_gen, source_path or "", limit),
             ).fetchall()
         return [_row_to_code_chunk(row) for row in rows]
 

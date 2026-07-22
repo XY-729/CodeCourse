@@ -1,13 +1,6 @@
 import { httpApiUrl, providerRequest } from "../platform/provider";
 import { isAndroidRuntime } from "../platform/runtime";
 
-declare global {
-  interface Window {
-    codecourseDesktop?: { apiBase?: string; openExternal?: (url: string) => void };
-    __CODECOURSE_API_BASE__?: string;
-  }
-}
-
 export type Project = {
   id: number;
   name: string;
@@ -196,6 +189,22 @@ export type ProjectIndexStatus = {
   engine?: string | null;
   degraded_reason?: string | null;
   indexed_fingerprint?: string | null;
+  stage?: string | null;
+  progress_current?: number;
+  progress_total?: number;
+  processed_files?: number;
+  unchanged_files?: number;
+  added_files?: number;
+  updated_files?: number;
+  deleted_files?: number;
+  skipped_files?: number;
+  failed_files?: number;
+  active_generation?: number;
+  building_generation?: number | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  duration_ms?: number | null;
+  last_good_index_at?: string | null;
 };
 
 export type LearningState = {
@@ -300,6 +309,13 @@ export function importProject(url: string): Promise<Project> {
   return request<Project>("/projects/import", {
     method: "POST",
     body: JSON.stringify({ url }),
+  });
+}
+
+export function importLocalProject(path: string): Promise<Project> {
+  return request<Project>("/projects/import-local", {
+    method: "POST",
+    body: JSON.stringify({ path }),
   });
 }
 
@@ -516,7 +532,7 @@ export async function generateOutlineLessonStream(
 }
 
 export function importProjectArchive(file: File): Promise<Project> {
-  return request<Project>("/projects/import-archive", {
+  return request<Project>(`/projects/import-archive?filename=${encodeURIComponent(file.name)}`, {
     method: "POST",
     body: file,
   });
