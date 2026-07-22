@@ -34,14 +34,13 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onActionModeStarted(ActionMode mode) {
         Log.d(SELECTION_TAG, "ActionMode started, type=" + mode.getType());
-        super.onActionModeStarted(mode);
+        // Add "提问" before super so it occupies the primary action slot.
+        // WebView's Copy/SelectAll are added by super and get secondary slots.
         Menu menu = mode.getMenu();
-        if (menu.findItem(ASK_SELECTION_MENU_ID) != null) {
-            return;
-        }
-        MenuItem askItem = menu.add(Menu.NONE, ASK_SELECTION_MENU_ID, Menu.NONE, "提问");
-        askItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
-        askItem.setOnMenuItemClickListener(item -> {
+        if (menu.findItem(ASK_SELECTION_MENU_ID) == null) {
+            MenuItem askItem = menu.add(Menu.NONE, ASK_SELECTION_MENU_ID, 0, "提问");
+            askItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+            askItem.setOnMenuItemClickListener(item -> {
             if (getBridge() == null) {
                 return false;
             }
@@ -52,9 +51,11 @@ public class MainActivity extends BridgeActivity {
                     + "window.dispatchEvent(new CustomEvent('codecourse-native-selection-ask',{detail:{text:text}}));"
                     + "return true;"
                     + "})();";
-            webView.evaluateJavascript(script, ignored -> mode.finish());
-            return true;
-        });
+                webView.evaluateJavascript(script, ignored -> mode.finish());
+                return true;
+            });
+        }
+        super.onActionModeStarted(mode);
     }
 
     @Override
