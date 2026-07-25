@@ -695,13 +695,12 @@ button:disabled,
   height: 27px;
   border: 1px solid #c8d0da;
   border-radius: 6px;
-  padding: 0 7px;
+  padding: 0 4px 0 0;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   color: #344054;
   background: #ffffff;
-  cursor: pointer;
 }
 
 .pane-tab.active {
@@ -720,6 +719,27 @@ button:disabled,
 .pane-tab svg {
   flex: 0 0 auto;
   color: #7b8794;
+}
+
+.pane-tab-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 4px 4px 11px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: none;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.pane-tab-main span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pane-tab-close {

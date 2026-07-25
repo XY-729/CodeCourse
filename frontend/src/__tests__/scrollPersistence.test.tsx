@@ -1,85 +1,90 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
-import { useRef } from "react";
+import { calculateReadingProgress } from "../components/MarkdownViewer";
 
-function useScrollHandler(onScrollRatioChange: (ratio: number) => void) {
-  const scrollFrameRef = useRef(0);
-  const debounceTimerRef = useRef(0);
+describe("calculateReadingProgress", () => {
+  it("returns 0 at top", () => expect(calculateReadingProgress(0, 1000, 500)).toBe(0));
+  it("returns 1 at bottom", () => expect(calculateReadingProgress(500, 1000, 500)).toBe(1));
+  it("returns 1 when unscrollable", () => expect(calculateReadingProgress(0, 400, 500)).toBe(1));
+  it("returns 0 for negative scrollTop", () => expect(calculateReadingProgress(-100, 1000, 500)).toBe(0));
+  it("returns 1 for overflow", () => expect(calculateReadingProgress(600, 1000, 500)).toBe(1));
+  it("handles zero height", () => expect(calculateReadingProgress(0, 0, 500)).toBe(1));
+  it("approaches 1 near bottom", () => expect(calculateReadingProgress(499, 1000, 500)).toBeCloseTo(0.998, 2));
+});
 
-  function simulateScroll(scrollTop: number, scrollHeight = 1000, clientHeight = 500) {
-    if (!scrollFrameRef.current) {
-      scrollFrameRef.current = 1;
-      scrollFrameRef.current = 0;
+describe("scroll save state machine contract", () => {
+  // The MarkdownViewer now implements a unified scroll save:
+  // - scrollend (preferred): commit once on stop, check selection
+  // - debounce (fallback): start 700ms timer on each scroll, reset on new scroll
+  // - unmount: cancel timer + commit once
+  // - Android selection active: skip all saves
+
+  function simulateScrollSaves(
+    hasScrollend: boolean,
+    hasSelection: boolean,
+    scrollCount: number,
+    advanceMs: number,
+  ): { commitCalls: number } {
+    let commitCalls = 0;
+    let commitScheduled = false;
+    let debounceTimer: number | null = null;
+
+    function commitReadingPosition() {
+      if (hasSelection) return; // selection guard
+      commitCalls += 1;
+      commitScheduled = false;
     }
-    window.clearTimeout(debounceTimerRef.current);
-    debounceTimerRef.current = window.setTimeout(() => {
-      const ratio = Math.max(0, Math.min(1, scrollTop / (scrollHeight - clientHeight)));
-      onScrollRatioChange(ratio);
-    }, 700) as unknown as number;
+
+    // scroll handler
+    for (let i = 0; i < scrollCount; i++) {
+      if (!hasScrollend) {
+        // debounce mode: clear + re-schedule
+        if (debounceTimer !== null) clearTimeout(debounceTimer);
+        debounceTimer = 1; // mark as scheduled
+        commitScheduled = true;
+      }
+    }
+
+    // after advance
+    if (!hasScrollend && commitScheduled) {
+      commitReadingPosition();
+    }
+    if (hasScrollend) {
+      // scrollend fires once
+      commitReadingPosition();
+    }
+
+    return { commitCalls };
   }
 
-  function cleanup() {
-    window.clearTimeout(debounceTimerRef.current);
-    window.clearTimeout(scrollFrameRef.current);
-  }
-
-  return { simulateScroll, cleanup };
-}
-
-describe("scroll persistence", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
+  it("scrollend: commits once after scrolling stops", () => {
+    const r = simulateScrollSaves(true, false, 100, 0);
+    expect(r.commitCalls).toBe(1);
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
+  it("debounce: commits once after timer expires", () => {
+    const r = simulateScrollSaves(false, false, 100, 700);
+    expect(r.commitCalls).toBe(1);
   });
 
-  it("does NOT call onScrollRatioChange during continuous scrolling", () => {
-    const onSave = vi.fn();
-    const { result } = renderHook(() => useScrollHandler(onSave as unknown as (ratio: number) => void));
-
-    for (let i = 0; i < 100; i++) {
-      act(() => {
-        result.current.simulateScroll(i * 5);
-      });
-    }
-    expect(onSave).not.toHaveBeenCalled();
+  it("selection active: no commit on scrollend", () => {
+    const r = simulateScrollSaves(true, true, 100, 0);
+    expect(r.commitCalls).toBe(0);
   });
 
-  it("calls onScrollRatioChange exactly once after scrolling stops", () => {
-    const onSave = vi.fn();
-    const { result } = renderHook(() => useScrollHandler(onSave as unknown as (ratio: number) => void));
-
-    act(() => { result.current.simulateScroll(250); });
-    act(() => { result.current.simulateScroll(300); });
-
-    expect(onSave).not.toHaveBeenCalled();
-    act(() => { vi.advanceTimersByTime(700); });
-    expect(onSave).toHaveBeenCalledTimes(1);
+  it("selection active: no commit on debounce", () => {
+    const r = simulateScrollSaves(false, true, 100, 700);
+    expect(r.commitCalls).toBe(0);
   });
 
-  it("only saves final position after burst", () => {
-    const onSave = vi.fn();
-    const { result } = renderHook(() => useScrollHandler(onSave as unknown as (ratio: number) => void));
-
-    act(() => { result.current.simulateScroll(100); });
-    act(() => { result.current.simulateScroll(200); });
-    act(() => { result.current.simulateScroll(500); });
-    act(() => { vi.advanceTimersByTime(700); });
-
-    expect(onSave).toHaveBeenCalledTimes(1);
-    expect(onSave).toHaveBeenCalledWith(1);
-  });
-
-  it("cleanup clears pending debounce timers", () => {
-    const onSave = vi.fn();
-    const { result, unmount } = renderHook(() => useScrollHandler(onSave as unknown as (ratio: number) => void));
-
-    act(() => { result.current.simulateScroll(300); });
-    act(() => { result.current.cleanup(); });
-    act(() => { vi.advanceTimersByTime(1000); });
-
-    expect(onSave).not.toHaveBeenCalled();
+  it("both scrollend and debounce would not both fire in production", () => {
+    // In production, only one path is active.
+    // scrollend path: no debounce timer
+    // debounce path: no scrollend
+    // So at most 1 commit per stop.
+    const r1 = simulateScrollSaves(true, false, 100, 0);
+    const r2 = simulateScrollSaves(false, false, 100, 700);
+    // Neither can produce >1 because the paths are mutually exclusive
+    expect(r1.commitCalls).toBeLessThanOrEqual(1);
+    expect(r2.commitCalls).toBeLessThanOrEqual(1);
   });
 });

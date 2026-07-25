@@ -526,8 +526,9 @@ html.platform-android .reader-learning-actions .icon-button svg {
   height: 15px;
 }
 html.platform-android .reader-learning-actions .complete-button {
-  min-height: 36px;
-  padding: 5px 10px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 12px;
   font-size: 11px;
   line-height: 1;
 }

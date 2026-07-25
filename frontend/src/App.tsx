@@ -2333,7 +2333,8 @@ export default function App() {
             }
           }
           if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
-            let restoredLayout = stored.layout;
+            // Always hydrate — stored layout is stripped of content
+            let restoredLayout = await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses);
             if (restoredLayout.type === "split") {
               restoredLayout = normalizeToSingleGroup(restoredLayout, stored.activeGroupId ? findGroup(stored.layout, stored.activeGroupId)?.activeItemId : null);
             }
@@ -2372,8 +2373,8 @@ export default function App() {
           }
         }
       } catch {
+        // Only clean Android key — never touch desktop data from Android
         try { window.localStorage.removeItem(androidWorkbenchStorageKey(freshProject.id)); } catch { /* best-effort */ }
-        try { window.localStorage.removeItem(workbenchStorageKey(freshProject.id)); } catch { /* best-effort */ }
       }
       const recent = [...nextLearningStates].sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
       const recentCourse = recent?.source_type === "course" ? nextCourses.find((file) => file.filename === recent.source_path) : null;
@@ -3438,10 +3439,11 @@ export default function App() {
         <div className="pane-tabs">
           {!mobileRuntime ? <span className="pane-name">工作区</span> : null}
           {group.items.map((item) => (
-            <button
+            <div
               key={item.id}
               className={`pane-tab ${item.id === group.activeItemId ? "active" : ""}`}
-              onClick={() => activateItem(group.id, item)}
+              role="tab"
+              aria-selected={item.id === group.activeItemId}
               title={item.path}
               draggable={!mobileRuntime && item.type !== "knowledge_graph"}
               onDragStart={(event) => {
@@ -3458,7 +3460,13 @@ export default function App() {
                 void handleTabDragEnd(event, group.id, item);
               }}
             >
-              <span>{item.dirty ? `${item.title} *` : item.title}</span>
+              <button
+                type="button"
+                className="pane-tab-main"
+                onClick={() => activateItem(group.id, item)}
+              >
+                <span>{item.dirty ? `${item.title} *` : item.title}</span>
+              </button>
               <button
                 type="button"
                 className="pane-tab-close"
@@ -3471,7 +3479,7 @@ export default function App() {
               >
                 <X size={13} />
               </button>
-            </button>
+            </div>
           ))}
         </div>
         {!mobileRuntime ? <div className="pane-workspace-actions" onClick={(event) => event.stopPropagation()}>
@@ -3870,7 +3878,7 @@ export default function App() {
     if (except !== "prompts") setPromptEditorOpen(false);
   }
 
-  async function handleTabDragEnd(event: DragEvent<HTMLButtonElement>, groupId: string, item: OpenItem) {
+  async function handleTabDragEnd(event: DragEvent<HTMLElement>, groupId: string, item: OpenItem) {
     if (mobileRuntime || item.type === "knowledge_graph" || !window.codecourseDesktop?.detachTab) return;
     const outsideWindow = event.clientX <= 1
       || event.clientY <= 1

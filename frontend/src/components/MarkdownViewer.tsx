@@ -416,80 +416,79 @@ export default function MarkdownViewer({
     refreshProgress();
   }, [content, sourcePath]);
 
-  // Cleanup rAF and ResizeObserver on unmount
-  const saveTimerRef = useRef(0);
+  // Cleanup: unified timer, rAF, ResizeObserver — single flush on unmount
   const scrollValueRef = useRef<number | null>(null);
+  const positionSaveTimerRef = useRef<number>(0);
+  const unmountedRef = useRef(false);
+  const lastSavedRatioRef = useRef<number | null>(null);
 
-  // Flush pending position save on unmount
+  function hasActiveAndroidSelection(): boolean {
+    if (!androidRuntime) return false;
+    const sel = window.getSelection();
+    return sel !== null && !sel.isCollapsed;
+  }
+
+  function commitReadingPosition() {
+    if (unmountedRef.current) return;
+    if (hasActiveAndroidSelection()) return;
+    if (scrollValueRef.current === null) return;
+    if (!onScrollRatioChange) return;
+    if (lastSavedRatioRef.current === scrollValueRef.current) return;
+    lastSavedRatioRef.current = scrollValueRef.current;
+    onScrollRatioChange(scrollValueRef.current);
+  }
+
+  // Flush pending position on unmount
   useEffect(() => () => {
+    unmountedRef.current = true;
     window.cancelAnimationFrame(scrollFrameRef.current);
+    window.clearTimeout(positionSaveTimerRef.current);
     resizeObserverRef.current?.disconnect();
-    window.clearTimeout(saveTimerRef.current);
-    // Submit final reading position if available
-    if (scrollValueRef.current !== null && onScrollRatioChange) {
-      onScrollRatioChange(scrollValueRef.current);
-    }
+    commitReadingPosition();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // rAF-throttled scroll: only updates the progress bar (visual).
-  // Position saving uses a separate trailing debounce (below).
-  function reportScroll() {
+  function reportScrollRaf() {
     if (scrollFrameRef.current) return;
     scrollFrameRef.current = window.requestAnimationFrame(() => {
       scrollFrameRef.current = 0;
       refreshProgress();
-      // Track position for eventual save
-      if (onScrollRatioChange) {
-        const article = articleRef.current;
-        if (article) {
-          const ratio = calculateReadingProgress(
-            article.scrollTop, article.scrollHeight, article.clientHeight,
-          );
-          scrollValueRef.current = ratio;
-        }
-      }
     });
   }
 
-  // Trailing debounce: save reading position only after scroll stops (~700ms).
-  // Android pauses position saving during text selection to avoid
-  // parent state updates that would destroy the native Range.
-  const saveDebounceRef = useRef(0);
-  const schedulePositionSave = useCallback(() => {
-    if (!onScrollRatioChange) return;
-    // On Android, skip while selection is active
-    if (androidRuntime) {
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed) return;
+  // Unified scroll handler: update progress bar (visual) + track position
+  function onScrollHandler() {
+    reportScrollRaf();
+    const article = articleRef.current;
+    if (article && onScrollRatioChange) {
+      scrollValueRef.current = calculateReadingProgress(
+        article.scrollTop, article.scrollHeight, article.clientHeight,
+      );
     }
-    window.clearTimeout(saveDebounceRef.current);
-    saveDebounceRef.current = window.setTimeout(() => {
-      if (scrollValueRef.current !== null) {
-        onScrollRatioChange(scrollValueRef.current);
-      }
-    }, 700) as unknown as number;
-  }, [onScrollRatioChange, androidRuntime]);
+    // Only set debounce if scrollend is NOT supported
+    if (article && !("onscrollend" in article)) {
+      if (hasActiveAndroidSelection()) return;
+      window.clearTimeout(positionSaveTimerRef.current);
+      positionSaveTimerRef.current = window.setTimeout(() => {
+        commitReadingPosition();
+      }, 700) as unknown as number;
+    }
+  }
 
-  // Use scrollend if available, otherwise debounce on each scroll event
+  // scrollend listener (preferred path when supported)
   useEffect(() => {
     const article = articleRef.current;
-    if (!article) return;
+    if (!article || !onScrollRatioChange) return;
 
     const handleScrollEnd = () => {
-      if (scrollValueRef.current !== null && onScrollRatioChange) {
-        onScrollRatioChange(scrollValueRef.current);
-      }
+      commitReadingPosition();
     };
 
-    // scrollend is supported in modern WebViews
     if ("onscrollend" in article) {
       article.addEventListener("scrollend", handleScrollEnd);
       return () => article.removeEventListener("scrollend", handleScrollEnd);
     }
-
-    // Fallback: trailing debounce triggered from reportScroll
-    // (The debounce is set by schedulePositionSave, called via onScroll)
     return undefined;
   }, [onScrollRatioChange]);
 
@@ -641,10 +640,7 @@ export default function MarkdownViewer({
         onMouseUp={androidRuntime ? undefined : captureSelection}
         onKeyUp={androidRuntime ? undefined : captureSelection}
         onContextMenu={androidRuntime ? undefined : handleContextMenu}
-        onScroll={(e) => {
-          reportScroll();
-          schedulePositionSave();
-        }}
+        onScroll={onScrollHandler}
       >
         <div ref={bodyRef} className="markdown-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={highlightedComponents}>
