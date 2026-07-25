@@ -7,13 +7,8 @@ type SecureStorePlugin = {
 };
 
 export type NotificationPermissionStatus =
-  | "granted"
-  | "denied"
-  | "denied_permanently"
-  | "notifications_disabled"
-  | "not_required"
-  | "no_activity"
-  | "error";
+  | "granted" | "denied" | "denied_permanently"
+  | "notifications_disabled" | "not_required" | "no_activity" | "error";
 
 export type NotificationPermissionResult = {
   granted: boolean;
@@ -21,22 +16,33 @@ export type NotificationPermissionResult = {
   canAskAgain: boolean;
 };
 
+export type GenerationServiceState = {
+  active: boolean;
+  sessionId: number;
+  taskId: number;
+};
+
 export const CodeCourseSecureStore = registerPlugin<SecureStorePlugin>("CodeCourseSecureStore");
 export const CodeCourseNative = registerPlugin<{
   openExternal(options: { url: string }): Promise<void>;
-  setGenerationActive(options: { active: boolean; label?: string }): Promise<void>;
-  updateGenerationProgress(options: {
-    sessionId: number;
-    taskId: number;
-    sequence: number;
-    current: number;
-    total: number;
-    indeterminate?: boolean;
-    stageLabel?: string;
+  setGenerationActive(options: {
+    active: boolean;
+    label?: string;
+    sessionId?: number;
+    taskId?: number;
     activeTaskCount?: number;
   }): Promise<void>;
+  getGenerationServiceState(): Promise<GenerationServiceState>;
+  updateGenerationProgress(options: {
+    sessionId: number; taskId: number; sequence: number;
+    current: number; total: number; indeterminate?: boolean;
+    stageLabel?: string; activeTaskCount?: number;
+  }): Promise<void>;
   switchForegroundTask(options: { sessionId: number; taskId: number }): Promise<void>;
-  notifyCompletion(options: { taskId: number; label: string }): Promise<void>;
+  notifyCompletion(options: {
+    taskId: number; projectId?: number; taskType?: string;
+    outputPath?: string; label: string;
+  }): Promise<void>;
   moveToBackground(): Promise<void>;
   requestNotificationPermission(): Promise<NotificationPermissionResult>;
   openNotificationSettings(): Promise<void>;
@@ -48,7 +54,8 @@ export function isNativeAndroidRuntime(): boolean {
 
 export function isAndroidRuntime(): boolean {
   if (isNativeAndroidRuntime()) return true;
-  return import.meta.env.DEV && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("preview") === "android";
+  return import.meta.env.DEV && typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("preview") === "android";
 }
 
 export function applyPlatformClass(): void {

@@ -333,41 +333,64 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
     if (hasTasks && !this.serviceStarted) {
       // 0 → N: start service
+      const ftId = this.pickForegroundTask();
+      if (ftId <= 0) return; // no valid task to foreground
       this.generationSessionId += 1;
-      this.foregroundTaskId = this.pickForegroundTask();
+      this.foregroundTaskId = ftId;
+      const info = this.taskInfoMap.get(ftId);
+      const label = info ? info.projectName : "正在生成学习内容";
       try {
-        const info = this.taskInfoMap.get(this.foregroundTaskId);
-        const label = info ? `正在生成学习内容` : "正在生成学习内容";
-        await CodeCourseNative.setGenerationActive({ active: true, label });
+        await CodeCourseNative.setGenerationActive({
+          active: true, label,
+          sessionId: this.generationSessionId,
+          taskId: ftId,
+          activeTaskCount: this.runningTasks.size,
+        });
         this.serviceStarted = true;
       } catch (err) {
         console.warn("Failed to start foreground service:", err);
-        // Don't set serviceStarted=true on failure
       }
     } else if (!hasTasks && this.serviceStarted) {
       // N → 0: stop service
       try {
         await CodeCourseNative.setGenerationActive({ active: false });
-        this.serviceStarted = false;
-        this.generationSessionId += 1;
-        this.foregroundTaskId = 0;
+        // Verify with native state
+        try {
+          const state = await CodeCourseNative.getGenerationServiceState();
+          if (!state.active) {
+            this.serviceStarted = false;
+          } else {
+            // Still active — retry once after short delay
+            await new Promise(r => setTimeout(r, 300));
+            await CodeCourseNative.setGenerationActive({ active: false });
+            const state2 = await CodeCourseNative.getGenerationServiceState();
+            this.serviceStarted = state2.active;
+          }
+        } catch {
+          this.serviceStarted = false; // query failed, best-effort
+        }
+        if (!this.serviceStarted) {
+          this.generationSessionId += 1;
+          this.foregroundTaskId = 0;
+        }
       } catch (err) {
         console.warn("Failed to stop foreground service:", err);
-        // Still mark as stopped to avoid repeated stop attempts
-        this.serviceStarted = false;
+        // Don't mark as stopped — try verifying native state
+        try {
+          const state = await CodeCourseNative.getGenerationServiceState();
+          this.serviceStarted = state.active;
+        } catch { /* leave as-is */ }
       }
     } else if (hasTasks && this.serviceStarted) {
-      // Still running — maybe switch foreground task
       const best = this.pickForegroundTask();
-      if (best !== this.foregroundTaskId && best !== 0) {
+      if (best !== this.foregroundTaskId && best > 0) {
         this.foregroundTaskId = best;
         const info = this.taskInfoMap.get(best);
         if (info) {
-          info.sequence = 0; // reset sequence for new foreground task
+          info.sequence = 0;
           try {
             await CodeCourseNative.switchForegroundTask({
-              sessionId: this.generationSessionId,
-              taskId: best,
+              sessionId: this.generationSessionId, taskId: best,
             });
           } catch { /* best-effort */ }
         }
@@ -435,9 +458,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const stale = nowTs - info.lastSentAt > 1500;
     const enoughProgress = pctChanged && pct !== null && info.lastPercent !== null && Math.abs(pct - info.lastPercent) >= 1;
 
+    // Send on: first, label change, indeterminate change, complete, stale, or pct change >=1%
     if (!firstUpdate && !labelChanged && !indeterminateChanged && !isComplete) {
-      if (!stale) return;
-      if (!enoughProgress && pct !== null) return;
+      if (!stale && !enoughProgress) return;
     }
 
     info.sequence += 1;
@@ -493,66 +516,61 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     let project: Project | null = null;
     let payload: Record<string, unknown> = {};
     let taskType = "";
+    let taskInputHash = "";
 
     try {
-      // Permission check before any heavy work
-      await this.ensureNotificationPermission();
-
-      // Sync service state (0→1 transition starts the service)
-      await this.syncGenerationServiceState();
-
-      // Load task
+      // 1. Load task (before any service start)
       const rows = await db.query<Row>("SELECT * FROM generation_tasks WHERE id=?", [taskId]);
       if (!rows.length) {
         console.warn(`Task ${taskId} not found — skipping`);
-        return; // finally will clean up
+        return;
       }
       taskRow = rows[0];
       taskType = String(taskRow.task_type);
       projectId = Number(taskRow.project_id);
+      taskInputHash = String(taskRow.input_hash || "");
 
-      // Load project
+      // 2. Load project
       project = await this.getProject(projectId);
 
-      // Parse payload
+      // 3. Parse payload
       try {
         payload = JSON.parse(String(taskRow.payload_json || "{}"));
       } catch {
         throw new Error("Task payload is corrupted — cannot recover");
       }
 
-      // Register task info
+      // 4. Register task info (before service start so foreground pick works)
       this.taskInfoMap.set(taskId, {
-        taskId,
-        startedAt: Date.now(),
-        projectId,
-        taskType,
+        taskId, startedAt: Date.now(), projectId, taskType,
         projectName: project.name,
         sourcePath: String(taskRow.source_path || ""),
-        sequence: 0,
-        lastSentAt: 0,
-        lastStageLabel: "",
-        lastPercent: null,
-        lastCurrent: 0,
-        lastTotal: 0,
+        sequence: 0, lastSentAt: 0, lastStageLabel: "",
+        lastPercent: null, lastCurrent: 0, lastTotal: 0,
       });
+
+      // 5. Permission + service
+      await this.ensureNotificationPermission();
+      await this.syncGenerationServiceState();
 
       // Mark running
       await db.run("UPDATE generation_tasks SET status='running',progress_current=0,progress_total=1,stage_label='preparing',updated_at=? WHERE id=?", [now(), taskId]);
       await this.reportProgress(taskId, "preparing", 0, 1, true);
 
-      // Execute
+      // 6. Execute with DB inputHash for checkpoint consistency
       let output: TaskOutput;
       if (taskType === "outline") {
-        output = await this.generateOutline(projectId, payload, taskId);
+        output = await this.generateOutline(projectId, payload, taskId, taskInputHash);
       } else if (taskType === "file_lesson") {
-        output = await this.generateFileLesson(projectId, payload, taskId);
+        output = await this.generateFileLesson(projectId, payload, taskId, taskInputHash);
+      } else if (taskType === "outline_lesson") {
+        output = await this.generateOutlineLesson(projectId, payload, taskId, taskInputHash);
       } else {
-        output = await this.generateOutlineLesson(projectId, payload, taskId);
+        throw new Error(`Unknown task type: ${taskType}`);
       }
 
-      // Persist result
-      const group = output.filename.startsWith("lessons/") ? "课件" : "总纲";
+      // Persist result — group by taskType, not filename
+      const group = taskType === "outline" ? "总纲" : taskType === "file_lesson" ? "文件课件" : "课件";
       await this.upsertCourse(projectId, output.filename, output.content, group);
       await this.ensureCourseNode(projectId, output.filename);
       await db.run("UPDATE generation_tasks SET status='completed',progress_current=progress_total,stage_label='completed',output_path=?,updated_at=? WHERE id=?", [output.filename, now(), taskId]);
@@ -568,10 +586,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         }
       } catch { /* best-effort */ }
 
-      // Send completion notification — only after everything is persisted
+      // Send completion notification — only after everything persisted
       const bodyText = buildCompletionLabel(taskType, project.name, output);
       try {
-        await CodeCourseNative.notifyCompletion({ taskId, label: bodyText });
+        await CodeCourseNative.notifyCompletion({
+          taskId, projectId, taskType,
+          outputPath: output.filename,
+          label: bodyText,
+        });
       } catch (err) {
         console.warn("Completion notification failed for task", taskId, ":", safeErrorMessage(err));
         // Task is still completed — notification failure is non-fatal
@@ -645,6 +667,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if ((match = path.match(/^\/projects\/(\d+)\/lessons\/outline$/))) return this.queueTask(Number(match[1]), "outline_lesson", body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/tasks$/))) return this.listTasks(Number(match[1])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/tasks\/(\d+)$/))) return this.getTask(Number(match[1]), Number(match[2])) as Promise<T>;
+    if ((match = path.match(/^\/projects\/(\d+)\/tasks\/(\d+)\/retry$/)) && method === "POST") return this.retryTask(Number(match[1]), Number(match[2])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/index\/build$/))) return this.buildIndex(Number(match[1])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/index\/status$/))) return this.indexStatus(Number(match[1])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/learning-state$/))) {
@@ -898,6 +921,17 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if (!row) throw new Error("生成任务不存在。"); return taskFromRow(row);
   }
 
+  private async retryTask(projectId: number, taskId: number): Promise<GenerationTask> {
+    const task = await this.getTask(projectId, taskId);
+    if (task.status !== "failed" && task.status !== "cancelled") {
+      throw new Error("只能重试失败或已取消的任务");
+    }
+    // Reset to queued, keep _checkpoint in payload_json for resume
+    await db.run("UPDATE generation_tasks SET status='queued',error_message=NULL,stage_label='等待重试',updated_at=? WHERE id=?", [now(), taskId]);
+    void this.runTask(taskId);
+    return this.getTask(projectId, taskId);
+  }
+
   // ---- generation methods ----
   private async projectContext(projectId: number, paths?: string[]): Promise<string> {
     const placeholders = paths?.length ? ` AND path IN (${paths.map(() => "?").join(",")})` : "";
@@ -910,16 +944,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return blocks.join("\n\n");
   }
 
-  private computeInputHash(taskType: string, projectId: number, payload: Record<string, unknown>): string {
-    return hashText(`${taskType}:${projectId}:${JSON.stringify(payload)}`);
-  }
-
-  private async generateOutline(projectId: number, payload: Record<string, unknown>, taskId: number): Promise<TaskOutput> {
+  private async generateOutline(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
     const project = await this.getProject(projectId); const prompts = await this.getPrompts();
     const key = project.project_type === "learning_plan" ? "prompt.learning_plan.outline" : "prompt.outline";
     const context = project.project_type === "learning_plan" ? "" : await this.projectContext(projectId, (payload.scope as Record<string, unknown>)?.paths as string[] | undefined);
-
-    const inputHash = this.computeInputHash("outline", projectId, payload);
 
     // Validate checkpoint
     const cp = validateCheckpoint(payload._checkpoint, "outline", inputHash) as (OutlineCheckpoint | null);
@@ -959,15 +987,13 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return { filename: "outline.md", content };
   }
 
-  private async generateFileLesson(projectId: number, payload: Record<string, unknown>, taskId: number): Promise<TaskOutput> {
+  private async generateFileLesson(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
     const prompts = await this.getPrompts();
     const sourcePath = String(payload.path || "");
     const content = await readRepoFile(projectId, sourcePath);
     const mode = payload.mode === "detailed" ? "detailed" : "brief";
     const expected = prompts[`prompt.file_lesson.${mode}_expected`] || "详细解释文件职责、结构、关键符号和练习。";
     const settings = await this.getLLMSettings();
-
-    const inputHash = this.computeInputHash("file_lesson", projectId, payload);
     const cp = validateCheckpoint(payload._checkpoint, "file_lesson", inputHash) as (OutlineCheckpoint | null);
 
     let lesson: string;
@@ -1001,7 +1027,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return { filename: `files/${sourcePath.replace(/[^\p{L}\p{N}_.-]+/gu, "_")}_${mode}.md`, content: lesson };
   }
 
-  private async generateOutlineLesson(projectId: number, payload: Record<string, unknown>, taskId: number): Promise<TaskOutput> {
+  private async generateOutlineLesson(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
     const project = await this.getProject(projectId); const prompts = await this.getPrompts();
     const outline = await readGeneratedFile(projectId, "outline.md");
     const key = project.project_type === "learning_plan" ? "prompt.learning_plan.lesson" : "prompt.outline_lesson";
@@ -1021,17 +1047,13 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         model: settings.model,
         lesson_input: lessonInput,
       });
-    return this.generateDetailedLesson(projectId, payload, taskId, base, prompts["prompt.system"] || "你是学习课程设计师。");
+    return this.generateDetailedLesson(projectId, payload, taskId, base, prompts["prompt.system"] || "你是学习课程设计师。", inputHash);
   }
 
   private async generateDetailedLesson(
-    projectId: number,
-    payload: Record<string, unknown>,
-    taskId: number,
-    base: string,
-    systemPrompt: string,
+    projectId: number, payload: Record<string, unknown>, taskId: number,
+    base: string, systemPrompt: string, inputHash: string,
   ): Promise<TaskOutput> {
-    const inputHash = this.computeInputHash("outline_lesson", projectId, payload);
 
     await db.run("UPDATE generation_tasks SET progress_current=0,progress_total=12,stage_label='planning',updated_at=? WHERE id=?", [now(), taskId]);
     await this.reportProgress(taskId, "正在规划课件", 0, 12, true);
@@ -1060,6 +1082,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
     const completedCount = generatedByIndex.size;
 
+    // Mutable repair state — survives across batch boundaries and restores on cold start
+    let repairGenerated: string | null = dlCp?.repairGenerated ?? null;
+
     // Save plan to checkpoint immediately
     const saveCheckpoint = async () => {
       const obj: Record<string, string> = {};
@@ -1072,7 +1097,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         plan,
         generatedByIndex: obj,
       };
-      if (dlCp?.repairGenerated) cp.repairGenerated = dlCp.repairGenerated;
+      if (repairGenerated) cp.repairGenerated = repairGenerated;
       await db.run("UPDATE generation_tasks SET payload_json=? WHERE id=?", [JSON.stringify({ ...payload, _checkpoint: cp }), taskId]);
     };
 
@@ -1139,14 +1164,19 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
     let body = orderedSections.join("\n\n");
 
+    // Apply restored repair content
+    if (repairGenerated) {
+      body += `\n\n${repairGenerated}`;
+    }
+
     // Check for missing items
     const missing = missingLessonItems(body, plan.sections);
     if (missing.length) {
       totalCalls += 1;
       if (totalCalls > 12) throw new Error("课件仍有遗漏知识项，但已达到 12 次 API 调用上限，旧课件已保留。");
 
-      // Check if repair was already done
-      if (!dlCp?.repairGenerated) {
+      // Only call LLM if repair wasn't already done
+      if (!repairGenerated) {
         await db.run("UPDATE generation_tasks SET progress_current=?,progress_total=?,stage_label=?,updated_at=? WHERE id=?", [totalCalls - 1, totalCalls, `正在补全 ${missing.length} 个遗漏项`, now(), taskId]);
         await this.reportProgress(taskId, `正在补全 ${missing.length} 个遗漏项`, totalCalls - 1, totalCalls, false);
 
@@ -1154,11 +1184,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         let supplement = (await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: `${base}\n\n以下知识项在正文中遗漏。请输出 \`## 遗漏知识补全\`，并为每项建立包含完整名称的独立 \`###\` 小节，完整讲解。\n\n${missingLines}` }])).trim();
         if (!supplement.startsWith("##")) supplement = `## 遗漏知识补全\n\n${supplement}`;
 
-        // Save repair to checkpoint
-        const cpWithRepair = { ...dlCp, repairGenerated: supplement } as DetailedLessonCheckpoint;
-        (payload as Record<string, unknown>)._checkpoint = cpWithRepair;
+        // Persist repair to mutable state + checkpoint
+        repairGenerated = supplement;
         await saveCheckpoint();
-
         body += `\n\n${supplement}`;
       }
 

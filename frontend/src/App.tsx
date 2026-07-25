@@ -3905,6 +3905,9 @@ export default function App() {
 
   function notifyTaskCompleted(title: string, body: string) {
     if (mobileRuntime) {
+      // Generation tasks notify themselves via AndroidLocalProvider.runTask().
+      // Suppress App-level duplicate; only QA/answer completions use taskId=0 here.
+      if (title.includes("生成完成")) return;
       void CodeCourseNative.notifyCompletion({ taskId: 0, label: body }).catch(() => undefined);
       return;
     }
