@@ -397,8 +397,7 @@ export default function MarkdownViewer({
     fill.style.opacity = article.scrollHeight <= article.clientHeight ? "0" : "1";
   }
 
-  // Unified progress refresh — multiple resize sources, single rAF
-  const progressRafRef = useRef(0);
+  // Unified progress refresh — multiple resize sources, single rAF per frame
   const scheduleProgressRefresh = useCallback(() => {
     if (progressRafRef.current) return;
     progressRafRef.current = window.requestAnimationFrame(() => {
@@ -449,6 +448,13 @@ export default function MarkdownViewer({
   const positionSaveTimerRef = useRef<number>(0);
   const unmountedRef = useRef(false);
   const lastSavedRatioRef = useRef<number | null>(null);
+  const progressRafRef = useRef(0);
+
+  // Always use latest callback + source identity via ref
+  const onScrollRatioChangeRef = useRef(onScrollRatioChange);
+  useEffect(() => { onScrollRatioChangeRef.current = onScrollRatioChange; }, [onScrollRatioChange]);
+  const sourceKeyRef = useRef(`${sourceType}:${sourcePath ?? title}`);
+  useEffect(() => { sourceKeyRef.current = `${sourceType}:${sourcePath ?? title}`; }, [sourceType, sourcePath, title]);
 
   function hasActiveAndroidSelection(): boolean {
     if (!androidRuntime) return false;
@@ -460,18 +466,43 @@ export default function MarkdownViewer({
     if (!allowDuringUnmount && unmountedRef.current) return;
     if (hasActiveAndroidSelection()) return;
     if (scrollValueRef.current === null) return;
-    if (!onScrollRatioChange) return;
     if (lastSavedRatioRef.current === scrollValueRef.current) return;
+    const cb = onScrollRatioChangeRef.current;
+    if (!cb) return;
     lastSavedRatioRef.current = scrollValueRef.current;
-    onScrollRatioChange(scrollValueRef.current);
+    cb(scrollValueRef.current);
   }
+
+  // Source key change: flush old position, reset state, prepare new key
+  useEffect(() => {
+    const currentKey = `${sourceType}:${sourcePath ?? title}`;
+    sourceKeyRef.current = currentKey;
+    // Reset scroll position state for new document
+    scrollValueRef.current = null;
+    lastSavedRatioRef.current = null;
+    unmountedRef.current = false;
+
+    return () => {
+      // Flush before source changes
+      window.clearTimeout(positionSaveTimerRef.current);
+      if (!hasActiveAndroidSelection() && scrollValueRef.current !== null) {
+        const cb = onScrollRatioChangeRef.current;
+        if (cb) {
+          cb(scrollValueRef.current);
+          scrollValueRef.current = null;
+        }
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceType, sourcePath, title]);
 
   // Flush pending position on unmount — commit before setting unmounted flag
   useEffect(() => () => {
     window.clearTimeout(positionSaveTimerRef.current);
     window.cancelAnimationFrame(scrollFrameRef.current);
+    window.cancelAnimationFrame(progressRafRef.current);
     resizeObserverRef.current?.disconnect();
-    commitReadingPosition(true); // allow during unmount
+    commitReadingPosition(true);
     unmountedRef.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

@@ -2322,16 +2322,18 @@ export default function App() {
             if (desktopRaw) {
               const desktop = JSON.parse(desktopRaw) as StoredWorkbench;
               if (desktop?.version === WORKBENCH_STORAGE_VERSION && desktop.layout) {
-                const hydrated = await hydrateStoredLayout(desktop.layout, freshProject.id, nextCourses);
-                const merged = normalizeToSingleGroup(
-                  hydrated,
-                  desktop.activeGroupId ? findGroup(desktop.layout, desktop.activeGroupId)?.activeItemId : null,
-                );
-                // Strip content before persisting — never write full file contents to localStorage
-                stored = { version: WORKBENCH_STORAGE_VERSION, layout: stripLayoutContent(merged), activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView, navigationOpen: false, sidebarWidth: 264 };
-                try { window.localStorage.setItem(androidWorkbenchStorageKey(freshProject.id), JSON.stringify(stored)); } catch { /* storage full */ }
-                // Restore hydrated layout for current session
-                stored = { ...stored, layout: merged };
+                // Hydrate once from desktop, normalize, then save stripped + use hydrated in-memory
+                const hydratedDesktop = await hydrateStoredLayout(desktop.layout, freshProject.id, nextCourses);
+                const merged = normalizeToSingleGroup(hydratedDesktop,
+                  desktop.activeGroupId ? findGroup(desktop.layout, desktop.activeGroupId)?.activeItemId : null);
+                // Persist stripped layout to Android key
+                try { window.localStorage.setItem(androidWorkbenchStorageKey(freshProject.id), JSON.stringify({
+                  version: WORKBENCH_STORAGE_VERSION, layout: stripLayoutContent(merged),
+                  activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView,
+                  navigationOpen: false, sidebarWidth: 264,
+                })); } catch { /* storage full */ }
+                // Use hydrated layout directly (no re-hydrate)
+                stored = { version: WORKBENCH_STORAGE_VERSION, layout: merged, activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView, navigationOpen: false, sidebarWidth: 264 };
               }
             }
           }
@@ -3596,6 +3598,7 @@ export default function App() {
               </div>
             ) : (
               <MarkdownViewer
+                key={`${activeItem.qaRecordId ? "qa" : "course"}:${activeItem.id}`}
                 title={activeItem.title}
                 sourcePath={activeItem.path}
                 sourceType={activeItem.qaRecordId ? "qa" : "course"}

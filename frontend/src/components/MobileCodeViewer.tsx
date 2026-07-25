@@ -135,7 +135,7 @@ export default function MobileCodeViewer({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [activeMatch, setActiveMatch] = useState(0);
+  const [activeMatch, setActiveMatch] = useState(-1);
   const searchTimerRef = useRef<number>(0);
 
   const plainLines = useMemo(() => content.split("\n"), [content]);
@@ -144,7 +144,7 @@ export default function MobileCodeViewer({
 
   // search debounce
   useEffect(() => {
-    if (!searchInput.trim()) { window.clearTimeout(searchTimerRef.current); setDebouncedQuery(""); setActiveMatch(0); return; }
+    if (!searchInput.trim()) { window.clearTimeout(searchTimerRef.current); setDebouncedQuery(""); setActiveMatch(-1); return; }
     const t = window.setTimeout(() => setDebouncedQuery(searchInput), 200);
     searchTimerRef.current = t;
     return () => window.clearTimeout(t);
@@ -152,7 +152,7 @@ export default function MobileCodeViewer({
 
   // reset on file switch
   useEffect(() => {
-    setSearchInput(""); setDebouncedQuery(""); setActiveMatch(0);
+    setSearchInput(""); setDebouncedQuery(""); setActiveMatch(-1);
   }, [content, path]);
 
   // highlighting
@@ -175,9 +175,8 @@ export default function MobileCodeViewer({
   }, [plainLines, debouncedQuery]);
   const matchSet = useMemo(() => new Set(matches), [matches]);
   useEffect(() => {
-    if (!matches.length) setActiveMatch(0);
-    else if (activeMatch >= matches.length) setActiveMatch(0);
-  }, [matches.length, activeMatch]);
+    if (!matches.length) setActiveMatch(-1);
+  }, [matches.length]);
 
   // virtual list
   const { state: virt, updateRange, scrollToLine } = useVirtualLines(totalLines, ROW_HEIGHT);
@@ -223,7 +222,12 @@ export default function MobileCodeViewer({
   // moveMatch
   function moveMatch(delta: number) {
     if (!matches.length) return;
-    const next = (activeMatch + delta + matches.length) % matches.length;
+    let next: number;
+    if (activeMatch < 0) {
+      next = delta > 0 ? 0 : matches.length - 1;
+    } else {
+      next = (activeMatch + delta + matches.length) % matches.length;
+    }
     setActiveMatch(next);
     const el = scrollRef.current; if (!el) return;
     if (isLargeFile) scrollToLine(matches[next], "center", el);
@@ -236,8 +240,9 @@ export default function MobileCodeViewer({
     const ln = index + 1;
     const anchored = selectedRange && ln >= selectedRange.startLineNumber && ln <= selectedRange.endLineNumber;
     const matched = matchSet.has(ln);
+    const active = activeMatch >= 0 && matches.length > 0 && ln === matches[activeMatch];
     return (
-      <div className={`mobile-code-line ${anchored ? "selection-anchor" : ""} ${matched ? "search-match" : ""}`}
+      <div className={`mobile-code-line ${anchored ? "selection-anchor" : ""} ${matched ? "search-match" : ""} ${active ? "search-match-active" : ""}`}
         data-line={ln} key={index} style={pos}>
         <span className="mobile-line-number">{ln}</span>
         <code className={highlightedLines ? "hljs" : ""}>
@@ -260,7 +265,7 @@ export default function MobileCodeViewer({
       {searchOpen && (
         <div className="mobile-code-search">
           <Search size={14} /><input autoFocus value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="搜索" />
-          <span>{matches.length ? `${activeMatch + 1}/${matches.length}` : "0/0"}</span>
+          <span>{matches.length ? (activeMatch < 0 ? `0/${matches.length}` : `${activeMatch + 1}/${matches.length}`) : "0/0"}</span>
           <button className="icon-button" onClick={() => moveMatch(-1)} disabled={!matches.length}><ChevronUp size={15} /></button>
           <button className="icon-button" onClick={() => moveMatch(1)} disabled={!matches.length}><ChevronDown size={15} /></button>
           <button className="icon-button" onClick={() => { setSearchOpen(false); setSearchInput(""); setDebouncedQuery(""); }}><X size={15} /></button>
