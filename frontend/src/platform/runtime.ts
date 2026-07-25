@@ -10,8 +10,10 @@ export const CodeCourseSecureStore = registerPlugin<SecureStorePlugin>("CodeCour
 export const CodeCourseNative = registerPlugin<{
   openExternal(options: { url: string }): Promise<void>;
   setGenerationActive(options: { active: boolean; label?: string }): Promise<void>;
-  notifyCompletion(options: { label: string }): Promise<void>;
+  updateGenerationProgress(options: { current: number; total: number; indeterminate?: boolean; stageLabel?: string }): Promise<void>;
+  notifyCompletion(options: { label: string; courseName?: string }): Promise<void>;
   moveToBackground(): Promise<void>;
+  requestNotificationPermission(): Promise<{ granted: boolean; reason?: string }>;
 }>("CodeCourseNative");
 
 export function isNativeAndroidRuntime(): boolean {

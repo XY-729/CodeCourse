@@ -198,6 +198,8 @@ function learningStateFromRow(row: Row): LearningState {
 export class AndroidLocalProvider implements CodeCourseProvider {
   private runningTasks = new Set<number>();
   private runningIndexes = new Set<number>();
+  private notificationPermissionGranted = false;
+  private notificationPermissionChecked = false;
 
   static async create(): Promise<AndroidLocalProvider> {
     const provider = new AndroidLocalProvider();
@@ -205,6 +207,18 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     await provider.resumeTasks();
     await provider.resumeIndexes();
     return provider;
+  }
+
+  private async ensureNotificationPermission(): Promise<boolean> {
+    if (this.notificationPermissionChecked) return this.notificationPermissionGranted;
+    this.notificationPermissionChecked = true;
+    try {
+      const result = await CodeCourseNative.requestNotificationPermission();
+      this.notificationPermissionGranted = Boolean(result.granted);
+    } catch {
+      this.notificationPermissionGranted = false;
+    }
+    return this.notificationPermissionGranted;
   }
 
   async request<T>(rawPath: string, init?: RequestInit): Promise<T> {
@@ -493,7 +507,22 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
   private async resumeTasks(): Promise<void> {
     const rows = await db.query<Row>("SELECT id FROM generation_tasks WHERE status IN ('queued','running')");
-    for (const row of rows) { await db.run("UPDATE generation_tasks SET status='queued',stage_label='恢复任务' WHERE id=?", [row.id]); void this.runTask(Number(row.id)); }
+    if (!rows.length) return;
+    // Reset running tasks to queued and restart them
+    for (const row of rows) {
+      await db.run("UPDATE generation_tasks SET status='queued',stage_label='恢复任务' WHERE id=?", [row.id]);
+    }
+    // Ensure notification permission before restarting
+    await this.ensureNotificationPermission();
+    // Restart foreground service — start it with the first task's label so the
+    // notification is visible immediately
+    await CodeCourseNative.setGenerationActive({
+      active: true,
+      label: `正在恢复 ${rows.length} 个生成任务`,
+    }).catch(() => {});
+    for (const row of rows) {
+      void this.runTask(Number(row.id));
+    }
   }
   private async listTasks(projectId: number): Promise<GenerationTask[]> { return (await db.query<Row>("SELECT * FROM generation_tasks WHERE project_id=? ORDER BY id DESC", [projectId])).map(taskFromRow); }
   private async getTask(projectId: number, taskId: number): Promise<GenerationTask> {
@@ -502,23 +531,37 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
   private async runTask(taskId: number): Promise<void> {
     if (this.runningTasks.has(taskId)) return; this.runningTasks.add(taskId);
+    // Ensure notification permission before first task
+    await this.ensureNotificationPermission();
+    // Start foreground service
     void CodeCourseNative.setGenerationActive({
       active: true,
       label: `正在生成学习内容（${this.runningTasks.size} 个任务）`,
     }).catch(() => {});
+    const task = (await db.query<Row>("SELECT * FROM generation_tasks WHERE id=?", [taskId]))[0];
+    if (!task) { this.runningTasks.delete(taskId); return; }
+    const projectId = Number(task.project_id);
+    const project = await this.getProject(projectId);
+    const payload = JSON.parse(task.payload_json || "{}");
     try {
-      const task = (await db.query<Row>("SELECT * FROM generation_tasks WHERE id=?", [taskId]))[0]; if (!task) return;
-      const payload = JSON.parse(task.payload_json || "{}");
       await db.run("UPDATE generation_tasks SET status='running',progress_current=0,progress_total=1,stage_label='准备上下文',updated_at=? WHERE id=?", [now(), taskId]);
+      void this.reportProgress("准备上下文", 0, 1, true);
       let output: { filename: string; content: string };
-      if (task.task_type === "outline") output = await this.generateOutline(Number(task.project_id), payload, taskId);
-      else if (task.task_type === "file_lesson") output = await this.generateFileLesson(Number(task.project_id), payload);
-      else output = await this.generateOutlineLesson(Number(task.project_id), payload, taskId);
-      await this.upsertCourse(Number(task.project_id), output.filename, output.content, output.filename.startsWith("lessons/") ? "课件" : "总纲");
-      await this.ensureCourseNode(Number(task.project_id), output.filename, titleFromMarkdown(output.filename, output.content));
+      if (task.task_type === "outline") output = await this.generateOutline(projectId, payload, taskId);
+      else if (task.task_type === "file_lesson") output = await this.generateFileLesson(projectId, payload);
+      else output = await this.generateOutlineLesson(projectId, payload, taskId);
+      await this.upsertCourse(projectId, output.filename, output.content, output.filename.startsWith("lessons/") ? "课件" : "总纲");
+      await this.ensureCourseNode(projectId, output.filename, titleFromMarkdown(output.filename, output.content));
       await db.run("UPDATE generation_tasks SET status='completed',progress_current=progress_total,stage_label='已完成',output_path=?,updated_at=? WHERE id=?", [output.filename, now(), taskId]);
+      // Send completion notification
+      const lessonTitle = output.filename.startsWith("lessons/") ? titleFromMarkdown(output.filename, output.content) : "";
+      const completionLabel = lessonTitle ? `第 ${lessonTitle} 课已生成` : "学习总纲已生成";
+      void CodeCourseNative.notifyCompletion({ label: completionLabel, courseName: project.name }).catch(() => {});
     } catch (error) {
-      await db.run("UPDATE generation_tasks SET status='failed',stage_label='生成失败',error_message=?,updated_at=? WHERE id=?", [error instanceof Error ? error.message : String(error), now(), taskId]);
+      const msg = error instanceof Error ? error.message : String(error);
+      await db.run("UPDATE generation_tasks SET status='failed',stage_label='生成失败',error_message=?,updated_at=? WHERE id=?", [msg, now(), taskId]);
+      // Update progress notification to show failure
+      void this.reportProgress("生成失败", 0, 0, true).catch(() => {});
     } finally {
       this.runningTasks.delete(taskId);
       if (this.runningTasks.size === 0) {
@@ -530,6 +573,23 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         }).catch(() => {});
       }
     }
+  }
+
+  /** Throttled progress update to native notification. */
+  private lastProgressUpdate = 0;
+  private lastProgressLabel = "";
+  private async reportProgress(stageLabel: string, current: number, total: number, indeterminate: boolean): Promise<void> {
+    const now = Date.now();
+    // Throttle: update at most every ~1.5s unless label changes
+    if (now - this.lastProgressUpdate < 1500 && stageLabel === this.lastProgressLabel) return;
+    this.lastProgressUpdate = now;
+    this.lastProgressLabel = stageLabel;
+    await CodeCourseNative.updateGenerationProgress({
+      current,
+      total,
+      indeterminate,
+      stageLabel,
+    }).catch(() => {});
   }
   private async projectContext(projectId: number, paths?: string[]): Promise<string> {
     const rows = await db.query<Row>(`SELECT path,language,is_key_file FROM project_files WHERE project_id=? ${paths?.length ? `AND path IN (${paths.map(() => "?").join(",")})` : ""} ORDER BY is_key_file DESC,path LIMIT 60`, [projectId, ...(paths || [])]);
@@ -544,20 +604,33 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const project = await this.getProject(projectId); const prompts = await this.getPrompts();
     const key = project.project_type === "learning_plan" ? "prompt.learning_plan.outline" : "prompt.outline";
     const context = project.project_type === "learning_plan" ? "" : await this.projectContext(projectId, payload.scope?.paths);
-    await db.run("UPDATE generation_tasks SET stage_label='生成学习总纲',updated_at=? WHERE id=?", [now(), taskId]);
-    const settings = await this.getLLMSettings();
-    const prompt = renderPrompt(prompts[key] || "生成详细学习总纲", {
-      model: settings.model,
-      scope_text: payload.scope?.type || (project.project_type === "learning_plan" ? "learning_plan" : "full_project"),
-      user_instructions: payload.instructions || "无",
-      prompt_input: context,
-    });
-    let content = await this.callLLM([{ role: "system", content: prompts["prompt.system"] || "你是学习助手。" }, { role: "user", content: prompt }]);
-    if (!content.startsWith("#")) content = `# ${project.project_type === "learning_plan" ? "学习计划总纲" : "项目学习总纲"}\n\n${content}`;
-    if (project.project_type === "repository" && content.includes("## FILE:")) {
-      const outlinePart = content.match(/## FILE:\s*outline\.md\s*([\s\S]*)/i)?.[1]?.trim(); if (outlinePart) content = outlinePart;
+
+    // Check for checkpoint — if we already generated content, skip LLM call
+    const checkpoint = payload._checkpoint && typeof payload._checkpoint === "object" ? payload._checkpoint as { content?: string; generated?: boolean } : {};
+    let content: string;
+    if (checkpoint.content && checkpoint.generated) {
+      content = checkpoint.content;
+    } else {
+      await db.run("UPDATE generation_tasks SET stage_label='生成学习总纲',updated_at=? WHERE id=?", [now(), taskId]);
+      void this.reportProgress("生成学习总纲", 0, 1, true);
+      const settings = await this.getLLMSettings();
+      const prompt = renderPrompt(prompts[key] || "生成详细学习总纲", {
+        model: settings.model,
+        scope_text: payload.scope?.type || (project.project_type === "learning_plan" ? "learning_plan" : "full_project"),
+        user_instructions: payload.instructions || "无",
+        prompt_input: context,
+      });
+      content = await this.callLLM([{ role: "system", content: prompts["prompt.system"] || "你是学习助手。" }, { role: "user", content: prompt }]);
+      if (!content.startsWith("#")) content = `# ${project.project_type === "learning_plan" ? "学习计划总纲" : "项目学习总纲"}\n\n${content}`;
+      if (project.project_type === "repository" && content.includes("## FILE:")) {
+        const outlinePart = content.match(/## FILE:\s*outline\.md\s*([\s\S]*)/i)?.[1]?.trim(); if (outlinePart) content = outlinePart;
+      }
+      // Save checkpoint so a crash after LLM call doesn't lose the generated content
+      await db.run("UPDATE generation_tasks SET payload_json=?,updated_at=? WHERE id=?", [JSON.stringify({ ...payload, _checkpoint: { content, generated: true } }), now(), taskId]);
     }
+
     content = addOutlineLessonLinks(content);
+    void this.reportProgress("总纲生成完成", 1, 1, false);
     return { filename: "outline.md", content };
   }
   private async generateFileLesson(projectId: number, payload: any): Promise<{ filename: string; content: string }> {
@@ -608,6 +681,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     systemPrompt: string,
   ): Promise<{ filename: string; content: string }> {
     await db.run("UPDATE generation_tasks SET progress_current=0,progress_total=12,stage_label='正在规划课件',updated_at=? WHERE id=?", [now(), taskId]);
+    void this.reportProgress("正在规划课件", 0, 12, true);
     const plannerPrompt = `你是一位课程设计师。现在要根据课程材料，为其中一课制定详细的章节规划。\n\n本课名称：${payload.title}\n本课是课程路线中的第 ${payload.lesson_number} 课。\n\n你的任务：阅读下方课程材料，从中提取本课应该覆盖的全部知识内容，并将其组织为 4-10 个章节。每个章节必须列出明确的知识项（函数、API、语法、概念、公式或方法）。不能使用"其他相关知识"等笼统项。\n\n只输出一个 JSON 对象，不要输出 Markdown 或额外解释：\n\n{\n  "lesson_title": "${payload.title}",\n  "position": "本课在学习路线中的位置（从课程材料推断）",\n  "objectives": ["3-5 条可验证的学习目标"],\n  "sections": [\n    {\n      "title": "章节标题",\n      "items": [\n        {"name": "具体的知识项名称", "kind": "function 或 concept", "focus": "讲解重点（可选，可为空字符串）"}\n      ]\n    }\n  ],\n  "textbooks": [{"title": "确信存在的书名", "author": "作者", "topics": "相关章节主题"}]\n}\n\n教材不确定时 textbooks 返回空数组。不编造页码、版次或书目。\n\n用户补充要求：${payload.instructions || "无"}\n\n课程材料：\n${base}`;
     const checkpoint = payload._checkpoint && typeof payload._checkpoint === "object" ? payload._checkpoint as { plan?: LessonPlan; generated?: string[] } : {};
     const plan = checkpoint.plan
@@ -627,6 +701,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const saveCheckpoint = async () => db.run("UPDATE generation_tasks SET payload_json=?,updated_at=? WHERE id=?", [JSON.stringify({ ...payload, _checkpoint: { plan, generated } }), now(), taskId]);
     if (!checkpoint.plan) await saveCheckpoint();
     await db.run("UPDATE generation_tasks SET progress_current=?,progress_total=?,stage_label=?,updated_at=? WHERE id=?", [1 + generated.length, totalCalls, generated.length ? `已恢复 ${generated.length}/${plan.sections.length} 个章节` : "章节计划已完成", now(), taskId]);
+    void this.reportProgress(generated.length ? `已恢复 ${generated.length}/${plan.sections.length} 个章节` : "章节计划已完成", 1 + generated.length, totalCalls, false);
 
     const genSection = async (sec: { title: string; items: Array<{ name: string; kind: string; focus?: string }> }): Promise<string> => {
       const itemLines = sec.items.map((item) => `- ${item.name}（类型：${item.kind}；重点：${item.focus || "完整讲清"}）`).join("\n");
@@ -644,6 +719,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         now(),
         taskId,
       ]);
+      void this.reportProgress(`生成第 ${completedBeforeRun + batchStart + 1}-${completedBeforeRun + batchStart + batchSections.length}/${plan.sections.length} 章`, 1 + generated.length, totalCalls, false);
       const results = await Promise.allSettled(batchSections.map((section) => genSection(section)));
       const failed = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
       if (failed) throw failed.reason;
@@ -651,12 +727,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         if (result.status === "fulfilled") generated.push(result.value);
       }
       await saveCheckpoint();
+      const progressLabel = `已完成 ${generated.length}/${plan.sections.length} 个章节`;
       await db.run("UPDATE generation_tasks SET progress_current=?,stage_label=?,updated_at=? WHERE id=?", [
         1 + generated.length,
-        `已完成 ${generated.length}/${plan.sections.length} 个章节`,
+        progressLabel,
         now(),
         taskId,
       ]);
+      void this.reportProgress(progressLabel, 1 + generated.length, totalCalls, false);
     }
 
     let body = generated.join("\n\n");
@@ -665,6 +743,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       totalCalls += 1;
       if (totalCalls > 12) throw new Error("课件仍有遗漏知识项，但已达到 12 次 API 调用上限，旧课件已保留。");
       await db.run("UPDATE generation_tasks SET progress_current=?,progress_total=?,stage_label=?,updated_at=? WHERE id=?", [totalCalls - 1, totalCalls, `正在补全 ${missing.length} 个遗漏项`, now(), taskId]);
+      void this.reportProgress(`正在补全 ${missing.length} 个遗漏项`, totalCalls - 1, totalCalls, false);
       const missingLines = missing.map((item) => `- ${item.name}（${item.kind}）：${item.focus}`).join("\n");
       let supplement = (await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: `${base}\n\n以下知识项在正文中遗漏。请输出 \`## 遗漏知识补全\`，并为每项建立包含完整名称的独立 \`###\` 小节，完整讲解。\n\n${missingLines}` }])).trim();
       if (!supplement.startsWith("##")) supplement = `## 遗漏知识补全\n\n${supplement}`;
