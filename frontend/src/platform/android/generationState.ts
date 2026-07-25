@@ -23,6 +23,119 @@ export type BaseCheckpoint = {
   updatedAt: string;
 };
 
+export type OutlineCheckpoint = BaseCheckpoint & {
+  generated: boolean;
+  generatedContent: string;
+};
+
+export type DetailedLessonCheckpoint = BaseCheckpoint & {
+  plan: LessonPlan;
+  generatedByIndex: Record<string, string>;
+  repairGenerated?: string | null;
+};
+
+export type LessonPlan = {
+  lesson_title: string;
+  position: string;
+  objectives: string[];
+  sections: LessonPlanSection[];
+  textbooks: Array<{ title: string; author: string; topics: string }>;
+};
+
+export type LessonPlanSection = {
+  title: string;
+  items: Array<{ name: string; kind: string; focus: string }>;
+};
+
+function validateBaseFields(raw: Record<string, unknown>, expectedTaskType: string, expectedInputHash: string): boolean {
+  if (raw.version !== CHECKPOINT_VERSION) return false;
+  if (typeof raw.taskType !== "string" || raw.taskType !== expectedTaskType) return false;
+  if (typeof raw.inputHash !== "string" || raw.inputHash !== expectedInputHash) return false;
+  if (typeof raw.updatedAt !== "string" || !raw.updatedAt) return false;
+  return true;
+}
+
+/** Full parser — validates AND returns all business fields. */
+export function parseOutlineCheckpoint(
+  raw: unknown, expectedTaskType: "outline" | "file_lesson", expectedInputHash: string,
+): OutlineCheckpoint | null {
+  if (!raw || typeof raw !== "object") return null;
+  const cp = raw as Record<string, unknown>;
+  if (!validateBaseFields(cp, expectedTaskType, expectedInputHash)) return null;
+  if (typeof cp.generated !== "boolean" || !cp.generated) return null;
+  if (typeof cp.generatedContent !== "string" || !cp.generatedContent.trim()) return null;
+  return {
+    version: cp.version as number, taskType: expectedTaskType,
+    inputHash: expectedInputHash, updatedAt: cp.updatedAt as string,
+    generated: true, generatedContent: cp.generatedContent,
+  };
+}
+
+/** Full parser for detailed lesson — validates ALL fields and returns them. */
+export function parseDetailedLessonCheckpoint(
+  raw: unknown, expectedInputHash: string,
+): DetailedLessonCheckpoint | null {
+  if (!raw || typeof raw !== "object") return null;
+  const cp = raw as Record<string, unknown>;
+  if (!validateBaseFields(cp, "outline_lesson", expectedInputHash)) return null;
+
+  // plan
+  if (!cp.plan || typeof cp.plan !== "object") return null;
+  const planRaw = cp.plan as Record<string, unknown>;
+  if (!Array.isArray(planRaw.sections)) return null;
+  const sections: LessonPlanSection[] = [];
+  for (const s of planRaw.sections as Record<string, unknown>[]) {
+    if (!s || typeof s !== "object") return null;
+    if (typeof s.title !== "string" || !s.title.trim()) return null;
+    if (!Array.isArray(s.items)) return null;
+    const items: Array<{ name: string; kind: string; focus: string }> = [];
+    for (const item of s.items as Record<string, unknown>[]) {
+      if (!item || typeof item !== "object") return null;
+      if (typeof item.name !== "string" || !item.name.trim()) return null;
+      if (typeof item.kind !== "string" || !item.kind.trim()) return null;
+      items.push({ name: item.name, kind: item.kind, focus: typeof item.focus === "string" ? item.focus : "" });
+    }
+    sections.push({ title: s.title, items });
+  }
+
+  const plan: LessonPlan = {
+    lesson_title: typeof planRaw.lesson_title === "string" ? planRaw.lesson_title : "",
+    position: typeof planRaw.position === "string" ? planRaw.position : "",
+    objectives: Array.isArray(planRaw.objectives) ? planRaw.objectives.map(String) : [],
+    sections,
+    textbooks: Array.isArray(planRaw.textbooks) ? planRaw.textbooks as LessonPlan["textbooks"] : [],
+  };
+
+  // generatedByIndex
+  const gbi: Record<string, string> = {};
+  if (cp.generatedByIndex && typeof cp.generatedByIndex === "object") {
+    for (const [k, v] of Object.entries(cp.generatedByIndex as Record<string, unknown>)) {
+      if (!/^\d+$/.test(k)) continue; // skip invalid keys
+      const idx = Number(k);
+      if (idx < 0 || idx >= sections.length) continue; // out of bounds
+      if (typeof v !== "string" || !v.trim()) continue;
+      gbi[k] = v;
+    }
+  }
+
+  // repairGenerated
+  let repairGenerated: string | null = null;
+  if (cp.repairGenerated !== undefined && cp.repairGenerated !== null) {
+    if (typeof cp.repairGenerated !== "string") return null; // type mismatch = corrupt
+    repairGenerated = cp.repairGenerated;
+  }
+
+  return {
+    version: cp.version as number, taskType: "outline_lesson",
+    inputHash: expectedInputHash, updatedAt: cp.updatedAt as string,
+    plan, generatedByIndex: gbi, repairGenerated,
+  };
+}
+
+// Export the full parsers — these are the ONLY entry points for production checkpoint recovery.
+// Legacy wrappers below remain for existing caller compatibility but delegate to full parsers.
+
+/** @deprecated Use parseOutlineCheckpoint instead */
 export function validateBaseCheckpoint(raw: unknown, expectedTaskType: string, expectedInputHash: string): BaseCheckpoint | null {
   if (!raw || typeof raw !== "object") return null;
   const cp = raw as Record<string, unknown>;
@@ -31,44 +144,6 @@ export function validateBaseCheckpoint(raw: unknown, expectedTaskType: string, e
   if (typeof cp.inputHash !== "string" || cp.inputHash !== expectedInputHash) return null;
   if (typeof cp.updatedAt !== "string" || !cp.updatedAt) return null;
   return { version: cp.version as number, taskType: cp.taskType, inputHash: cp.inputHash, updatedAt: cp.updatedAt };
-}
-
-export function validateOutlineCheckpoint(cp: BaseCheckpoint | null): cp is (BaseCheckpoint & { generated: boolean; generatedContent: string }) | null {
-  if (!cp) return false;
-  const raw = cp as Record<string, unknown>;
-  if (typeof raw.generated !== "boolean" || !raw.generated) return false;
-  if (typeof raw.generatedContent !== "string" || !raw.generatedContent.trim()) return false;
-  return true;
-}
-
-export function validateDetailedLessonCheckpoint(raw: unknown): Record<string, unknown> | null {
-  if (!raw || typeof raw !== "object") return null;
-  const cp = raw as Record<string, unknown>;
-  // plan is required
-  if (!cp.plan || typeof cp.plan !== "object") return null;
-  const plan = cp.plan as Record<string, unknown>;
-  if (!Array.isArray(plan.sections)) return null;
-  // Each section must have title + items
-  for (const s of plan.sections as Record<string, unknown>[]) {
-    if (!s || typeof s !== "object") return null;
-    if (typeof s.title !== "string") return null;
-    if (!Array.isArray(s.items)) return null;
-    for (const item of s.items as Record<string, unknown>[]) {
-      if (!item || typeof item !== "object") return null;
-      if (typeof item.name !== "string") return null;
-      if (typeof item.kind !== "string") return null;
-    }
-  }
-  // generatedByIndex is a map of index→string
-  if (cp.generatedByIndex && typeof cp.generatedByIndex === "object") {
-    for (const [k, v] of Object.entries(cp.generatedByIndex as Record<string, unknown>)) {
-      if (!/^\d+$/.test(k)) return null;
-      if (typeof v !== "string" || !v.trim()) return null;
-    }
-  }
-  // repairGenerated is optional string
-  if (cp.repairGenerated !== undefined && cp.repairGenerated !== null && typeof cp.repairGenerated !== "string") return null;
-  return cp;
 }
 
 // ---- course group ----

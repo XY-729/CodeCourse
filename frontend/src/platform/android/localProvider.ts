@@ -3,11 +3,19 @@ import { CodeCourseNative, CodeCourseSecureStore } from "../runtime";
 import type { NotificationPermissionResult, NotificationPermissionStatus } from "../runtime";
 import type { CodeCourseProvider } from "../provider";
 import {
-  CHECKPOINT_VERSION as CP_VER, validateBaseCheckpoint, validateOutlineCheckpoint,
-  validateDetailedLessonCheckpoint, courseGroupForTaskType, buildCompletionLabel,
-  shouldSendProgress, canRetry, buildSlimCheckpoint, permissionNotice,
+  CHECKPOINT_VERSION as CP_VER,
+  parseOutlineCheckpoint, parseDetailedLessonCheckpoint,
+  courseGroupForTaskType, buildCompletionLabel, shouldSendProgress,
+  canRetry, buildSlimCheckpoint, permissionNotice,
   type ServiceState, type PermissionNotice,
+  type OutlineCheckpoint, type DetailedLessonCheckpoint,
+  type LessonPlan as GsLessonPlan,
 } from "./generationState";
+
+// Local aliases matching the original localProvider types
+type LessonPlan = GsLessonPlan;
+type LessonPlanSection = GsLessonPlan["sections"][number];
+type LessonPlanItem = LessonPlanSection["items"][number];
 import type {
   CourseFile, GenerationTask, HighlightRecord, KnowledgeEdge, KnowledgeGraph, KnowledgeLink, KnowledgeNode,
   LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, Project, ProjectIndexStatus, ProjectSearchResult,
@@ -53,56 +61,25 @@ function addOutlineLessonLinks(outline: string): string {
   return cleaned + "\n\n" + lines.join("\n");
 }
 
-// ---- checkpoint types ----
-const CHECKPOINT_VERSION = CP_VER; // re-exported from generationState
+// ---- checkpoint types (from shared generationState) ----
+const CHECKPOINT_VERSION = CP_VER;
 
-type BaseCheckpoint = {
-  version: number;
-  taskType: string;
-  inputHash: string;
-  updatedAt: string;
-};
-
-type OutlineCheckpoint = BaseCheckpoint & {
-  generatedContent: string;
-  generated: boolean;
-};
-
-type LessonSectionPlan = {
-  title: string;
-  items: Array<{ name: string; kind: "function" | "concept"; focus: string }>;
-};
-
-type GeneratedSection = string;
-
-type DetailedLessonCheckpoint = BaseCheckpoint & {
-  plan: LessonPlan;
-  // Map: section index (0-based) → generated markdown
-  generatedByIndex: Record<string, GeneratedSection>;
-  repairGenerated?: string;
-};
-
-// ---- types ----
-type LessonPlanItem = {
-  name: string;
-  kind: "function" | "concept";
-  focus: string;
-};
-
-type LessonPlanSection = {
-  title: string;
-  items: LessonPlanItem[];
-};
-
-type LessonPlan = {
-  lesson_title: string;
-  position: string;
-  objectives: string[];
-  sections: LessonPlanSection[];
-  textbooks: Array<{ title: string; author: string; topics: string }>;
-};
 
 // ---- running task metadata ----
+type ProgressSnapshot = {
+  stageLabel: string;
+  current: number;
+  total: number;
+  indeterminate: boolean;
+};
+
+type LastSentSnapshot = {
+  stageLabel: string;
+  percent: number | null;
+  indeterminate: boolean;
+  sentAt: number;
+};
+
 type RunningTaskInfo = {
   taskId: number;
   startedAt: number;
@@ -110,13 +87,9 @@ type RunningTaskInfo = {
   taskType: string;
   projectName: string;
   sourcePath: string | null;
-  // per-task progress (not shared)
   sequence: number;
-  lastSentAt: number;
-  lastStageLabel: string;
-  lastPercent: number | null;
-  lastCurrent: number;
-  lastTotal: number;
+  latest: ProgressSnapshot;
+  lastSent: LastSentSnapshot | null;
 };
 
 type TaskOutput = { filename: string; content: string };
@@ -180,7 +153,7 @@ function parseLessonPlan(raw: string): LessonPlan {
         kind: entry.kind === "function" ? "function" as const : "concept" as const,
         focus: String(entry.focus || "full explanation").trim(),
       };
-    }).filter((item): item is LessonPlanItem => item !== null);
+    }).filter((item): item is NonNullable<typeof item> => item !== null);
     if (!items.length) throw new Error(`section ${index + 1} of lesson plan has no items`);
     return { title: String(record.title || `section ${index + 1}`).trim(), items };
   });
@@ -193,7 +166,7 @@ function parseLessonPlan(raw: string): LessonPlan {
     lesson_title: String(value.lesson_title || "").trim(),
     position: String(value.position || "").trim(),
     objectives: (Array.isArray(value.objectives) ? value.objectives : []).map(String).map((item) => item.trim()).filter(Boolean),
-    sections: parsedSections,
+    sections: parsedSections as LessonPlanSection[],
     textbooks,
   };
 }
@@ -259,11 +232,6 @@ function safeErrorMessage(error: unknown): string {
  * Build completion notification label from task type + output metadata.
  * Never guesses task type from file path.
  */
-/** Thin wrapper: delegate to shared validateBaseCheckpoint from generationState */
-function validateCheckpoint(raw: unknown, taskType: string, inputHash: string): unknown | null {
-  return validateBaseCheckpoint(raw, taskType, inputHash);
-}
-
 export class AndroidLocalProvider implements CodeCourseProvider {
   // ---- task lifecycle ----
   private runningTasks = new Set<number>();
@@ -441,54 +409,38 @@ export class AndroidLocalProvider implements CodeCourseProvider {
    * Only sends if this task is the current foreground task.
    */
   private async reportProgress(taskId: number, stageLabel: string, current: number, total: number, indeterminate: boolean): Promise<void> {
-    // Save latest snapshot for later resend when Service recovers
     const info = this.taskInfoMap.get(taskId);
-    if (info) {
-      info.lastStageLabel = stageLabel; info.lastCurrent = current; info.lastTotal = total;
-    }
+    if (!info) return;
+
+    // Always update latest snapshot (used for resend when Service recovers)
+    info.latest = { stageLabel, current, total, indeterminate };
 
     if (taskId !== this.foregroundTaskId) return;
-    if (this.serviceState !== "running") return; // Service not ready yet
-    if (!info) return;
+    if (this.serviceState !== "running") return;
 
     const nowTs = Date.now();
     const pct = (!indeterminate && total > 0) ? Math.round((current * 100) / total) : null;
 
-    // Always send on: first update, label change, indeterminate change, completion, task switch
-    const firstUpdate = info.sequence === 0;
-    const labelChanged = stageLabel !== info.lastStageLabel;
-    const pctChanged = pct !== null && pct !== info.lastPercent;
-    const indeterminateChanged = indeterminate !== (info.lastTotal <= 0);
+    // Compute comparisons BEFORE overwriting lastSent
+    const firstUpdate = info.lastSent === null;
+    const labelChanged = info.lastSent !== null && stageLabel !== info.lastSent.stageLabel;
+    const indeterminateChanged = info.lastSent !== null && indeterminate !== info.lastSent.indeterminate;
+    const pctChanged = pct !== null && info.lastSent !== null && pct !== info.lastSent.percent;
     const isComplete = !indeterminate && total > 0 && current >= total;
-    const stale = nowTs - info.lastSentAt > 1500;
-    const enoughProgress = pctChanged && pct !== null && info.lastPercent !== null && Math.abs(pct - info.lastPercent) >= 1;
+    const stale = info.lastSent !== null && (nowTs - info.lastSent.sentAt > 1500);
+    const enoughProgress = pctChanged && info.lastSent !== null && info.lastSent.percent !== null && Math.abs(pct - info.lastSent.percent) >= 1;
 
-    // Send on: first, label change, indeterminate change, complete, stale, or pct change >=1%
-    if (!firstUpdate && !labelChanged && !indeterminateChanged && !isComplete) {
-      if (!stale && !enoughProgress) return;
-    }
+    if (!shouldSendProgress(firstUpdate, labelChanged, indeterminateChanged, isComplete, stale, enoughProgress)) return;
 
     info.sequence += 1;
-    info.lastSentAt = nowTs;
-    info.lastStageLabel = stageLabel;
-    info.lastPercent = pct;
-    info.lastCurrent = current;
-    info.lastTotal = total;
+    info.lastSent = { stageLabel, percent: pct, indeterminate, sentAt: nowTs };
 
     try {
       await CodeCourseNative.updateGenerationProgress({
-        sessionId: this.generationSessionId,
-        taskId,
-        sequence: info.sequence,
-        current,
-        total,
-        indeterminate,
-        stageLabel,
-        activeTaskCount: this.runningTasks.size,
+        sessionId: this.generationSessionId, taskId, sequence: info.sequence,
+        current, total, indeterminate, stageLabel, activeTaskCount: this.runningTasks.size,
       });
-    } catch {
-      // Progress notification failure must not interrupt the task
-    }
+    } catch { /* non-fatal */ }
   }
 
   // ==================================================================
@@ -550,8 +502,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         taskId, startedAt: Date.now(), projectId, taskType,
         projectName: project.name,
         sourcePath: String(taskRow.source_path || ""),
-        sequence: 0, lastSentAt: 0, lastStageLabel: "",
-        lastPercent: null, lastCurrent: 0, lastTotal: 0,
+        sequence: 0,
+        latest: { stageLabel: "", current: 0, total: 1, indeterminate: true },
+        lastSent: null,
       });
 
       // 5. Permission + service
@@ -951,7 +904,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const context = project.project_type === "learning_plan" ? "" : await this.projectContext(projectId, (payload.scope as Record<string, unknown>)?.paths as string[] | undefined);
 
     // Validate checkpoint
-    const cp = validateCheckpoint(payload._checkpoint, "outline", inputHash) as (OutlineCheckpoint | null);
+    const cp = parseOutlineCheckpoint(payload._checkpoint, "outline", inputHash);
     let content: string;
     if (cp?.generated && cp.generatedContent) {
       content = cp.generatedContent;
@@ -995,7 +948,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const mode = payload.mode === "detailed" ? "detailed" : "brief";
     const expected = prompts[`prompt.file_lesson.${mode}_expected`] || "详细解释文件职责、结构、关键符号和练习。";
     const settings = await this.getLLMSettings();
-    const cp = validateCheckpoint(payload._checkpoint, "file_lesson", inputHash) as (OutlineCheckpoint | null);
+    const cp = parseOutlineCheckpoint(payload._checkpoint, "file_lesson", inputHash);
 
     let lesson: string;
     if (cp?.generated && cp.generatedContent) {
@@ -1061,7 +1014,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
     // Parse or recover plan from checkpoint
     const rawCp = payload._checkpoint;
-    const dlCp = validateCheckpoint(rawCp, "outline_lesson", inputHash) as (DetailedLessonCheckpoint | null);
+    const dlCp = parseDetailedLessonCheckpoint(rawCp, inputHash);
 
     const plannerPrompt = `你是一位课程设计师。现在要根据课程材料，为其中一课制定详细的章节规划。\n\n本课名称：${payload.title}\n本课是课程路线中的第 ${payload.lesson_number} 课。\n\n你的任务：阅读下方课程材料，从中提取本课应该覆盖的全部知识内容，并将其组织为 4-10 个章节。每个章节必须列出明确的知识项（函数、API、语法、概念、公式或方法）。不能使用"其他相关知识"等笼统项。\n\n只输出一个 JSON 对象，不要输出 Markdown 或额外解释：\n\n{\n  "lesson_title": "${payload.title}",\n  "position": "本课在学习路线中的位置（从课程材料推断）",\n  "objectives": ["3-5 条可验证的学习目标"],\n  "sections": [\n    {\n      "title": "章节标题",\n      "items": [\n        {"name": "具体的知识项名称", "kind": "function 或 concept", "focus": "讲解重点（可选，可为空字符串）"}\n      ]\n    }\n  ],\n  "textbooks": [{"title": "确信存在的书名", "author": "作者", "topics": "相关章节主题"}]\n}\n\n教材不确定时 textbooks 返回空数组。不编造页码、版次或书目。\n\n用户补充要求：${payload.instructions || "无"}\n\n课程材料：\n${base}`;
 

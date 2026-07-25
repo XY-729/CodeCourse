@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  validateBaseCheckpoint, validateOutlineCheckpoint, validateDetailedLessonCheckpoint,
+  validateBaseCheckpoint, parseOutlineCheckpoint, parseDetailedLessonCheckpoint,
   courseGroupForTaskType, buildCompletionLabel, shouldSendProgress, canRetry,
   buildSlimCheckpoint, permissionNotice,
 } from "../platform/android/generationState";
@@ -27,59 +27,51 @@ describe("validateBaseCheckpoint", () => {
   });
 });
 
-describe("validateOutlineCheckpoint", () => {
-  const base = { version: 1, taskType: "outline", inputHash: "h1", updatedAt: "now" };
+const BASE = { version: 1, taskType: "outline", inputHash: "h1", updatedAt: "now" };
+
+describe("parseOutlineCheckpoint", () => {
   it("rejects missing generated flag", () => {
-    expect(validateOutlineCheckpoint(base as any)).toBe(false);
-  });
-  it("rejects generated=false", () => {
-    expect(validateOutlineCheckpoint({ ...base, generated: false, generatedContent: "x" } as any)).toBe(false);
+    expect(parseOutlineCheckpoint({ ...BASE, generated: false, generatedContent: "x" }, "outline", "h1")).toBeNull();
   });
   it("rejects empty generatedContent", () => {
-    expect(validateOutlineCheckpoint({ ...base, generated: true, generatedContent: "" } as any)).toBe(false);
+    expect(parseOutlineCheckpoint({ ...BASE, generated: true, generatedContent: " " }, "outline", "h1")).toBeNull();
   });
-  it("accepts valid outline checkpoint", () => {
-    expect(validateOutlineCheckpoint({ ...base, generated: true, generatedContent: "hello" } as any)).toBe(true);
+  it("accepts valid outline checkpoint — preserves all fields", () => {
+    const cp = parseOutlineCheckpoint({ ...BASE, generated: true, generatedContent: "hello world" }, "outline", "h1");
+    expect(cp).not.toBeNull();
+    expect(cp!.generatedContent).toBe("hello world");
+    expect(cp!.generated).toBe(true);
+  });
+  it("works for file_lesson taskType", () => {
+    const cp = parseOutlineCheckpoint({ ...BASE, taskType: "file_lesson", generated: true, generatedContent: "x" }, "file_lesson", "h1");
+    expect(cp).not.toBeNull();
   });
 });
 
-describe("validateDetailedLessonCheckpoint", () => {
+describe("parseDetailedLessonCheckpoint", () => {
+  const base = { version: 1, taskType: "outline_lesson", inputHash: "h1", updatedAt: "now" };
   const validPlan = { sections: [{ title: "Ch1", items: [{ name: "fn", kind: "function" }] }] };
-  it("rejects null", () => expect(validateDetailedLessonCheckpoint(null)).toBeNull());
-  it("rejects missing plan", () => expect(validateDetailedLessonCheckpoint({})).toBeNull());
-  it("rejects plan without sections", () => expect(validateDetailedLessonCheckpoint({ plan: {} })).toBeNull());
-  it("rejects section without title", () => {
-    expect(validateDetailedLessonCheckpoint({ plan: { sections: [{ items: [{ name: "x", kind: "f" }] }] } })).toBeNull();
-  });
+  it("rejects null", () => expect(parseDetailedLessonCheckpoint(null, "h1")).toBeNull());
+  it("rejects missing plan", () => expect(parseDetailedLessonCheckpoint({ ...base }, "h1")).toBeNull());
   it("rejects item without name", () => {
-    expect(validateDetailedLessonCheckpoint({ plan: { sections: [{ title: "T", items: [{ kind: "f" }] }] } })).toBeNull();
+    expect(parseDetailedLessonCheckpoint({ ...base, plan: { sections: [{ title: "T", items: [{ kind: "f" }] }] } }, "h1")).toBeNull();
   });
-  it("rejects non-numeric generatedByIndex key", () => {
-    const cp = { plan: validPlan, generatedByIndex: { abc: "content" } };
-    expect(validateDetailedLessonCheckpoint(cp)).toBeNull();
+  it("skips non-numeric generatedByIndex key (no crash)", () => {
+    const cp = parseDetailedLessonCheckpoint({ ...base, plan: validPlan, generatedByIndex: { abc: "content" } }, "h1");
+    expect(Object.keys(cp!.generatedByIndex)).toHaveLength(0);
   });
-  it("rejects non-string generatedByIndex value", () => {
-    const cp = { plan: validPlan, generatedByIndex: { 0: 123 } };
-    expect(validateDetailedLessonCheckpoint(cp)).toBeNull();
+  it("skips out-of-bounds index", () => {
+    const cp = parseDetailedLessonCheckpoint({ ...base, plan: validPlan, generatedByIndex: { 99: "content" } }, "h1");
+    expect(Object.keys(cp!.generatedByIndex)).toHaveLength(0);
   });
-  it("accepts valid sections (no generatedByIndex)", () => {
-    expect(validateDetailedLessonCheckpoint({ plan: validPlan })).not.toBeNull();
+  it("preserves valid generatedByIndex entries", () => {
+    const cp = parseDetailedLessonCheckpoint({ ...base, plan: validPlan, generatedByIndex: { 0: "section content" } }, "h1");
+    expect(cp).not.toBeNull();
+    expect(cp!.generatedByIndex["0"]).toBe("section content");
   });
-  it("accepts valid generatedByIndex", () => {
-    const cp = { plan: validPlan, generatedByIndex: { 0: "content", 1: "content2" } };
-    expect(validateDetailedLessonCheckpoint(cp)).not.toBeNull();
-  });
-  it("accepts optional repairGenerated as string", () => {
-    const cp = { plan: validPlan, generatedByIndex: { 0: "c" }, repairGenerated: "repair" };
-    expect(validateDetailedLessonCheckpoint(cp)).not.toBeNull();
-  });
-  it("accepts missing repairGenerated", () => {
-    const cp = { plan: validPlan, generatedByIndex: { 0: "c" } };
-    expect(validateDetailedLessonCheckpoint(cp)).not.toBeNull();
-  });
-  it("accepts null repairGenerated", () => {
-    const cp = { plan: validPlan, generatedByIndex: { 0: "c" }, repairGenerated: null };
-    expect(validateDetailedLessonCheckpoint(cp)).not.toBeNull();
+  it("preserves repairGenerated", () => {
+    const cp = parseDetailedLessonCheckpoint({ ...base, plan: validPlan, generatedByIndex: { 0: "c" }, repairGenerated: "repair" }, "h1");
+    expect(cp!.repairGenerated).toBe("repair");
   });
 });
 
