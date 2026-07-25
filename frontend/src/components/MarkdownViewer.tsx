@@ -397,24 +397,52 @@ export default function MarkdownViewer({
     fill.style.opacity = article.scrollHeight <= article.clientHeight ? "0" : "1";
   }
 
-  // ResizeObserver: recalculate progress when content size changes
+  // Unified progress refresh — multiple resize sources, single rAF
+  const progressRafRef = useRef(0);
+  const scheduleProgressRefresh = useCallback(() => {
+    if (progressRafRef.current) return;
+    progressRafRef.current = window.requestAnimationFrame(() => {
+      progressRafRef.current = 0;
+      refreshProgress();
+    });
+  }, []);
+
+  // ResizeObserver on markdown body
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    resizeObserverRef.current = new ResizeObserver(() => {
-      refreshProgress();
-    });
-    resizeObserverRef.current.observe(body);
-    return () => {
-      resizeObserverRef.current?.disconnect();
-      resizeObserverRef.current = null;
-    };
-  }, [content]);
+    const ro = new ResizeObserver(() => scheduleProgressRefresh());
+    ro.observe(body);
+    return () => ro.disconnect();
+  }, [content, scheduleProgressRefresh]);
 
-  // Recalculate when content or sourcePath changes
+  // ResizeObserver on article viewport
   useEffect(() => {
-    refreshProgress();
-  }, [content, sourcePath]);
+    const article = articleRef.current;
+    if (!article) return;
+    const ro = new ResizeObserver(() => scheduleProgressRefresh());
+    ro.observe(article);
+    return () => ro.disconnect();
+  }, [scheduleProgressRefresh]);
+
+  // window resize
+  useEffect(() => {
+    window.addEventListener("resize", scheduleProgressRefresh);
+    return () => window.removeEventListener("resize", scheduleProgressRefresh);
+  }, [scheduleProgressRefresh]);
+
+  // visualViewport resize (soft keyboard, etc.)
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    vv.addEventListener("resize", scheduleProgressRefresh);
+    return () => vv.removeEventListener("resize", scheduleProgressRefresh);
+  }, [scheduleProgressRefresh]);
+
+  // Recalculate on content/sourcePath change
+  useEffect(() => {
+    scheduleProgressRefresh();
+  }, [content, sourcePath, scheduleProgressRefresh]);
 
   // Cleanup: unified timer, rAF, ResizeObserver — single flush on unmount
   const scrollValueRef = useRef<number | null>(null);
@@ -428,8 +456,8 @@ export default function MarkdownViewer({
     return sel !== null && !sel.isCollapsed;
   }
 
-  function commitReadingPosition() {
-    if (unmountedRef.current) return;
+  function commitReadingPosition(allowDuringUnmount = false) {
+    if (!allowDuringUnmount && unmountedRef.current) return;
     if (hasActiveAndroidSelection()) return;
     if (scrollValueRef.current === null) return;
     if (!onScrollRatioChange) return;
@@ -438,13 +466,13 @@ export default function MarkdownViewer({
     onScrollRatioChange(scrollValueRef.current);
   }
 
-  // Flush pending position on unmount
+  // Flush pending position on unmount — commit before setting unmounted flag
   useEffect(() => () => {
-    unmountedRef.current = true;
-    window.cancelAnimationFrame(scrollFrameRef.current);
     window.clearTimeout(positionSaveTimerRef.current);
+    window.cancelAnimationFrame(scrollFrameRef.current);
     resizeObserverRef.current?.disconnect();
-    commitReadingPosition();
+    commitReadingPosition(true); // allow during unmount
+    unmountedRef.current = true;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

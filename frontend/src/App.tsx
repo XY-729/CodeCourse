@@ -2327,8 +2327,11 @@ export default function App() {
                   hydrated,
                   desktop.activeGroupId ? findGroup(desktop.layout, desktop.activeGroupId)?.activeItemId : null,
                 );
-                stored = { version: WORKBENCH_STORAGE_VERSION, layout: merged, activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView, navigationOpen: false, sidebarWidth: 264 };
+                // Strip content before persisting — never write full file contents to localStorage
+                stored = { version: WORKBENCH_STORAGE_VERSION, layout: stripLayoutContent(merged), activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView, navigationOpen: false, sidebarWidth: 264 };
                 try { window.localStorage.setItem(androidWorkbenchStorageKey(freshProject.id), JSON.stringify(stored)); } catch { /* storage full */ }
+                // Restore hydrated layout for current session
+                stored = { ...stored, layout: merged };
               }
             }
           }
