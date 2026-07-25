@@ -1,7 +1,13 @@
 import { CapacitorHttp, HttpResponse } from "@capacitor/core";
 import { CodeCourseNative, CodeCourseSecureStore } from "../runtime";
-import type { NotificationPermissionResult } from "../runtime";
+import type { NotificationPermissionResult, NotificationPermissionStatus } from "../runtime";
 import type { CodeCourseProvider } from "../provider";
+import {
+  CHECKPOINT_VERSION as CP_VER, validateBaseCheckpoint, validateOutlineCheckpoint,
+  validateDetailedLessonCheckpoint, courseGroupForTaskType, buildCompletionLabel,
+  shouldSendProgress, canRetry, buildSlimCheckpoint, permissionNotice,
+  type ServiceState, type PermissionNotice,
+} from "./generationState";
 import type {
   CourseFile, GenerationTask, HighlightRecord, KnowledgeEdge, KnowledgeGraph, KnowledgeLink, KnowledgeNode,
   LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, Project, ProjectIndexStatus, ProjectSearchResult,
@@ -48,7 +54,7 @@ function addOutlineLessonLinks(outline: string): string {
 }
 
 // ---- checkpoint types ----
-const CHECKPOINT_VERSION = 1;
+const CHECKPOINT_VERSION = CP_VER; // re-exported from generationState
 
 type BaseCheckpoint = {
   version: number;
@@ -253,35 +259,9 @@ function safeErrorMessage(error: unknown): string {
  * Build completion notification label from task type + output metadata.
  * Never guesses task type from file path.
  */
-function buildCompletionLabel(taskType: string, projectName: string, output: TaskOutput): string {
-  if (taskType === "outline") {
-    return `${projectName} · 学习总纲已生成`;
-  }
-  if (taskType === "file_lesson") {
-    const fileName = output.filename.split("/").pop() ?? output.filename;
-    return `${projectName} · ${fileName} 的文件课件已生成`;
-  }
-  // outline_lesson: use the first-level heading minus leading noise
-  const h1 = titleFromMarkdown(output.filename, output.content);
-  // If h1 already starts with a numbered pattern like "第 3 课：xxx",
-  // use it as-is; do not add another "第...课" prefix
-  if (/^第\s*\d+\s*课/.test(h1)) {
-    return `${projectName} · ${h1}已生成`;
-  }
-  return `${projectName} · ${h1}已生成`;
-}
-
-/**
- * Validate a checkpoint object from payload_json._checkpoint.
- * Returns null if the checkpoint is invalid or incompatible.
- */
+/** Thin wrapper: delegate to shared validateBaseCheckpoint from generationState */
 function validateCheckpoint(raw: unknown, taskType: string, inputHash: string): unknown | null {
-  if (!raw || typeof raw !== "object") return null;
-  const cp = raw as Record<string, unknown>;
-  if (cp.version !== CHECKPOINT_VERSION) return null;
-  if (String(cp.taskType || "") !== taskType) return null;
-  if (String(cp.inputHash || "") !== inputHash) return null;
-  return cp;
+  return validateBaseCheckpoint(raw, taskType, inputHash);
 }
 
 export class AndroidLocalProvider implements CodeCourseProvider {
@@ -290,7 +270,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private runningIndexes = new Set<number>();
 
   // ---- service state ----
-  private serviceStarted = false;
+  private serviceState: ServiceState = "stopped";
   private serviceStateMutex: Promise<void> = Promise.resolve();
   private generationSessionId = 0;
   private foregroundTaskId = 0;
@@ -301,6 +281,37 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   // ---- permission ----
   private permissionResult: NotificationPermissionResult | null = null;
   private permissionPromise: Promise<NotificationPermissionResult> | null = null;
+  private lastPermissionNotice: NotificationPermissionStatus | null = null;
+
+  // ---- notification callbacks ----
+  private onPermissionNotice?: (notice: PermissionNotice) => void;
+
+  /** Register a callback for permission UI notices. */
+  setPermissionNoticeHandler(handler: (notice: PermissionNotice) => void) {
+    this.onPermissionNotice = handler;
+  }
+
+  /** Invalidate cached permission after returning from settings. */
+  invalidatePermissionCache() {
+    this.permissionResult = null;
+    this.permissionPromise = null;
+    this.lastPermissionNotice = null;
+  }
+
+  /** Poll native state until Service is ready with matching session/task. */
+  private async waitForGenerationServiceReady(
+    sessionId: number, taskId: number, timeoutMs: number,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const state = await CodeCourseNative.getGenerationServiceState();
+        if (state.active && state.sessionId === sessionId && state.taskId === taskId) return true;
+      } catch { /* retry */ }
+      await new Promise(r => setTimeout(r, 80));
+    }
+    return false;
+  }
 
   static async create(): Promise<AndroidLocalProvider> {
     const provider = new AndroidLocalProvider();
@@ -331,57 +342,33 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async _syncServiceStateUnsafe(): Promise<void> {
     const hasTasks = this.runningTasks.size > 0;
 
-    if (hasTasks && !this.serviceStarted) {
-      // 0 → N: start service
+    if (hasTasks && (this.serviceState === "stopped" || this.serviceState === "unknown" || this.serviceState === "failed")) {
       const ftId = this.pickForegroundTask();
-      if (ftId <= 0) return; // no valid task to foreground
-      this.generationSessionId += 1;
-      this.foregroundTaskId = ftId;
+      if (ftId <= 0) return;
+      this.generationSessionId += 1; this.foregroundTaskId = ftId;
+      this.serviceState = "starting"; const sid = this.generationSessionId; const tid = ftId;
       const info = this.taskInfoMap.get(ftId);
       const label = info ? info.projectName : "正在生成学习内容";
       try {
-        await CodeCourseNative.setGenerationActive({
-          active: true, label,
-          sessionId: this.generationSessionId,
-          taskId: ftId,
-          activeTaskCount: this.runningTasks.size,
-        });
-        this.serviceStarted = true;
-      } catch (err) {
-        console.warn("Failed to start foreground service:", err);
-      }
-    } else if (!hasTasks && this.serviceStarted) {
-      // N → 0: stop service
-      try {
-        await CodeCourseNative.setGenerationActive({ active: false });
-        // Verify with native state
+        await CodeCourseNative.setGenerationActive({ active: true, label, sessionId: sid, taskId: tid, activeTaskCount: this.runningTasks.size });
+        const ready = await this.waitForGenerationServiceReady(sid, tid, 2000);
+        this.serviceState = ready ? "running" : "failed";
+        if (!ready) console.warn("Foreground service not ready — running without system notification");
+      } catch (err) { console.warn("Failed to start service:", err); this.serviceState = "failed"; }
+    } else if (!hasTasks && this.serviceState !== "stopped") {
+      this.serviceState = "stopping"; let stopped = false;
+      for (let i = 0; i < 3 && !stopped; i++) {
         try {
-          const state = await CodeCourseNative.getGenerationServiceState();
-          if (!state.active) {
-            this.serviceStarted = false;
-          } else {
-            // Still active — retry once after short delay
-            await new Promise(r => setTimeout(r, 300));
-            await CodeCourseNative.setGenerationActive({ active: false });
-            const state2 = await CodeCourseNative.getGenerationServiceState();
-            this.serviceStarted = state2.active;
-          }
-        } catch {
-          this.serviceStarted = false; // query failed, best-effort
-        }
-        if (!this.serviceStarted) {
-          this.generationSessionId += 1;
-          this.foregroundTaskId = 0;
-        }
-      } catch (err) {
-        console.warn("Failed to stop foreground service:", err);
-        // Don't mark as stopped — try verifying native state
-        try {
-          const state = await CodeCourseNative.getGenerationServiceState();
-          this.serviceStarted = state.active;
-        } catch { /* leave as-is */ }
+          await CodeCourseNative.setGenerationActive({ active: false });
+          if (i > 1) await new Promise(r => setTimeout(r, i * 200));
+          const ns = await CodeCourseNative.getGenerationServiceState();
+          if (!ns.active) stopped = true;
+        } catch { /* retry */ }
       }
-    } else if (hasTasks && this.serviceStarted) {
+      this.serviceState = stopped ? "stopped" : "unknown";
+      if (!stopped) console.warn("Failed to stop service after retries");
+      this.generationSessionId += 1; this.foregroundTaskId = 0;
+    } else if (hasTasks && this.serviceState === "running") {
       const best = this.pickForegroundTask();
       if (best !== this.foregroundTaskId && best > 0) {
         this.foregroundTaskId = best;
@@ -414,9 +401,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   //  Notification Permission
   // ==================================================================
 
-  private async ensureNotificationPermission(): Promise<NotificationPermissionResult> {
-    if (this.permissionResult) return this.permissionResult;
-    if (this.permissionPromise) return this.permissionPromise;
+  private async ensureNotificationPermission(): Promise<void> {
+    if (this.permissionResult) {
+      this.emitPermissionNotice(this.permissionResult);
+      return;
+    }
+    if (this.permissionPromise) { await this.permissionPromise; return; }
 
     this.permissionPromise = (async () => {
       try {
@@ -424,12 +414,22 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       } catch {
         this.permissionResult = { granted: false, status: "error", canAskAgain: false };
       }
+      this.emitPermissionNotice(this.permissionResult);
       return this.permissionResult;
     })();
 
-    const result = await this.permissionPromise;
+    await this.permissionPromise;
     this.permissionPromise = null;
-    return result;
+  }
+
+  private emitPermissionNotice(result: NotificationPermissionResult) {
+    if (!result.granted && result.status !== this.lastPermissionNotice) {
+      this.lastPermissionNotice = result.status;
+      const notice = permissionNotice(result);
+      if (notice && this.onPermissionNotice) {
+        this.onPermissionNotice(notice);
+      }
+    }
   }
 
   // ==================================================================
@@ -441,9 +441,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
    * Only sends if this task is the current foreground task.
    */
   private async reportProgress(taskId: number, stageLabel: string, current: number, total: number, indeterminate: boolean): Promise<void> {
-    if (taskId !== this.foregroundTaskId) return; // not the foreground task
-
+    // Save latest snapshot for later resend when Service recovers
     const info = this.taskInfoMap.get(taskId);
+    if (info) {
+      info.lastStageLabel = stageLabel; info.lastCurrent = current; info.lastTotal = total;
+    }
+
+    if (taskId !== this.foregroundTaskId) return;
+    if (this.serviceState !== "running") return; // Service not ready yet
     if (!info) return;
 
     const nowTs = Date.now();
@@ -575,15 +580,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await this.ensureCourseNode(projectId, output.filename);
       await db.run("UPDATE generation_tasks SET status='completed',progress_current=progress_total,stage_label='completed',output_path=?,updated_at=? WHERE id=?", [output.filename, now(), taskId]);
 
-      // Clean up checkpoint (reduce payload size)
+      // Slim checkpoint — always reduce payload after success
       try {
-        const cp = payload._checkpoint;
-        if (cp && typeof cp === "object") {
-          const slim: Record<string, unknown> = { version: CHECKPOINT_VERSION, completed: true, outputPath: output.filename, completedAt: now() };
-          const cleaned = { ...payload, _checkpoint: slim };
-          delete (cleaned as Record<string, unknown>)._checkpoint_generatedContent;
-          await db.run("UPDATE generation_tasks SET payload_json=? WHERE id=?", [JSON.stringify(cleaned), taskId]);
-        }
+        const slimCheckpoint = buildSlimCheckpoint(taskType, taskInputHash, output.filename);
+        const { _checkpoint: _, ...rest } = payload as Record<string, unknown>;
+        await db.run("UPDATE generation_tasks SET payload_json=? WHERE id=?", [JSON.stringify({ ...rest, _checkpoint: slimCheckpoint }), taskId]);
       } catch { /* best-effort */ }
 
       // Send completion notification — only after everything persisted

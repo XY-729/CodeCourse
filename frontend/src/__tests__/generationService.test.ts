@@ -1,161 +1,178 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
+import {
+  validateBaseCheckpoint, validateOutlineCheckpoint, validateDetailedLessonCheckpoint,
+  courseGroupForTaskType, buildCompletionLabel, shouldSendProgress, canRetry,
+  buildSlimCheckpoint, permissionNotice,
+} from "../platform/android/generationState";
 
-// Test checkpoint hash stability
-describe("Checkpoint inputHash stability", () => {
-  // Simulate: compute hash from stable task inputs, NOT from payload._checkpoint
-  function computeStableHash(taskType: string, payload: Record<string, unknown>): string {
-    // Strip _checkpoint from payload before hashing
-    const { _checkpoint, ...rest } = payload;
-    return JSON.stringify({ taskType, payload: rest });
-  }
+// ====== checkpoint validation ======
 
-  it("produces same hash with and without _checkpoint in payload", () => {
-    const payload1 = { path: "src/main.ts", instructions: "test" };
-    const payload2 = { path: "src/main.ts", instructions: "test", _checkpoint: { version: 1, generated: true } };
-
-    const h1 = computeStableHash("file_lesson", payload1);
-    const h2 = computeStableHash("file_lesson", payload2);
-    expect(h1).toBe(h2);
+describe("validateBaseCheckpoint", () => {
+  it("rejects null", () => expect(validateBaseCheckpoint(null, "outline", "hash1")).toBeNull());
+  it("rejects non-object", () => expect(validateBaseCheckpoint("string", "outline", "hash1")).toBeNull());
+  it("rejects wrong version", () => {
+    expect(validateBaseCheckpoint({ version: 99, taskType: "outline", inputHash: "h1", updatedAt: "now" }, "outline", "h1")).toBeNull();
   });
-
-  it("produces different hash for different task types", () => {
-    const payload = { path: "src/main.ts" };
-    const h1 = computeStableHash("outline", payload);
-    const h2 = computeStableHash("file_lesson", payload);
-    expect(h1).not.toBe(h2);
+  it("rejects wrong taskType", () => {
+    expect(validateBaseCheckpoint({ version: 1, taskType: "wrong", inputHash: "h1", updatedAt: "now" }, "outline", "h1")).toBeNull();
   });
-
-  it("produces different hash for different payloads", () => {
-    const h1 = computeStableHash("file_lesson", { path: "a.ts" });
-    const h2 = computeStableHash("file_lesson", { path: "b.ts" });
-    expect(h1).not.toBe(h2);
+  it("rejects wrong inputHash", () => {
+    expect(validateBaseCheckpoint({ version: 1, taskType: "outline", inputHash: "wrong", updatedAt: "now" }, "outline", "h1")).toBeNull();
+  });
+  it("rejects missing updatedAt", () => {
+    expect(validateBaseCheckpoint({ version: 1, taskType: "outline", inputHash: "h1", updatedAt: "" }, "outline", "h1")).toBeNull();
+  });
+  it("accepts valid checkpoint", () => {
+    expect(validateBaseCheckpoint({ version: 1, taskType: "outline", inputHash: "h1", updatedAt: "2024-01-01" }, "outline", "h1")).not.toBeNull();
   });
 });
 
-// Test buildCompletionLabel
+describe("validateOutlineCheckpoint", () => {
+  const base = { version: 1, taskType: "outline", inputHash: "h1", updatedAt: "now" };
+  it("rejects missing generated flag", () => {
+    expect(validateOutlineCheckpoint(base as any)).toBe(false);
+  });
+  it("rejects generated=false", () => {
+    expect(validateOutlineCheckpoint({ ...base, generated: false, generatedContent: "x" } as any)).toBe(false);
+  });
+  it("rejects empty generatedContent", () => {
+    expect(validateOutlineCheckpoint({ ...base, generated: true, generatedContent: "" } as any)).toBe(false);
+  });
+  it("accepts valid outline checkpoint", () => {
+    expect(validateOutlineCheckpoint({ ...base, generated: true, generatedContent: "hello" } as any)).toBe(true);
+  });
+});
+
+describe("validateDetailedLessonCheckpoint", () => {
+  const validPlan = { sections: [{ title: "Ch1", items: [{ name: "fn", kind: "function" }] }] };
+  it("rejects null", () => expect(validateDetailedLessonCheckpoint(null)).toBeNull());
+  it("rejects missing plan", () => expect(validateDetailedLessonCheckpoint({})).toBeNull());
+  it("rejects plan without sections", () => expect(validateDetailedLessonCheckpoint({ plan: {} })).toBeNull());
+  it("rejects section without title", () => {
+    expect(validateDetailedLessonCheckpoint({ plan: { sections: [{ items: [{ name: "x", kind: "f" }] }] } })).toBeNull();
+  });
+  it("rejects item without name", () => {
+    expect(validateDetailedLessonCheckpoint({ plan: { sections: [{ title: "T", items: [{ kind: "f" }] }] } })).toBeNull();
+  });
+  it("rejects non-numeric generatedByIndex key", () => {
+    const cp = { plan: validPlan, generatedByIndex: { abc: "content" } };
+    expect(validateDetailedLessonCheckpoint(cp)).toBeNull();
+  });
+  it("rejects non-string generatedByIndex value", () => {
+    const cp = { plan: validPlan, generatedByIndex: { 0: 123 } };
+    expect(validateDetailedLessonCheckpoint(cp)).toBeNull();
+  });
+  it("accepts valid sections (no generatedByIndex)", () => {
+    expect(validateDetailedLessonCheckpoint({ plan: validPlan })).not.toBeNull();
+  });
+  it("accepts valid generatedByIndex", () => {
+    const cp = { plan: validPlan, generatedByIndex: { 0: "content", 1: "content2" } };
+    expect(validateDetailedLessonCheckpoint(cp)).not.toBeNull();
+  });
+  it("accepts optional repairGenerated as string", () => {
+    const cp = { plan: validPlan, generatedByIndex: { 0: "c" }, repairGenerated: "repair" };
+    expect(validateDetailedLessonCheckpoint(cp)).not.toBeNull();
+  });
+  it("accepts missing repairGenerated", () => {
+    const cp = { plan: validPlan, generatedByIndex: { 0: "c" } };
+    expect(validateDetailedLessonCheckpoint(cp)).not.toBeNull();
+  });
+  it("accepts null repairGenerated", () => {
+    const cp = { plan: validPlan, generatedByIndex: { 0: "c" }, repairGenerated: null };
+    expect(validateDetailedLessonCheckpoint(cp)).not.toBeNull();
+  });
+});
+
+// ====== course group ======
+
+describe("courseGroupForTaskType", () => {
+  it("outline → 总纲", () => expect(courseGroupForTaskType("outline")).toBe("总纲"));
+  it("outline_lesson → 课件", () => expect(courseGroupForTaskType("outline_lesson")).toBe("课件"));
+  it("file_lesson → 文件课件", () => expect(courseGroupForTaskType("file_lesson")).toBe("文件课件"));
+  it("unknown throws", () => expect(() => courseGroupForTaskType("unknown")).toThrow());
+});
+
+// ====== buildCompletionLabel ======
+
 describe("buildCompletionLabel", () => {
-  function buildCompletionLabel(taskType: string, projectName: string, output: { filename: string; content: string }): string {
-    if (taskType === "outline") {
-      return `${projectName} · 学习总纲已生成`;
-    }
-    if (taskType === "file_lesson") {
-      const fileName = output.filename.split("/").pop() ?? output.filename;
-      return `${projectName} · ${fileName} 的文件课件已生成`;
-    }
-    const h1Match = output.content.match(/^#\s+(.+)$/m);
-    const h1 = h1Match?.[1]?.trim() ?? "课件";
-    if (/^第\s*\d+\s*课/.test(h1)) {
-      return `${projectName} · ${h1}已生成`;
-    }
-    return `${projectName} · ${h1}已生成`;
-  }
-
-  it("outline: correct format", () => {
-    const label = buildCompletionLabel("outline", "MyProject", { filename: "outline.md", content: "# Outline" });
-    expect(label).toBe("MyProject · 学习总纲已生成");
+  const out = { filename: "outline.md", content: "# My Outline" };
+  const fileOut = { filename: "files/Foo_java_detailed.md", content: "# Foo Analysis" };
+  const lessonOut = { filename: "lessons/lesson_03.md", content: "# 第 3 课：任务队列\n\nBody" };
+  it("outline uses 总纲", () => {
+    expect(buildCompletionLabel("outline", "P", out)).toContain("总纲");
   });
-
-  it("file_lesson: uses filename", () => {
-    const label = buildCompletionLabel("file_lesson", "MyProject", {
-      filename: "files/Foo_java_detailed.md",
-      content: "# Foo.java Analysis",
-    });
-    expect(label).toContain("Foo_java_detailed.md");
-    expect(label).toContain("的文件课件已生成");
+  it("file_lesson uses filename", () => {
+    expect(buildCompletionLabel("file_lesson", "P", fileOut)).toContain("Foo_java_detailed.md");
   });
-
-  it("outline_lesson: uses h1 without doubling 第...课", () => {
-    const label = buildCompletionLabel("outline_lesson", "MyProject", {
-      filename: "lessons/lesson_03.md",
-      content: "# 第 3 课：任务队列\n\nContent",
-    });
-    expect(label).toBe("MyProject · 第 3 课：任务队列已生成");
-    // Must not produce "第 第 3 课..."
+  it("outline_lesson uses h1", () => {
+    expect(buildCompletionLabel("outline_lesson", "P", lessonOut)).toContain("第 3 课：任务队列");
+  });
+  it("does not double 第", () => {
+    const label = buildCompletionLabel("outline_lesson", "P", lessonOut);
     expect(label).not.toMatch(/第\s+第/);
   });
+});
 
-  it("file_lesson never shows 总纲", () => {
-    const label = buildCompletionLabel("file_lesson", "MyProject", {
-      filename: "files/main_py_detailed.md",
-      content: "# main.py Analysis",
-    });
-    expect(label).not.toContain("总纲");
-  });
+// ====== shouldSendProgress ======
 
-  it("outline never shows 课件", () => {
-    const label = buildCompletionLabel("outline", "MyProject", {
-      filename: "outline.md",
-      content: "# Outline",
-    });
-    expect(label).toContain("总纲");
+describe("shouldSendProgress", () => {
+  it("first update always sends", () => expect(shouldSendProgress(true, false, false, false, false, false)).toBe(true));
+  it("label change always sends", () => expect(shouldSendProgress(false, true, false, false, false, false)).toBe(true));
+  it("indeterminate change always sends", () => expect(shouldSendProgress(false, false, true, false, false, false)).toBe(true));
+  it("100% complete always sends", () => expect(shouldSendProgress(false, false, false, true, false, false)).toBe(true));
+  it("stale sends", () => expect(shouldSendProgress(false, false, false, false, true, false)).toBe(true));
+  it("pct change sends", () => expect(shouldSendProgress(false, false, false, false, false, true)).toBe(true));
+  it("nothing: no send", () => expect(shouldSendProgress(false, false, false, false, false, false)).toBe(false));
+});
+
+// ====== canRetry ======
+
+describe("canRetry", () => {
+  it("failed can retry", () => expect(canRetry("failed")).toBe(true));
+  it("cancelled can retry", () => expect(canRetry("cancelled")).toBe(true));
+  it("completed cannot retry", () => expect(canRetry("completed")).toBe(false));
+  it("queued cannot retry", () => expect(canRetry("queued")).toBe(false));
+});
+
+// ====== buildSlimCheckpoint ======
+
+describe("buildSlimCheckpoint", () => {
+  it("contains completed metadata", () => {
+    const cp = buildSlimCheckpoint("outline", "hash1", "outline.md");
+    expect(cp.version).toBe(1);
+    expect(cp.taskType).toBe("outline");
+    expect(cp.completed).toBe(true);
+    expect(cp.outputPath).toBe("outline.md");
   });
 });
 
-// Test course group assignment
-describe("course group by taskType", () => {
-  function getCourseGroup(taskType: string): string {
-    if (taskType === "outline") return "总纲";
-    if (taskType === "file_lesson") return "文件课件";
-    return "课件";
-  }
+// ====== permissionNotice ======
 
-  it("outline → 总纲", () => {
-    expect(getCourseGroup("outline")).toBe("总纲");
+describe("permissionNotice", () => {
+  it("granted → null", () => {
+    expect(permissionNotice({ granted: true, status: "granted", canAskAgain: false })).toBeNull();
   });
-
-  it("outline_lesson → 课件", () => {
-    expect(getCourseGroup("outline_lesson")).toBe("课件");
+  it("not_required → null", () => {
+    expect(permissionNotice({ granted: true, status: "not_required", canAskAgain: false })).toBeNull();
   });
-
-  it("file_lesson → 文件课件", () => {
-    expect(getCourseGroup("file_lesson")).toBe("文件课件");
+  it("denied → notice without settings", () => {
+    const n = permissionNotice({ granted: false, status: "denied", canAskAgain: true });
+    expect(n?.showSettingsAction).toBe(false);
+    expect(n?.message).toContain("不可见");
   });
-
-  it("unknown task type throws or defaults", () => {
-    // Our router should handle unknown types before reaching this
-    expect(getCourseGroup("unknown_type")).toBe("课件");
+  it("denied_permanently → notice with settings", () => {
+    const n = permissionNotice({ granted: false, status: "denied_permanently", canAskAgain: false });
+    expect(n?.showSettingsAction).toBe(true);
   });
-});
-
-// Test progress throttle logic (OR, not AND)
-describe("progress throttle", () => {
-  function shouldSend(
-    firstUpdate: boolean, labelChanged: boolean, indeterminateChanged: boolean,
-    isComplete: boolean, stale: boolean, enoughProgress: boolean,
-  ): boolean {
-    if (firstUpdate || labelChanged || indeterminateChanged || isComplete) return true;
-    return stale || enoughProgress;
-  }
-
-  it("first update always sends", () => {
-    expect(shouldSend(true, false, false, false, false, false)).toBe(true);
+  it("notifications_disabled → notice with settings", () => {
+    const n = permissionNotice({ granted: false, status: "notifications_disabled", canAskAgain: false });
+    expect(n?.showSettingsAction).toBe(true);
+    expect(n?.message).toContain("系统已关闭");
   });
-
-  it("label change always sends", () => {
-    expect(shouldSend(false, true, false, false, false, false)).toBe(true);
+  it("no_activity → null (silent)", () => {
+    expect(permissionNotice({ granted: false, status: "no_activity", canAskAgain: true })).toBeNull();
   });
-
-  it("indeterminate change always sends", () => {
-    expect(shouldSend(false, false, true, false, false, false)).toBe(true);
-  });
-
-  it("100% complete always sends", () => {
-    expect(shouldSend(false, false, false, true, false, false)).toBe(true);
-  });
-
-  it("sends when stale (only condition)", () => {
-    expect(shouldSend(false, false, false, false, true, false)).toBe(true);
-  });
-
-  it("sends when pct changes >=1% (only condition)", () => {
-    expect(shouldSend(false, false, false, false, false, true)).toBe(true);
-  });
-
-  it("does NOT send when neither stale nor pct-changed", () => {
-    expect(shouldSend(false, false, false, false, false, false)).toBe(false);
-  });
-
-  it("sends when stale even without pct change", () => {
-    expect(shouldSend(false, false, false, false, true, false)).toBe(true);
+  it("error → null (silent)", () => {
+    expect(permissionNotice({ granted: false, status: "error", canAskAgain: false })).toBeNull();
   });
 });
