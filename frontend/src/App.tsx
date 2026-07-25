@@ -265,8 +265,9 @@ function androidWorkbenchStorageKey(projectId: number) {
   return `codecourse.android.workbench.v${WORKBENCH_STORAGE_VERSION}.${projectId}`;
 }
 
-/** Merge all groups from a layout tree into a single group, preserving open tabs. */
-function normalizeToSingleGroup(node: LayoutNode): GroupNode {
+/** Merge all groups from a layout tree into a single group, preserving open tabs
+ *  and respecting preferredActiveItemId for the active document. */
+function normalizeToSingleGroup(node: LayoutNode, preferredActiveItemId?: string | null): GroupNode {
   const items: OpenItem[] = [];
   const seen = new Set<string>();
   function collect(n: LayoutNode) {
@@ -283,8 +284,18 @@ function normalizeToSingleGroup(node: LayoutNode): GroupNode {
     }
   }
   collect(node);
-  const activeItem = items.length > 0 ? items[items.length - 1] : null;
-  return { type: "group", group: { id: ROOT_GROUP_ID, items, activeItemId: activeItem?.id ?? null } };
+
+  let activeItemId: string | null = null;
+  // Rule 1: preferred active item still present
+  if (preferredActiveItemId && items.some((item) => item.id === preferredActiveItemId)) {
+    activeItemId = preferredActiveItemId;
+  }
+  // Rule 2: fallback to first item
+  if (!activeItemId && items.length > 0) {
+    activeItemId = items[0].id;
+  }
+
+  return { type: "group", group: { id: ROOT_GROUP_ID, items, activeItemId } };
 }
 
 function taskStatusMessage(task: GenerationTask): string {
@@ -1515,7 +1526,7 @@ export default function App() {
       group: {
         id: groupId,
         items,
-        activeItemId: target.activeItemId ?? items.at(-1)?.id ?? null,
+        activeItemId: target.activeItemId ?? (items.length > 0 ? items[items.length - 1].id : null),
       },
     };
     commitLayoutChange(() => merged);
@@ -1877,6 +1888,11 @@ export default function App() {
   }
 
   function splitGroupWithItem(groupId: string, zone: DropZone, item: OpenItem) {
+    // Android: never allow split — always open in root group
+    if (mobileRuntime) {
+      openItemInGroup(ROOT_GROUP_ID, item);
+      return;
+    }
     const meta = splitMeta(zone);
     if (!meta || countGroups(layout) >= MAX_GROUPS) {
       if (meta) {
@@ -1982,7 +1998,7 @@ export default function App() {
     if (node.type === "group") {
       const hydrated = await Promise.all(node.group.items.map((item) => hydrateStoredItem(item, projectId, availableCourses)));
       const items = hydrated.filter((item): item is OpenItem => Boolean(item));
-      const activeItemId = items.some((item) => item.id === node.group.activeItemId) ? node.group.activeItemId : items.at(-1)?.id ?? null;
+      const activeItemId = items.some((item) => item.id === node.group.activeItemId) ? node.group.activeItemId : (items.length > 0 ? items[items.length - 1].id : null);
       return { ...node, group: { ...node.group, items, activeItemId } };
     }
     const [first, second] = await Promise.all([
@@ -2295,41 +2311,69 @@ export default function App() {
       await refreshHighlights(freshProject.id);
       await refreshKnowledgeLinks(freshProject.id);
       try {
-        // On Android, use a separate storage key so desktop split layouts are never restored
-        const wbKey = mobileRuntime
-          ? androidWorkbenchStorageKey(freshProject.id)
-          : workbenchStorageKey(freshProject.id);
-        const rawWorkbench = window.localStorage.getItem(wbKey);
-        const stored = rawWorkbench ? JSON.parse(rawWorkbench) as StoredWorkbench : null;
-        if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
-          let restoredLayout = await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses);
-          // On Android, collapse any multi-pane layout into a single group
-          if (mobileRuntime && restoredLayout.type === "split") {
-            restoredLayout = normalizeToSingleGroup(restoredLayout);
-          }
-          if (countLayoutItems(restoredLayout) > 0) {
-            const restoredGroupId = mobileRuntime
-              ? ROOT_GROUP_ID
-              : hasGroup(restoredLayout, stored.activeGroupId) ? stored.activeGroupId : firstGroupId(restoredLayout);
-            const restoredGroup = findGroup(restoredLayout, restoredGroupId);
-            const restoredItem = restoredGroup?.items.find((item) => item.id === restoredGroup.activeItemId) ?? null;
-            setLayout(restoredLayout);
-            setActiveGroupId(restoredGroupId);
-            // On Android, always show navigation initially, never restore sidebar width
-            setNavigationView(mobileRuntime ? "courses" : (stored.navigationView ?? "courses"));
-            setNavigationOpen(mobileRuntime ? false : Boolean(stored.navigationOpen));
-            setSidebarWidth(mobileRuntime ? 264 : clamp(stored.sidebarWidth || 264, 240, 360));
-            if (restoredItem?.type === "file") {
-              setFileContent({ path: restoredItem.path, content: restoredItem.content, language: restoredItem.language ?? "plaintext" });
-            } else if (restoredItem?.type === "course") {
-              setSelectedCourse(restoredItem.path);
-              void refreshDocumentTerms(restoredItem.qaRecordId ? "qa" : "course", restoredItem.path, freshProject.id);
+        if (mobileRuntime) {
+          // Android: try Android key; if missing, one-time migrate from desktop key
+          let stored: StoredWorkbench | null = null;
+          const androidRaw = window.localStorage.getItem(androidWorkbenchStorageKey(freshProject.id));
+          if (androidRaw) {
+            stored = JSON.parse(androidRaw) as StoredWorkbench;
+          } else {
+            const desktopRaw = window.localStorage.getItem(workbenchStorageKey(freshProject.id));
+            if (desktopRaw) {
+              const desktop = JSON.parse(desktopRaw) as StoredWorkbench;
+              if (desktop?.version === WORKBENCH_STORAGE_VERSION && desktop.layout) {
+                const hydrated = await hydrateStoredLayout(desktop.layout, freshProject.id, nextCourses);
+                const merged = normalizeToSingleGroup(
+                  hydrated,
+                  desktop.activeGroupId ? findGroup(desktop.layout, desktop.activeGroupId)?.activeItemId : null,
+                );
+                stored = { version: WORKBENCH_STORAGE_VERSION, layout: merged, activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView, navigationOpen: false, sidebarWidth: 264 };
+                try { window.localStorage.setItem(androidWorkbenchStorageKey(freshProject.id), JSON.stringify(stored)); } catch { /* storage full */ }
+              }
             }
-            return;
+          }
+          if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
+            let restoredLayout = stored.layout;
+            if (restoredLayout.type === "split") {
+              restoredLayout = normalizeToSingleGroup(restoredLayout, stored.activeGroupId ? findGroup(stored.layout, stored.activeGroupId)?.activeItemId : null);
+            }
+            if (countLayoutItems(restoredLayout) > 0) {
+              const rg = findGroup(restoredLayout, ROOT_GROUP_ID);
+              const ri = rg?.items.find((item) => item.id === rg.activeItemId) ?? null;
+              setLayout(restoredLayout); setActiveGroupId(ROOT_GROUP_ID); setNavigationView("courses"); setNavigationOpen(false); setSidebarWidth(264);
+              if (ri?.type === "file") setFileContent({ path: ri.path, content: ri.content, language: ri.language ?? "plaintext" });
+              else if (ri?.type === "course") { setSelectedCourse(ri.path); void refreshDocumentTerms(ri.qaRecordId ? "qa" : "course", ri.path, freshProject.id); }
+              return;
+            }
+          }
+        } else {
+          const wbKey = workbenchStorageKey(freshProject.id);
+          const rawWorkbench = window.localStorage.getItem(wbKey);
+          const stored = rawWorkbench ? JSON.parse(rawWorkbench) as StoredWorkbench : null;
+          if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
+            const restoredLayout = await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses);
+            if (countLayoutItems(restoredLayout) > 0) {
+              const restoredGroupId = hasGroup(restoredLayout, stored.activeGroupId) ? stored.activeGroupId : firstGroupId(restoredLayout);
+              const restoredGroup = findGroup(restoredLayout, restoredGroupId);
+              const restoredItem = restoredGroup?.items.find((item) => item.id === restoredGroup.activeItemId) ?? null;
+              setLayout(restoredLayout);
+              setActiveGroupId(restoredGroupId);
+              setNavigationView(stored.navigationView ?? "courses");
+              setNavigationOpen(Boolean(stored.navigationOpen));
+              setSidebarWidth(clamp(stored.sidebarWidth || 264, 240, 360));
+              if (restoredItem?.type === "file") {
+                setFileContent({ path: restoredItem.path, content: restoredItem.content, language: restoredItem.language ?? "plaintext" });
+              } else if (restoredItem?.type === "course") {
+                setSelectedCourse(restoredItem.path);
+                void refreshDocumentTerms(restoredItem.qaRecordId ? "qa" : "course", restoredItem.path, freshProject.id);
+              }
+              return;
+            }
           }
         }
       } catch {
-        window.localStorage.removeItem(workbenchStorageKey(freshProject.id));
+        try { window.localStorage.removeItem(androidWorkbenchStorageKey(freshProject.id)); } catch { /* best-effort */ }
+        try { window.localStorage.removeItem(workbenchStorageKey(freshProject.id)); } catch { /* best-effort */ }
       }
       const recent = [...nextLearningStates].sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
       const recentCourse = recent?.source_type === "course" ? nextCourses.find((file) => file.filename === recent.source_path) : null;
@@ -3378,21 +3422,21 @@ export default function App() {
           setActiveGroupId(group.id);
           if (workspaceMenuGroupId) setWorkspaceMenuGroupId(null);
         }}
-        onDragOver={(event) => {
+        onDragOver={mobileRuntime ? undefined : (event) => {
           event.preventDefault();
           event.stopPropagation();
           const zone = detectDropZone(event);
           showDropPreview(event.currentTarget, group.id, zone);
         }}
-        onDragLeave={(event) => {
+        onDragLeave={mobileRuntime ? undefined : (event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
             if (dropPreviewRef.current?.groupId === group.id) clearDropPreview();
           }
         }}
-        onDrop={(event) => handleGroupDrop(event, group.id)}
+        onDrop={mobileRuntime ? undefined : (event) => handleGroupDrop(event, group.id)}
       >
         <div className="pane-tabs">
-          <span className="pane-name">工作区</span>
+          {!mobileRuntime ? <span className="pane-name">工作区</span> : null}
           {group.items.map((item) => (
             <button
               key={item.id}
@@ -3415,13 +3459,18 @@ export default function App() {
               }}
             >
               <span>{item.dirty ? `${item.title} *` : item.title}</span>
-              <X
-                size={13}
+              <button
+                type="button"
+                className="pane-tab-close"
+                aria-label={`关闭 ${item.title}`}
                 onClick={(event) => {
                   event.stopPropagation();
                   closeItemInGroup(group.id, item.id);
                 }}
-              />
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                <X size={13} />
+              </button>
             </button>
           ))}
         </div>

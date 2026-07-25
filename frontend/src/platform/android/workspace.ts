@@ -27,6 +27,7 @@ const LANGUAGE_BY_SUFFIX: Record<string, string> = {
   cs: "csharp", scala: "scala", groovy: "groovy", lua: "lua", r: "r",
   graphql: "graphql", gql: "graphql", env: "ini",
   tex: "latex", makefile_ext: "makefile", patch: "diff", diff: "diff",
+  bzl: "python",
 };
 
 const SPECIAL_FILENAME_LANGUAGE: Record<string, string> = {
@@ -37,15 +38,30 @@ const SPECIAL_FILENAME_LANGUAGE: Record<string, string> = {
   ".gitignore": "ini",
   ".gitattributes": "ini",
   ".editorconfig": "ini",
-  build: "stata",
-  workspace: "stata",
+  "build.bazel": "python",
+  "workspace.bazel": "python",
+  "module.bazel": "python",
+  build: "python",
+  workspace: "python",
+  "BUILD.bazel": "python",
+  "WORKSPACE.bazel": "python",
+  "MODULE.bazel": "python",
   podfile: "ruby",
   gemfile: "ruby",
   procfile: "yaml",
   vagrantfile: "ruby",
   "gradlew": "shell",
   "mvnw": "shell",
+  ".env": "ini",
+  ".env.local": "ini",
+  ".env.production": "ini",
+  ".env.development": "ini",
 };
+
+// Suffix patterns: extensions matching .env.* patterns should be ini
+function isEnvFile(filename: string): boolean {
+  return /^\.env(\..+)?$/.test(filename);
+}
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   dos: "dos",
@@ -64,18 +80,57 @@ const LANGUAGE_ALIASES: Record<string, string> = {
   stata: "stata",
 };
 
+// Legacy DB aliases — normalize old language names stored in the database
+const LEGACY_DB_ALIASES: Record<string, string> = {
+  js: "javascript",
+  ts: "typescript",
+  py: "python",
+  kt: "kotlin",
+  sh: "shell",
+  bash: "shell",
+  zsh: "shell",
+  md: "markdown",
+  yml: "yaml",
+  cs: "csharp",
+  rb: "ruby",
+  ps1: "powershell",
+  kts: "kotlin",
+  hpp: "cpp",
+  h: "c",
+};
+
 /**
  * Normalize a language identifier to one that highlight.js can handle.
+ * First checks legacy DB aliases, then our alias table, then hljs itself.
  * Returns "plaintext" for unrecognized languages.
  */
 export function normalizeLanguage(raw: string): string {
   const key = raw.trim().toLowerCase();
   if (!key || key === "plaintext" || key === "text" || key === "txt") return "plaintext";
-  // Direct alias
-  if (LANGUAGE_ALIASES[key]) return LANGUAGE_ALIASES[key];
+
+  // Legacy DB alias
+  if (LEGACY_DB_ALIASES[key]) {
+    const resolved = LEGACY_DB_ALIASES[key];
+    try {
+      if (hljs.getLanguage(resolved)) return resolved;
+    } catch { /* hljs not available */ }
+    return "plaintext";
+  }
+
+  // Our alias table
+  if (LANGUAGE_ALIASES[key]) {
+    const resolved = LANGUAGE_ALIASES[key];
+    try {
+      if (hljs.getLanguage(resolved)) return resolved;
+    } catch { /* hljs not available */ }
+    return "plaintext";
+  }
+
+  // Direct hljs check
   try {
     if (hljs.getLanguage(key)) return key;
   } catch { /* highlight.js not available in all contexts */ }
+
   return "plaintext";
 }
 
@@ -90,16 +145,26 @@ export type ImportedTextFile = {
 export function inferLanguage(path: string): string {
   const name = path.split("/").pop() ?? path;
   const lowerName = name.toLowerCase();
-  // Check special filenames first (case-insensitive for Dockerfile/Makefile variants)
-  if (SPECIAL_FILENAME_LANGUAGE[lowerName]) return SPECIAL_FILENAME_LANGUAGE[lowerName];
-  // Check for Dockerfile.* variants (e.g. Dockerfile.prod, dockerfile.dev)
+
+  // Check special filenames first (case-insensitive)
+  if (SPECIAL_FILENAME_LANGUAGE[lowerName]) return normalizeLanguage(SPECIAL_FILENAME_LANGUAGE[lowerName]);
+
+  // Check .env.* patterns
+  if (isEnvFile(lowerName)) return "ini";
+
+  // Check for Dockerfile.* variants
   if (lowerName.startsWith("dockerfile")) return "dockerfile";
   if (lowerName.startsWith("makefile")) return "makefile";
   if (lowerName === "cmakelists.txt" || lowerName.startsWith("cmakelists")) return "cmake";
+
   // Extension-based lookup
-  const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
-  const raw = LANGUAGE_BY_SUFFIX[ext];
-  if (raw) return normalizeLanguage(raw);
+  const dotIdx = name.lastIndexOf(".");
+  if (dotIdx >= 0) {
+    const ext = name.slice(dotIdx + 1).toLowerCase();
+    const raw = LANGUAGE_BY_SUFFIX[ext];
+    if (raw) return normalizeLanguage(raw);
+  }
+
   return "plaintext";
 }
 

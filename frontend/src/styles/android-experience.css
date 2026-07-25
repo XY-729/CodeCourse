@@ -537,6 +537,41 @@ html.platform-android .reader-learning-actions .complete-button.completed {
   background: var(--mobile-accent-soft);
 }
 
+/* Tab close button — proper touch target */
+html.platform-android .pane-tab-close {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 8px;
+  color: var(--mobile-text-tertiary);
+  background: transparent;
+  touch-action: manipulation;
+}
+html.platform-android .pane-tab-close:active {
+  color: var(--mobile-text);
+  background: var(--mobile-surface-pressed);
+}
+
+/* Reading toolbar — ensure row layout on Android at all widths */
+html.platform-android .reader-learning-toolbar {
+  flex-direction: row !important;
+  align-items: center !important;
+}
+html.platform-android .reader-learning-actions {
+  width: auto !important;
+  flex: 0 0 auto !important;
+  margin-left: auto !important;
+  justify-content: flex-end !important;
+}
+
 html.platform-android .editor-tab {
   border-radius: 10px 10px 0 0;
   color: var(--mobile-text-secondary);

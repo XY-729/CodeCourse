@@ -722,6 +722,28 @@ button:disabled,
   color: #7b8794;
 }
 
+.pane-tab-close {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 6px;
+  color: #7b8794;
+  background: transparent;
+  cursor: pointer;
+}
+.pane-tab-close:hover {
+  color: #343a37;
+  background: #e8eeeb;
+}
+
 .pane-body,
 .viewer {
   flex: 1;
@@ -3908,6 +3930,7 @@ html.platform-android[data-theme="dark"] .field-label > span {
   background: #337a70;
   transform-origin: left center;
   transform: scaleX(0);
+  will-change: transform;
 }
 @media (prefers-reduced-motion: reduce) {
   .reader-progress-fill {
