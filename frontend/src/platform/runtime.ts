@@ -6,14 +6,40 @@ type SecureStorePlugin = {
   remove(options: { key: string }): Promise<void>;
 };
 
+export type NotificationPermissionStatus =
+  | "granted"
+  | "denied"
+  | "denied_permanently"
+  | "notifications_disabled"
+  | "not_required"
+  | "no_activity"
+  | "error";
+
+export type NotificationPermissionResult = {
+  granted: boolean;
+  status: NotificationPermissionStatus;
+  canAskAgain: boolean;
+};
+
 export const CodeCourseSecureStore = registerPlugin<SecureStorePlugin>("CodeCourseSecureStore");
 export const CodeCourseNative = registerPlugin<{
   openExternal(options: { url: string }): Promise<void>;
   setGenerationActive(options: { active: boolean; label?: string }): Promise<void>;
-  updateGenerationProgress(options: { current: number; total: number; indeterminate?: boolean; stageLabel?: string }): Promise<void>;
-  notifyCompletion(options: { label: string; courseName?: string }): Promise<void>;
+  updateGenerationProgress(options: {
+    sessionId: number;
+    taskId: number;
+    sequence: number;
+    current: number;
+    total: number;
+    indeterminate?: boolean;
+    stageLabel?: string;
+    activeTaskCount?: number;
+  }): Promise<void>;
+  switchForegroundTask(options: { sessionId: number; taskId: number }): Promise<void>;
+  notifyCompletion(options: { taskId: number; label: string }): Promise<void>;
   moveToBackground(): Promise<void>;
-  requestNotificationPermission(): Promise<{ granted: boolean; reason?: string }>;
+  requestNotificationPermission(): Promise<NotificationPermissionResult>;
+  openNotificationSettings(): Promise<void>;
 }>("CodeCourseNative");
 
 export function isNativeAndroidRuntime(): boolean {

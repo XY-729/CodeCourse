@@ -7,11 +7,10 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
+import android.provider.Settings;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
+import androidx.core.app.NotificationManagerCompat;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -25,8 +24,7 @@ import org.json.JSONObject;
 public class CodeCourseNativePlugin extends Plugin {
 
     private static final String TAG = "CCNativePlugin";
-
-    // Held across permission request lifecycle
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 3001;
     private PluginCall pendingPermissionCall;
 
     @PluginMethod
@@ -57,6 +55,7 @@ public class CodeCourseNativePlugin extends Plugin {
                 getContext().startService(intent);
             }
         } else {
+            // Stop foreground before stopping service
             getContext().stopService(new Intent(getContext(), CodeCourseGenerationService.class));
         }
         call.resolve();
@@ -64,19 +63,34 @@ public class CodeCourseNativePlugin extends Plugin {
 
     @PluginMethod
     public void updateGenerationProgress(PluginCall call) {
+        long sessionId = call.getInt("sessionId", 0);
+        int taskId = call.getInt("taskId", 0);
+        int sequence = call.getInt("sequence", 0);
         int current = call.getInt("current", 0);
         int total = call.getInt("total", 0);
         boolean indeterminate = Boolean.TRUE.equals(call.getBoolean("indeterminate", total <= 0));
         String stageLabel = call.getString("stageLabel", "");
-        CodeCourseGenerationService.updateProgress(getContext(), current, total, indeterminate, stageLabel);
+        int activeTaskCount = call.getInt("activeTaskCount", 1);
+
+        CodeCourseGenerationService.updateProgress(
+            getContext(), sessionId, taskId, sequence,
+            current, total, indeterminate, stageLabel, activeTaskCount);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void switchForegroundTask(PluginCall call) {
+        long sessionId = call.getInt("sessionId", 0);
+        int taskId = call.getInt("taskId", 0);
+        CodeCourseGenerationService.switchForegroundTask(sessionId, taskId);
         call.resolve();
     }
 
     @PluginMethod
     public void notifyCompletion(PluginCall call) {
+        int taskId = call.getInt("taskId", 0);
         String label = call.getString("label", "学习内容已经生成完成");
-        String courseName = call.getString("courseName", "");
-        CodeCourseGenerationService.showCompletion(getContext(), label, courseName);
+        CodeCourseGenerationService.showCompletion(getContext(), taskId, label);
         call.resolve();
     }
 
@@ -91,40 +105,78 @@ public class CodeCourseNativePlugin extends Plugin {
     }
 
     /**
-     * Check notification permission status. If not granted on Android 13+,
-     * request it from the user. On Android 12 and below, always returns granted=true.
-     *
-     * Returns: { granted: boolean, reason?: string }
+     * Returns a detailed permission status object.
+     * Android 12-: {granted:true, status:"not_required", canAskAgain:false}
+     * Android 13+: checks runtime permission + system notification toggle
      */
     @PluginMethod
     public void requestNotificationPermission(PluginCall call) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            resolvePermissionResult(call, true, "pre_tiramisu");
+            resolvePermissionStatus(call, true, "not_required", false);
             return;
         }
 
         Context context = getContext();
         NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (manager != null && manager.areNotificationsEnabled()) {
-            resolvePermissionResult(call, true, "already_enabled");
+        if (manager == null) {
+            resolvePermissionStatus(call, false, "error", false);
             return;
         }
 
-        // Check if we should show rationale
-        if (getActivity() != null && ActivityCompat.shouldShowRequestPermissionRationale(getActivity(), Manifest.permission.POST_NOTIFICATIONS)) {
-            // User previously denied but hasn't selected "don't ask again".
-            // We'll request again — but only once per session.
+        boolean runtimeGranted = ActivityCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+            == PackageManager.PERMISSION_GRANTED;
+        boolean notificationsEnabled = manager.areNotificationsEnabled();
+
+        if (runtimeGranted && notificationsEnabled) {
+            resolvePermissionStatus(call, true, "granted", false);
+            return;
         }
 
-        // Request the permission
-        if (getActivity() != null) {
+        if (!runtimeGranted && getActivity() != null) {
+            boolean canAsk = ActivityCompat.shouldShowRequestPermissionRationale(getActivity(), Manifest.permission.POST_NOTIFICATIONS)
+                || true; // First denial still allows re-asking
+
+            // If user previously denied permanently (don't ask again), canAskAgain=false
+            boolean deniedPermanently = !canAsk
+                && !ActivityCompat.shouldShowRequestPermissionRationale(getActivity(), Manifest.permission.POST_NOTIFICATIONS);
+
+            // Store call for async result
             pendingPermissionCall = call;
-            // Use the bridge to request; the result comes back via handleRequestPermissionsResult
             String[] permissions = { Manifest.permission.POST_NOTIFICATIONS };
             bridge.saveCall(call);
-            ActivityCompat.requestPermissions(getActivity(), permissions, 3001);
-        } else {
-            resolvePermissionResult(call, false, "no_activity");
+            ActivityCompat.requestPermissions(getActivity(), permissions, NOTIFICATION_PERMISSION_REQUEST);
+            // Result delivered via handleRequestPermissionsResult
+            return;
+        }
+
+        if (!notificationsEnabled && runtimeGranted) {
+            resolvePermissionStatus(call, false, "notifications_disabled", true);
+            return;
+        }
+
+        // Runtime not granted and no activity to request
+        boolean canAsk = getActivity() == null
+            ? false
+            : ActivityCompat.shouldShowRequestPermissionRationale(getActivity(), Manifest.permission.POST_NOTIFICATIONS);
+        resolvePermissionStatus(call, false,
+            canAsk ? "denied" : "denied_permanently",
+            canAsk);
+    }
+
+    @PluginMethod
+    public void openNotificationSettings(PluginCall call) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+            intent.putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+            if (getActivity() != null) {
+                getActivity().startActivity(intent);
+            } else {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(intent);
+            }
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("Unable to open notification settings", e);
         }
     }
 
@@ -132,21 +184,38 @@ public class CodeCourseNativePlugin extends Plugin {
     protected void handleRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.handleRequestPermissionsResult(requestCode, permissions, grantResults);
 
-        if (requestCode == 3001) {
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
             boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-            PluginCall savedCall = bridge.getSavedCall(pendingPermissionCall != null ? pendingPermissionCall.getCallbackId() : null);
-            if (savedCall != null) {
-                resolvePermissionResult(savedCall, granted, granted ? "granted" : "denied");
-            }
+            Context context = getContext();
+            NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+            boolean notificationsEnabled = manager != null && manager.areNotificationsEnabled();
+
+            PluginCall savedCall = pendingPermissionCall != null
+                ? bridge.getSavedCall(pendingPermissionCall.getCallbackId())
+                : null;
             pendingPermissionCall = null;
+
+            if (savedCall != null) {
+                if (granted && notificationsEnabled) {
+                    resolvePermissionStatus(savedCall, true, "granted", false);
+                } else if (!granted && getActivity() != null) {
+                    boolean canAsk = ActivityCompat.shouldShowRequestPermissionRationale(
+                        getActivity(), Manifest.permission.POST_NOTIFICATIONS);
+                    resolvePermissionStatus(savedCall, false,
+                        canAsk ? "denied" : "denied_permanently", canAsk);
+                } else {
+                    resolvePermissionStatus(savedCall, false, "denied_permanently", false);
+                }
+            }
         }
     }
 
-    private void resolvePermissionResult(PluginCall call, boolean granted, String reason) {
+    private void resolvePermissionStatus(PluginCall call, boolean granted, String status, boolean canAskAgain) {
         try {
             JSONObject result = new JSONObject();
             result.put("granted", granted);
-            result.put("reason", reason);
+            result.put("status", status);
+            result.put("canAskAgain", canAskAgain);
             call.resolve(JSObject.fromJSONObject(result));
         } catch (Exception e) {
             call.resolve();

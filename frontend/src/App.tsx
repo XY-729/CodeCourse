@@ -3856,7 +3856,7 @@ export default function App() {
 
   function notifyTaskCompleted(title: string, body: string) {
     if (mobileRuntime) {
-      void CodeCourseNative.notifyCompletion({ label: body }).catch(() => undefined);
+      void CodeCourseNative.notifyCompletion({ taskId: 0, label: body }).catch(() => undefined);
       return;
     }
     void window.codecourseDesktop?.notify?.({ title, body });
