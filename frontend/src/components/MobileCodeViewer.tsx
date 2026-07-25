@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import hljs from "highlight.js";
 import type { ViewerRange, ViewerSelection } from "./CodeViewer";
 
 type Props = {
@@ -12,6 +13,10 @@ type Props = {
   onVisibleLineChange?: (line: number) => void;
 };
 
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 export default function MobileCodeViewer({ path, language, content, selectedRange, onSelectionChange, initialLine, onVisibleLineChange }: Props) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scrollFrameRef = useRef(0);
@@ -20,6 +25,45 @@ export default function MobileCodeViewer({ path, language, content, selectedRang
   const [query, setQuery] = useState("");
   const [activeMatch, setActiveMatch] = useState(0);
   const plainLines = useMemo(() => content.split("\n"), [content]);
+  const highlightedLines = useMemo(() => {
+    const validLang = language && hljs.getLanguage(language) ? language : undefined;
+    const rawLines = content.split("\n");
+    if (!validLang) return rawLines.map((line) => escapeHtml(line || " "));
+    try {
+      const fullResult = hljs.highlight(content, { language: validLang, ignoreIllegals: true });
+      // Split highlighted HTML by newlines, tracking open tags across lines
+      const htmlLines = fullResult.value.split("\n");
+      // Match any unclosed span tags and carry them across line breaks
+      const openTags: string[] = [];
+      return htmlLines.map((lineHtml, i) => {
+        // Close any currently open tags
+        let prefix = "";
+        for (let j = openTags.length - 1; j >= 0; j--) {
+          prefix += `<span class="${openTags[j]}">`;
+        }
+        // Track open/close spans in this line
+        const opens = lineHtml.match(/<span class="([^"]*)">/g) ?? [];
+        const closes = lineHtml.match(/<\/span>/g) ?? [];
+        const diff = opens.length - closes.length;
+        if (diff > 0) {
+          for (let k = opens.length - diff; k < opens.length; k++) {
+            const cls = opens[k].match(/class="([^"]*)"/)?.[1] ?? "";
+            openTags.push(cls);
+          }
+        } else if (diff < 0) {
+          openTags.splice(openTags.length + diff);
+        }
+        // Close open tags at end of line
+        let suffix = "";
+        for (let j = 0; j < openTags.length; j++) {
+          suffix += "</span>";
+        }
+        return prefix + (lineHtml || " ") + suffix;
+      });
+    } catch {
+      return rawLines.map((line) => escapeHtml(line || " "));
+    }
+  }, [content, language]);
   const matches = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return [];
@@ -40,11 +84,6 @@ export default function MobileCodeViewer({ path, language, content, selectedRang
   }, [content, initialLine, path]);
 
   useEffect(() => () => window.cancelAnimationFrame(scrollFrameRef.current), []);
-
-  // Android relies entirely on native WebView ActionMode for text selection.
-  // No onPointerUp / selectionchange listener — React state updates during
-  // selection would re-render <code> children and destroy the native Range.
-  // MainActivity reads window.getSelection() when the user taps "Ask".
 
   function captureVisibleLine() {
     if (scrollFrameRef.current) return;
@@ -83,11 +122,11 @@ export default function MobileCodeViewer({ path, language, content, selectedRang
       <button className="icon-button" onClick={() => { setSearchOpen(false); setQuery(""); }}><X size={15} /></button>
     </div> : null}
     <div ref={scrollRef} className="mobile-code-scroll" onScroll={captureVisibleLine}>
-      {plainLines.map((line, index) => {
+      {plainLines.map((_line, index) => {
         const lineNumber = index + 1;
         const anchored = selectedRange && lineNumber >= selectedRange.startLineNumber && lineNumber <= selectedRange.endLineNumber;
         const matched = matchSet.has(lineNumber);
-        return <div className={`mobile-code-line ${anchored ? "selection-anchor" : ""} ${matched ? "search-match" : ""}`} data-line={lineNumber} key={index}><span className="mobile-line-number">{lineNumber}</span><code>{line || " "}</code></div>;
+        return <div className={`mobile-code-line ${anchored ? "selection-anchor" : ""} ${matched ? "search-match" : ""}`} data-line={lineNumber} key={index}><span className="mobile-line-number">{lineNumber}</span><code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedLines[index] || " " }} /></div>;
       })}
     </div>
   </div>;

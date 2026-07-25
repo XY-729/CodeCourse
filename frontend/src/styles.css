@@ -3897,6 +3897,17 @@ html.platform-android[data-theme="dark"] .field-label > span {
 .course-state.in-progress { color: #43877c; fill: #d8ebe6; }
 .course-state.completed { color: #287369; }
 
+.reader-progress-bar {
+  flex: 0 0 2px;
+  background: #e3e9e6;
+}
+.reader-progress-fill {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  background: #337a70;
+  transition: width 80ms linear;
+}
 .reader-learning-toolbar {
   min-height: 39px;
   padding: 5px 10px 5px 14px;

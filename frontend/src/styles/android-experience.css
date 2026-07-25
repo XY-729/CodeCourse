@@ -477,21 +477,35 @@ html.platform-android .pane-tab.active {
 }
 
 html.platform-android .reader-learning-toolbar {
-  min-height: 48px;
-  padding: 6px 10px 6px 14px;
+  min-height: 40px;
+  padding: 4px 8px 4px 10px;
 }
 
+html.platform-android .reader-breadcrumb {
+  font-size: 11px;
+}
 html.platform-android .reader-breadcrumb strong {
   color: var(--mobile-text);
 }
 
+html.platform-android .reader-learning-actions { gap: 3px; }
 html.platform-android .reader-learning-actions .icon-button,
 html.platform-android .reader-learning-actions .complete-button {
   color: var(--mobile-text-secondary);
   border-color: var(--mobile-line);
   background: var(--mobile-surface-raised);
 }
-
+html.platform-android .reader-learning-actions .icon-button {
+  padding: 4px;
+}
+html.platform-android .reader-learning-actions .icon-button svg {
+  width: 13px;
+  height: 13px;
+}
+html.platform-android .reader-learning-actions .complete-button {
+  padding: 3px 7px;
+  font-size: 11px;
+}
 html.platform-android .reader-learning-actions .complete-button.completed {
   color: var(--mobile-accent-strong);
   border-color: var(--mobile-line-strong);
@@ -1141,6 +1155,10 @@ html.platform-android .selection-quick-bar button {
     outline-offset: -2px;
   }
 }
+
+/* Hide desktop workspace controls on Android */
+html.platform-android .pane-workspace-actions { display: none; }
+html.platform-android .split-resizer { display: none; }
 
 @media (max-width: 370px) {
   html.platform-android .markdown-body h1 { font-size: 27px; }

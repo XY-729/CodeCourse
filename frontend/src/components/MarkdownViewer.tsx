@@ -28,8 +28,8 @@ type Props = {
   onGenerateLesson?: (lessonNumber: number, title: string) => void;
   headerActions?: ReactNode;
   embedded?: boolean;
-  initialScrollRatio?: number;
   onScrollRatioChange?: (ratio: number) => void;
+  initialScrollRatio?: number;
 };
 
 /* ---- Backend highlights ---- */
@@ -320,14 +320,18 @@ export default function MarkdownViewer({
   onGenerateLesson,
   headerActions,
   embedded = false,
-  initialScrollRatio = 0,
+  initialScrollRatio,
   onScrollRatioChange,
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
+  const progressFillRef = useRef<HTMLDivElement | null>(null);
+  const scrollFrameRef = useRef(0);
   const androidRuntime = isAndroidRuntime();
   // Never inject <mark> temp-selection elements on Android — they would
   // destroy the native Range and collapse the drag handles.
   const effectiveTempSelectedText = androidRuntime ? null : tempSelectedText;
+  const initialScrollRef = useRef(initialScrollRatio);
+  initialScrollRef.current = initialScrollRatio;
   const [selectedText, setSelectedText] = useState("");
   const [docFontSize, setDocFontSize] = useState(() => {
     try {
@@ -366,21 +370,34 @@ export default function MarkdownViewer({
     return () => article.removeEventListener("wheel", handleWheel);
   }, [handleWheel]);
 
+  // Restore reading position on open
   useEffect(() => {
     const article = articleRef.current;
-    if (!article) return;
+    if (!article || !initialScrollRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       const maxScroll = Math.max(0, article.scrollHeight - article.clientHeight);
-      article.scrollTop = maxScroll * Math.min(1, Math.max(0, initialScrollRatio));
+      article.scrollTop = maxScroll * Math.min(1, Math.max(0, initialScrollRef.current!));
     });
     return () => window.cancelAnimationFrame(frame);
   }, [sourcePath]);
 
+  // Cleanup rAF on unmount
+  useEffect(() => () => window.cancelAnimationFrame(scrollFrameRef.current), []);
+
+  // rAF-throttled scroll reporting — no React state per scroll pixel
   function reportScroll() {
-    const article = articleRef.current;
-    if (!article || !onScrollRatioChange) return;
-    const maxScroll = Math.max(0, article.scrollHeight - article.clientHeight);
-    onScrollRatioChange(maxScroll > 0 ? article.scrollTop / maxScroll : 0);
+    if (scrollFrameRef.current) return;
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      scrollFrameRef.current = 0;
+      const article = articleRef.current;
+      if (!article) return;
+      const maxScroll = Math.max(0, article.scrollHeight - article.clientHeight);
+      const ratio = maxScroll > 0 ? article.scrollTop / maxScroll : 0;
+      if (progressFillRef.current) {
+        progressFillRef.current.style.width = `${ratio * 100}%`;
+      }
+      onScrollRatioChange?.(ratio);
+    });
   }
 
   const captureSelection = useCallback(() => {
@@ -528,6 +545,9 @@ export default function MarkdownViewer({
           <strong>Markdown</strong>
         </div>
       </div> : null}
+      <div className="reader-progress-bar" aria-hidden="true">
+        <div ref={progressFillRef} className="reader-progress-fill" />
+      </div>
       <article
         ref={articleRef}
         className="markdown-scroll-viewport"
