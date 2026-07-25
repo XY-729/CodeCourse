@@ -1,5 +1,6 @@
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import JSZip from "jszip";
+import hljs from "highlight.js";
 import type { TreeNode } from "../../api/client";
 
 const IGNORED_DIRS = new Set([
@@ -18,8 +19,65 @@ const LANGUAGE_BY_SUFFIX: Record<string, string> = {
   py: "python", js: "javascript", jsx: "javascript", ts: "typescript", tsx: "typescript", json: "json",
   md: "markdown", toml: "toml", yml: "yaml", yaml: "yaml", html: "html", css: "css", scss: "scss",
   c: "c", h: "c", cpp: "cpp", hpp: "cpp", rs: "rust", go: "go", java: "java", kt: "kotlin",
-  sh: "shell", sql: "sql", vue: "html", svelte: "html", xml: "xml",
+  sh: "shell", bash: "shell", zsh: "shell", fish: "shell",
+  sql: "sql", vue: "html", svelte: "html", xml: "xml", svg: "xml",
+  gradle: "groovy", kts: "kotlin", properties: "ini", ini: "ini", conf: "ini", cfg: "ini",
+  bat: "dos", cmd: "dos", ps1: "powershell", psd1: "powershell", psm1: "powershell",
+  proto: "protobuf", dart: "dart", swift: "swift", rb: "ruby", php: "php",
+  cs: "csharp", scala: "scala", groovy: "groovy", lua: "lua", r: "r",
+  graphql: "graphql", gql: "graphql", env: "ini",
+  tex: "latex", makefile_ext: "makefile", patch: "diff", diff: "diff",
 };
+
+const SPECIAL_FILENAME_LANGUAGE: Record<string, string> = {
+  dockerfile: "dockerfile",
+  makefile: "makefile",
+  cmakelists: "cmake",
+  "cmakelists.txt": "cmake",
+  ".gitignore": "ini",
+  ".gitattributes": "ini",
+  ".editorconfig": "ini",
+  build: "stata",
+  workspace: "stata",
+  podfile: "ruby",
+  gemfile: "ruby",
+  procfile: "yaml",
+  vagrantfile: "ruby",
+  "gradlew": "shell",
+  "mvnw": "shell",
+};
+
+const LANGUAGE_ALIASES: Record<string, string> = {
+  dos: "dos",
+  powershell: "powershell",
+  protobuf: "protobuf",
+  csharp: "csharp",
+  dockerfile: "dockerfile",
+  cmake: "cmake",
+  makefile: "makefile",
+  latex: "latex",
+  diff: "diff",
+  ini: "ini",
+  groovy: "groovy",
+  dart: "dart",
+  r: "r",
+  stata: "stata",
+};
+
+/**
+ * Normalize a language identifier to one that highlight.js can handle.
+ * Returns "plaintext" for unrecognized languages.
+ */
+export function normalizeLanguage(raw: string): string {
+  const key = raw.trim().toLowerCase();
+  if (!key || key === "plaintext" || key === "text" || key === "txt") return "plaintext";
+  // Direct alias
+  if (LANGUAGE_ALIASES[key]) return LANGUAGE_ALIASES[key];
+  try {
+    if (hljs.getLanguage(key)) return key;
+  } catch { /* highlight.js not available in all contexts */ }
+  return "plaintext";
+}
 
 export type ImportedTextFile = {
   path: string;
@@ -31,10 +89,18 @@ export type ImportedTextFile = {
 
 export function inferLanguage(path: string): string {
   const name = path.split("/").pop() ?? path;
-  if (name === "Dockerfile") return "dockerfile";
-  if (name === "Makefile") return "makefile";
-  if (name === "CMakeLists.txt") return "cmake";
-  return LANGUAGE_BY_SUFFIX[name.includes(".") ? name.split(".").pop()!.toLowerCase() : ""] ?? "plaintext";
+  const lowerName = name.toLowerCase();
+  // Check special filenames first (case-insensitive for Dockerfile/Makefile variants)
+  if (SPECIAL_FILENAME_LANGUAGE[lowerName]) return SPECIAL_FILENAME_LANGUAGE[lowerName];
+  // Check for Dockerfile.* variants (e.g. Dockerfile.prod, dockerfile.dev)
+  if (lowerName.startsWith("dockerfile")) return "dockerfile";
+  if (lowerName.startsWith("makefile")) return "makefile";
+  if (lowerName === "cmakelists.txt" || lowerName.startsWith("cmakelists")) return "cmake";
+  // Extension-based lookup
+  const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
+  const raw = LANGUAGE_BY_SUFFIX[ext];
+  if (raw) return normalizeLanguage(raw);
+  return "plaintext";
 }
 
 function normalizeEntryPath(input: string): string {

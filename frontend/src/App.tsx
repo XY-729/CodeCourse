@@ -261,6 +261,32 @@ function workbenchStorageKey(projectId: number) {
   return `codecourse.workbench.v${WORKBENCH_STORAGE_VERSION}.${projectId}`;
 }
 
+function androidWorkbenchStorageKey(projectId: number) {
+  return `codecourse.android.workbench.v${WORKBENCH_STORAGE_VERSION}.${projectId}`;
+}
+
+/** Merge all groups from a layout tree into a single group, preserving open tabs. */
+function normalizeToSingleGroup(node: LayoutNode): GroupNode {
+  const items: OpenItem[] = [];
+  const seen = new Set<string>();
+  function collect(n: LayoutNode) {
+    if (n.type === "group") {
+      for (const item of n.group.items) {
+        if (!seen.has(item.id)) {
+          seen.add(item.id);
+          items.push(item);
+        }
+      }
+    } else {
+      collect(n.first);
+      collect(n.second);
+    }
+  }
+  collect(node);
+  const activeItem = items.length > 0 ? items[items.length - 1] : null;
+  return { type: "group", group: { id: ROOT_GROUP_ID, items, activeItemId: activeItem?.id ?? null } };
+}
+
 function taskStatusMessage(task: GenerationTask): string {
   if (task.stage_label) {
     const progress = task.progress_total > 0 ? ` (${task.progress_current}/${task.progress_total})` : "";
@@ -823,11 +849,15 @@ export default function App() {
       sidebarWidth,
     };
     try {
-      window.localStorage.setItem(workbenchStorageKey(project.id), JSON.stringify(stored));
+      // Android uses a separate storage key to avoid overwriting desktop split layouts
+      const key = mobileRuntime
+        ? androidWorkbenchStorageKey(project.id)
+        : workbenchStorageKey(project.id);
+      window.localStorage.setItem(key, JSON.stringify(stored));
     } catch {
       // A full storage area must not interrupt reading; recent position still lives in SQLite.
     }
-  }, [activeGroupId, layout, loading, navigationOpen, navigationView, project?.id, sidebarWidth]);
+  }, [activeGroupId, layout, loading, navigationOpen, navigationView, project?.id, sidebarWidth, mobileRuntime]);
 
   useEffect(() => {
     loadProjects();
@@ -2265,19 +2295,30 @@ export default function App() {
       await refreshHighlights(freshProject.id);
       await refreshKnowledgeLinks(freshProject.id);
       try {
-        const rawWorkbench = window.localStorage.getItem(workbenchStorageKey(freshProject.id));
+        // On Android, use a separate storage key so desktop split layouts are never restored
+        const wbKey = mobileRuntime
+          ? androidWorkbenchStorageKey(freshProject.id)
+          : workbenchStorageKey(freshProject.id);
+        const rawWorkbench = window.localStorage.getItem(wbKey);
         const stored = rawWorkbench ? JSON.parse(rawWorkbench) as StoredWorkbench : null;
         if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
-          const restoredLayout = await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses);
+          let restoredLayout = await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses);
+          // On Android, collapse any multi-pane layout into a single group
+          if (mobileRuntime && restoredLayout.type === "split") {
+            restoredLayout = normalizeToSingleGroup(restoredLayout);
+          }
           if (countLayoutItems(restoredLayout) > 0) {
-            const restoredGroupId = hasGroup(restoredLayout, stored.activeGroupId) ? stored.activeGroupId : firstGroupId(restoredLayout);
+            const restoredGroupId = mobileRuntime
+              ? ROOT_GROUP_ID
+              : hasGroup(restoredLayout, stored.activeGroupId) ? stored.activeGroupId : firstGroupId(restoredLayout);
             const restoredGroup = findGroup(restoredLayout, restoredGroupId);
             const restoredItem = restoredGroup?.items.find((item) => item.id === restoredGroup.activeItemId) ?? null;
             setLayout(restoredLayout);
             setActiveGroupId(restoredGroupId);
-            setNavigationView(stored.navigationView ?? "courses");
-            setNavigationOpen(Boolean(stored.navigationOpen));
-            setSidebarWidth(clamp(stored.sidebarWidth || 264, 240, 360));
+            // On Android, always show navigation initially, never restore sidebar width
+            setNavigationView(mobileRuntime ? "courses" : (stored.navigationView ?? "courses"));
+            setNavigationOpen(mobileRuntime ? false : Boolean(stored.navigationOpen));
+            setSidebarWidth(mobileRuntime ? 264 : clamp(stored.sidebarWidth || 264, 240, 360));
             if (restoredItem?.type === "file") {
               setFileContent({ path: restoredItem.path, content: restoredItem.content, language: restoredItem.language ?? "plaintext" });
             } else if (restoredItem?.type === "course") {
@@ -3384,7 +3425,7 @@ export default function App() {
             </button>
           ))}
         </div>
-        <div className="pane-workspace-actions" onClick={(event) => event.stopPropagation()}>
+        {!mobileRuntime ? <div className="pane-workspace-actions" onClick={(event) => event.stopPropagation()}>
             <button
               className="icon-button pane-workspace-menu-button"
               onClick={() => setWorkspaceMenuGroupId((current) => current === group.id ? null : group.id)}
@@ -3403,7 +3444,7 @@ export default function App() {
                 <button type="button" role="menuitem" className="danger" onClick={() => closeWorkspaceGroup(group.id)} disabled={countGroups(layout) <= 1}>关闭当前工作区</button>
               </div>
             ) : null}
-        </div>
+        </div> : null}
         <div className="pane-body">
           {editorMountDeferred ? <div className="viewer-loading deferred-editor-loading">正在准备工作区…</div> : null}
           {activeItem?.type === "course" && lessonIndex >= 0 ? (
@@ -3625,7 +3666,7 @@ export default function App() {
             /></Suspense>
           ) : null}
         </div>
-        <div className="drop-preview" aria-hidden="true" />
+        {!mobileRuntime ? <div className="drop-preview" aria-hidden="true" /> : null}
       </section>
     );
   }
@@ -3639,7 +3680,7 @@ export default function App() {
         <div className="split-child first" style={{ flex: `var(--split-ratio, ${node.ratio}) 1 0` }}>
           {renderLayoutNode(node.first)}
         </div>
-        <div
+        {!mobileRuntime ? <div
           className={`split-resizer ${node.direction}`}
           onDoubleClick={() => collapseSplitById(node.id, node.ratio < 0.5 ? "first" : "second")}
           onMouseDown={(event) => {
@@ -3710,7 +3751,7 @@ export default function App() {
               boundaries,
             });
           }}
-        />
+        /> : null}
         <div className="split-child second" style={{ flex: `calc(1 - var(--split-ratio, ${node.ratio})) 1 0` }}>
           {renderLayoutNode(node.second)}
         </div>

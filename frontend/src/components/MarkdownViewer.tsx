@@ -32,6 +32,16 @@ type Props = {
   initialScrollRatio?: number;
 };
 
+export function calculateReadingProgress(
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+): number {
+  if (scrollHeight <= 0 || clientHeight <= 0 || scrollHeight <= clientHeight) return 1;
+  const safeTop = Math.max(0, Math.min(scrollTop, scrollHeight - clientHeight));
+  return safeTop / (scrollHeight - clientHeight);
+}
+
 /* ---- Backend highlights ---- */
 function applyHighlightToText(text: string, highlight: HighlightRecord, keyPrefix: string): ReactNode[] {
   if (!highlight.selected_text || !text.includes(highlight.selected_text)) {
@@ -76,7 +86,6 @@ function buildAnnotationInlineStyle(annotation: Annotation): React.CSSProperties
 }
 
 function applyAnnotationToText(text: string, annotation: Annotation, keyPrefix: string): ReactNode[] {
-  // Skip annotations with no visible style
   if (!annotation.style.color && !annotation.style.bold && !annotation.style.underline) {
     return [text];
   }
@@ -86,7 +95,6 @@ function applyAnnotationToText(text: string, annotation: Annotation, keyPrefix: 
   const cls = buildAnnotationClasses(annotation);
   const inlineStyle = buildAnnotationInlineStyle(annotation);
   const parts = text.split(annotation.selectedText);
-  // TODO: use positional matching (offsets) to handle duplicate text precisely
   return parts.flatMap((part, index) => {
     if (index === parts.length - 1) {
       return [part];
@@ -273,19 +281,16 @@ function highlightChildren(
       return child;
     }
     let parts: ReactNode[] = [child];
-    // Layer 1: backend highlights
     for (const hl of highlights) {
       parts = parts.flatMap((p, i) =>
         typeof p === "string" ? applyHighlightToText(p, hl, `hl-${i}`) : [p],
       );
     }
-    // Layer 2: local annotations (overwrite highlights where they overlap)
     for (const ann of annotations) {
       parts = parts.flatMap((p, i) =>
         typeof p === "string" ? applyAnnotationToText(p, ann, `ann-${i}`) : [p],
       );
     }
-    // Layer 3: temp selection preview (top layer)
     if (tempText) {
       parts = parts.flatMap((p, i) =>
         typeof p === "string" ? applyTempSelection(p, tempText, `tmp-${i}`) : [p],
@@ -325,13 +330,13 @@ export default function MarkdownViewer({
 }: Props) {
   const articleRef = useRef<HTMLElement | null>(null);
   const progressFillRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const scrollFrameRef = useRef(0);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const androidRuntime = isAndroidRuntime();
   // Never inject <mark> temp-selection elements on Android — they would
   // destroy the native Range and collapse the drag handles.
   const effectiveTempSelectedText = androidRuntime ? null : tempSelectedText;
-  const initialScrollRef = useRef(initialScrollRatio);
-  initialScrollRef.current = initialScrollRatio;
   const [selectedText, setSelectedText] = useState("");
   const [docFontSize, setDocFontSize] = useState(() => {
     try {
@@ -351,7 +356,6 @@ export default function MarkdownViewer({
   // Ctrl+wheel zoom for Markdown viewer
   const handleWheel = useCallback((event: WheelEvent) => {
     if (!event.ctrlKey) return;
-    // Only intercept if the target is inside the markdown article
     const article = articleRef.current;
     if (!article || !article.contains(event.target as Node)) return;
     event.preventDefault();
@@ -370,33 +374,78 @@ export default function MarkdownViewer({
     return () => article.removeEventListener("wheel", handleWheel);
   }, [handleWheel]);
 
-  // Restore reading position on open
+  // Desktop only: restore reading position on open. Android never auto-scrolls.
   useEffect(() => {
+    if (androidRuntime || !initialScrollRatio) return;
     const article = articleRef.current;
-    if (!article || !initialScrollRef.current) return;
+    if (!article) return;
     const frame = window.requestAnimationFrame(() => {
       const maxScroll = Math.max(0, article.scrollHeight - article.clientHeight);
-      article.scrollTop = maxScroll * Math.min(1, Math.max(0, initialScrollRef.current!));
+      if (maxScroll <= 0) return;
+      article.scrollTop = maxScroll * Math.min(1, Math.max(0, initialScrollRatio));
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [sourcePath]);
+  }, [androidRuntime, sourcePath, initialScrollRatio]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Cleanup rAF on unmount
-  useEffect(() => () => window.cancelAnimationFrame(scrollFrameRef.current), []);
+  // Update progress bar whenever content size or scroll position changes
+  function refreshProgress() {
+    const article = articleRef.current;
+    const fill = progressFillRef.current;
+    if (!article || !fill) return;
+    const progress = calculateReadingProgress(article.scrollTop, article.scrollHeight, article.clientHeight);
+    // Use transform: scaleX for GPU-accelerated progress
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (!reduceMotion) {
+      fill.style.willChange = "transform";
+    }
+    fill.style.transform = `scaleX(${progress})`;
+    if (article.scrollHeight <= article.clientHeight) {
+      fill.style.opacity = "0";
+    } else {
+      fill.style.opacity = "1";
+    }
+  }
 
-  // rAF-throttled scroll reporting — no React state per scroll pixel
+  // ResizeObserver: recalculate progress when content size changes
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    resizeObserverRef.current = new ResizeObserver(() => {
+      refreshProgress();
+    });
+    resizeObserverRef.current.observe(body);
+    return () => {
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+    };
+  }, [content]);
+
+  // Recalculate when content or sourcePath changes
+  useEffect(() => {
+    refreshProgress();
+  }, [content, sourcePath]);
+
+  // Cleanup rAF and ResizeObserver on unmount
+  useEffect(() => () => {
+    window.cancelAnimationFrame(scrollFrameRef.current);
+    resizeObserverRef.current?.disconnect();
+  }, []);
+
+  // rAF-throttled scroll reporting — no React state per scroll pixel.
+  // Desktop saves scrollRatio for position persistence. Android only updates
+  // the progress bar and does NOT trigger state updates that could re-render
+  // and invalidate the native selection Range.
   function reportScroll() {
     if (scrollFrameRef.current) return;
     scrollFrameRef.current = window.requestAnimationFrame(() => {
       scrollFrameRef.current = 0;
+      refreshProgress();
+      if (!onScrollRatioChange) return;
       const article = articleRef.current;
       if (!article) return;
       const maxScroll = Math.max(0, article.scrollHeight - article.clientHeight);
-      const ratio = maxScroll > 0 ? article.scrollTop / maxScroll : 0;
-      if (progressFillRef.current) {
-        progressFillRef.current.style.width = `${ratio * 100}%`;
-      }
-      onScrollRatioChange?.(ratio);
+      const ratio = calculateReadingProgress(article.scrollTop, article.scrollHeight, article.clientHeight);
+      onScrollRatioChange(ratio);
     });
   }
 
@@ -435,11 +484,7 @@ export default function MarkdownViewer({
         } : undefined,
       });
     }
-  }, [onSelectionChange, sourcePath, sourceType, title]);
-
-  // Android relies entirely on native WebView ActionMode for text selection.
-  // No JS listener during selection — React state updates would mutate the DOM
-  // and invalidate the native Range, destroying the drag handles.
+  }, [onSelectionChange, sourcePath, sourceType, title, androidRuntime]);
 
   function handleContextMenu(event: React.MouseEvent) {
     const article = articleRef.current;
@@ -473,7 +518,6 @@ export default function MarkdownViewer({
     code: ({ className, children, ...props }: { className?: string; children?: ReactNode; node?: unknown }) => {
       const codeText = String(children ?? "").replace(/\n$/, "");
       const lang = className?.replace(/^language-/, "") ?? "";
-      // Only highlight fenced code blocks (those with a language- class from markdown)
       if (className?.startsWith("language-") && lang) {
         try {
           const validLang = hljs.getLanguage(lang) ? lang : undefined;
@@ -485,7 +529,6 @@ export default function MarkdownViewer({
           return <code className={className}>{children}</code>;
         }
       }
-      // Inline code — no className, render plainly
       return <code>{children}</code>;
     },
     pre: ({ children }: { children?: ReactNode }) => <pre>{children}</pre>,
@@ -556,7 +599,7 @@ export default function MarkdownViewer({
         onContextMenu={androidRuntime ? undefined : handleContextMenu}
         onScroll={reportScroll}
       >
-        <div className="markdown-body">
+        <div ref={bodyRef} className="markdown-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={highlightedComponents}>
             {content}
           </ReactMarkdown>

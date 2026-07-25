@@ -477,18 +477,36 @@ html.platform-android .pane-tab.active {
 }
 
 html.platform-android .reader-learning-toolbar {
-  min-height: 40px;
-  padding: 4px 8px 4px 10px;
+  min-height: 44px;
+  padding: 6px 10px 6px 14px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 html.platform-android .reader-breadcrumb {
   font-size: 11px;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
 html.platform-android .reader-breadcrumb strong {
   color: var(--mobile-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-html.platform-android .reader-learning-actions { gap: 3px; }
+html.platform-android .reader-learning-actions {
+  flex: 0 0 auto;
+  width: auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 html.platform-android .reader-learning-actions .icon-button,
 html.platform-android .reader-learning-actions .complete-button {
   color: var(--mobile-text-secondary);
@@ -496,15 +514,22 @@ html.platform-android .reader-learning-actions .complete-button {
   background: var(--mobile-surface-raised);
 }
 html.platform-android .reader-learning-actions .icon-button {
-  padding: 4px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 html.platform-android .reader-learning-actions .icon-button svg {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
 }
 html.platform-android .reader-learning-actions .complete-button {
-  padding: 3px 7px;
+  min-height: 36px;
+  padding: 5px 10px;
   font-size: 11px;
+  line-height: 1;
 }
 html.platform-android .reader-learning-actions .complete-button.completed {
   color: var(--mobile-accent-strong);
@@ -672,6 +697,16 @@ html.platform-android .mobile-line-number {
 html.platform-android .mobile-code-line code {
   user-select: text;
   -webkit-user-select: text;
+}
+
+/* Large file notice */
+html.platform-android .mobile-code-notice {
+  padding: 5px 10px;
+  color: var(--mobile-text-secondary);
+  background: var(--mobile-surface-soft);
+  border-bottom: 1px solid var(--mobile-line);
+  font-size: 11px;
+  text-align: center;
 }
 
 

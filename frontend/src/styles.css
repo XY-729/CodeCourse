@@ -3899,14 +3899,20 @@ html.platform-android[data-theme="dark"] .field-label > span {
 
 .reader-progress-bar {
   flex: 0 0 2px;
+  overflow: hidden;
   background: #e3e9e6;
 }
 .reader-progress-fill {
   display: block;
   height: 100%;
-  min-width: 0;
   background: #337a70;
-  transition: width 80ms linear;
+  transform-origin: left center;
+  transform: scaleX(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-progress-fill {
+    transition: none;
+  }
 }
 .reader-learning-toolbar {
   min-height: 39px;
