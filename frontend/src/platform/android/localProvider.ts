@@ -5,12 +5,16 @@ import type { CodeCourseProvider } from "../provider";
 import {
   CHECKPOINT_VERSION as CP_VER,
   parseOutlineCheckpoint, parseDetailedLessonCheckpoint,
-  courseGroupForTaskType, buildCompletionLabel, shouldSendProgress,
+  courseGroupForTaskType, buildCompletionLabel,
   canRetry, buildSlimCheckpoint, permissionNotice,
-  type ServiceState, type PermissionNotice,
+  type PermissionNotice,
   type OutlineCheckpoint, type DetailedLessonCheckpoint,
   type LessonPlan as GsLessonPlan,
 } from "./generationState";
+import {
+  GenerationServiceCoordinator,
+  type ProgressSnapshot,
+} from "./generationServiceCoordinator";
 
 // Local aliases matching the original localProvider types
 type LessonPlan = GsLessonPlan;
@@ -64,33 +68,6 @@ function addOutlineLessonLinks(outline: string): string {
 // ---- checkpoint types (from shared generationState) ----
 const CHECKPOINT_VERSION = CP_VER;
 
-
-// ---- running task metadata ----
-type ProgressSnapshot = {
-  stageLabel: string;
-  current: number;
-  total: number;
-  indeterminate: boolean;
-};
-
-type LastSentSnapshot = {
-  stageLabel: string;
-  percent: number | null;
-  indeterminate: boolean;
-  sentAt: number;
-};
-
-type RunningTaskInfo = {
-  taskId: number;
-  startedAt: number;
-  projectId: number;
-  taskType: string;
-  projectName: string;
-  sourcePath: string | null;
-  sequence: number;
-  latest: ProgressSnapshot;
-  lastSent: LastSentSnapshot | null;
-};
 
 type TaskOutput = { filename: string; content: string };
 
@@ -237,14 +214,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private runningTasks = new Set<number>();
   private runningIndexes = new Set<number>();
 
-  // ---- service state ----
-  private serviceState: ServiceState = "stopped";
-  private serviceStateMutex: Promise<void> = Promise.resolve();
-  private generationSessionId = 0;
-  private foregroundTaskId = 0;
-
-  // ---- running task metadata ----
-  private taskInfoMap = new Map<number, RunningTaskInfo>();
+  // The coordinator is the only owner of foreground Service state.
+  private readonly serviceCoordinator = new GenerationServiceCoordinator(CodeCourseNative);
 
   // ---- permission ----
   private permissionResult: NotificationPermissionResult | null = null;
@@ -252,10 +223,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private lastPermissionNotice: NotificationPermissionStatus | null = null;
 
   // ---- notification callbacks ----
-  private onPermissionNotice?: (notice: PermissionNotice) => void;
+  private onPermissionNotice: ((notice: PermissionNotice) => void) | null = null;
 
   /** Register a callback for permission UI notices. */
-  setPermissionNoticeHandler(handler: (notice: PermissionNotice) => void) {
+  setPermissionNoticeHandler(handler: ((notice: PermissionNotice) => void) | null) {
     this.onPermissionNotice = handler;
   }
 
@@ -266,24 +237,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     this.lastPermissionNotice = null;
   }
 
-  /** Poll native state until Service is ready with matching session/task. */
-  private async waitForGenerationServiceReady(
-    sessionId: number, taskId: number, timeoutMs: number,
-  ): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      try {
-        const state = await CodeCourseNative.getGenerationServiceState();
-        if (state.active && state.sessionId === sessionId && state.taskId === taskId) return true;
-      } catch { /* retry */ }
-      await new Promise(r => setTimeout(r, 80));
-    }
-    return false;
-  }
-
   static async create(): Promise<AndroidLocalProvider> {
     const provider = new AndroidLocalProvider();
     await db.init();
+    await provider.reconcileGenerationServiceState().catch((error) => {
+      console.warn("Initial generation Service reconcile failed", error);
+    });
     await provider.resumeTasks();
     await provider.resumeIndexes();
     return provider;
@@ -293,76 +252,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   //  Service State Synchronizer
   // ==================================================================
 
-  /**
-   * Serialize all Service start/stop operations to prevent races.
-   * Called from runTask after adding/removing from runningTasks.
-   */
   private async syncGenerationServiceState(): Promise<void> {
-    this.serviceStateMutex = this.serviceStateMutex.then(async () => {
-      // Guards are executed serially because we chain on the mutex promise
-      await this._syncServiceStateUnsafe();
-    }).catch((err) => {
-      console.warn("syncGenerationServiceState failed:", err);
-    });
-    await this.serviceStateMutex;
+    await this.serviceCoordinator.sync();
   }
 
-  private async _syncServiceStateUnsafe(): Promise<void> {
-    const hasTasks = this.runningTasks.size > 0;
-
-    if (hasTasks && (this.serviceState === "stopped" || this.serviceState === "unknown" || this.serviceState === "failed")) {
-      const ftId = this.pickForegroundTask();
-      if (ftId <= 0) return;
-      this.generationSessionId += 1; this.foregroundTaskId = ftId;
-      this.serviceState = "starting"; const sid = this.generationSessionId; const tid = ftId;
-      const info = this.taskInfoMap.get(ftId);
-      const label = info ? info.projectName : "正在生成学习内容";
-      try {
-        await CodeCourseNative.setGenerationActive({ active: true, label, sessionId: sid, taskId: tid, activeTaskCount: this.runningTasks.size });
-        const ready = await this.waitForGenerationServiceReady(sid, tid, 2000);
-        this.serviceState = ready ? "running" : "failed";
-        if (!ready) console.warn("Foreground service not ready — running without system notification");
-      } catch (err) { console.warn("Failed to start service:", err); this.serviceState = "failed"; }
-    } else if (!hasTasks && this.serviceState !== "stopped") {
-      this.serviceState = "stopping"; let stopped = false;
-      for (let i = 0; i < 3 && !stopped; i++) {
-        try {
-          await CodeCourseNative.setGenerationActive({ active: false });
-          if (i > 1) await new Promise(r => setTimeout(r, i * 200));
-          const ns = await CodeCourseNative.getGenerationServiceState();
-          if (!ns.active) stopped = true;
-        } catch { /* retry */ }
-      }
-      this.serviceState = stopped ? "stopped" : "unknown";
-      if (!stopped) console.warn("Failed to stop service after retries");
-      this.generationSessionId += 1; this.foregroundTaskId = 0;
-    } else if (hasTasks && this.serviceState === "running") {
-      const best = this.pickForegroundTask();
-      if (best !== this.foregroundTaskId && best > 0) {
-        this.foregroundTaskId = best;
-        const info = this.taskInfoMap.get(best);
-        if (info) {
-          info.sequence = 0;
-          try {
-            await CodeCourseNative.switchForegroundTask({
-              sessionId: this.generationSessionId, taskId: best,
-            });
-          } catch { /* best-effort */ }
-        }
-      }
-    }
-  }
-
-  private pickForegroundTask(): number {
-    let earliestId = 0;
-    let earliestTime = Infinity;
-    for (const info of this.taskInfoMap.values()) {
-      if (info.startedAt < earliestTime) {
-        earliestTime = info.startedAt;
-        earliestId = info.taskId;
-      }
-    }
-    return earliestId;
+  async reconcileGenerationServiceState(): Promise<void> {
+    await this.serviceCoordinator.reconcile();
   }
 
   // ==================================================================
@@ -390,13 +285,22 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     this.permissionPromise = null;
   }
 
+  async getNotificationPermissionStatus(): Promise<NotificationPermissionResult> {
+    this.permissionResult = await CodeCourseNative.getNotificationPermissionStatus();
+    this.permissionPromise = null;
+    this.emitPermissionNotice(this.permissionResult);
+    return this.permissionResult;
+  }
+
   private emitPermissionNotice(result: NotificationPermissionResult) {
-    if (!result.granted && result.status !== this.lastPermissionNotice) {
+    if (result.granted) {
       this.lastPermissionNotice = result.status;
-      const notice = permissionNotice(result);
-      if (notice && this.onPermissionNotice) {
-        this.onPermissionNotice(notice);
-      }
+      this.onPermissionNotice?.(null);
+      return;
+    }
+    if (result.status !== this.lastPermissionNotice) {
+      this.lastPermissionNotice = result.status;
+      this.onPermissionNotice?.(permissionNotice(result));
     }
   }
 
@@ -409,38 +313,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
    * Only sends if this task is the current foreground task.
    */
   private async reportProgress(taskId: number, stageLabel: string, current: number, total: number, indeterminate: boolean): Promise<void> {
-    const info = this.taskInfoMap.get(taskId);
-    if (!info) return;
-
-    // Always update latest snapshot (used for resend when Service recovers)
-    info.latest = { stageLabel, current, total, indeterminate };
-
-    if (taskId !== this.foregroundTaskId) return;
-    if (this.serviceState !== "running") return;
-
-    const nowTs = Date.now();
-    const pct = (!indeterminate && total > 0) ? Math.round((current * 100) / total) : null;
-
-    // Compute comparisons BEFORE overwriting lastSent
-    const firstUpdate = info.lastSent === null;
-    const labelChanged = info.lastSent !== null && stageLabel !== info.lastSent.stageLabel;
-    const indeterminateChanged = info.lastSent !== null && indeterminate !== info.lastSent.indeterminate;
-    const pctChanged = pct !== null && info.lastSent !== null && pct !== info.lastSent.percent;
-    const isComplete = !indeterminate && total > 0 && current >= total;
-    const stale = info.lastSent !== null && (nowTs - info.lastSent.sentAt > 1500);
-    const enoughProgress = pctChanged && info.lastSent !== null && info.lastSent.percent !== null && Math.abs(pct - info.lastSent.percent) >= 1;
-
-    if (!shouldSendProgress(firstUpdate, labelChanged, indeterminateChanged, isComplete, stale, enoughProgress)) return;
-
-    info.sequence += 1;
-    info.lastSent = { stageLabel, percent: pct, indeterminate, sentAt: nowTs };
-
-    try {
-      await CodeCourseNative.updateGenerationProgress({
-        sessionId: this.generationSessionId, taskId, sequence: info.sequence,
-        current, total, indeterminate, stageLabel, activeTaskCount: this.runningTasks.size,
-      });
-    } catch { /* non-fatal */ }
+    const snapshot: ProgressSnapshot = { stageLabel, current, total, indeterminate };
+    await this.serviceCoordinator.reportProgress(taskId, snapshot);
   }
 
   // ==================================================================
@@ -498,13 +372,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       }
 
       // 4. Register task info (before service start so foreground pick works)
-      this.taskInfoMap.set(taskId, {
+      this.serviceCoordinator.registerTask({
         taskId, startedAt: Date.now(), projectId, taskType,
         projectName: project.name,
         sourcePath: String(taskRow.source_path || ""),
-        sequence: 0,
-        latest: { stageLabel: "", current: 0, total: 1, indeterminate: true },
-        lastSent: null,
       });
 
       // 5. Permission + service
@@ -570,7 +441,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     } finally {
       // CRITICAL: always cleanup
       this.runningTasks.delete(taskId);
-      this.taskInfoMap.delete(taskId);
+      this.serviceCoordinator.unregisterTask(taskId);
 
       // Sync service state (N→0 transition stops the service)
       await this.syncGenerationServiceState();

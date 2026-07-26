@@ -1,17 +1,26 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { Bot, Copy, Highlighter, X } from "lucide-react";
+import { Bot, Copy, Eraser, Highlighter, X } from "lucide-react";
 import type { ViewerAnchorRect } from "./CodeViewer";
 
 type Props = {
   canHighlight: boolean;
+  highlighted: boolean;
   anchorRect?: ViewerAnchorRect;
   onAsk: () => void;
-  onHighlight: () => void;
+  onToggleHighlight: () => void;
   onCopy: () => void;
   onClose: () => void;
 };
 
-export default function SelectionQuickBar({ canHighlight, anchorRect, onAsk, onHighlight, onCopy, onClose }: Props) {
+export default function SelectionQuickBar({
+  canHighlight,
+  highlighted,
+  anchorRect,
+  onAsk,
+  onToggleHighlight,
+  onCopy,
+  onClose,
+}: Props) {
   const barRef = useRef<HTMLDivElement | null>(null);
   const [position, setPosition] = useState<{ left: number; top: number; placement: "top" | "bottom" } | null>(null);
 
@@ -74,7 +83,12 @@ export default function SelectionQuickBar({ canHighlight, anchorRect, onAsk, onH
       aria-label="选区操作"
     >
       <button onClick={onAsk}><Bot size={14} />提问</button>
-      {canHighlight ? <button onClick={onHighlight}><Highlighter size={14} />高亮</button> : null}
+      {canHighlight ? (
+        <button onClick={onToggleHighlight}>
+          {highlighted ? <Eraser size={14} /> : <Highlighter size={14} />}
+          {highlighted ? "取消高亮" : "高亮"}
+        </button>
+      ) : null}
       <button onClick={onCopy}><Copy size={14} />复制</button>
       <button className="icon-button" onClick={onClose} title="取消选区"><X size={14} /></button>
     </div>

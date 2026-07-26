@@ -22,6 +22,20 @@ export type GenerationServiceState = {
   taskId: number;
 };
 
+export type ForegroundTaskSwitchResult = {
+  switched: boolean;
+  sessionId: number;
+  taskId: number;
+};
+
+export type CompletionNavigation = {
+  projectId: number;
+  taskId: number;
+  taskType: string;
+  outputPath: string;
+  navigationId: string;
+};
+
 export type SetGenerationActiveOptions =
   | {
       active: true;
@@ -44,18 +58,17 @@ export const CodeCourseNative = registerPlugin<{
     current: number; total: number; indeterminate?: boolean;
     stageLabel?: string; activeTaskCount?: number;
   }): Promise<void>;
-  switchForegroundTask(options: { sessionId: number; taskId: number }): Promise<void>;
+  switchForegroundTask(options: { sessionId: number; taskId: number }): Promise<ForegroundTaskSwitchResult>;
   notifyCompletion(options: {
     taskId: number; projectId?: number; taskType?: string;
     outputPath?: string; label: string;
   }): Promise<void>;
   moveToBackground(): Promise<void>;
   requestNotificationPermission(): Promise<NotificationPermissionResult>;
+  getNotificationPermissionStatus(): Promise<NotificationPermissionResult>;
   openNotificationSettings(): Promise<void>;
-  consumePendingCompletionNavigation(): Promise<{
-    projectId: number; taskId: number; taskType: string;
-    outputPath: string; navigationId: string;
-  } | null>;
+  consumePendingCompletionNavigation(): Promise<CompletionNavigation | null>;
+  ackCompletionNavigation(options: { navigationId: string }): Promise<void>;
 }>("CodeCourseNative");
 
 export function isNativeAndroidRuntime(): boolean {

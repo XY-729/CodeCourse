@@ -7,6 +7,7 @@ import {
   createEmptyCourseFile,
   createLearningPlan,
   createHighlight,
+  deleteHighlight,
   deleteLearningAnchor,
   dismissDocumentTerm,
   getQARecord,
@@ -69,8 +70,7 @@ import type {
 } from "./api/client";
 import AppDialog from "./components/AppDialog";
 import type { AppDialogState, ChoiceDialogOption } from "./components/AppDialog";
-import CodeViewer, { ViewerRange, ViewerSelection } from "./components/CodeViewer";
-import ContextMenu from "./components/ContextMenu";
+import CodeViewer, { type CodeJumpRequest, ViewerRange, ViewerSelection } from "./components/CodeViewer";
 import CommandPalette, { type CommandPaletteItem } from "./components/CommandPalette";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
@@ -86,13 +86,11 @@ import TaskFeedback from "./components/TaskFeedback";
 import { GESTURE_COMPLETE_EVENT } from "./components/GestureLayer";
 import type { GesturePath } from "./gestures/GestureDrawer";
 import { recognizeGesture } from "./gestures/GestureRecognizer";
-import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
-import type { SetGenerationActiveOptions } from "./platform/runtime";
 import { getCodeCourseProvider } from "./platform/provider";
-import type { PermissionNotice } from "./platform/android/generationState";
-import { canRetry } from "./platform/android/generationState";
+import { canRetry, permissionNotice as buildPermissionNotice, type PermissionNotice } from "./platform/android/generationState";
 import { setCodeCourseDragImage } from "./utils/dragImage";
+import { TrailingSaveScheduler } from "./learning/trailingSaveScheduler";
 
 const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewer"));
 
@@ -113,7 +111,8 @@ type OpenItem = {
   qaRecordId?: number;
   favorite?: boolean;
   dirty?: boolean;
-  initialLine?: number;
+  restoreLine?: number;
+  jumpRequest?: CodeJumpRequest;
 };
 
 type EditorGroup = {
@@ -723,22 +722,14 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [permissionNotice, setPermissionNotice] = useState<PermissionNotice>(null);
   const dismissedPermissionStatusRef = useRef<string | null>(null);
+  const awaitingNotificationSettingsRef = useRef(false);
   const [retryingTaskId, setRetryingTaskId] = useState<number | null>(null);
-  const [completionNavHandled, setCompletionNavHandled] = useState<Set<string>>(new Set());
+  const handledCompletionNavRef = useRef(new Set<string>());
   const [gestureHint, setGestureHint] = useState<{ id: number; text: string } | null>(null);
   const [gestureGuideOpen, setGestureGuideOpen] = useState(false);
   const [workspaceMenuGroupId, setWorkspaceMenuGroupId] = useState<string | null>(null);
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
-  const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    sourceType: "file" | "course" | "selection" | "qa";
-    sourcePath: string;
-    selectedText: string;
-    existingStyle: AnnotationStyle;
-  } | null>(null);
   const [editingCourseItemId, setEditingCourseItemId] = useState<string | null>(null);
   const [appDialog, setAppDialog] = useState<AppDialogState | null>(null);
   const [appDialogValue, setAppDialogValue] = useState("");
@@ -752,8 +743,12 @@ export default function App() {
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
   const desktopDragDepthRef = useRef(0);
   const learningStatesRef = useRef<LearningState[]>([]);
-  const learningSaveTimers = useRef<Map<string, number>>(new Map());
+  const learningSaveScheduler = useRef(new TrailingSaveScheduler(800));
   const pendingLearningUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
+  const learningUpdateSequences = useRef<Map<string, number>>(new Map());
+  const learningInFlightSequences = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => () => learningSaveScheduler.current.cancelAll(), []);
   const streamingContentRef = useRef<Map<string, string>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
   const dropPrefetchRef = useRef<Map<string, Promise<OpenItem | null>>>(new Map());
@@ -796,13 +791,12 @@ export default function App() {
   useEffect(() => {
     if (!mobileRuntime) return;
     let disposed = false;
+    let registeredProvider: Awaited<ReturnType<typeof getCodeCourseProvider>> | null = null;
     getCodeCourseProvider().then((provider) => {
       if (disposed) return;
-      const p = provider as {
-        setPermissionNoticeHandler?(handler: (notice: PermissionNotice) => void): void;
-      };
-      if (p.setPermissionNoticeHandler) {
-        p.setPermissionNoticeHandler((notice: PermissionNotice) => {
+      registeredProvider = provider;
+      if (provider.setPermissionNoticeHandler) {
+        provider.setPermissionNoticeHandler((notice: PermissionNotice) => {
           if (disposed) return;
           if (notice) {
             setPermissionNotice(notice);
@@ -812,17 +806,52 @@ export default function App() {
         });
       }
     });
-    return () => { disposed = true; };
+    return () => {
+      disposed = true;
+      registeredProvider?.setPermissionNoticeHandler?.(null);
+    };
   }, [mobileRuntime]);
 
-  // Handle "go to settings" and re-check after resume
-  const handleOpenNotificationSettings = useCallback(() => {
-    void CodeCourseNative.openNotificationSettings().catch(() => undefined);
-    void getCodeCourseProvider().then((provider) => {
-      const p = provider as { invalidatePermissionCache?: () => void };
-      p.invalidatePermissionCache?.();
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    let disposed = false;
+    let listener: { remove: () => Promise<void> } | null = null;
+    void import("@capacitor/app").then(async ({ App: NativeApp }) => {
+      listener = await NativeApp.addListener("appStateChange", ({ isActive }) => {
+        if (disposed) return;
+        if (!isActive) {
+          flushAllPendingLearningUpdates();
+          return;
+        }
+        void getCodeCourseProvider().then(async (provider) => {
+          await provider.reconcileGenerationServiceState?.().catch((error) => {
+            console.warn("Generation Service resume reconcile failed", error);
+          });
+          if (!awaitingNotificationSettingsRef.current) return;
+          awaitingNotificationSettingsRef.current = false;
+          provider.invalidatePermissionCache?.();
+          const result = await provider.getNotificationPermissionStatus?.();
+          if (!result || disposed) return;
+          dismissedPermissionStatusRef.current = null;
+          setPermissionNotice(buildPermissionNotice(result));
+        }).catch((error) => {
+          console.warn("Notification settings resume check failed", error);
+        });
+      });
     });
-    setPermissionNotice(null);
+    return () => {
+      disposed = true;
+      void listener?.remove();
+    };
+  }, [mobileRuntime, project?.id]);
+
+  // Open settings now; permission is checked only when the app resumes.
+  const handleOpenNotificationSettings = useCallback(() => {
+    awaitingNotificationSettingsRef.current = true;
+    void CodeCourseNative.openNotificationSettings().catch(() => {
+      awaitingNotificationSettingsRef.current = false;
+      setToast("无法打开通知设置");
+    });
   }, []);
 
   const handleDismissPermissionNotice = useCallback(() => {
@@ -833,35 +862,56 @@ export default function App() {
   }, [permissionNotice]);
 
   // Completion navigation: listen for warm-start events and consume cold-start on init
-  const navigateToCompletion = useCallback(async (projectId: number, taskId: number, _taskType: string, outputPath: string) => {
-    const navKey = `${taskId}:${outputPath}`;
-    setCompletionNavHandled((prev) => {
-      if (prev.has(navKey)) return prev;
-      const next = new Set(prev);
-      next.add(navKey);
-      return next;
-    });
+  const navigateToCompletion = useCallback(async (
+    projectId: number,
+    taskId: number,
+    _taskType: string,
+    outputPath: string,
+    navigationId?: string,
+  ): Promise<boolean> => {
+    const navKey = navigationId || `${taskId}:${outputPath}`;
+    if (handledCompletionNavRef.current.has(navKey)) return true;
+    handledCompletionNavRef.current.add(navKey);
 
     // Load project if not already open
     if (!project || project.id !== projectId) {
       try {
         const p = await getProject(projectId);
-        void openProject(p);
-      } catch {
+        await openProject(p);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!/404|not found|不存在/i.test(message)) {
+          handledCompletionNavRef.current.delete(navKey);
+        }
         setToast("无法打开项目");
-        return;
+        return /404|not found|不存在/i.test(message);
       }
     }
 
     // Open output file
     if (outputPath) {
       try {
-        await getCourseContent(projectId, outputPath);
-        openCourseInActiveGroup(projectId, outputPath);
+        const content = await getCourseContent(projectId, outputPath);
+        setSelectedCourse(outputPath);
+        setFileContent(null);
+        setLayout((current) => {
+          const targetGroupId = hasGroup(current, activeGroupId)
+            ? activeGroupId
+            : firstGroupId(current);
+          return updateGroup(current, targetGroupId, (group) => openItem(group, {
+            id: `course:${outputPath}`,
+            type: "course",
+            path: outputPath,
+            title: outputPath.split("/").pop() ?? outputPath,
+            content: content.content,
+          }));
+        });
+        void refreshDocumentTerms("course", outputPath, projectId);
       } catch {
-        setToast("生成完成，但无法打开文件：" + outputPath);
+        setToast("生成完成，但结果文件不存在：" + outputPath);
       }
     }
+    return true;
   }, [project]);
 
   useEffect(() => {
@@ -871,20 +921,34 @@ export default function App() {
     // Cold start: consume pending navigation
     void CodeCourseNative.consumePendingCompletionNavigation().then((pending) => {
       if (disposed || !pending) return;
-      navigateToCompletion(pending.projectId, pending.taskId, pending.taskType, pending.outputPath);
+      void navigateToCompletion(
+        pending.projectId,
+        pending.taskId,
+        pending.taskType,
+        pending.outputPath,
+        pending.navigationId,
+      );
     }).catch(() => undefined);
 
     // Warm start: listen for event
     function handleCompletionNav(event: Event) {
       if (disposed) return;
       const detail = (event as CustomEvent<{
-        projectId?: number; taskId?: number; taskType?: string; outputPath?: string;
+        projectId?: number; taskId?: number; taskType?: string;
+        outputPath?: string; navigationId?: string;
       }>).detail;
       if (!detail || !detail.projectId || !detail.taskId) return;
-      navigateToCompletion(
+      void navigateToCompletion(
         detail.projectId, detail.taskId,
-        detail.taskType ?? "", detail.outputPath ?? "",
-      );
+        detail.taskType ?? "", detail.outputPath ?? "", detail.navigationId,
+      ).then((handled) => {
+        if (handled && detail.navigationId) {
+          return CodeCourseNative.ackCompletionNavigation({
+            navigationId: detail.navigationId,
+          });
+        }
+        return undefined;
+      }).catch(() => undefined);
     }
     window.addEventListener("codecourseCompletionNavigation", handleCompletionNav);
     return () => {
@@ -1124,7 +1188,6 @@ export default function App() {
       setGenerationOpen(false);
       setMoreMenuOpen(false);
       setCommandPaletteOpen(false);
-      setContextMenu(null);
       setQAHighlightDraft(null);
       setWorkspaceMenuGroupId(null);
       setGestureGuideOpen(false);
@@ -1197,6 +1260,7 @@ export default function App() {
           showGestureHint("没有可关闭的文档");
           return;
         }
+        if (activeItem.type === "file") flushPendingLearningUpdate("file", activeItem.path);
         rememberClosedItem(activeGroupId, activeItem);
         const nextGroup = closeItem(group, activeItem.id);
         setLayout((current) => updateGroup(current, activeGroupId, () => nextGroup));
@@ -1702,15 +1766,28 @@ export default function App() {
     return learningStatesRef.current.find((entry) => entry.source_type === sourceType && entry.source_path === sourcePath);
   }
 
-  async function persistLearningUpdate(projectId: number, key: string, payload: LearningStateUpdate) {
+  async function persistLearningUpdate(
+    projectId: number,
+    key: string,
+    payload: LearningStateUpdate,
+    sequence: number,
+  ) {
+    if (learningInFlightSequences.current.get(key) === sequence) return;
+    learningInFlightSequences.current.set(key, sequence);
     try {
       const saved = await updateLearningState(projectId, payload);
-      setLearningStates((current) => [...current.filter((entry) => learningStateKey(entry.source_type, entry.source_path) !== key), saved]);
+      if (learningUpdateSequences.current.get(key) === sequence) {
+        setLearningStates((current) => [...current.filter((entry) => learningStateKey(entry.source_type, entry.source_path) !== key), saved]);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存学习位置失败");
     } finally {
-      pendingLearningUpdates.current.delete(key);
-      learningSaveTimers.current.delete(key);
+      if (learningInFlightSequences.current.get(key) === sequence) {
+        learningInFlightSequences.current.delete(key);
+      }
+      if (learningUpdateSequences.current.get(key) === sequence) {
+        pendingLearningUpdates.current.delete(key);
+      }
     }
   }
 
@@ -1733,22 +1810,50 @@ export default function App() {
       position_value: positionKind === "scroll_ratio" ? clamp(positionValue, 0, 1) : Math.max(1, Math.round(positionValue)),
     };
     pendingLearningUpdates.current.set(key, payload);
-    const timer = learningSaveTimers.current.get(key);
-    if (timer) window.clearTimeout(timer);
+    const sequence = (learningUpdateSequences.current.get(key) ?? 0) + 1;
+    learningUpdateSequences.current.set(key, sequence);
     if (immediate) {
-      void persistLearningUpdate(project.id, key, payload);
+      learningSaveScheduler.current.cancel(key);
+      void persistLearningUpdate(project.id, key, payload, sequence);
       return;
     }
-    learningSaveTimers.current.set(key, window.setTimeout(() => {
+    learningSaveScheduler.current.schedule(key, () => {
       const latest = pendingLearningUpdates.current.get(key);
-      if (latest) void persistLearningUpdate(project.id, key, latest);
-    }, 800));
+      const latestSequence = learningUpdateSequences.current.get(key);
+      if (latest && latestSequence != null) {
+        void persistLearningUpdate(project.id, key, latest, latestSequence);
+      }
+    });
+  }
+
+  function flushPendingLearningUpdate(sourceType: LearningState["source_type"], sourcePath: string) {
+    if (!project) return;
+    const key = learningStateKey(sourceType, sourcePath);
+    const payload = pendingLearningUpdates.current.get(key);
+    const sequence = learningUpdateSequences.current.get(key);
+    if (!payload || sequence == null) return;
+    learningSaveScheduler.current.flush(key, () => {
+      void persistLearningUpdate(project.id, key, payload, sequence);
+    });
+  }
+
+  function flushAllPendingLearningUpdates() {
+    if (!project) return;
+    for (const key of pendingLearningUpdates.current.keys()) {
+      const separator = key.indexOf(":");
+      if (separator <= 0) continue;
+      flushPendingLearningUpdate(
+        key.slice(0, separator) as LearningState["source_type"],
+        key.slice(separator + 1),
+      );
+    }
   }
 
   function touchOpenItem(item: OpenItem) {
     if (item.type === "file") {
-      const state = findLearningState("file", item.path);
-      queueLearningUpdate("file", item.path, "line", state?.position_value ?? 1, state?.status);
+      // Activating a file tab is not a scroll event. The restore line is a
+      // snapshot captured when the file is opened, never a live DB input.
+      return;
     } else if (item.type === "course") {
       const sourceType = item.qaRecordId ? "qa" : "course";
       const state = findLearningState(sourceType, item.path);
@@ -1764,13 +1869,15 @@ export default function App() {
     const existing = findLearningState("course", filename);
     const nextStatus = existing?.status === "completed" ? "in_progress" : "completed";
     const key = learningStateKey("course", filename);
+    const sequence = (learningUpdateSequences.current.get(key) ?? 0) + 1;
+    learningUpdateSequences.current.set(key, sequence);
     await persistLearningUpdate(project.id, key, {
       source_type: "course",
       source_path: filename,
       status: nextStatus,
       position_kind: "scroll_ratio",
       position_value: existing?.position_value ?? 0,
-    });
+    }, sequence);
     setTaskMessage(nextStatus === "completed" ? "本课已完成" : "已恢复为学习中");
     setToast(nextStatus === "completed" ? "已标记完成" : "已恢复为学习中");
   }
@@ -2048,7 +2155,10 @@ export default function App() {
   function closeItemInGroup(groupId: string, itemId: string) {
     const group = findGroup(layout, groupId);
     const item = group?.items.find((entry) => entry.id === itemId);
-    if (item) rememberClosedItem(groupId, item);
+    if (item) {
+      if (item.type === "file") flushPendingLearningUpdate("file", item.path);
+      rememberClosedItem(groupId, item);
+    }
     setLayout((prev) => updateGroup(prev, groupId, (group) => closeItem(group, itemId)));
   }
 
@@ -2074,7 +2184,15 @@ export default function App() {
     try {
       if (item.type === "file") {
         const file = await getProjectFile(projectId, item.path);
-        return { ...item, content: file.content, language: file.language, dirty: false };
+        const saved = findLearningState("file", item.path);
+        return {
+          ...item,
+          content: file.content,
+          language: file.language,
+          dirty: false,
+          restoreLine: saved?.position_kind === "line" ? saved.position_value : 1,
+          jumpRequest: undefined,
+        };
       }
       if (item.type === "course") {
         const course = await getCourseContent(projectId, item.path);
@@ -2116,6 +2234,7 @@ export default function App() {
     }
     if (payload.kind === "file" && payload.path) {
       const content = await getProjectFile(project.id, payload.path);
+      const saved = findLearningState("file", payload.path);
       return {
         id: `file:${payload.path}`,
         type: "file",
@@ -2123,6 +2242,7 @@ export default function App() {
         title: payload.path.split("/").pop() ?? payload.path,
         content: content.content,
         language: content.language,
+        restoreLine: saved?.position_kind === "line" ? saved.position_value : 1,
       };
     }
     if (payload.kind === "course" && payload.filename) {
@@ -2206,8 +2326,10 @@ export default function App() {
     return buildOpenItem(payload);
   }
 
-  async function openFileInActiveGroup(projectId: number, path: string, initialLine?: number) {
+  async function openFileInActiveGroup(projectId: number, path: string, explicitLine?: number) {
     const content = await getProjectFile(projectId, path);
+    const saved = findLearningState("file", path);
+    const restoreLine = saved?.position_kind === "line" ? saved.position_value : 1;
     setFileContent(content);
     setSelectedCourse(null);
     openItemInGroup(activeGroupId, {
@@ -2217,7 +2339,12 @@ export default function App() {
       title: path.split("/").pop() ?? path,
       content: content.content,
       language: content.language,
-      initialLine,
+      restoreLine,
+      jumpRequest: explicitLine ? {
+        id: nextId("code-jump"),
+        line: explicitLine,
+        align: "start",
+      } : undefined,
     });
     if (mobileRuntime) {
       setNavigationOpen(false);
@@ -2359,6 +2486,7 @@ export default function App() {
   }
 
   async function openProject(nextProject: Project) {
+    flushAllPendingLearningUpdates();
     setError("");
     setLoading(true);
     layoutHistoryRef.current = [];
@@ -2404,9 +2532,7 @@ export default function App() {
       setQAPanelError("");
       setHighlights([]);
       setKnowledgeLinks([]);
-      setAnnotations([]);
       setSelectionAnchor(null);
-      setContextMenu(null);
       setLayout(initialLayout);
       setActiveGroupId(ROOT_GROUP_ID);
       await refreshQAHistory(freshProject.id);
@@ -2943,7 +3069,6 @@ export default function App() {
         setIndexStatus(null);
         setSelectedScopeFiles([]);
         setSelectionAnchor(null);
-        setContextMenu(null);
         setQAHistory([]);
         setHighlights([]);
         setKnowledgeLinks([]);
@@ -3203,7 +3328,6 @@ export default function App() {
         selectedText: nextText,
       };
     });
-    setContextMenu((current) => (current ? { ...current, selectedText: nextText } : current));
   }
 
   function handleClearSelection() {
@@ -3213,7 +3337,6 @@ export default function App() {
   function handleDismissSelection() {
     setSelection(null);
     setSelectionAnchor(null);
-    setContextMenu(null);
     window.getSelection()?.removeAllRanges();
   }
 
@@ -3258,106 +3381,30 @@ export default function App() {
     }
   }
 
-  function findAnnotation(courseFile: string, selectedText: string): Annotation | undefined {
-    // TODO: use positional matching (offsets) to handle duplicate text precisely
-    return annotations.find((ann) => ann.courseFile === courseFile && ann.selectedText === selectedText);
-  }
-
-  function handleContextMenuOpen(
-    sourceType: "file" | "course" | "selection" | "qa",
-    x: number,
-    y: number,
-    sourcePath: string | null,
-    selectedText: string,
-  ) {
-    const path = sourcePath ?? "";
-    const text = selectedText.slice(0, 20000);
-    if (!mobileRuntime) {
-      openAssistant("history");
-    }
-    setSelection({
-      sourceType,
-      sourcePath: path || null,
-      selectedText: text,
-    });
-    setSelectionAnchor({
-      sourceType,
-      sourcePath: path || null,
-      selectedText: text,
-      range: selectionAnchor?.sourcePath === path ? selectionAnchor.range : undefined,
-    });
-    const existing = sourceType === "file" ? undefined : findAnnotation(path, text);
-    setContextMenu({
-      x,
-      y,
-      sourceType,
-      sourcePath: path,
-      selectedText: text,
-      existingStyle: existing?.style ?? {},
-    });
-  }
-
-  function handleMarkdownContextMenuOpen(event: MouseEvent, sourcePath: string, selectedText: string, sourceType: "course" | "qa" = "course") {
-    event.preventDefault();
-    event.stopPropagation();
-    handleContextMenuOpen(sourceType, event.clientX, event.clientY, sourcePath, selectedText);
-  }
-
-  function handleContextMenuClose() {
-    setContextMenu(null);
-  }
-
-  function handleContextAsk() {
-    setQAQuestion("");
-    setContextMenu(null);
-  }
-
-  async function handleContextCopy() {
-    const text = selection?.selectedText || contextMenu?.selectedText || "";
-    if (text.trim()) {
-      await navigator.clipboard?.writeText(text);
-    }
-    setContextMenu(null);
-  }
-
-  /** Upsert or delete an annotation for the current context-menu selection. */
-  function upsertAnnotation(updater: (prev: AnnotationStyle) => AnnotationStyle) {
-    if (!contextMenu) {
+  async function handleToggleHighlight(sourceType: "course" | "qa", sourcePath: string, selectedText: string) {
+    if (!project || !sourcePath || !selectedText.trim()) {
       return;
     }
-    const existing = findAnnotation(contextMenu.sourcePath, contextMenu.selectedText);
-    const newStyle = updater(existing?.style ?? {});
-    const hasStyle = newStyle.color || newStyle.bold || newStyle.underline;
-
-    setAnnotations((prev) => {
-      const rest = prev.filter((ann) => ann !== existing);
-      if (!hasStyle) {
-        // All styles cleared — delete the annotation
-        return rest;
-      }
-      const ann: Annotation = existing
-        ? { ...existing, style: newStyle }
-        : {
-            id: nextId("annot"),
-            courseFile: contextMenu.sourcePath,
-            selectedText: contextMenu.selectedText,
-            style: newStyle,
-            createdAt: new Date().toISOString(),
-          };
-      return [...rest, ann];
-    });
-  }
-
-  function handleSetColor(color: AnnotationColor | null) {
-    upsertAnnotation((prev) => ({ ...prev, color: color ?? undefined }));
-  }
-
-  function handleToggleBold() {
-    upsertAnnotation((prev) => ({ ...prev, bold: !prev.bold }));
-  }
-
-  function handleToggleUnderline() {
-    upsertAnnotation((prev) => ({ ...prev, underline: !prev.underline }));
+    const normalizedText = selectedText.trim();
+    const matching = highlights.filter((highlight) =>
+      highlight.source_type === sourceType
+      && highlight.source_path === sourcePath
+      && highlight.selected_text.trim() === normalizedText,
+    );
+    if (matching.length === 0) {
+      await handleCreateHighlight(sourceType, sourcePath, normalizedText);
+      setToast("已添加高亮");
+      return;
+    }
+    try {
+      await Promise.all(matching.map((highlight) => deleteHighlight(project.id, highlight.id)));
+      const deletedIds = new Set(matching.map((highlight) => highlight.id));
+      setHighlights((items) => items.filter((highlight) => !deletedIds.has(highlight.id)));
+      setQAPanelError("");
+      setToast("已取消高亮");
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "取消高亮失败");
+    }
   }
 
   async function handleDeleteQA(record: QARecord) {
@@ -3643,6 +3690,7 @@ export default function App() {
           ) : null}
           {!editorMountDeferred && activeItem?.type === "file" ? (
             <CodeViewer
+              key={activeItem.id}
               path={activeItem.path}
               language={activeItem.language ?? "plaintext"}
               content={activeItem.content}
@@ -3652,8 +3700,18 @@ export default function App() {
                   : null
               }
               onSelectionChange={handleSelection}
-              onContextMenu={(payload) => handleContextMenuOpen("file", payload.clientX, payload.clientY, payload.sourcePath, payload.selectedText)}
-              initialLine={activeItem.initialLine ?? (activeLearningState?.position_kind === "line" ? activeLearningState.position_value : 1)}
+              restoreLine={activeItem.restoreLine ?? 1}
+              jumpRequest={activeItem.jumpRequest}
+              onJumpConsumed={(requestId) => {
+                setLayout((current) => updateEveryGroup(current, (editorGroup) => ({
+                  ...editorGroup,
+                  items: editorGroup.items.map((item) =>
+                    item.id === activeItem.id && item.jumpRequest?.id === requestId
+                      ? { ...item, jumpRequest: undefined }
+                      : item,
+                  ),
+                })));
+              }}
               onVisibleLineChange={(line) => queueLearningUpdate("file", activeItem.path, "line", line)}
             />
           ) : null}
@@ -3727,14 +3785,12 @@ export default function App() {
                 highlights={highlights.filter((highlight) => highlight.source_type === (activeItem.qaRecordId ? "qa" : "course") && highlight.source_path === activeItem.path)}
                 knowledgeLinks={knowledgeLinks.filter((link) => link.source_type === "course" && link.source_path === activeItem.path)}
                 documentTerms={documentTermsBySource[`${activeItem.qaRecordId ? "qa" : "course"}:${activeItem.path}`] ?? []}
-                annotations={annotations.filter((ann) => ann.courseFile === activeItem.path)}
                 tempSelectedText={
                   !mobileRuntime && selectionAnchor?.sourceType === (activeItem.qaRecordId ? "qa" : "course") && selectionAnchor.sourcePath === activeItem.path
                     ? selectionAnchor.selectedText
                     : null
                 }
                 onSelectionChange={handleSelection}
-                onContextMenu={(event, text, sourcePath) => handleMarkdownContextMenuOpen(event, sourcePath, text, activeItem.qaRecordId ? "qa" : "course")}
                 onOpenKnowledgeLink={handleOpenKnowledgeLink}
                 onGenerateTerm={handleGenerateTerm}
                 onTermAction={handleTermAction}
@@ -3793,16 +3849,6 @@ export default function App() {
                     setSelection(nextSelection);
                     setSelectionAnchor(nextSelection);
                   }
-                }}
-                onContextMenu={(event) => {
-                  const target = event.currentTarget;
-                  const text = target.value.slice(target.selectionStart, target.selectionEnd).trim() || qaHighlightDraft?.selectedText || "";
-                  if (!text) {
-                    return;
-                  }
-                  event.preventDefault();
-                  event.stopPropagation();
-                  handleContextMenuOpen("selection", event.clientX, event.clientY, activeItem.path, text);
                 }}
               />
               {activeQAHighlights.length ? (
@@ -4522,32 +4568,22 @@ export default function App() {
       {promptEditorOpen ? (
         <PromptEditor onClose={() => setPromptEditorOpen(false)} />
       ) : null}
-      {contextMenu ? (
-        <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          sourceType={contextMenu.sourceType}
-          currentStyle={contextMenu.existingStyle}
-          onClose={handleContextMenuClose}
-          onAskSelection={handleContextAsk}
-          onCopySelection={handleContextCopy}
-          onClearSelection={handleDismissSelection}
-          onSetColor={handleSetColor}
-          onToggleBold={handleToggleBold}
-          onToggleUnderline={handleToggleUnderline}
-        />
-      ) : null}
-      {selectionAnchor?.selectedText && !contextMenu ? (
+      {selectionAnchor?.selectedText ? (
         <SelectionQuickBar
           canHighlight={selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa"}
+          highlighted={highlights.some((highlight) =>
+            highlight.source_type === selectionAnchor.sourceType
+            && highlight.source_path === (selectionAnchor.sourcePath ?? "")
+            && highlight.selected_text.trim() === selectionAnchor.selectedText.trim()
+          )}
           anchorRect={selectionAnchor.anchorRect}
           onAsk={() => {
             setSelection({ ...selectionAnchor });
             openAssistant("history");
           }}
-          onHighlight={() => {
+          onToggleHighlight={() => {
             if (selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa") {
-              void handleCreateHighlight(selectionAnchor.sourceType, selectionAnchor.sourcePath ?? "", selectionAnchor.selectedText);
+              void handleToggleHighlight(selectionAnchor.sourceType, selectionAnchor.sourcePath ?? "", selectionAnchor.selectedText);
             }
           }}
           onCopy={() => void navigator.clipboard.writeText(selectionAnchor.selectedText)}

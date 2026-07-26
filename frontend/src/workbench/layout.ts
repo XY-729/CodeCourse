@@ -11,7 +11,12 @@ export type OpenItem = {
   qaRecordId?: number;
   favorite?: boolean;
   dirty?: boolean;
-  initialLine?: number;
+  restoreLine?: number;
+  jumpRequest?: {
+    id: string;
+    line: number;
+    align: "start" | "center";
+  };
 };
 
 export type EditorGroup = {

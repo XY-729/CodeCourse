@@ -20,8 +20,6 @@ type Props = {
   annotations?: Annotation[];
   tempSelectedText?: string | null;
   onSelectionChange?: (selection: ViewerSelection) => void;
-  onCreateHighlight?: (text: string) => void;
-  onContextMenu?: (event: React.MouseEvent, text: string, sourcePath: string) => void;
   onOpenKnowledgeLink?: (term: string, links: KnowledgeLink[]) => void;
   onGenerateTerm?: (term: DocumentTerm) => void;
   onTermAction?: (term: DocumentTerm) => void;
@@ -317,8 +315,6 @@ export default function MarkdownViewer({
   annotations = [],
   tempSelectedText,
   onSelectionChange,
-  onCreateHighlight: _onCreateHighlight,
-  onContextMenu,
   onOpenKnowledgeLink,
   onGenerateTerm,
   onTermAction,
@@ -337,7 +333,6 @@ export default function MarkdownViewer({
   // Never inject <mark> temp-selection elements on Android — they would
   // destroy the native Range and collapse the drag handles.
   const effectiveTempSelectedText = androidRuntime ? null : tempSelectedText;
-  const [selectedText, setSelectedText] = useState("");
   const [docFontSize, setDocFontSize] = useState(() => {
     try {
       const v = localStorage.getItem("codecourse.desktop.docFontSize");
@@ -460,15 +455,17 @@ export default function MarkdownViewer({
     return sel !== null && !sel.isCollapsed;
   }
 
-  function commitReadingPosition(allowDuringUnmount = false) {
+  function commitReadingPosition(
+    allowDuringUnmount = false,
+    callback = onScrollRatioChangeRef.current,
+  ) {
     if (!allowDuringUnmount && unmountedRef.current) return;
     if (hasActiveAndroidSelection()) return;
     if (scrollValueRef.current === null) return;
     if (lastSavedRatioRef.current === scrollValueRef.current) return;
-    const cb = onScrollRatioChangeRef.current;
-    if (!cb) return;
+    if (!callback) return;
     lastSavedRatioRef.current = scrollValueRef.current;
-    cb(scrollValueRef.current);
+    callback(scrollValueRef.current);
   }
 
   // Source key change: flush old position via commitReadingPosition, then reset
@@ -482,7 +479,10 @@ export default function MarkdownViewer({
     return () => {
       // Flush pending position for outgoing document — unified path
       window.clearTimeout(positionSaveTimerRef.current);
-      commitReadingPosition(false);
+      // Capture the outgoing document's callback. React updates refs during
+      // render, before this cleanup runs, so reading the shared callback ref
+      // here could otherwise save document A's ratio into document B.
+      commitReadingPosition(false, onScrollRatioChange);
       scrollValueRef.current = null;
     };
   }, [sourceType, sourcePath, title]);
@@ -561,7 +561,6 @@ export default function MarkdownViewer({
     const focusNode = selection.focusNode;
     if (anchorNode && focusNode && article.contains(anchorNode) && article.contains(focusNode)) {
       const rect = selection.rangeCount > 0 ? selection.getRangeAt(0).getBoundingClientRect() : null;
-      setSelectedText(text);
       onSelectionChange?.({
         sourceType,
         sourcePath: sourcePath ?? title,
@@ -577,34 +576,6 @@ export default function MarkdownViewer({
       });
     }
   }, [onSelectionChange, sourcePath, sourceType, title, androidRuntime]);
-
-  function handleContextMenu(event: React.MouseEvent) {
-    const article = articleRef.current;
-    if (!article || !article.contains(event.target as Node)) {
-      return;
-    }
-
-    const liveText = window.getSelection()?.toString().trim();
-    const text = liveText || selectedText.trim();
-
-    if (!text) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    if (liveText) {
-      setSelectedText(liveText);
-      onSelectionChange?.({
-        sourceType,
-        sourcePath: sourcePath ?? title,
-        selectedText: liveText,
-      });
-    }
-
-    onContextMenu?.(event, text, sourcePath ?? title ?? "");
-  }
 
   const highlightedComponents = useMemo(() => ({
     code: ({ className, children, ...props }: { className?: string; children?: ReactNode; node?: unknown }) => {
@@ -688,7 +659,6 @@ export default function MarkdownViewer({
         className="markdown-scroll-viewport"
         onMouseUp={androidRuntime ? undefined : captureSelection}
         onKeyUp={androidRuntime ? undefined : captureSelection}
-        onContextMenu={androidRuntime ? undefined : handleContextMenu}
         onScroll={onScrollHandler}
       >
         <div ref={bodyRef} className="markdown-body">

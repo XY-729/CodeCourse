@@ -39,17 +39,17 @@ public class MainActivity extends BridgeActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        savePendingNavigationFromIntent(intent);
+        String navigationId = savePendingNavigationFromIntent(intent);
 
         // Emit to WebView via bridge event for warm start
-        emitCompletionNavigation(intent);
+        emitCompletionNavigation(intent, navigationId);
     }
 
-    private void savePendingNavigationFromIntent(Intent intent) {
-        if (intent == null) return;
+    private String savePendingNavigationFromIntent(Intent intent) {
+        if (intent == null) return null;
         int projectId = intent.getIntExtra(CodeCourseGenerationService.EXTRA_PROJECT_ID, 0);
         int taskId = intent.getIntExtra(CodeCourseGenerationService.EXTRA_COMPLETION_TASK_ID, 0);
-        if (projectId <= 0 && taskId <= 0) return;
+        if (projectId <= 0 && taskId <= 0) return null;
 
         String taskType = intent.getStringExtra(CodeCourseGenerationService.EXTRA_TASK_TYPE);
         String outputPath = intent.getStringExtra(CodeCourseGenerationService.EXTRA_OUTPUT_PATH);
@@ -68,13 +68,15 @@ public class MainActivity extends BridgeActivity {
 
             Log.d(TAG, "Saved pending navigation: projectId=" + projectId
                 + " taskId=" + taskId + " navId=" + navigationId);
+            return navigationId;
         } catch (Exception e) {
             Log.w(TAG, "Failed to save pending navigation: " + e.getMessage());
+            return null;
         }
     }
 
-    private void emitCompletionNavigation(Intent intent) {
-        if (intent == null) return;
+    private void emitCompletionNavigation(Intent intent, String navigationId) {
+        if (intent == null || navigationId == null || navigationId.isEmpty()) return;
         int projectId = intent.getIntExtra(CodeCourseGenerationService.EXTRA_PROJECT_ID, 0);
         int taskId = intent.getIntExtra(CodeCourseGenerationService.EXTRA_COMPLETION_TASK_ID, 0);
         if (projectId <= 0 && taskId <= 0) return;
@@ -88,6 +90,7 @@ public class MainActivity extends BridgeActivity {
             payload.put("taskId", taskId);
             payload.put("taskType", taskType != null ? taskType : "");
             payload.put("outputPath", outputPath != null ? outputPath : "");
+            payload.put("navigationId", navigationId);
 
             JSObject eventData = JSObject.fromJSONObject(payload);
             bridge.triggerWindowJSEvent("codecourseCompletionNavigation", eventData.toString());
@@ -104,6 +107,22 @@ public class MainActivity extends BridgeActivity {
             prefs.edit().remove("pending").apply();
         }
         return pending;
+    }
+
+    /** Remove a warm-start pending navigation only when the acknowledgement matches it. */
+    static boolean ackPendingNavigation(Context ctx, String navigationId) {
+        if (navigationId == null || navigationId.isEmpty()) return false;
+        SharedPreferences prefs = ctx.getSharedPreferences(PENDING_NAV_PREF, Context.MODE_PRIVATE);
+        String pending = prefs.getString("pending", null);
+        if (pending == null) return false;
+        try {
+            JSONObject payload = new JSONObject(pending);
+            if (!navigationId.equals(payload.optString("navigationId", ""))) return false;
+            prefs.edit().remove("pending").apply();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @Override

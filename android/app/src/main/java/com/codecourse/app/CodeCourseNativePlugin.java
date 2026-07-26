@@ -100,9 +100,15 @@ public class CodeCourseNativePlugin extends Plugin {
 
     @PluginMethod
     public void switchForegroundTask(PluginCall call) {
-        CodeCourseGenerationService.switchForegroundTask(
-            call.getInt("sessionId", 0), call.getInt("taskId", 0));
-        call.resolve();
+        long sessionId = call.getInt("sessionId", 0);
+        int taskId = call.getInt("taskId", 0);
+        boolean switched = CodeCourseGenerationService.switchForegroundTask(sessionId, taskId);
+        Bundle state = CodeCourseGenerationService.getGenerationServiceState();
+        JSObject result = new JSObject();
+        result.put("switched", switched);
+        result.put("sessionId", state.getLong("sessionId", 0));
+        result.put("taskId", state.getInt("taskId", 0));
+        call.resolve(result);
     }
 
     @PluginMethod
@@ -177,6 +183,11 @@ public class CodeCourseNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getNotificationPermissionStatus(PluginCall call) {
+        resolveCurrentPermissionStatus(call);
+    }
+
+    @PluginMethod
     public void consumePendingCompletionNavigation(PluginCall call) {
         try {
             String pending = MainActivity.consumePendingNavigation(getContext());
@@ -189,6 +200,12 @@ public class CodeCourseNativePlugin extends Plugin {
         } catch (Exception e) {
             call.resolve();
         }
+    }
+
+    @PluginMethod
+    public void ackCompletionNavigation(PluginCall call) {
+        MainActivity.ackPendingNavigation(getContext(), call.getString("navigationId", ""));
+        call.resolve();
     }
 
     @PluginMethod
@@ -241,5 +258,36 @@ public class CodeCourseNativePlugin extends Plugin {
             r.put("canAskAgain", canAskAgain);
             call.resolve(JSObject.fromJSONObject(r));
         } catch (Exception e) { call.resolve(); }
+    }
+
+    private void resolveCurrentPermissionStatus(PluginCall call) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            resolvePermissionStatus(call, true, "not_required", false);
+            return;
+        }
+        Context ctx = getContext();
+        NotificationManager mgr = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (mgr == null) {
+            resolvePermissionStatus(call, false, "error", false);
+            return;
+        }
+        boolean runtimeGranted = ActivityCompat.checkSelfPermission(
+            ctx, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+        boolean notificationsEnabled = mgr.areNotificationsEnabled();
+        if (runtimeGranted && notificationsEnabled) {
+            resolvePermissionStatus(call, true, "granted", false);
+            return;
+        }
+        if (runtimeGranted) {
+            resolvePermissionStatus(call, false, "notifications_disabled", false);
+            return;
+        }
+        SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        boolean requestedBefore = prefs.getBoolean(PREF_PERMISSION_REQUESTED, false);
+        boolean canAskAgain = requestedBefore && getActivity() != null
+            && ActivityCompat.shouldShowRequestPermissionRationale(
+                getActivity(), Manifest.permission.POST_NOTIFICATIONS);
+        resolvePermissionStatus(call, false,
+            canAskAgain ? "denied" : "denied_permanently", canAskAgain);
     }
 }

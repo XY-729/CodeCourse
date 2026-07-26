@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
-import type { ViewerRange, ViewerSelection } from "./CodeViewer";
+import type { CodeJumpRequest, ViewerRange, ViewerSelection } from "./CodeViewer";
 
 type Props = {
   path: string | null;
@@ -9,8 +9,9 @@ type Props = {
   content: string;
   selectedRange?: ViewerRange | null;
   onSelectionChange?: (selection: ViewerSelection) => void;
-  onContextMenu?: (payload: { clientX: number; clientY: number; selectedText: string; sourcePath: string | null }) => void;
-  initialLine?: number;
+  restoreLine?: number;
+  jumpRequest?: CodeJumpRequest | null;
+  onJumpConsumed?: (requestId: string) => void;
   onVisibleLineChange?: (line: number) => void;
 };
 
@@ -33,11 +34,20 @@ function currentEditorTheme() {
   return document.documentElement.dataset.theme === "dark" ? "vs-dark" : "vs";
 }
 
-export default function MonacoCodeViewer({ path, language, content, selectedRange, onSelectionChange, onContextMenu, initialLine = 1, onVisibleLineChange }: Props) {
+export default function MonacoCodeViewer({
+  path,
+  language,
+  content,
+  selectedRange,
+  onSelectionChange,
+  restoreLine = 1,
+  jumpRequest,
+  onJumpConsumed,
+  onVisibleLineChange,
+}: Props) {
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
   const decorationIds = useRef<string[]>([]);
-  const selectedRangeRef = useRef<ViewerRange | null>(selectedRange ?? null);
   const [editorTheme, setEditorTheme] = useState(currentEditorTheme);
   const [codeFontSize, setCodeFontSize] = useState(loadCodeFontSize);
   const fontSizeRef = useRef(codeFontSize);
@@ -59,7 +69,6 @@ export default function MonacoCodeViewer({ path, language, content, selectedRang
 
   function setPersistentSelection(range: ViewerRange | null) {
     const editor = editorRef.current; const monaco = monacoRef.current; if (!editor || !monaco) return;
-    selectedRangeRef.current = range;
     decorationIds.current = editor.deltaDecorations(decorationIds.current, range ? [{
       range: new monaco.Range(range.startLineNumber, range.startColumn, range.endLineNumber, range.endColumn),
       options: { className: "monaco-persistent-selection", inlineClassName: "monaco-persistent-selection-inline", stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
@@ -67,18 +76,24 @@ export default function MonacoCodeViewer({ path, language, content, selectedRang
   }
 
   useEffect(() => { setPersistentSelection(selectedRange ?? null); }, [selectedRange, content, path]);
+  const consumedJumpIdsRef = useRef(new Set<string>());
+
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor) return;
-    const line = Math.max(1, Math.round(initialLine));
-    editor.revealLineInCenter(line);
+    if (!editor || !jumpRequest || consumedJumpIdsRef.current.has(jumpRequest.id)) return;
+    const line = Math.max(1, Math.round(jumpRequest.line));
+    if (jumpRequest.align === "center") editor.revealLineInCenter(line);
+    else editor.revealLine(line);
     editor.setPosition({ lineNumber: line, column: 1 });
-  }, [initialLine, path]);
+    consumedJumpIdsRef.current.add(jumpRequest.id);
+    onJumpConsumed?.(jumpRequest.id);
+  }, [jumpRequest, onJumpConsumed]);
 
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor; monacoRef.current = monaco; setPersistentSelection(selectedRange ?? null);
-    editor.revealLineInCenter(Math.max(1, Math.round(initialLine)));
-    editor.setPosition({ lineNumber: Math.max(1, Math.round(initialLine)), column: 1 });
+    const line = Math.max(1, Math.round(restoreLine));
+    editor.revealLineInCenter(line);
+    editor.setPosition({ lineNumber: line, column: 1 });
     editor.onDidScrollChange((event) => {
       if (!event.scrollTopChanged) return;
       const visible = editor.getVisibleRanges()[0];
@@ -99,14 +114,6 @@ export default function MonacoCodeViewer({ path, language, content, selectedRang
         height: endPosition.height,
       } : undefined;
       setPersistentSelection(range); onSelectionChange?.({ sourceType: "file", sourcePath: path, selectedText, language, range, anchorRect });
-    });
-    editor.onContextMenu((event) => {
-      const model = editor.getModel(); if (!model) return;
-      const liveSelection = editor.getSelection();
-      let selectedText = liveSelection && !liveSelection.isEmpty() ? model.getValueInRange(liveSelection).trim() : "";
-      if (!selectedText && selectedRangeRef.current) selectedText = model.getValueInRange(new monaco.Range(selectedRangeRef.current.startLineNumber, selectedRangeRef.current.startColumn, selectedRangeRef.current.endLineNumber, selectedRangeRef.current.endColumn)).trim();
-      if (!selectedText) return; event.event.preventDefault(); event.event.stopPropagation();
-      onContextMenu?.({ clientX: event.event.browserEvent.clientX, clientY: event.event.browserEvent.clientY, selectedText, sourcePath: path });
     });
     editor.onDidChangeConfiguration((event) => {
       if (event.hasChanged(monaco.editor.EditorOption.fontSize)) {

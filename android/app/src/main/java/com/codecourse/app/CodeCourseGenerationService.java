@@ -137,12 +137,16 @@ public class CodeCourseGenerationService extends Service {
 
     // ---- foreground task switch ----
 
-    public static void switchForegroundTask(long sessionId, int newTaskId) {
+    public static boolean switchForegroundTask(long sessionId, int newTaskId) {
         synchronized (SESSION_LOCK) {
-            if (sessionId != sCurrentSessionId) return;
+            if (!SERVICE_ACTIVE.get() || sessionId <= 0 || newTaskId <= 0
+                || sessionId != sCurrentSessionId) {
+                return false;
+            }
             sCurrentTaskId = newTaskId;
             sLastAcceptedSequence = 0;
             Log.d(TAG, "Foreground task switched to " + newTaskId);
+            return true;
         }
     }
 

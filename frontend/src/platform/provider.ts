@@ -1,7 +1,13 @@
 import { isNativeAndroidRuntime } from "./runtime";
+import type { NotificationPermissionResult } from "./runtime";
+import type { PermissionNotice } from "./android/generationState";
 
 export interface CodeCourseProvider {
   request<T>(path: string, init?: RequestInit): Promise<T>;
+  reconcileGenerationServiceState?(): Promise<void>;
+  getNotificationPermissionStatus?(): Promise<NotificationPermissionResult>;
+  invalidatePermissionCache?(): void;
+  setPermissionNoticeHandler?(handler: ((notice: PermissionNotice) => void) | null): void;
 }
 
 class HttpProvider implements CodeCourseProvider {

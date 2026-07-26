@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import hljs from "highlight.js";
-import type { ViewerRange, ViewerSelection } from "./CodeViewer";
+import type { CodeJumpRequest, ViewerRange, ViewerSelection } from "./CodeViewer";
 
 type Props = {
   path: string | null; language: string; content: string;
   selectedRange?: ViewerRange | null; onSelectionChange?: (selection: ViewerSelection) => void;
-  initialLine?: number; onVisibleLineChange?: (line: number) => void;
+  restoreLine?: number;
+  jumpRequest?: CodeJumpRequest | null;
+  onJumpConsumed?: (requestId: string) => void;
+  onVisibleLineChange?: (line: number) => void;
 };
 
 const LARGE_FILE_BYTES = 400_000;
 const LARGE_FILE_LINES = 8_000;
+const VIRTUAL_FILE_LINES = 1_000;
 const VIRTUAL_OVERSCAN = 20;
 const ROW_HEIGHT = 24;
 const ALLOWED_SPAN_CLASS_RE = /^hljs-/;
@@ -99,6 +103,10 @@ export function calcScrollTop(lineNum: number, align: "start" | "center", client
   return clamp(targetTop, 0, Math.max(0, totalLines * rowH - clientHeight));
 }
 
+export function calculateVisibleLine(scrollTop: number, rowHeight: number, totalLines: number): number {
+  return clamp(Math.floor(Math.max(0, scrollTop) / rowHeight) + 1, 1, Math.max(1, totalLines));
+}
+
 // ====================================================================
 //  Virtual list hook
 // ====================================================================
@@ -139,19 +147,26 @@ function useVirtualLines(totalLines: number, rowH: number) {
 
 export default function MobileCodeViewer({
   path, language, content, selectedRange,
-  onSelectionChange: _onSelectionChange,
-  initialLine, onVisibleLineChange,
+  onSelectionChange,
+  restoreLine = 1,
+  jumpRequest,
+  onJumpConsumed,
+  onVisibleLineChange,
 }: Props) {
+  const viewerRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [activeMatch, setActiveMatch] = useState(-1);
+  const [selectionAnchorLine, setSelectionAnchorLine] = useState<number | null>(null);
+  const [selectionActive, setSelectionActive] = useState(false);
   const searchTimerRef = useRef<number>(0);
 
   const plainLines = useMemo(() => content.split("\n"), [content]);
   const totalLines = plainLines.length;
-  const isLargeFile = content.length > LARGE_FILE_BYTES || totalLines > LARGE_FILE_LINES;
+  const shouldVirtualize = totalLines > VIRTUAL_FILE_LINES;
+  const shouldSkipHighlight = content.length > LARGE_FILE_BYTES || totalLines > LARGE_FILE_LINES;
 
   // search debounce
   useEffect(() => {
@@ -163,12 +178,65 @@ export default function MobileCodeViewer({
 
   // reset on file switch
   useEffect(() => {
-    setSearchInput(""); setDebouncedQuery(""); setActiveMatch(-1);
+    setSearchInput(""); setDebouncedQuery(""); setActiveMatch(-1); setSelectionAnchorLine(null); setSelectionActive(false);
   }, [content, path]);
+
+  // Keep the native selection anchor mounted while a learner drags Android's
+  // handles across a virtualized file. Only that anchor row is pinned; the
+  // remaining 50,000-line document stays virtual.
+  useEffect(() => {
+    const handleSelectionChange = () => {
+      const selection = window.getSelection();
+      const viewer = viewerRef.current;
+      if (!selection || selection.isCollapsed || !viewer || !selection.anchorNode) {
+        setSelectionActive(false);
+        setSelectionAnchorLine(null);
+        return;
+      }
+      const anchorElement = (selection.anchorNode.nodeType === Node.ELEMENT_NODE
+        ? selection.anchorNode as Element
+        : selection.anchorNode.parentElement)?.closest<HTMLElement>(".mobile-code-line");
+      if (!anchorElement || !viewer.contains(anchorElement)) {
+        setSelectionActive(false);
+        setSelectionAnchorLine(null);
+        return;
+      }
+      const anchorLine = Number(anchorElement.dataset.line);
+      if (!Number.isFinite(anchorLine)) return;
+      setSelectionActive(true);
+      setSelectionAnchorLine(shouldVirtualize ? anchorLine : null);
+
+      const focusElement = selection.focusNode
+        ? (selection.focusNode.nodeType === Node.ELEMENT_NODE
+            ? selection.focusNode as Element
+            : selection.focusNode.parentElement)?.closest<HTMLElement>(".mobile-code-line")
+        : null;
+      const focusLine = Number(focusElement?.dataset.line || anchorLine);
+      const startLine = Math.min(anchorLine, focusLine);
+      const endLine = Math.max(anchorLine, focusLine);
+      const selectedText = selection.toString().trim();
+      if (selectedText) {
+        onSelectionChange?.({
+          sourceType: "file",
+          sourcePath: path,
+          selectedText,
+          language,
+          range: {
+            startLineNumber: startLine,
+            startColumn: 1,
+            endLineNumber: endLine,
+            endColumn: Math.max(1, plainLines[endLine - 1]?.length ?? 1),
+          },
+        });
+      }
+    };
+    document.addEventListener("selectionchange", handleSelectionChange);
+    return () => document.removeEventListener("selectionchange", handleSelectionChange);
+  }, [language, onSelectionChange, path, plainLines, shouldVirtualize]);
 
   // highlighting
   const highlightedLines = useMemo(() => {
-    if (isLargeFile) return null;
+    if (shouldSkipHighlight) return null;
     const valid = language && hljs.getLanguage(language) ? language : undefined;
     if (!valid) return null;
     try {
@@ -176,7 +244,7 @@ export default function MobileCodeViewer({
       while (lines.length < totalLines) lines.push(" ");
       return lines;
     } catch { return null; }
-  }, [content, language, isLargeFile, totalLines]);
+  }, [content, language, shouldSkipHighlight, totalLines]);
 
   // search matches
   const matches = useMemo(() => {
@@ -203,7 +271,7 @@ export default function MobileCodeViewer({
     visLineRafRef.current = window.requestAnimationFrame(() => {
       visLineRafRef.current = 0;
       const el = scrollRef.current; if (!el) return;
-      const vl = clamp(Math.floor(el.scrollTop / ROW_HEIGHT) + 1, 1, totalLines);
+      const vl = calculateVisibleLine(el.scrollTop, ROW_HEIGHT, totalLines);
       if (vl !== lastReportedRef.current) { lastReportedRef.current = vl; visibleLineCallbackRef.current?.(vl); }
     });
   }, [totalLines]);
@@ -211,24 +279,72 @@ export default function MobileCodeViewer({
   // SINGLE unified scroll handler
   const handleCodeScroll = useCallback(() => {
     const el = scrollRef.current; if (!el) return;
-    if (isLargeFile) updateRange(el.scrollTop, el.clientHeight);
+    if (shouldVirtualize) updateRange(el.scrollTop, el.clientHeight);
     scheduleVisibleLine();
-  }, [isLargeFile, updateRange, scheduleVisibleLine]);
+  }, [shouldVirtualize, updateRange, scheduleVisibleLine]);
 
-  // initialLine jump
-  const initialJumpedRef = useRef(false);
+  type ScrollReason = "initial-restore" | "explicit-jump" | "search-result";
+  const restoreLineAtMountRef = useRef(restoreLine);
+  const restoreConsumedRef = useRef(false);
+  const consumedJumpIdsRef = useRef(new Set<string>());
+
+  const performProgrammaticScroll = useCallback((
+    reason: ScrollReason,
+    line: number,
+    requestId?: string,
+  ): boolean => {
+    if (selectionActive && reason !== "search-result") return false;
+    if (reason === "search-result" && selectionActive) {
+      window.getSelection()?.removeAllRanges();
+      setSelectionActive(false);
+      setSelectionAnchorLine(null);
+    }
+    const el = scrollRef.current;
+    if (!el) return false;
+    scrollToLine(line, reason === "search-result" ? "center" : "start", el);
+    if (reason !== "initial-restore") scheduleVisibleLine();
+    if (import.meta.env.DEV) {
+      console.debug("programmatic-scroll", {
+        reason,
+        path,
+        line,
+        requestId,
+        timestamp: Date.now(),
+      });
+    }
+    return true;
+  }, [path, scheduleVisibleLine, scrollToLine, selectionActive]);
+
+  const performProgrammaticScrollRef = useRef(performProgrammaticScroll);
+  performProgrammaticScrollRef.current = performProgrammaticScroll;
+
+  // The restore position is a mount-time snapshot. Parent rerenders, content
+  // refreshes and persisted learning-state updates cannot replay it.
   useEffect(() => {
-    if (initialJumpedRef.current) return;
-    if (!initialLine || initialLine < 1) return;
+    if (restoreConsumedRef.current) return;
     const frame = window.requestAnimationFrame(() => {
-      const el = scrollRef.current; if (!el) return;
-      if (isLargeFile) scrollToLine(initialLine, "start", el);
-      else el.querySelector<HTMLElement>(`[data-line="${initialLine}"]`)?.scrollIntoView({ block: "start" });
-      initialJumpedRef.current = true;
-      scheduleVisibleLine();
+      if (restoreConsumedRef.current) return;
+      if (performProgrammaticScrollRef.current("initial-restore", restoreLineAtMountRef.current)) {
+        restoreConsumedRef.current = true;
+      }
     });
-    return () => { window.cancelAnimationFrame(frame); initialJumpedRef.current = false; };
-  }, [content, initialLine, path, isLargeFile, scrollToLine, scheduleVisibleLine]);
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  // Explicit navigation is ID-based: the same line may be requested again
+  // with a new ID, while content/theme rerenders cannot replay an old ID.
+  useEffect(() => {
+    if (!jumpRequest || consumedJumpIdsRef.current.has(jumpRequest.id)) return;
+    if (!performProgrammaticScroll("explicit-jump", jumpRequest.line, jumpRequest.id)) return;
+    // An explicit navigation on mount supersedes the passive restore snapshot.
+    restoreConsumedRef.current = true;
+    consumedJumpIdsRef.current.add(jumpRequest.id);
+    onJumpConsumed?.(jumpRequest.id);
+  }, [jumpRequest, onJumpConsumed, performProgrammaticScroll]);
+
+  useEffect(() => () => {
+    window.cancelAnimationFrame(visLineRafRef.current);
+  }, []);
 
   // moveMatch
   function moveMatch(delta: number) {
@@ -240,10 +356,7 @@ export default function MobileCodeViewer({
       next = (activeMatch + delta + matches.length) % matches.length;
     }
     setActiveMatch(next);
-    const el = scrollRef.current; if (!el) return;
-    if (isLargeFile) scrollToLine(matches[next], "center", el);
-    else el.querySelector<HTMLElement>(`[data-line="${matches[next]}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
-    scheduleVisibleLine();
+    performProgrammaticScroll("search-result", matches[next], `search:${next}`);
   }
 
   // renderLine
@@ -264,15 +377,15 @@ export default function MobileCodeViewer({
   }
 
   return (
-    <div className="viewer mobile-code-viewer">
+    <div ref={viewerRef} className="viewer mobile-code-viewer">
       <div className="viewer-header">
         <span>{path ?? "代码"}</span>
         <div className="viewer-actions">
-          <strong>{isLargeFile ? `${language} · 大文件` : language}</strong>
+          <strong>{shouldVirtualize ? `${language} · 大文件` : language}</strong>
           <button className="icon-button" onClick={() => setSearchOpen(o => !o)} title="搜索"><Search size={15} /></button>
         </div>
       </div>
-      {isLargeFile && <div className="mobile-code-notice">大文件：虚拟列表仅渲染可见行</div>}
+      {shouldVirtualize && <div className="mobile-code-notice">大文件：虚拟列表仅渲染可见行</div>}
       {searchOpen && (
         <div className="mobile-code-search">
           <Search size={14} /><input autoFocus value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="搜索" />
@@ -283,10 +396,15 @@ export default function MobileCodeViewer({
         </div>
       )}
       <div ref={scrollRef} className="mobile-code-scroll" onScroll={handleCodeScroll}>
-        {isLargeFile ? (
-          <div style={{ height: virt.totalHeight, position: "relative" }}>
-            {Array.from({ length: virt.end - virt.start }, (_, i) => {
-              const idx = virt.start + i;
+        {shouldVirtualize ? (
+          <div className="mobile-code-virtual-spacer" style={{ height: virt.totalHeight, position: "relative" }}>
+            {[
+              ...Array.from({ length: virt.end - virt.start }, (_, i) => virt.start + i),
+              ...(selectionAnchorLine != null
+                && (selectionAnchorLine - 1 < virt.start || selectionAnchorLine - 1 >= virt.end)
+                ? [selectionAnchorLine - 1]
+                : []),
+            ].map((idx) => {
               return renderLine(idx, { position: "absolute", top: idx * ROW_HEIGHT, left: 0, right: 0, height: ROW_HEIGHT });
             })}
           </div>
