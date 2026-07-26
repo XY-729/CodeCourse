@@ -1,152 +1,104 @@
-# Android v0.4.0 Release Candidate Checklist
+# Android v0.4.0 Release Verification
 
 ## Baseline
 
-- **Commit:** TBD (see below)
-- **Branch:** main
-- **Parent:** 126cd30
-- **Version:** 0.4.0 (versionCode 400)
+- **Branch:** `main`
+- **Parent:** `ac4ad6fcd691db229de5b2978c641d81c1b8ad5c`
+- **Verified implementation commit:** `28f6135e8596fb147175b339401e7557c490fff1`
+- **Version:** `0.4.0` (`versionCode 400`)
+- **Scope:** release closure plus Android code-reader scroll stability
 
 ## Automated Verification
 
-- [x] TypeScript type check (`npx tsc --noEmit`) — 0 errors
-- [x] Vitest — 128 tests passed (8 test files, 0 failures)
-- [x] Frontend build (`npm run build`) — successful
-- [ ] Capacitor sync + Android build (`assembleDebug`)
-- [ ] Gradle test (`./gradlew test`)
-- [ ] Lint (`./gradlew lint`)
-- [ ] CI workflow (pending push)
+- [x] TypeScript: `pnpm --dir frontend exec tsc --noEmit`
+- [x] Vitest: 148 tests in 11 files
+- [x] Frontend production build
+- [x] Capacitor sync
+- [x] Android debug build: `gradlew.bat assembleDebug`
+- [x] Gradle unit-test task: `gradlew.bat test`
+- [x] Android lint: `gradlew.bat lint`
+- [x] GitHub Actions PR Validation for `28f6135`:
+  [run 30185587589](https://github.com/XY-729/CodeCourse/actions/runs/30185587589)
 
-## Test Breakdown
+## Android Code Reader
 
-| Category | Count | File |
-|---|---|---|
-| Pure function (checkpoint, progress, etc.) | ~40 | generationService.test.ts |
-| Pure function (normalize, strip, resolve) | 16 | workspaceNormalization.test.ts |
-| Pure function (virtual range, scroll calc) | 12 | virtualList.test.tsx |
-| Pure function (reading progress) | ~10 | readingProgress.test.ts |
-| Pure function (language detect) | ~10 | languageDetection.test.ts |
-| Pure function (code highlight) | ~8 | codeHighlighting.test.tsx |
-| Component test (code search debounce) | ~8 | codeSearchDebounce.test.tsx |
-| Component test (scroll persistence) | ~8 | scrollPersistence.test.tsx |
-| Component test (virtual list render) | 6 | virtualList.test.tsx |
-| Component test (MobileCodeViewer) | 3 | virtualList.test.tsx |
-| **Total** | **~128** | |
+- [x] `restoreLine`, `visibleLine`, and `jumpRequest` are separate data flows.
+- [x] The saved learning position is captured only when a file tab is opened.
+- [x] A database write-back cannot become a new scroll input for the active tab.
+- [x] Every code tab uses its instance ID as the React component key.
+- [x] Activating a file tab no longer writes a synthetic reading position.
+- [x] Initial restore is consumed once per mounted file component.
+- [x] Explicit jumps are consumed once per request ID.
+- [x] Content, language, theme, search UI, and unrelated parent renders do not replay restore.
+- [x] Android code rows and the scroll algorithm use an exact 24px row height.
+- [x] Code-reader scroll anchoring is disabled locally.
+- [x] `content-visibility:auto` is not used for code rows.
+- [x] Files over 1,000 lines use the fixed-height virtual list.
+- [x] A 50,000-line file renders fewer than 300 code rows.
+- [x] Visible-line persistence uses an 800ms trailing save.
+- [x] Pending positions flush on tab close, project switch, and App backgrounding.
+- [x] Out-of-order save responses cannot replace a newer learning state.
+- [x] Vertical programmatic scrolling is audited as restore, explicit jump, or search result.
+- [x] Active Android text selections pin their anchor line in the virtual range.
 
-## Android JVM Tests
+### Production Regression Coverage
 
-- [ ] Service session state
-- [ ] Completion intent extras
-- [ ] Pending navigation consume
+`frontend/src/__tests__/virtualList.test.tsx` contains 12 tests that render the
+real `MobileCodeViewer`, plus 3 pure geometry tests:
 
-## Changes in this RC
+- 50,000-line bounded DOM
+- real scroll to line 20,000
+- one-time restore
+- App-style 800ms persistence write-back without a second jump
+- unrelated parent rerender stability
+- same-line explicit request with a new ID
+- 200ms search and far-result navigation
+- requestAnimationFrame visible-line sampling
+- ordinary-file line 100 geometry
+- line 500 save/restore round trip
+- keyed A/B file isolation
+- selection-anchor pinning
+- stable CSS geometry
 
-### A. Foreground Service
-- Tightened `setGenerationActive` to discriminated union (`active:true` requires sessionId>0, taskId>0, activeTaskCount>0, label)
-- Java plugin validates parameters and rejects invalid starts
-- Service ownership stays exclusively in `AndroidLocalProvider`
+`frontend/src/__tests__/trailingSaveScheduler.test.ts` additionally verifies
+that 100 scroll updates produce exactly one database callback containing the
+latest position.
 
-### B. Service State Machine
-- Start: register taskInfo → pick foreground → setGenerationActive → poll native state → running
-- Stop: N tasks → 0 → stopping → stop retries → stopped/unknown
-- Foreground task switch updates notification immediately
-- onTaskRemoved/onTimeout cleaup recognized by next sync
+## Release Closure
 
-### C. Checkpoint Recovery
-- Outline: validates version, taskType, inputHash, generated, generatedContent
-- Detailed lesson: validates plan sections, items, generatedByIndex, repairGenerated
-- Corrupt checkpoint → log warning → discard → generate fresh
-- Slim checkpoint saved on completion
-
-### D. Permission UI
-- Provider emits `PermissionNotice` via `setPermissionNoticeHandler`
-- App registers handler in useEffect, shows banner with message
-- `denied_permanently` / `notifications_disabled` shows "前往通知设置" button
-- `openNotificationSettings()` opens Android system notification settings
-- Permission cache invalidated on resume from settings
-- Same status dismissed once per session
-
-### E. Retry Button
-- "继续生成" button shown for failed/cancelled tasks
-- Calls `retryGenerationTask()` API
-- Re-tracks same task after successful retry
-- Prevents double-click
-
-### F. Completion Navigation
-- Cold start: MainActivity saves to SharedPreferences → React consumes via `consumePendingCompletionNavigation`
-- Warm start: `onNewIntent` emits bridge event → React listener handles
-- Single-shot consume prevents duplicate navigation
-- Deduplication by taskId+outputPath
-- Opens project and output file; falls back gracefully on missing file
-
-### G. Reader Cleanup
-- Unified `commitReadingPosition()` for all save paths
-- Source key change and unmount both use same dedup logic
-- No eslint-disable comments for missing deps
-- Stable callback ref eliminates stale closure issues
-
-### H. Workspace Extraction
-- `frontend/src/workbench/layout.ts` exports `normalizeToSingleGroup`, `stripLayoutContent`, `resolvePreferredActiveItem`
-- Tests import from production module (no inline copy)
-
-### I. Virtual List Tests
-- `computeVirtualRange` and `calcScrollTop` exported from MobileCodeViewer.tsx
-- Tests import and call production functions
-- Component test renders real MobileCodeViewer with 50,000-line file
-
-### J. CI
-- New `pr-validation.yml` workflow: tsc, vitest, frontend build, cap sync, gradle test, assembleDebug, lint
-- Runs on push to main and PRs
-
-## Known Limitations
-
-1. **QA generation does not use background service** — QA runs in foreground by design. If QA backgrounding is required in the future, it must go through `AndroidLocalProvider` unified scheduling.
-2. **Virtual list selection protection** — During active Android text selection, anchor lines are not yet pinned in the virtual DOM. Selection across very large virtual gaps may lose the anchor. This is noted in the final report.
-3. **No release keystore** on this machine — only debug APK verified
-4. **No real-device testing performed yet** — all verification is on simulator/emulator or automated
-
-## APK
-
-- [ ] Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk`
-- [ ] Release APK: requires signing keystore (not available)
+- [x] Foreground generation coordinator reconciles native state and switches tasks transactionally.
+- [x] Notification permission is rechecked when returning from system settings.
+- [x] Warm completion navigation is acknowledged and deduplicated.
+- [x] Checkpoint and coordinator tests use production implementations.
+- [x] Android workspace layout helpers are imported from production code.
+- [x] Debug APK exists at `android/app/build/outputs/apk/debug/app-debug.apk`.
+- [ ] Signed release APK (release keystore is not available in this environment).
 
 ## Real Device Verification
 
-### Markdown Reader
-- [ ] Document A scrolled to middle, open B → B starts from top
-- [ ] Continuous scroll smooth, no jank
-- [ ] Long press selection, no jitter
-- [ ] Drag selection handles, no parent re-render
+The following checks remain mandatory on a real Android device:
 
-### Code Viewer (Large File)
-- [ ] Open 50,000+ line file → DOM lines in virtual range
-- [ ] Scroll to middle and bottom
-- [ ] Search far result → first "next" hits first result
-- [ ] Long press selection, cross-screen handle drag
-- [ ] Search and font size change → no white screen
+- [ ] Open files containing 300, 2,000, 10,000, and 50,000 lines.
+- [ ] Scroll each file rapidly for 30 seconds, stop, and confirm no movement for 5 seconds.
+- [ ] Background the App for 10 seconds and confirm the reader does not jump on resume.
+- [ ] Open and close search without changing the reading position.
+- [ ] Select a search result and confirm this explicit action is the only resulting jump.
+- [ ] Change the theme without changing the reading position.
+- [ ] Long-press text and drag both selection handles without collapsing the selection.
+- [ ] Switch repeatedly between files A and B without sharing positions.
+- [ ] Observe a development build and confirm ordinary reading emits no `programmatic-scroll` log.
+- [ ] Verify foreground notification progress, completion navigation, permission recovery, and retry.
 
-### Workspace Restore
-- [ ] Desktop layout first entry into Android → tabs correct
-- [ ] Active tab correct
-- [ ] Android key does not save content body
-- [ ] Restart → workspace restores
-- [ ] Desktop layout unaffected
+## Known Limitations
 
-### Foreground Service
-- [ ] Notification appears during generation
-- [ ] Progress bar updates
-- [ ] Completion notification visible
-- [ ] Tap completion notification → opens correct result
-- [ ] Deny notification permission → generation continues, notice shown
-- [ ] "前往通知设置" opens system settings
-
-### Retry
-- [ ] Failed task shows "继续生成" button
-- [ ] Click → retries same task
-- [ ] Completed result opens correctly
+1. The generated APK is a debug build and is not suitable for public distribution.
+2. Gradle's `test` task succeeds, but this repository still relies mainly on
+   TypeScript production-path tests for the Capacitor coordinator.
+3. Real-device verification has not been performed in this environment.
 
 ## Release Conclusion
 
-**达到 Release Candidate 条件**
+**未达到正式发布条件。**
 
-Pending: real device verification, release keystore signing.
+Automated verification is green, but the real-device matrix and signed release
+APK are still required. Do not create the `v0.4.0` tag or GitHub Release yet.
