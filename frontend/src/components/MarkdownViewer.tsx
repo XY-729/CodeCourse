@@ -443,18 +443,16 @@ export default function MarkdownViewer({
     scheduleProgressRefresh();
   }, [content, sourcePath, scheduleProgressRefresh]);
 
-  // Cleanup: unified timer, rAF, ResizeObserver — single flush on unmount
+  // Cleanup: unified timer, rAF, ResizeObserver — single commit path
   const scrollValueRef = useRef<number | null>(null);
   const positionSaveTimerRef = useRef<number>(0);
   const unmountedRef = useRef(false);
   const lastSavedRatioRef = useRef<number | null>(null);
   const progressRafRef = useRef(0);
 
-  // Always use latest callback + source identity via ref
+  // Always use latest callback via stable ref
   const onScrollRatioChangeRef = useRef(onScrollRatioChange);
-  useEffect(() => { onScrollRatioChangeRef.current = onScrollRatioChange; }, [onScrollRatioChange]);
-  const sourceKeyRef = useRef(`${sourceType}:${sourcePath ?? title}`);
-  useEffect(() => { sourceKeyRef.current = `${sourceType}:${sourcePath ?? title}`; }, [sourceType, sourcePath, title]);
+  onScrollRatioChangeRef.current = onScrollRatioChange;
 
   function hasActiveAndroidSelection(): boolean {
     if (!androidRuntime) return false;
@@ -473,27 +471,20 @@ export default function MarkdownViewer({
     cb(scrollValueRef.current);
   }
 
-  // Source key change: flush old position, reset state, prepare new key
+  // Source key change: flush old position via commitReadingPosition, then reset
   useEffect(() => {
-    const currentKey = `${sourceType}:${sourcePath ?? title}`;
-    sourceKeyRef.current = currentKey;
+    const prevKey = `${sourceType}:${sourcePath ?? title}`;
     // Reset scroll position state for new document
     scrollValueRef.current = null;
     lastSavedRatioRef.current = null;
     unmountedRef.current = false;
 
     return () => {
-      // Flush before source changes
+      // Flush pending position for outgoing document — unified path
       window.clearTimeout(positionSaveTimerRef.current);
-      if (!hasActiveAndroidSelection() && scrollValueRef.current !== null) {
-        const cb = onScrollRatioChangeRef.current;
-        if (cb) {
-          cb(scrollValueRef.current);
-          scrollValueRef.current = null;
-        }
-      }
+      commitReadingPosition(false);
+      scrollValueRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceType, sourcePath, title]);
 
   // Flush pending position on unmount — commit before setting unmounted flag
@@ -504,7 +495,6 @@ export default function MarkdownViewer({
     resizeObserverRef.current?.disconnect();
     commitReadingPosition(true);
     unmountedRef.current = true;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // rAF-throttled scroll: only updates the progress bar (visual).

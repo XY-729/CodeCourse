@@ -81,6 +81,25 @@ function renderHighlightedLine(html: string): ReactNode[] {
 }
 
 // ====================================================================
+//  Exported virtual list helpers (tests import these)
+// ====================================================================
+
+export function computeVirtualRange(scrollTop: number, clientHeight: number, totalLines: number, rowH: number, overscan: number) {
+  const start = Math.max(0, Math.floor(scrollTop / rowH) - overscan);
+  const visible = Math.ceil(clientHeight / rowH);
+  const end = clamp(start + visible + overscan * 2, 0, totalLines);
+  return { start, end };
+}
+
+export function calcScrollTop(lineNum: number, align: "start" | "center", clientHeight: number, totalLines: number, rowH: number) {
+  const zero = clamp(lineNum - 1, 0, totalLines - 1);
+  let targetTop: number;
+  if (align === "center") targetTop = zero * rowH - clientHeight / 2 + rowH / 2;
+  else targetTop = zero * rowH;
+  return clamp(targetTop, 0, Math.max(0, totalLines * rowH - clientHeight));
+}
+
+// ====================================================================
 //  Virtual list hook
 // ====================================================================
 
@@ -97,24 +116,16 @@ function useVirtualLines(totalLines: number, rowH: number) {
     if (rafRef.current) return;
     rafRef.current = window.requestAnimationFrame(() => {
       rafRef.current = 0;
-      const start = Math.max(0, Math.floor(scrollTop / rowH) - VIRTUAL_OVERSCAN);
-      const visible = Math.ceil(clientHeight / rowH);
-      const end = clamp(start + visible + VIRTUAL_OVERSCAN * 2, 0, totalLines);
-      setState({ start, end, totalHeight: totalLines * rowH });
+      const r = computeVirtualRange(scrollTop, clientHeight, totalLines, rowH, VIRTUAL_OVERSCAN);
+      setState({ ...r, totalHeight: totalLines * rowH });
     });
   }, [totalLines, rowH]);
 
   const scrollToLine = useCallback((lineNum: number, align: "start" | "center", el: HTMLDivElement) => {
-    const zero = clamp(lineNum - 1, 0, totalLines - 1);
-    let targetTop: number;
-    if (align === "center") targetTop = zero * rowH - el.clientHeight / 2 + rowH / 2;
-    else targetTop = zero * rowH;
-    el.scrollTop = clamp(targetTop, 0, Math.max(0, totalLines * rowH - el.clientHeight));
+    el.scrollTop = calcScrollTop(lineNum, align, el.clientHeight, totalLines, rowH);
     // Force immediate range update so the target line is actually rendered
-    const start = Math.max(0, Math.floor(el.scrollTop / rowH) - VIRTUAL_OVERSCAN);
-    const visible = Math.ceil(el.clientHeight / rowH);
-    const end = clamp(start + visible + VIRTUAL_OVERSCAN * 2, 0, totalLines);
-    setState({ start, end, totalHeight: totalLines * rowH });
+    const r = computeVirtualRange(el.scrollTop, el.clientHeight, totalLines, rowH, VIRTUAL_OVERSCAN);
+    setState({ ...r, totalHeight: totalLines * rowH });
   }, [totalLines, rowH]);
 
   useEffect(() => () => window.cancelAnimationFrame(rafRef.current), []);

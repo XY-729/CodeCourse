@@ -546,6 +546,12 @@ export function getGenerationTask(projectId: number, taskId: number): Promise<Ge
   return request<GenerationTask>(`/projects/${projectId}/tasks/${taskId}`);
 }
 
+export function retryGenerationTask(projectId: number, taskId: number): Promise<GenerationTask> {
+  return request<GenerationTask>(`/projects/${projectId}/tasks/${taskId}/retry`, {
+    method: "POST",
+  });
+}
+
 export function buildProjectIndex(projectId: number): Promise<ProjectIndexStatus> {
   return request<ProjectIndexStatus>(`/projects/${projectId}/index/build`, {
     method: "POST",

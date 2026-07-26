@@ -1,0 +1,64 @@
+name: PR Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.16.1"
+          run_install: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Vitest
+        working-directory: frontend
+        run: npx vitest run
+
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Capacitor sync
+        run: npx cap sync android
+
+      - name: Gradle test
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew test
+
+      - name: Assemble debug
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Lint
+        working-directory: android
+        run: ./gradlew lint

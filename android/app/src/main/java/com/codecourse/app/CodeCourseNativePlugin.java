@@ -47,12 +47,19 @@ public class CodeCourseNativePlugin extends Plugin {
     public void setGenerationActive(PluginCall call) {
         boolean active = Boolean.TRUE.equals(call.getBoolean("active", false));
         if (active) {
-            String label = call.getString("label", "正在后台生成学习内容");
+            String label = call.getString("label", "");
             long sessionId = call.getInt("sessionId", 0);
             int taskId = call.getInt("taskId", 0);
-            int activeCount = call.getInt("activeTaskCount", 1);
+            int activeCount = call.getInt("activeTaskCount", 0);
+
+            if (sessionId <= 0 || taskId <= 0 || activeCount <= 0 || label == null || label.trim().isEmpty()) {
+                call.reject("Invalid start parameters: sessionId=" + sessionId
+                    + " taskId=" + taskId + " activeTaskCount=" + activeCount);
+                return;
+            }
+
             Intent intent = CodeCourseGenerationService.createStartIntent(
-                getContext(), label, sessionId, taskId, activeCount);
+                getContext(), label.trim(), sessionId, taskId, activeCount);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 getContext().startForegroundService(intent);
             } else {
@@ -167,6 +174,21 @@ public class CodeCourseNativePlugin extends Plugin {
             getActivity(), Manifest.permission.POST_NOTIFICATIONS);
         resolvePermissionStatus(call, false,
             canAsk ? "denied" : "denied_permanently", canAsk);
+    }
+
+    @PluginMethod
+    public void consumePendingCompletionNavigation(PluginCall call) {
+        try {
+            String pending = MainActivity.consumePendingNavigation(getContext());
+            if (pending != null && !pending.isEmpty()) {
+                JSObject result = new JSObject(pending);
+                call.resolve(result);
+            } else {
+                call.resolve();
+            }
+        } catch (Exception e) {
+            call.resolve();
+        }
     }
 
     @PluginMethod

@@ -22,16 +22,22 @@ export type GenerationServiceState = {
   taskId: number;
 };
 
+export type SetGenerationActiveOptions =
+  | {
+      active: true;
+      label: string;
+      sessionId: number;
+      taskId: number;
+      activeTaskCount: number;
+    }
+  | {
+      active: false;
+    };
+
 export const CodeCourseSecureStore = registerPlugin<SecureStorePlugin>("CodeCourseSecureStore");
 export const CodeCourseNative = registerPlugin<{
   openExternal(options: { url: string }): Promise<void>;
-  setGenerationActive(options: {
-    active: boolean;
-    label?: string;
-    sessionId?: number;
-    taskId?: number;
-    activeTaskCount?: number;
-  }): Promise<void>;
+  setGenerationActive(options: SetGenerationActiveOptions): Promise<void>;
   getGenerationServiceState(): Promise<GenerationServiceState>;
   updateGenerationProgress(options: {
     sessionId: number; taskId: number; sequence: number;
@@ -46,6 +52,10 @@ export const CodeCourseNative = registerPlugin<{
   moveToBackground(): Promise<void>;
   requestNotificationPermission(): Promise<NotificationPermissionResult>;
   openNotificationSettings(): Promise<void>;
+  consumePendingCompletionNavigation(): Promise<{
+    projectId: number; taskId: number; taskType: string;
+    outputPath: string; navigationId: string;
+  } | null>;
 }>("CodeCourseNative");
 
 export function isNativeAndroidRuntime(): boolean {

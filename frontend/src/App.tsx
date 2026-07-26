@@ -22,6 +22,7 @@ import {
   getCourseContent,
   getCourseFiles,
   getGenerationTask,
+  retryGenerationTask,
   getLLMSettings,
   getLearningStates,
   getProject,
@@ -87,6 +88,10 @@ import type { GesturePath } from "./gestures/GestureDrawer";
 import { recognizeGesture } from "./gestures/GestureRecognizer";
 import type { Annotation, AnnotationColor, AnnotationStyle } from "./types";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
+import type { SetGenerationActiveOptions } from "./platform/runtime";
+import { getCodeCourseProvider } from "./platform/provider";
+import type { PermissionNotice } from "./platform/android/generationState";
+import { canRetry } from "./platform/android/generationState";
 import { setCodeCourseDragImage } from "./utils/dragImage";
 
 const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewer"));
@@ -199,7 +204,7 @@ type StoredWorkbench = {
   sidebarWidth: number;
 };
 
-const TERMINAL_TASK_STATUSES = new Set(["completed", "failed"]);
+const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const MAX_GROUPS = 9;
 const ROOT_GROUP_ID = "group-1";
 const ASSISTANT_WIDTH_STORAGE_KEY = "codecourse.assistantWidth";
@@ -716,6 +721,10 @@ export default function App() {
   const [learningStates, setLearningStates] = useState<LearningState[]>([]);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [permissionNotice, setPermissionNotice] = useState<PermissionNotice>(null);
+  const dismissedPermissionStatusRef = useRef<string | null>(null);
+  const [retryingTaskId, setRetryingTaskId] = useState<number | null>(null);
+  const [completionNavHandled, setCompletionNavHandled] = useState<Set<string>>(new Set());
   const [gestureHint, setGestureHint] = useState<{ id: number; text: string } | null>(null);
   const [gestureGuideOpen, setGestureGuideOpen] = useState(false);
   const [workspaceMenuGroupId, setWorkspaceMenuGroupId] = useState<string | null>(null);
@@ -778,18 +787,111 @@ export default function App() {
     dropPreviewRef.current = { groupId, zone, element };
   }, []);
 
-  useEffect(() => {
-    if (!mobileRuntime) return;
-    const active = isTaskRunning || anyQALoading;
-    const label = anyQALoading
-      ? (activeQAGeneration?.label || "正在生成 AI 回答")
-      : (activeTask ? taskStatusMessage(activeTask) : "正在生成学习内容");
-    void CodeCourseNative.setGenerationActive({ active, label }).catch(() => undefined);
-  }, [activeQAGeneration?.label, activeTask, anyQALoading, isTaskRunning, mobileRuntime]);
 
   useEffect(() => {
     document.documentElement.classList.remove("app-starting");
   }, []);
+
+  // Register permission notice handler on Android provider
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    let disposed = false;
+    getCodeCourseProvider().then((provider) => {
+      if (disposed) return;
+      const p = provider as {
+        setPermissionNoticeHandler?(handler: (notice: PermissionNotice) => void): void;
+      };
+      if (p.setPermissionNoticeHandler) {
+        p.setPermissionNoticeHandler((notice: PermissionNotice) => {
+          if (disposed) return;
+          if (notice) {
+            setPermissionNotice(notice);
+          } else {
+            setPermissionNotice(null);
+          }
+        });
+      }
+    });
+    return () => { disposed = true; };
+  }, [mobileRuntime]);
+
+  // Handle "go to settings" and re-check after resume
+  const handleOpenNotificationSettings = useCallback(() => {
+    void CodeCourseNative.openNotificationSettings().catch(() => undefined);
+    void getCodeCourseProvider().then((provider) => {
+      const p = provider as { invalidatePermissionCache?: () => void };
+      p.invalidatePermissionCache?.();
+    });
+    setPermissionNotice(null);
+  }, []);
+
+  const handleDismissPermissionNotice = useCallback(() => {
+    if (permissionNotice) {
+      dismissedPermissionStatusRef.current = permissionNotice.status;
+    }
+    setPermissionNotice(null);
+  }, [permissionNotice]);
+
+  // Completion navigation: listen for warm-start events and consume cold-start on init
+  const navigateToCompletion = useCallback(async (projectId: number, taskId: number, _taskType: string, outputPath: string) => {
+    const navKey = `${taskId}:${outputPath}`;
+    setCompletionNavHandled((prev) => {
+      if (prev.has(navKey)) return prev;
+      const next = new Set(prev);
+      next.add(navKey);
+      return next;
+    });
+
+    // Load project if not already open
+    if (!project || project.id !== projectId) {
+      try {
+        const p = await getProject(projectId);
+        void openProject(p);
+      } catch {
+        setToast("无法打开项目");
+        return;
+      }
+    }
+
+    // Open output file
+    if (outputPath) {
+      try {
+        await getCourseContent(projectId, outputPath);
+        openCourseInActiveGroup(projectId, outputPath);
+      } catch {
+        setToast("生成完成，但无法打开文件：" + outputPath);
+      }
+    }
+  }, [project]);
+
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    let disposed = false;
+
+    // Cold start: consume pending navigation
+    void CodeCourseNative.consumePendingCompletionNavigation().then((pending) => {
+      if (disposed || !pending) return;
+      navigateToCompletion(pending.projectId, pending.taskId, pending.taskType, pending.outputPath);
+    }).catch(() => undefined);
+
+    // Warm start: listen for event
+    function handleCompletionNav(event: Event) {
+      if (disposed) return;
+      const detail = (event as CustomEvent<{
+        projectId?: number; taskId?: number; taskType?: string; outputPath?: string;
+      }>).detail;
+      if (!detail || !detail.projectId || !detail.taskId) return;
+      navigateToCompletion(
+        detail.projectId, detail.taskId,
+        detail.taskType ?? "", detail.outputPath ?? "",
+      );
+    }
+    window.addEventListener("codecourseCompletionNavigation", handleCompletionNav);
+    return () => {
+      disposed = true;
+      window.removeEventListener("codecourseCompletionNavigation", handleCompletionNav);
+    };
+  }, [mobileRuntime, navigateToCompletion]);
 
   useEffect(() => {
     if (!mobileRuntime) return;
@@ -2619,6 +2721,25 @@ export default function App() {
       }
     } else if (nextTask.status === "failed") {
       setTaskMessage(`生成失败：${nextTask.error_message ?? "未知错误"}`);
+    } else if (nextTask.status === "cancelled") {
+      setTaskMessage("生成已取消");
+    }
+  }
+
+  async function handleRetryTask() {
+    if (!project || !activeTask) return;
+    if (!canRetry(activeTask.status)) return;
+    if (retryingTaskId === activeTask.id) return;
+
+    setRetryingTaskId(activeTask.id);
+    setError("");
+    try {
+      const retried = await retryGenerationTask(project.id, activeTask.id);
+      void trackTask(retried);
+    } catch (err) {
+      setError(`重试失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setRetryingTaskId(null);
     }
   }
 
@@ -4086,6 +4207,21 @@ export default function App() {
           </div>
         </div>
       ) : null}
+      {permissionNotice && dismissedPermissionStatusRef.current !== permissionNotice.status ? (
+        <div className="permission-notice-banner">
+          <span>{permissionNotice.message}</span>
+          <div className="permission-notice-actions">
+            {permissionNotice.showSettingsAction ? (
+              <button className="secondary-button" onClick={handleOpenNotificationSettings}>
+                前往通知设置
+              </button>
+            ) : null}
+            <button className="icon-button" onClick={handleDismissPermissionNotice} title="关闭">
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      ) : null}
       <TaskFeedback
         error={error}
         busy={showBusy}
@@ -4359,7 +4495,17 @@ export default function App() {
                   </>
                 ) : null}
               </div>
-              <div className={`drawer-task-status ${activeTask?.status === "failed" ? "failed" : ""}`}>{taskMessage || "准备好后即可生成"}</div>
+              <div className={`drawer-task-status ${activeTask?.status === "failed" || activeTask?.status === "cancelled" ? "failed" : ""}`}>
+                {taskMessage || "准备好后即可生成"}
+                {activeTask && canRetry(activeTask.status) ? (
+                  <button className="primary-button" style={{ marginLeft: 8 }}
+                    onClick={handleRetryTask}
+                    disabled={retryingTaskId === activeTask.id}>
+                    <RefreshCw size={14} className={retryingTaskId === activeTask.id ? "spin" : ""} />
+                    继续生成
+                  </button>
+                ) : null}
+              </div>
             </div>
           </section>
         </div>
