@@ -845,3 +845,117 @@ export function listKnowledgeLinks(projectId: number, sourceType?: string, sourc
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return request<KnowledgeLink[]>(`/projects/${projectId}/knowledge/links${suffix}`);
 }
+
+// ---- Personalization Types ----
+
+export type PersonalizationConcept = {
+  id: string;
+  conceptKey: string;
+  canonicalName: string;
+  displayName: string;
+  domain: string;
+  conceptType: "language_feature" | "framework_api" | "pattern" | "tool" | "theory" | "project_symbol" | string;
+  aliases: string[];
+  difficulty: number;
+  createdAt: string;
+};
+
+export type PersonalizationScope = {
+  type: "global" | "project" | "session";
+  id: string;
+};
+
+export type PersonalizationMastery = {
+  id: string;
+  conceptId: string;
+  scope: PersonalizationScope;
+  knownEvidence: number;
+  unknownEvidence: number;
+  mastery: number;
+  uncertainty: number;
+  manualStatus: "known" | "unknown" | null;
+  sequence: number;
+  lastSeenAt: string;
+  updatedAt: string;
+};
+
+export type PersonalizationEvent = {
+  eventId: string;
+  idempotencyKey: string;
+  schemaVersion: number;
+  conceptId: string;
+  scope: PersonalizationScope;
+  eventType: string;
+  direction: "known" | "unknown" | "neutral";
+  strength: number;
+  source: "explicit_user" | "system_inference" | "model_inference" | string;
+  targetEventId?: string;
+  evidenceText?: string;
+  sessionId?: string;
+  qaRecordId?: number;
+  isVoided: boolean;
+  createdAt: string;
+};
+
+export type PersonalizationMarkResult = {
+  event: PersonalizationEvent;
+  mastery: PersonalizationMastery;
+  idempotent: boolean;
+};
+
+// ---- Personalization API ----
+
+export function listConcepts(projectId: number, query?: string): Promise<PersonalizationConcept[]> {
+  const params = query ? `?query=${encodeURIComponent(query)}` : "";
+  return request<PersonalizationConcept[]>(`/projects/${projectId}/personalization/concepts${params}`);
+}
+
+export function createConcept(projectId: number, payload: { conceptKey: string; canonicalName: string; displayName: string; domain?: string; conceptType?: string; aliases?: string[]; difficulty?: number }): Promise<PersonalizationConcept> {
+  return request<PersonalizationConcept>(`/projects/${projectId}/personalization/concepts`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getMasteryBatch(projectId: number, conceptIds: string[]): Promise<Record<string, PersonalizationMastery>> {
+  const ids = conceptIds.map(encodeURIComponent).join(",");
+  return request<Record<string, PersonalizationMastery>>(`/projects/${projectId}/personalization/mastery?concept_ids=${ids}`);
+}
+
+export function markConceptKnown(projectId: number, conceptId: string, idempotencyKey: string, evidenceText?: string): Promise<PersonalizationMarkResult> {
+  return request<PersonalizationMarkResult>(`/projects/${projectId}/personalization/mark-known`, {
+    method: "POST",
+    body: JSON.stringify({ conceptId, idempotencyKey, evidenceText }),
+  });
+}
+
+export function markConceptUnknown(projectId: number, conceptId: string, idempotencyKey: string, evidenceText?: string): Promise<PersonalizationMarkResult> {
+  return request<PersonalizationMarkResult>(`/projects/${projectId}/personalization/mark-unknown`, {
+    method: "POST",
+    body: JSON.stringify({ conceptId, idempotencyKey, evidenceText }),
+  });
+}
+
+export function clearConceptOverride(projectId: number, conceptId: string, idempotencyKey: string): Promise<PersonalizationMarkResult> {
+  return request<PersonalizationMarkResult>(`/projects/${projectId}/personalization/clear-override`, {
+    method: "POST",
+    body: JSON.stringify({ conceptId, idempotencyKey }),
+  });
+}
+
+export function getPersonalizationEvents(projectId: number, conceptId: string): Promise<PersonalizationEvent[]> {
+  return request<PersonalizationEvent[]>(`/projects/${projectId}/personalization/events/${encodeURIComponent(conceptId)}`);
+}
+
+export function voidPersonalizationEvent(projectId: number, eventId: string, conceptId: string, idempotencyKey: string, reason?: string): Promise<PersonalizationEvent> {
+  return request<PersonalizationEvent>(`/projects/${projectId}/personalization/events/${encodeURIComponent(eventId)}/void`, {
+    method: "POST",
+    body: JSON.stringify({ conceptId, idempotencyKey, reason }),
+  });
+}
+
+export function resetPersonalizationProfile(projectId: number): Promise<{ status: string; deletedMasteryCount: number; deletedEventCount: number }> {
+  return request<{ status: string; deletedMasteryCount: number; deletedEventCount: number }>(`/projects/${projectId}/personalization/profile`, {
+    method: "DELETE",
+  });
+}

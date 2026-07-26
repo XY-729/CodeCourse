@@ -24,7 +24,10 @@ import type {
   CourseFile, GenerationTask, HighlightRecord, KnowledgeEdge, KnowledgeGraph, KnowledgeLink, KnowledgeNode,
   LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, Project, ProjectIndexStatus, ProjectSearchResult,
   QAAskPayload, QARecord, TreeNode,
+  PersonalizationConcept, PersonalizationMastery, PersonalizationEvent,
 } from "../../api/client";
+
+type ScopeTypeStr = "global" | "project" | "session";
 import promptDefaults from "./default-prompts.json";
 import { MobileDatabase } from "./database";
 import {
@@ -537,6 +540,39 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if ((match = path.match(/^\/projects\/(\d+)\/knowledge\/edges\/(\d+)$/))) {
       if (method === "PUT") return this.updateEdge(Number(match[1]), Number(match[2]), body) as Promise<T>;
       if (method === "DELETE") return this.deleteById("knowledge_edges", Number(match[2])) as Promise<T>;
+    }
+
+    // Personalization
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/concepts$/))) {
+      if (method === "GET") return this.listPersonalizationConcepts(Number(match[1]), url.searchParams.get("query") || undefined) as Promise<T>;
+      if (method === "POST") return this.createPersonalizationConcept(Number(match[1]), body) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/mastery$/))) {
+      return this.getPersonalizationMasteryBatch(Number(match[1]), (url.searchParams.get("concept_ids") || "").split(",").filter(Boolean)) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/mark-known$/)) && method === "POST") {
+      if (body && typeof body === "object" && "conceptId" in body && "idempotencyKey" in body) {
+        return this.markConceptKnown(Number(match[1]), String(body.conceptId), String(body.idempotencyKey), typeof body.evidenceText === "string" ? body.evidenceText : undefined) as Promise<T>;
+      }
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/mark-unknown$/)) && method === "POST") {
+      if (body && typeof body === "object" && "conceptId" in body && "idempotencyKey" in body) {
+        return this.markConceptUnknown(Number(match[1]), String(body.conceptId), String(body.idempotencyKey), typeof body.evidenceText === "string" ? body.evidenceText : undefined) as Promise<T>;
+      }
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/clear-override$/)) && method === "POST") {
+      if (body && typeof body === "object" && "conceptId" in body && "idempotencyKey" in body) {
+        return this.clearConceptOverride(Number(match[1]), String(body.conceptId), String(body.idempotencyKey)) as Promise<T>;
+      }
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/events\/([^/]+)$/)) && method === "GET") {
+      return this.getPersonalizationEvents(Number(match[1]), decodeURIComponent(match[2])) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/events\/([^/]+)\/void$/)) && method === "POST") {
+      return this.voidPersonalizationEvent(Number(match[1]), decodeURIComponent(match[2]), body?.conceptId || "", body?.idempotencyKey || `void:${decodeURIComponent(match[2])}:${Date.now()}`, body?.reason) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/profile$/)) && method === "DELETE") {
+      return this.resetPersonalizationProfile(Number(match[1])) as Promise<T>;
     }
     throw new Error(`移动端尚未实现此操作：${method} ${path}`);
   }
@@ -1410,4 +1446,251 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async updateEdge(projectId: number, edgeId: number, payload: Record<string, unknown>): Promise<KnowledgeEdge> { const row = (await db.query<Row>("SELECT * FROM knowledge_edges WHERE project_id=? AND id=?", [projectId, edgeId]))[0]; await db.run("UPDATE knowledge_edges SET relation_type=?,label=?,updated_at=? WHERE project_id=? AND id=?", [payload.relation_type ?? row.relation_type, payload.label ?? row.label, now(), projectId, edgeId]); return this.edgeFromRow((await db.query<Row>("SELECT * FROM knowledge_edges WHERE id=?", [edgeId]))[0]); }
   private async listLinks(projectId: number, params: URLSearchParams): Promise<KnowledgeLink[]> { let sql = "SELECT * FROM knowledge_links WHERE project_id=?"; const values: unknown[] = [projectId]; if (params.get("source_type")) { sql += " AND source_type=?"; values.push(params.get("source_type")); } if (params.get("source_path")) { sql += " AND source_path=?"; values.push(params.get("source_path")); } return db.query<Row>(sql, values) as Promise<KnowledgeLink[]>; }
   private async deleteById(table: "highlights" | "knowledge_edges", id: number): Promise<{ deleted: boolean; id: number }> { await db.run(`DELETE FROM ${table} WHERE id=?`, [id]); return { deleted: true, id }; }
+
+  // ---- Personalization Methods ----
+  // Mirrors Python backend. Evidence deltas match TypeScript AUTO_EVIDENCE_DELTAS.
+
+  private scope(projectId: number) { return { type: "project" as const, id: String(projectId) }; }
+
+  private conceptFromRow(r: Row): PersonalizationConcept {
+    return {
+      id: String(r.id),
+      conceptKey: String(r.concept_key || `global:${r.domain}:${r.canonical_name}`),
+      canonicalName: String(r.canonical_name),
+      displayName: String(r.display_name),
+      domain: String(r.domain),
+      conceptType: String(r.concept_type) as PersonalizationConcept["conceptType"],
+      aliases: JSON.parse(String(r.aliases_json || "[]")) as string[],
+      difficulty: Number(r.difficulty),
+      createdAt: String(r.created_at),
+    };
+  }
+
+  private masteryFromRow(r: Row, scopeType: string, scopeId: string): PersonalizationMastery {
+    return {
+      id: String(r.id), conceptId: String(r.concept_id),
+      scope: { type: scopeType as unknown as ScopeTypeStr, id: scopeId },
+      knownEvidence: Number(r.known_evidence), unknownEvidence: Number(r.unknown_evidence),
+      mastery: Number(r.mastery), uncertainty: Number(r.uncertainty),
+      manualStatus: (r.manual_status as "known" | "unknown" | null) ?? null,
+      sequence: Number(r.sequence ?? 0),
+      lastSeenAt: String(r.last_seen_at), updatedAt: String(r.updated_at),
+    };
+  }
+
+  private eventFromRow(r: Row): PersonalizationEvent {
+    return {
+      eventId: String(r.id), idempotencyKey: String(r.idempotency_key),
+      schemaVersion: Number(r.schema_version), conceptId: String(r.concept_id),
+      scope: { type: String(r.scope_type) as unknown as ScopeTypeStr, id: String(r.scope_id) },
+      eventType: String(r.event_type), direction: String(r.direction) as "known" | "unknown" | "neutral",
+      strength: Number(r.strength), source: String(r.source) as "explicit_user" | "system_inference" | "model_inference",
+      targetEventId: r.target_event_id ? String(r.target_event_id) : undefined,
+      evidenceText: r.evidence_text ? String(r.evidence_text) : undefined,
+      sessionId: r.session_id ? String(r.session_id) : undefined,
+      qaRecordId: r.qa_record_id ? Number(r.qa_record_id) : undefined,
+      isVoided: Boolean(r.is_voided), createdAt: String(r.created_at),
+    };
+  }
+
+  private autoDeltas: Record<string, [number, number]> = {
+    asked_definition: [0, 3], asked_clarification: [0, 2], used_correctly: [1, 0],
+    opened_explanation: [0, 1], completed_exercise: [3, 0], saved_learning_anchor: [2, 0],
+    manual_override_known: [0, 0], manual_override_unknown: [0, 0],
+    manual_override_cleared: [0, 0], event_voided: [0, 0],
+  };
+
+  private calc(known: number, unknown: number) {
+    const total = known + unknown;
+    return { mastery: total > 0 ? known / total : 0.5, uncertainty: total > 0 ? 1 / Math.sqrt(total) : 0.7071 };
+  }
+
+  private async replayEvents(conceptId: string, scopeType: string, scopeId: string) {
+    const rows = await db.query<Row>(
+      "SELECT * FROM learning_events WHERE concept_id=? AND scope_type=? AND scope_id=? AND is_voided=0 ORDER BY created_at ASC, id ASC",
+      [conceptId, scopeType, scopeId],
+    );
+    const voidedIds = new Set(rows.filter(e => e.event_type === "event_voided" && e.target_event_id).map(e => String(e.target_event_id)));
+    const active = rows.filter(e => !voidedIds.has(String(e.id))).sort((a, b) => {
+      const dc = String(a.created_at).localeCompare(String(b.created_at));
+      return dc !== 0 ? dc : String(a.id).localeCompare(String(b.id));
+    });
+    let known = 1, unknown = 1, manual: string | null = null;
+    for (const e of active) {
+      const et = String(e.event_type);
+      if (et === "manual_override_known") { manual = "known"; continue; }
+      if (et === "manual_override_unknown") { manual = "unknown"; continue; }
+      if (et === "manual_override_cleared") { manual = null; continue; }
+      if (et === "event_voided") continue;
+      if (manual !== null) continue;
+      const d = this.autoDeltas[et] || [0, 0];
+      let dk = d[0], du = d[1];
+      if (String(e.source) !== "explicit_user") { dk = Math.min(dk, 1); du = Math.min(du, 1); }
+      known += dk * Number(e.strength); unknown += du * Number(e.strength);
+    }
+    return { known: Math.max(1, known), unknown: Math.max(1, unknown), manualStatus: manual as "known" | "unknown" | null };
+  }
+
+  private async updateProjection(conceptId: string, scopeType: string, scopeId: string, stamp: string): Promise<PersonalizationMastery> {
+    const { known, unknown, manualStatus } = await this.replayEvents(conceptId, scopeType, scopeId);
+    const { mastery, uncertainty } = this.calc(known, unknown);
+    const existing = (await db.query<Row>("SELECT * FROM concept_mastery WHERE concept_id=? AND scope_type=? AND scope_id=?", [conceptId, scopeType, scopeId]))[0];
+    const id = existing ? String(existing.id) : crypto.randomUUID();
+    const seq = (existing ? Number(existing.sequence ?? 0) : 0) + 1;
+    await db.run(
+      `INSERT INTO concept_mastery (id,concept_id,scope_type,scope_id,known_evidence,unknown_evidence,mastery,uncertainty,manual_status,sequence,last_seen_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(concept_id,scope_type,scope_id) DO UPDATE SET known_evidence=excluded.known_evidence,unknown_evidence=excluded.unknown_evidence,mastery=excluded.mastery,uncertainty=excluded.uncertainty,manual_status=excluded.manual_status,sequence=excluded.sequence,last_seen_at=excluded.last_seen_at,updated_at=excluded.updated_at`,
+      [id, conceptId, scopeType, scopeId, known, unknown, mastery, uncertainty, manualStatus, seq, stamp, stamp],
+    );
+    return { id, conceptId, scope: { type: scopeType as unknown as ScopeTypeStr, id: scopeId }, knownEvidence: known, unknownEvidence: unknown, mastery, uncertainty, manualStatus, sequence: seq, lastSeenAt: stamp, updatedAt: stamp };
+  }
+
+  async listPersonalizationConcepts(projectId: number, query?: string): Promise<PersonalizationConcept[]> {
+    await db.init();
+    const rows = query
+      ? await db.query<Row>("SELECT * FROM concepts WHERE canonical_name LIKE ? OR display_name LIKE ? OR aliases_json LIKE ? ORDER BY canonical_name LIMIT 50", [`%${query}%`, `%${query}%`, `%${query}%`])
+      : await db.query<Row>("SELECT * FROM concepts ORDER BY domain, canonical_name");
+    return rows.map(r => this.conceptFromRow(r));
+  }
+
+  async createPersonalizationConcept(projectId: number, payload: { conceptKey: string; canonicalName: string; displayName: string; domain?: string; conceptType?: string; aliases?: string[]; difficulty?: number }): Promise<PersonalizationConcept> {
+    await db.init();
+    const stamp = now();
+    const existing = (await db.query<Row>("SELECT * FROM concepts WHERE concept_key=?", [payload.conceptKey]))[0];
+    if (existing) return this.conceptFromRow(existing);
+    const id = crypto.randomUUID();
+    await db.run(
+      "INSERT INTO concepts (id,concept_key,canonical_name,display_name,domain,concept_type,aliases_json,difficulty,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+      [id, payload.conceptKey, payload.canonicalName, payload.displayName || payload.canonicalName, payload.domain || "general", payload.conceptType || "theory", JSON.stringify(payload.aliases || []), payload.difficulty ?? 0.5, stamp],
+    );
+    return this.conceptFromRow((await db.query<Row>("SELECT * FROM concepts WHERE id=?", [id]))[0]);
+  }
+
+  async getPersonalizationMasteryBatch(projectId: number, conceptIds: string[]): Promise<Record<string, PersonalizationMastery>> {
+    await db.init();
+    if (!conceptIds.length) return {};
+    const { type: st, id: si } = this.scope(projectId);
+    const ph = conceptIds.map(() => "?").join(",");
+    const rows = await db.query<Row>(`SELECT * FROM concept_mastery WHERE concept_id IN (${ph}) AND scope_type=? AND scope_id=?`, [...conceptIds, st, si]);
+    const result: Record<string, PersonalizationMastery> = {};
+    for (const r of rows) result[String(r.concept_id)] = this.masteryFromRow(r, st, si);
+    return result;
+  }
+
+  private async atomicFeedback(projectId: number, conceptId: string, eventType: "manual_override_known" | "manual_override_unknown" | "manual_override_cleared", direction: "known" | "unknown" | "neutral", idempotencyKey: string, evidenceText?: string): Promise<{ event: PersonalizationEvent; mastery: PersonalizationMastery; idempotent: boolean }> {
+    await db.init();
+    const { type: st, id: si } = this.scope(projectId);
+
+    return db.transaction(async () => {
+      const stamp = now();
+      const concept = (await db.queryInTx<Row>("SELECT * FROM concepts WHERE id=?", [conceptId]))[0];
+      if (!concept) throw new Error("Concept not found");
+
+      // Idempotency check
+      const existingEvt = (await db.queryInTx<Row>("SELECT * FROM learning_events WHERE idempotency_key=?", [idempotencyKey]))[0];
+      if (existingEvt) {
+        const m = (await db.queryInTx<Row>("SELECT * FROM concept_mastery WHERE concept_id=? AND scope_type=? AND scope_id=?", [conceptId, st, si]))[0];
+        return {
+          event: this.eventFromRow(existingEvt),
+          mastery: m ? this.masteryFromRow(m, st, si) : { id: "", conceptId, scope: { type: st as unknown as ScopeTypeStr, id: si }, knownEvidence: 1, unknownEvidence: 1, mastery: 0.5, uncertainty: 0.7071, manualStatus: null, sequence: 0, lastSeenAt: stamp, updatedAt: stamp },
+          idempotent: true,
+        };
+      }
+
+      // Insert event
+      const eventId = crypto.randomUUID();
+      await db.runInTx(
+        "INSERT INTO learning_events (id,idempotency_key,schema_version,concept_id,scope_type,scope_id,event_type,direction,strength,source,evidence_text,created_at) VALUES (?,?,1,?,?,?,?,?,1.0,'explicit_user',?,?)",
+        [eventId, idempotencyKey, conceptId, st, si, eventType, direction, evidenceText || null, stamp],
+      );
+
+      // Read stable event sequence and replay projection
+      const rows = await db.queryInTx<Row>(
+        "SELECT * FROM learning_events WHERE concept_id=? AND scope_type=? AND scope_id=? AND is_voided=0 ORDER BY created_at ASC, id ASC",
+        [conceptId, st, si],
+      );
+      const voidedIds = new Set(rows.filter(e => e.event_type === "event_voided" && e.target_event_id).map(e => String(e.target_event_id)));
+      const active = rows.filter(e => !voidedIds.has(String(e.id))).sort((a, b) => {
+        const dc = String(a.created_at).localeCompare(String(b.created_at));
+        return dc !== 0 ? dc : String(a.id).localeCompare(String(b.id));
+      });
+      let known = 1, unknown = 1, manual: string | null = null;
+      for (const e of active) {
+        const et = String(e.event_type);
+        if (et === "manual_override_known") { manual = "known"; continue; }
+        if (et === "manual_override_unknown") { manual = "unknown"; continue; }
+        if (et === "manual_override_cleared") { manual = null; continue; }
+        if (et === "event_voided") continue;
+        if (manual !== null) continue;
+        const d = this.autoDeltas[et] || [0, 0];
+        let dk = d[0], du = d[1];
+        if (String(e.source) !== "explicit_user") { dk = Math.min(dk, 1); du = Math.min(du, 1); }
+        known += dk * Number(e.strength); unknown += du * Number(e.strength);
+      }
+      known = Math.max(1, known); unknown = Math.max(1, unknown);
+      const total = known + unknown;
+      const mst = total > 0 ? known / total : 0.5;
+      const unc = total > 0 ? 1 / Math.sqrt(total) : 0.7071;
+
+      // UPSERT projection
+      const existingM = (await db.queryInTx<Row>("SELECT * FROM concept_mastery WHERE concept_id=? AND scope_type=? AND scope_id=?", [conceptId, st, si]))[0];
+      const masteryId = existingM ? String(existingM.id) : crypto.randomUUID();
+      const seq = (existingM ? Number(existingM.sequence ?? 0) : 0) + 1;
+      await db.runInTx(
+        "INSERT INTO concept_mastery (id,concept_id,scope_type,scope_id,known_evidence,unknown_evidence,mastery,uncertainty,manual_status,sequence,last_seen_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(concept_id,scope_type,scope_id) DO UPDATE SET known_evidence=excluded.known_evidence,unknown_evidence=excluded.unknown_evidence,mastery=excluded.mastery,uncertainty=excluded.uncertainty,manual_status=excluded.manual_status,sequence=excluded.sequence,last_seen_at=excluded.last_seen_at,updated_at=excluded.updated_at",
+        [masteryId, conceptId, st, si, known, unknown, mst, unc, manual, seq, stamp, stamp],
+      );
+
+      const mastery: PersonalizationMastery = { id: masteryId, conceptId, scope: { type: st as unknown as ScopeTypeStr, id: si }, knownEvidence: known, unknownEvidence: unknown, mastery: mst, uncertainty: unc, manualStatus: manual as "known" | "unknown" | null, sequence: seq, lastSeenAt: stamp, updatedAt: stamp };
+      return {
+        event: { eventId, idempotencyKey, schemaVersion: 1, conceptId, scope: { type: st as unknown as ScopeTypeStr, id: si }, eventType, direction, strength: 1.0, source: "explicit_user" as const, isVoided: false, createdAt: stamp, evidenceText: evidenceText || undefined },
+        mastery,
+        idempotent: false,
+      };
+    });
+  }
+
+  async markConceptKnown(projectId: number, conceptId: string, idempotencyKey: string, evidenceText?: string): Promise<{ event: PersonalizationEvent; mastery: PersonalizationMastery; idempotent: boolean }> {
+    return this.atomicFeedback(projectId, conceptId, "manual_override_known", "known", idempotencyKey, evidenceText);
+  }
+  async markConceptUnknown(projectId: number, conceptId: string, idempotencyKey: string, evidenceText?: string): Promise<{ event: PersonalizationEvent; mastery: PersonalizationMastery; idempotent: boolean }> {
+    return this.atomicFeedback(projectId, conceptId, "manual_override_unknown", "unknown", idempotencyKey, evidenceText);
+  }
+  async clearConceptOverride(projectId: number, conceptId: string, idempotencyKey: string): Promise<{ event: PersonalizationEvent; mastery: PersonalizationMastery; idempotent: boolean }> {
+    return this.atomicFeedback(projectId, conceptId, "manual_override_cleared", "neutral", idempotencyKey);
+  }
+
+  async getPersonalizationEvents(projectId: number, conceptId: string): Promise<PersonalizationEvent[]> {
+    await db.init();
+    const { type: st, id: si } = this.scope(projectId);
+    const rows = await db.query<Row>("SELECT * FROM learning_events WHERE concept_id=? AND scope_type=? AND scope_id=? AND is_voided=0 ORDER BY created_at ASC, id ASC", [conceptId, st, si]);
+    return rows.map(r => this.eventFromRow(r));
+  }
+
+  async voidPersonalizationEvent(projectId: number, eventId: string, conceptId: string, idempotencyKey: string, reason?: string): Promise<PersonalizationEvent> {
+    await db.init();
+    const { type: st, id: si } = this.scope(projectId);
+    const stamp = now();
+    const compensationId = crypto.randomUUID();
+    await db.run(
+      "INSERT INTO learning_events (id,idempotency_key,schema_version,concept_id,scope_type,scope_id,event_type,direction,strength,source,target_event_id,evidence_text,created_at) VALUES (?,?,1,?,?,?,?,?,1.0,'explicit_user',?,?,?)",
+      [compensationId, idempotencyKey, conceptId, st, si, "event_voided", "neutral", eventId, reason || "User requested undo", stamp],
+    );
+    await this.updateProjection(conceptId, st, si, stamp);
+    return { eventId: compensationId, idempotencyKey, schemaVersion: 1, conceptId, scope: { type: st as unknown as ScopeTypeStr, id: si }, eventType: "event_voided", direction: "neutral", strength: 1.0, source: "explicit_user", targetEventId: eventId, evidenceText: reason, isVoided: false, createdAt: stamp };
+  }
+
+  async resetPersonalizationProfile(projectId: number): Promise<{ status: string; deletedMasteryCount: number; deletedEventCount: number }> {
+    await db.init();
+    const { type: st, id: si } = this.scope(projectId);
+    // Physical deletion for privacy reset
+    const events = await db.query<Row>("SELECT COUNT(*) as c FROM learning_events WHERE scope_type=? AND scope_id=?", [st, si]);
+    const eventCount = Number(events[0]?.c ?? 0);
+    const mastery = await db.query<Row>("SELECT COUNT(*) as c FROM concept_mastery WHERE scope_type=? AND scope_id=?", [st, si]);
+    const masteryCount = Number(mastery[0]?.c ?? 0);
+    await db.run("DELETE FROM learning_events WHERE scope_type=? AND scope_id=?", [st, si]);
+    await db.run("DELETE FROM concept_mastery WHERE scope_type=? AND scope_id=?", [st, si]);
+    return { status: "ok", deletedMasteryCount: masteryCount, deletedEventCount: eventCount };
+  }
 }

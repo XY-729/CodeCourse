@@ -1,0 +1,149 @@
+{
+  "description": "Golden test vectors for cross-platform consistency. Both TypeScript and Python implementations must produce identical results within epsilon=1e-10 for mastery/uncertainty, exact match for integers.",
+  "version": 2,
+  "epsilon": 1e-10,
+  "vectors": [
+    {
+      "id": "v01_empty",
+      "name": "empty events — neutral initial state",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [],
+      "expected": {"knownEvidence": 1, "unknownEvidence": 1, "mastery": 0.5, "uncertainty": 0.7071067811865476, "manualStatus": null}
+    },
+    {
+      "id": "v02_single_asked_definition",
+      "name": "one asked_definition from user",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "asked_definition", "direction": "unknown", "strength": 1.0, "source": "explicit_user"}
+      ],
+      "expected": {"knownEvidence": 1, "unknownEvidence": 4, "mastery": 0.2, "uncertainty": 0.4472135954999579, "manualStatus": null}
+    },
+    {
+      "id": "v03_mixed_auto",
+      "name": "mixed known and unknown auto evidence",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "asked_definition", "direction": "unknown", "strength": 1.0, "source": "explicit_user"},
+        {"eventType": "completed_exercise", "direction": "known", "strength": 1.0, "source": "explicit_user"},
+        {"eventType": "saved_learning_anchor", "direction": "known", "strength": 1.0, "source": "explicit_user"}
+      ],
+      "expected": {"knownEvidence": 6, "unknownEvidence": 4, "mastery": 0.6, "uncertainty": 0.31622776601683794, "manualStatus": null}
+    },
+    {
+      "id": "v04_manual_known",
+      "name": "manual_override_known does NOT change evidence",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "manual_override_known", "direction": "known", "strength": 1.0, "source": "explicit_user"}
+      ],
+      "expected": {"knownEvidence": 1, "unknownEvidence": 1, "mastery": 0.5, "uncertainty": 0.7071067811865476, "manualStatus": "known"}
+    },
+    {
+      "id": "v05_manual_unknown",
+      "name": "manual_override_unknown does NOT change evidence",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "manual_override_unknown", "direction": "unknown", "strength": 1.0, "source": "explicit_user"}
+      ],
+      "expected": {"knownEvidence": 1, "unknownEvidence": 1, "mastery": 0.5, "uncertainty": 0.7071067811865476, "manualStatus": "unknown"}
+    },
+    {
+      "id": "v06_clear_override",
+      "name": "manual_override_cleared restores auto state, evidence preserved",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "completed_exercise", "direction": "known", "strength": 1.0, "source": "explicit_user"},
+        {"eventType": "manual_override_unknown", "direction": "unknown", "strength": 1.0, "source": "explicit_user"},
+        {"eventType": "manual_override_cleared", "direction": "neutral", "strength": 1.0, "source": "explicit_user"}
+      ],
+      "expected": {"knownEvidence": 4, "unknownEvidence": 1, "mastery": 0.8, "uncertainty": 0.4472135954999579, "manualStatus": null}
+    },
+    {
+      "id": "v07_event_voided",
+      "name": "event_voided compensation excludes target event",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "asked_definition", "direction": "unknown", "strength": 1.0, "source": "explicit_user", "eventId": "e1"},
+        {"eventType": "event_voided", "direction": "neutral", "strength": 1.0, "source": "explicit_user", "targetEventId": "e1"}
+      ],
+      "expected": {"knownEvidence": 1, "unknownEvidence": 1, "mastery": 0.5, "uncertainty": 0.7071067811865476, "manualStatus": null}
+    },
+    {
+      "id": "v08_decay_known",
+      "name": "decay on known-heavy evidence brings mastery toward 0.5",
+      "initialEvidence": {"known": 11, "unknown": 1},
+      "daysSince": 365,
+      "decay": true,
+      "expectedDecay": {"masteryLessThan": 0.85, "masteryGreaterThan": 0.55}
+    },
+    {
+      "id": "v09_decay_unknown",
+      "name": "decay on unknown-heavy evidence brings mastery toward 0.5",
+      "initialEvidence": {"known": 1, "unknown": 7},
+      "daysSince": 365,
+      "decay": true,
+      "expectedDecay": {"masteryLessThan": 0.45, "masteryGreaterThan": 0.15}
+    },
+    {
+      "id": "v10_decay_symmetric",
+      "name": "symmetric evidence stays at 0.5 after decay",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "daysSince": 730,
+      "decay": true,
+      "expectedDecay": {"knownEvidence": 1, "unknownEvidence": 1, "mastery": 0.5}
+    },
+    {
+      "id": "v11_same_timestamp",
+      "name": "same createdAt, different sequence — stable sort by id",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "asked_definition", "direction": "unknown", "strength": 1.0, "source": "explicit_user", "createdAt": "2026-01-01T00:00:00Z", "eventId": "b"},
+        {"eventType": "completed_exercise", "direction": "known", "strength": 1.0, "source": "explicit_user", "createdAt": "2026-01-01T00:00:00Z", "eventId": "a"},
+        {"eventType": "saved_learning_anchor", "direction": "known", "strength": 1.0, "source": "explicit_user", "createdAt": "2026-01-01T00:00:00Z", "eventId": "c"}
+      ],
+      "expected": {"knownEvidence": 6, "unknownEvidence": 4, "mastery": 0.6, "uncertainty": 0.31622776601683794, "manualStatus": null}
+    },
+    {
+      "id": "v12_capped_inference",
+      "name": "system inference capped at ±1 even for high-delta events",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "asked_definition", "direction": "unknown", "strength": 0.8, "source": "model_inference"}
+      ],
+      "expected": {"knownEvidence": 1, "unknownEvidence": 1.8, "mastery": 0.35714285714285715, "uncertainty": 0.5976143046671968, "manualStatus": null}
+    },
+    {
+      "id": "v13_multiple_override_switch",
+      "name": "multiple override switches preserve auto evidence",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "completed_exercise", "direction": "known", "strength": 1.0, "source": "explicit_user"},
+        {"eventType": "manual_override_known", "direction": "known", "strength": 1.0, "source": "explicit_user"},
+        {"eventType": "manual_override_unknown", "direction": "unknown", "strength": 1.0, "source": "explicit_user"},
+        {"eventType": "manual_override_cleared", "direction": "neutral", "strength": 1.0, "source": "explicit_user"}
+      ],
+      "expected": {"knownEvidence": 4, "unknownEvidence": 1, "mastery": 0.8, "uncertainty": 0.4472135954999579, "manualStatus": null}
+    },
+    {
+      "id": "v14_void_nonexistent",
+      "name": "event_voided targeting non-existent event — no effect",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "saved_learning_anchor", "direction": "known", "strength": 1.0, "source": "explicit_user", "eventId": "real"},
+        {"eventType": "event_voided", "direction": "neutral", "strength": 1.0, "source": "explicit_user", "targetEventId": "nonexistent"}
+      ],
+      "expected": {"knownEvidence": 3, "unknownEvidence": 1, "mastery": 0.75, "uncertainty": 0.5, "manualStatus": null}
+    },
+    {
+      "id": "v15_duplicate_idempotent",
+      "name": "duplicate events with same idempotencyKey only count once",
+      "initialEvidence": {"known": 1, "unknown": 1},
+      "events": [
+        {"eventType": "asked_definition", "direction": "unknown", "strength": 1.0, "source": "explicit_user", "eventId": "ik-dup"},
+        {"eventType": "asked_definition", "direction": "unknown", "strength": 1.0, "source": "explicit_user", "eventId": "ik-dup"}
+      ],
+      "expected": {"knownEvidence": 1, "unknownEvidence": 4, "mastery": 0.2, "uncertainty": 0.4472135954999579, "manualStatus": null}
+    }
+  ]
+}

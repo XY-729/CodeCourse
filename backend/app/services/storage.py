@@ -215,6 +215,55 @@ class LearningState:
     updated_at: str
 
 
+@dataclass
+class Concept:
+    id: str
+    concept_key: str
+    canonical_name: str
+    display_name: str
+    domain: str
+    concept_type: str
+    aliases_json: str
+    difficulty: float
+    created_at: str
+
+
+@dataclass
+class ConceptMastery:
+    id: str
+    concept_id: str
+    scope_type: str
+    scope_id: str
+    known_evidence: float
+    unknown_evidence: float
+    mastery: float
+    uncertainty: float
+    manual_status: Optional[str]
+    sequence: int
+    last_seen_at: str
+    updated_at: str
+
+
+@dataclass
+class LearningEventRecord:
+    id: str
+    idempotency_key: str
+    schema_version: int
+    concept_id: str
+    scope_type: str
+    scope_id: str
+    event_type: str
+    direction: str
+    strength: float
+    source: str
+    target_event_id: Optional[str]
+    evidence_text: Optional[str]
+    session_id: Optional[str]
+    qa_record_id: Optional[int]
+    is_voided: bool
+    created_at: str
+
+
 def init_storage() -> None:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     REPOS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -668,6 +717,104 @@ def init_storage() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS concepts (
+                id TEXT PRIMARY KEY,
+                concept_key TEXT NOT NULL UNIQUE,
+                canonical_name TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                domain TEXT NOT NULL DEFAULT 'general',
+                concept_type TEXT NOT NULL DEFAULT 'theory',
+                aliases_json TEXT NOT NULL DEFAULT '[]',
+                difficulty REAL NOT NULL DEFAULT 0.5,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_concepts_domain
+            ON concepts(domain, canonical_name)
+            """
+        )
+        # Migration: add concept_key if upgrading from old schema
+        concept_cols = [row[1] for row in conn.execute("PRAGMA table_info(concepts)").fetchall()]
+        if "concept_key" not in concept_cols:
+            conn.execute("ALTER TABLE concepts ADD COLUMN concept_key TEXT")
+            # Backfill: generate concept_key from domain + canonical_name
+            backfill_rows = conn.execute("SELECT id, domain, canonical_name FROM concepts WHERE concept_key IS NULL").fetchall()
+            for br in backfill_rows:
+                cid = br["id"]
+                domain = br["domain"] or "general"
+                cname = br["canonical_name"] or cid
+                key = f"global:{domain}:{cname}"
+                conn.execute("UPDATE concepts SET concept_key = ? WHERE id = ?", (key, cid))
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_concepts_key ON concepts(concept_key)")
+            conn.commit()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS concept_mastery (
+                id TEXT PRIMARY KEY,
+                concept_id TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                known_evidence REAL NOT NULL DEFAULT 1,
+                unknown_evidence REAL NOT NULL DEFAULT 1,
+                mastery REAL NOT NULL DEFAULT 0.5,
+                uncertainty REAL NOT NULL DEFAULT 0.7071,
+                manual_status TEXT,
+                sequence INTEGER NOT NULL DEFAULT 0,
+                last_seen_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(concept_id, scope_type, scope_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_concept_mastery_scope
+            ON concept_mastery(scope_type, scope_id, concept_id)
+            """
+        )
+        # Migration: add sequence column
+        mastery_cols = [row[1] for row in conn.execute("PRAGMA table_info(concept_mastery)").fetchall()]
+        if "sequence" not in mastery_cols:
+            conn.execute("ALTER TABLE concept_mastery ADD COLUMN sequence INTEGER NOT NULL DEFAULT 0")
+            conn.commit()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS learning_events (
+                id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                schema_version INTEGER NOT NULL DEFAULT 1,
+                concept_id TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                strength REAL NOT NULL,
+                source TEXT NOT NULL DEFAULT 'explicit_user',
+                target_event_id TEXT,
+                evidence_text TEXT,
+                session_id TEXT,
+                qa_record_id INTEGER,
+                is_voided INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_learning_events_concept
+            ON learning_events(concept_id, scope_type, scope_id, created_at)
+            """
+        )
+        # Migration: add target_event_id
+        event_cols = [row[1] for row in conn.execute("PRAGMA table_info(learning_events)").fetchall()]
+        if "target_event_id" not in event_cols:
+            conn.execute("ALTER TABLE learning_events ADD COLUMN target_event_id TEXT")
+            conn.commit()
         conn.commit()
 
 
@@ -984,6 +1131,8 @@ def delete_project(project_id: int) -> bool:
         for anchor_id in anchor_ids:
             conn.execute("DELETE FROM learning_anchors_fts WHERE anchor_id = ?", (anchor_id,))
         conn.execute("DELETE FROM learning_anchors WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM learning_events WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM concept_mastery WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM document_terms WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_links WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_edges WHERE project_id = ?", (project_id,))
@@ -2857,3 +3006,282 @@ def save_llm_settings(provider: str, base_url: str, model: str, enabled: bool, a
     elif api_key is not None and api_key.strip():
         set_setting("llm.api_key", api_key.strip())
     return get_llm_settings()
+
+
+# ---- Personalization: Concepts ----
+
+def _row_to_concept(row: sqlite3.Row) -> Concept:
+    return Concept(
+        id=row["id"],
+        concept_key=row["concept_key"] if "concept_key" in row.keys() else f"global:{row['domain']}:{row['canonical_name']}",
+        canonical_name=row["canonical_name"],
+        display_name=row["display_name"],
+        domain=row["domain"],
+        concept_type=row["concept_type"],
+        aliases_json=row["aliases_json"],
+        difficulty=float(row["difficulty"]),
+        created_at=row["created_at"],
+    )
+
+
+def upsert_concept(concept_id: str, concept_key: str, canonical_name: str, display_name: str, domain: str,
+                   concept_type: str, aliases_json: str, difficulty: float) -> Concept:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        # Check for existing by concept_key first (idempotent)
+        existing = conn.execute("SELECT * FROM concepts WHERE concept_key = ?", (concept_key,)).fetchone()
+        if existing:
+            row = existing
+        else:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO concepts (id, concept_key, canonical_name, display_name, domain, concept_type, aliases_json, difficulty, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (concept_id, concept_key, canonical_name, display_name, domain, concept_type, aliases_json, difficulty, now),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM concepts WHERE concept_key = ?", (concept_key,)).fetchone()
+        if row is None:
+            raise RuntimeError("concept was not persisted")
+        return _row_to_concept(row)
+
+
+def get_concept(concept_id: str) -> Optional[Concept]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM concepts WHERE id = ?", (concept_id,)).fetchone()
+        return _row_to_concept(row) if row else None
+
+
+def get_concept_by_key(key: str) -> Optional[Concept]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM concepts WHERE concept_key = ?", (key,)).fetchone()
+        return _row_to_concept(row) if row else None
+
+
+def get_concept_by_canonical_name(name: str) -> Optional[Concept]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM concepts WHERE canonical_name = ?", (name,)).fetchone()
+        return _row_to_concept(row) if row else None
+
+
+def search_concepts(query: str, limit: int = 50) -> list[Concept]:
+    with _connect() as conn:
+        pattern = f"%{query}%"
+        rows = conn.execute(
+            """
+            SELECT * FROM concepts
+            WHERE canonical_name LIKE ? OR display_name LIKE ? OR aliases_json LIKE ?
+            ORDER BY canonical_name
+            LIMIT ?
+            """,
+            (pattern, pattern, pattern, limit),
+        ).fetchall()
+        return [_row_to_concept(row) for row in rows]
+
+
+def list_all_concepts() -> list[Concept]:
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM concepts ORDER BY domain, canonical_name").fetchall()
+        return [_row_to_concept(row) for row in rows]
+
+
+# ---- Personalization: Concept Mastery ----
+
+def _row_to_concept_mastery(row: sqlite3.Row) -> ConceptMastery:
+    return ConceptMastery(
+        id=row["id"],
+        concept_id=row["concept_id"],
+        scope_type=row["scope_type"],
+        scope_id=row["scope_id"],
+        known_evidence=float(row["known_evidence"]),
+        unknown_evidence=float(row["unknown_evidence"]),
+        mastery=float(row["mastery"]),
+        uncertainty=float(row["uncertainty"]),
+        manual_status=row["manual_status"],
+        sequence=int(row["sequence"]) if "sequence" in row.keys() else 0,
+        last_seen_at=row["last_seen_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def upsert_concept_mastery(mastery_id: str, concept_id: str, scope_type: str, scope_id: str,
+                           known_evidence: float, unknown_evidence: float, mastery: float,
+                           uncertainty: float, manual_status: Optional[str],
+                           sequence: int = 0) -> ConceptMastery:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO concept_mastery (id, concept_id, scope_type, scope_id, known_evidence,
+                unknown_evidence, mastery, uncertainty, manual_status, sequence, last_seen_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(concept_id, scope_type, scope_id) DO UPDATE SET
+                known_evidence = excluded.known_evidence,
+                unknown_evidence = excluded.unknown_evidence,
+                mastery = excluded.mastery,
+                uncertainty = excluded.uncertainty,
+                manual_status = excluded.manual_status,
+                sequence = excluded.sequence,
+                last_seen_at = excluded.last_seen_at,
+                updated_at = excluded.updated_at
+            """,
+            (mastery_id, concept_id, scope_type, scope_id, known_evidence, unknown_evidence,
+             mastery, uncertainty, manual_status, sequence, now, now),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM concept_mastery WHERE concept_id = ? AND scope_type = ? AND scope_id = ?",
+            (concept_id, scope_type, scope_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("concept mastery was not persisted")
+        return _row_to_concept_mastery(row)
+
+
+def get_concept_mastery(concept_id: str, scope_type: str, scope_id: str) -> Optional[ConceptMastery]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM concept_mastery WHERE concept_id = ? AND scope_type = ? AND scope_id = ?",
+            (concept_id, scope_type, scope_id),
+        ).fetchone()
+        return _row_to_concept_mastery(row) if row else None
+
+
+def get_concept_mastery_batch(concept_ids: list[str], scope_type: str, scope_id: str) -> list[ConceptMastery]:
+    if not concept_ids:
+        return []
+    with _connect() as conn:
+        placeholders = ",".join("?" for _ in concept_ids)
+        rows = conn.execute(
+            f"SELECT * FROM concept_mastery WHERE concept_id IN ({placeholders}) AND scope_type = ? AND scope_id = ?",
+            (*concept_ids, scope_type, scope_id),
+        ).fetchall()
+        return [_row_to_concept_mastery(row) for row in rows]
+
+
+def delete_concept_mastery_by_scope(scope_type: str, scope_id: str) -> int:
+    with _connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM concept_mastery WHERE scope_type = ? AND scope_id = ?",
+            (scope_type, scope_id),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
+# ---- Personalization: Learning Events ----
+
+def _row_to_learning_event(row: sqlite3.Row) -> LearningEventRecord:
+    return LearningEventRecord(
+        id=row["id"],
+        idempotency_key=row["idempotency_key"],
+        schema_version=int(row["schema_version"]),
+        concept_id=row["concept_id"],
+        scope_type=row["scope_type"],
+        scope_id=row["scope_id"],
+        event_type=row["event_type"],
+        direction=row["direction"],
+        strength=float(row["strength"]),
+        source=row["source"],
+        target_event_id=row["target_event_id"] if "target_event_id" in row.keys() else None,
+        evidence_text=row["evidence_text"],
+        session_id=row["session_id"],
+        qa_record_id=row["qa_record_id"],
+        is_voided=bool(row["is_voided"]),
+        created_at=row["created_at"],
+    )
+
+
+def insert_learning_event(event_id: str, idempotency_key: str, schema_version: int,
+                          concept_id: str, scope_type: str, scope_id: str,
+                          event_type: str, direction: str, strength: float, source: str,
+                          evidence_text: Optional[str] = None, session_id: Optional[str] = None,
+                          qa_record_id: Optional[int] = None,
+                          target_event_id: Optional[str] = None) -> LearningEventRecord:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO learning_events (id, idempotency_key, schema_version, concept_id,
+                scope_type, scope_id, event_type, direction, strength, source,
+                target_event_id, evidence_text, session_id, qa_record_id, is_voided, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+            """,
+            (event_id, idempotency_key, schema_version, concept_id, scope_type, scope_id,
+             event_type, direction, strength, source, target_event_id, evidence_text,
+             session_id, qa_record_id, now),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM learning_events WHERE id = ?", (event_id,)).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT * FROM learning_events WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("learning event was not persisted")
+        return _row_to_learning_event(row)
+
+
+def get_learning_events(concept_id: str, scope_type: str, scope_id: str) -> list[LearningEventRecord]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM learning_events
+            WHERE concept_id = ? AND scope_type = ? AND scope_id = ? AND is_voided = 0
+            ORDER BY created_at ASC, id ASC
+            """,
+            (concept_id, scope_type, scope_id),
+        ).fetchall()
+        return [_row_to_learning_event(row) for row in rows]
+
+
+def get_event_by_idempotency_key(key: str) -> Optional[LearningEventRecord]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM learning_events WHERE idempotency_key = ?",
+            (key,),
+        ).fetchone()
+        return _row_to_learning_event(row) if row else None
+
+
+def get_event_by_id(event_id: str) -> Optional[LearningEventRecord]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM learning_events WHERE id = ?", (event_id,)).fetchone()
+        return _row_to_learning_event(row) if row else None
+
+
+def get_all_learning_events_for_scope(scope_type: str, scope_id: str) -> list[LearningEventRecord]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM learning_events WHERE scope_type = ? AND scope_id = ? ORDER BY created_at ASC, id ASC",
+            (scope_type, scope_id),
+        ).fetchall()
+        return [_row_to_learning_event(row) for row in rows]
+
+
+def delete_events_by_scope(scope_type: str, scope_id: str) -> int:
+    """Physical deletion — only for privacy reset."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM learning_events WHERE scope_type = ? AND scope_id = ?",
+            (scope_type, scope_id),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
+# ---- Transaction helper ----
+
+def run_in_transaction(fn) -> object:
+    """Execute fn(conn) inside a single transaction. Returns fn's result."""
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            result = fn(conn)
+            conn.commit()
+            return result
+        except Exception:
+            conn.rollback()
+            raise

@@ -250,6 +250,65 @@ export class MobileDatabase {
       });
       this.ftsVersion = 4;
     }
+    // Personalization tables
+    await this.createPersonalizationSchema();
+  }
+
+  private async createPersonalizationSchema(): Promise<void> {
+    await CapacitorSQLite.execute({
+      database: DATABASE,
+      statements: `
+        CREATE TABLE IF NOT EXISTS concepts (
+          id TEXT PRIMARY KEY,
+          concept_key TEXT NOT NULL UNIQUE,
+          canonical_name TEXT NOT NULL,
+          display_name TEXT NOT NULL,
+          domain TEXT NOT NULL DEFAULT 'general',
+          concept_type TEXT NOT NULL DEFAULT 'theory',
+          aliases_json TEXT NOT NULL DEFAULT '[]',
+          difficulty REAL NOT NULL DEFAULT 0.5,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_concepts_domain ON concepts(domain, canonical_name);
+        CREATE TABLE IF NOT EXISTS concept_mastery (
+          id TEXT PRIMARY KEY,
+          concept_id TEXT NOT NULL,
+          scope_type TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          known_evidence REAL NOT NULL DEFAULT 1,
+          unknown_evidence REAL NOT NULL DEFAULT 1,
+          mastery REAL NOT NULL DEFAULT 0.5,
+          uncertainty REAL NOT NULL DEFAULT 0.7071,
+          manual_status TEXT,
+          sequence INTEGER NOT NULL DEFAULT 0,
+          last_seen_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(concept_id, scope_type, scope_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_concept_mastery_scope ON concept_mastery(scope_type, scope_id, concept_id);
+        CREATE TABLE IF NOT EXISTS learning_events (
+          id TEXT PRIMARY KEY,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          schema_version INTEGER NOT NULL DEFAULT 1,
+          concept_id TEXT NOT NULL,
+          scope_type TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          direction TEXT NOT NULL,
+          strength REAL NOT NULL,
+          source TEXT NOT NULL DEFAULT 'explicit_user',
+          target_event_id TEXT,
+          evidence_text TEXT,
+          session_id TEXT,
+          qa_record_id INTEGER,
+          is_voided INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_learning_events_concept ON learning_events(concept_id, scope_type, scope_id, created_at);
+      `,
+      transaction: true,
+      readonly: false,
+    });
   }
 
   async query<T extends Record<string, unknown>>(statement: string, values: unknown[] = []): Promise<T[]> {
@@ -267,6 +326,41 @@ export class MobileDatabase {
   async execute(statements: string): Promise<void> {
     await this.init();
     await CapacitorSQLite.execute({ database: DATABASE, statements, transaction: true, readonly: false });
+  }
+
+  /**
+   * Execute a callback within an explicit transaction.
+   * On error, rolls back automatically.
+   * Returns the callback's result.
+   */
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    await this.init();
+    await CapacitorSQLite.execute({ database: DATABASE, statements: "BEGIN IMMEDIATE", transaction: false, readonly: false });
+    try {
+      const result = await fn();
+      await CapacitorSQLite.execute({ database: DATABASE, statements: "COMMIT", transaction: false, readonly: false });
+      return result;
+    } catch (error) {
+      await CapacitorSQLite.execute({ database: DATABASE, statements: "ROLLBACK", transaction: false, readonly: false });
+      throw error;
+    }
+  }
+
+  /**
+   * Run a single statement within an already-open transaction.
+   * Use inside transaction() callback for multi-step atomic operations.
+   */
+  async runInTx(statement: string, values: unknown[] = []): Promise<number> {
+    const result = await CapacitorSQLite.run({ database: DATABASE, statement, values, transaction: false, readonly: false });
+    return result.changes?.lastId ?? 0;
+  }
+
+  /**
+   * Query within an already-open transaction.
+   */
+  async queryInTx<T extends Record<string, unknown>>(statement: string, values: unknown[] = []): Promise<T[]> {
+    const result = await CapacitorSQLite.query({ database: DATABASE, statement, values, readonly: false });
+    return (result.values ?? []) as T[];
   }
 
   get searchVersion(): 4 | 5 {

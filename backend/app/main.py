@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import course, files, highlights, index, knowledge, learning, projects, qa, settings, terms
+from app.api import course, files, highlights, index, knowledge, learning, personalization, projects, qa, settings, terms
 from app.services.storage import init_storage
 
 
@@ -34,6 +34,7 @@ app.include_router(index.router)
 app.include_router(knowledge.router)
 app.include_router(learning.router)
 app.include_router(terms.router)
+app.include_router(personalization.router)
 app.include_router(settings.router)
 
 
