@@ -145,8 +145,25 @@ def _event_response(e: LearningEventRecord) -> dict:
     }
 
 
+STYLE_SURVEY_COOLDOWN_SECONDS = 24 * 60 * 60
+
+
+def _survey_is_due(last_survey_at: Optional[str], now: Optional[datetime] = None) -> bool:
+    if not last_survey_at:
+        return True
+    try:
+        last = datetime.fromisoformat(last_survey_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return (current - last).total_seconds() >= STYLE_SURVEY_COOLDOWN_SECONDS
+
+
 def _preferences_response(preferences) -> dict:
-    today = datetime.now(timezone.utc).date().isoformat()
     return {
         "scope": {
             "type": preferences.scope_type,
@@ -163,10 +180,7 @@ def _preferences_response(preferences) -> dict:
         "surveyDue": bool(
             preferences.survey_enabled
             and preferences.feedback_count >= 5
-            and (
-                not preferences.last_survey_at
-                or not preferences.last_survey_at.startswith(today)
-            )
+            and _survey_is_due(preferences.last_survey_at)
         ),
         "updatedAt": preferences.updated_at,
     }

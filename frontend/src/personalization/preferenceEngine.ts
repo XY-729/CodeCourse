@@ -38,6 +38,8 @@ export const DEFAULT_LEARNER_PREFERENCES: LearnerPreferences = {
   surveyDue: false,
 };
 
+export const STYLE_SURVEY_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
 export function inferPreferenceSignals(question: string): PreferenceSignal[] {
   const text = question.toLowerCase();
   const signals: PreferenceSignal[] = [];
@@ -68,8 +70,11 @@ export function shouldOfferStyleSurvey(
 ): boolean {
   if (!preferences.surveyEnabled || preferences.feedbackCount < 5) return false;
   if (!preferences.lastSurveyAt) return true;
-  const last = new Date(preferences.lastSurveyAt);
-  return last.toDateString() !== now.toDateString();
+  const lastTimestamp = Date.parse(preferences.lastSurveyAt);
+  const nowTimestamp = now.getTime();
+  if (!Number.isFinite(lastTimestamp) || !Number.isFinite(nowTimestamp)) return true;
+  const elapsed = nowTimestamp - lastTimestamp;
+  return elapsed >= STYLE_SURVEY_COOLDOWN_MS;
 }
 
 export function buildLearnerContext(

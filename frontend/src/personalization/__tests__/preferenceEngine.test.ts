@@ -30,6 +30,11 @@ describe("shouldOfferStyleSurvey", () => {
       feedbackCount: 8,
       lastSurveyAt: "2026-07-26T01:00:00+08:00",
     }, now)).toBe(false);
+    expect(shouldOfferStyleSurvey({
+      ...DEFAULT_LEARNER_PREFERENCES,
+      feedbackCount: 8,
+      lastSurveyAt: "2026-07-25T03:59:59Z",
+    }, now)).toBe(true);
   });
 });
 

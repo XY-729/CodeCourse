@@ -95,7 +95,7 @@ import TermActionPopover from "./components/TermActionPopover";
 import { GESTURE_COMPLETE_EVENT } from "./components/GestureLayer";
 import type { GesturePath } from "./gestures/GestureDrawer";
 import { recognizeGesture } from "./gestures/GestureRecognizer";
-import { normalizeTerm, scoreTermLinks, selectTopTerms } from "./personalization";
+import { normalizeTerm, scoreTermLinks, selectTopTerms, shouldOfferStyleSurvey } from "./personalization";
 import type { ConceptMastery, TermCandidate } from "./personalization";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
 import { getCodeCourseProvider } from "./platform/provider";
@@ -816,9 +816,7 @@ export default function App() {
     let cancelled = false;
     void getLearnerPreferences(project.id).then((preferences) => {
       if (cancelled) return;
-      const alreadyAskedToday = preferences.lastSurveyAt
-        && new Date(preferences.lastSurveyAt).toDateString() === new Date().toDateString();
-      setStyleSurveyDue(Boolean(preferences.surveyEnabled && !alreadyAskedToday));
+      setStyleSurveyDue(shouldOfferStyleSurvey(preferences));
     }).catch(() => setStyleSurveyDue(false));
     return () => {
       cancelled = true;

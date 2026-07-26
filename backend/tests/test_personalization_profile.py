@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -109,6 +110,13 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertLessEqual(
             survey["answerDepth"] - implicit["answerDepth"], 0.0500001
         )
+
+    def test_style_survey_cooldown_is_timezone_independent(self):
+        from app.api.personalization import _survey_is_due
+
+        now = datetime(2026, 7, 26, 4, 0, tzinfo=timezone.utc)
+        self.assertFalse(_survey_is_due("2026-07-26T01:00:00+08:00", now))
+        self.assertTrue(_survey_is_due("2026-07-25T03:59:59Z", now))
 
     def test_changed_document_rescans_and_removes_stale_candidates(self):
         import app.services.storage as storage
