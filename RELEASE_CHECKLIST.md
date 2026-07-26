@@ -43,8 +43,8 @@
 
 ### Production Regression Coverage
 
-`frontend/src/__tests__/virtualList.test.tsx` contains 12 tests that render the
-real `MobileCodeViewer`, plus 3 pure geometry tests:
+`frontend/src/__tests__/virtualList.test.tsx` contains 11 tests that render the
+real `MobileCodeViewer`, plus 3 pure geometry tests and 1 static CSS audit:
 
 - 50,000-line bounded DOM
 - real scroll to line 20,000
