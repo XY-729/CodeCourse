@@ -51,6 +51,8 @@ html:not(.platform-android) .markdown-body {
 html:not(.platform-android) .markdown-scroll-viewport {
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
+  overflow-anchor: none;
+  scroll-behavior: auto;
 }
 
 /* A workspace document keeps a stable line measure. The viewport consumes

@@ -55,7 +55,11 @@ export function buildConceptKey(
  * Normalize a term for concept lookup: lowercase, trim, collapse whitespace.
  */
 export function normalizeTerm(raw: string): string {
-  return raw.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9\-_.]/g, "");
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^\p{L}\p{N}\-_.]/gu, "");
 }
 
 /**

@@ -162,6 +162,8 @@ export type DocumentTerm = {
   confidence: number;
   status: "candidate" | "linked" | "known" | "dismissed" | string;
   qa_record_id?: number | null;
+  concept_id?: string | null;
+  content_hash?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -903,6 +905,38 @@ export type PersonalizationMarkResult = {
   idempotent: boolean;
 };
 
+export type LearnerPreferences = {
+  scope: PersonalizationScope;
+  answerDepth: number;
+  codeRatio: number;
+  explanationOrder: "balanced" | "example_first" | "principle_first" | "code_first";
+  prerequisiteDetail: number;
+  terminologyDensity: number;
+  feedbackCount: number;
+  surveyEnabled: boolean;
+  lastSurveyAt?: string | null;
+  surveyDue: boolean;
+  updatedAt: string;
+};
+
+export type PersonalizationProfile = {
+  preferences: LearnerPreferences;
+  concepts: Array<{
+    concept: PersonalizationConcept;
+    mastery: PersonalizationMastery;
+    judgement: "known" | "unfamiliar" | "uncertain";
+  }>;
+  preferenceEvidence: Array<{
+    id: string;
+    dimension: string;
+    delta: number;
+    source: string;
+    evidenceText?: string | null;
+    qaRecordId?: number | null;
+    createdAt: string;
+  }>;
+};
+
 // ---- Personalization API ----
 
 export function listConcepts(projectId: number, query?: string): Promise<PersonalizationConcept[]> {
@@ -954,8 +988,74 @@ export function voidPersonalizationEvent(projectId: number, eventId: string, con
   });
 }
 
-export function resetPersonalizationProfile(projectId: number): Promise<{ status: string; deletedMasteryCount: number; deletedEventCount: number }> {
-  return request<{ status: string; deletedMasteryCount: number; deletedEventCount: number }>(`/projects/${projectId}/personalization/profile`, {
+export function resolvePersonalizationTerms(
+  projectId: number,
+  terms: Array<{ text: string; source?: string; confidence?: number; context_relevance?: number }>,
+): Promise<{ terms: Array<{ text: string; concept: PersonalizationConcept; mastery?: PersonalizationMastery | null; confidence: number }> }> {
+  return request<{ terms: Array<{ text: string; concept: PersonalizationConcept; mastery?: PersonalizationMastery | null; confidence: number }> }>(`/projects/${projectId}/personalization/resolve`, {
+    method: "POST",
+    body: JSON.stringify({ terms }),
+  });
+}
+
+export function getLearnerPreferences(projectId: number): Promise<LearnerPreferences> {
+  return request<LearnerPreferences>(`/projects/${projectId}/personalization/preferences`);
+}
+
+export function updateLearnerPreferences(
+  projectId: number,
+  payload: Partial<{
+    answer_depth: number;
+    code_ratio: number;
+    explanation_order: LearnerPreferences["explanationOrder"];
+    prerequisite_detail: number;
+    terminology_density: number;
+    survey_enabled: boolean;
+    scope: "global" | "project";
+  }>,
+): Promise<LearnerPreferences> {
+  return request<LearnerPreferences>(`/projects/${projectId}/personalization/preferences`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function submitAnswerFeedback(
+  projectId: number,
+  payload: {
+    dimension: string;
+    choice: string;
+    qa_record_id?: number;
+    source?: "explicit_user" | "survey" | "implicit_question";
+    idempotency_key: string;
+    scope?: "global" | "project";
+  },
+): Promise<LearnerPreferences> {
+  return request<LearnerPreferences>(`/projects/${projectId}/personalization/answer-feedback`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function recordTermImpressions(
+  projectId: number,
+  impressions: Array<Record<string, unknown>>,
+): Promise<{ status: string; saved: number }> {
+  return request<{ status: string; saved: number }>(`/projects/${projectId}/personalization/term-impressions/batch`, {
+    method: "POST",
+    body: JSON.stringify({ impressions }),
+  });
+}
+
+export function getPersonalizationProfile(projectId: number): Promise<PersonalizationProfile> {
+  return request<PersonalizationProfile>(`/projects/${projectId}/personalization/profile`);
+}
+
+export function resetPersonalizationProfile(
+  projectId: number,
+  scope: "project" | "global" = "project",
+): Promise<{ status: string; deletedMasteryCount: number; deletedEventCount: number }> {
+  return request<{ status: string; deletedMasteryCount: number; deletedEventCount: number }>(`/projects/${projectId}/personalization/profile?scope=${scope}`, {
     method: "DELETE",
   });
 }

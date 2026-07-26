@@ -172,6 +172,8 @@ export class MobileDatabase {
           confidence REAL NOT NULL DEFAULT 0.5,
           status TEXT NOT NULL DEFAULT 'candidate',
           qa_record_id INTEGER,
+          concept_id TEXT,
+          content_hash TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           UNIQUE(project_id, source_type, source_path, term_text) ON CONFLICT IGNORE,
@@ -233,6 +235,21 @@ export class MobileDatabase {
       transaction: true,
       readonly: false,
     });
+    for (const statement of [
+      "ALTER TABLE document_terms ADD COLUMN concept_id TEXT",
+      "ALTER TABLE document_terms ADD COLUMN content_hash TEXT",
+    ]) {
+      try {
+        await CapacitorSQLite.execute({
+          database: DATABASE,
+          statements: statement,
+          transaction: false,
+          readonly: false,
+        });
+      } catch {
+        // Existing installations already have the column.
+      }
+    }
     try {
       await CapacitorSQLite.execute({
         database: DATABASE,
@@ -305,6 +322,54 @@ export class MobileDatabase {
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_mobile_learning_events_concept ON learning_events(concept_id, scope_type, scope_id, created_at);
+        CREATE TABLE IF NOT EXISTS learner_preferences (
+          scope_type TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          answer_depth REAL NOT NULL DEFAULT 0.5,
+          code_ratio REAL NOT NULL DEFAULT 0.5,
+          explanation_order TEXT NOT NULL DEFAULT 'balanced',
+          prerequisite_detail REAL NOT NULL DEFAULT 0.5,
+          terminology_density REAL NOT NULL DEFAULT 0.5,
+          feedback_count INTEGER NOT NULL DEFAULT 0,
+          survey_enabled INTEGER NOT NULL DEFAULT 1,
+          last_survey_at TEXT,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(scope_type, scope_id)
+        );
+        CREATE TABLE IF NOT EXISTS preference_events (
+          id TEXT PRIMARY KEY,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          scope_type TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          dimension TEXT NOT NULL,
+          delta REAL NOT NULL,
+          source TEXT NOT NULL,
+          qa_record_id INTEGER,
+          evidence_text TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_preference_events_scope
+          ON preference_events(scope_type, scope_id, created_at DESC);
+        CREATE TABLE IF NOT EXISTS term_impressions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id INTEGER NOT NULL,
+          concept_id TEXT,
+          source_type TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          term_text TEXT NOT NULL,
+          content_hash TEXT NOT NULL DEFAULT '',
+          displayed_count INTEGER NOT NULL DEFAULT 0,
+          opened_count INTEGER NOT NULL DEFAULT 0,
+          feedback TEXT,
+          display_style TEXT NOT NULL DEFAULT 'subtle',
+          last_displayed_at TEXT,
+          last_opened_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(project_id, source_type, source_path, term_text, content_hash)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_term_impressions_source
+          ON term_impressions(project_id, source_type, source_path);
       `,
       transaction: true,
       readonly: false,

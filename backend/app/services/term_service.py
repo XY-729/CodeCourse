@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from pathlib import Path
 from typing import Iterable, Optional
-
 from app.core.config import GENERATED_ROOT
+from app.services.personalization_service import resolve_concept
 from app.services.storage import (
     DocumentTerm,
+    delete_stale_document_term_candidates,
     get_qa_record,
     get_qa_record_by_output_path,
     list_code_chunks,
@@ -19,6 +21,11 @@ from app.services.storage import (
 TERMS_LINE_RE = re.compile(r"^\s*(?:TERMS|术语)\s*[:：]\s*(\[.*\])\s*$", re.IGNORECASE)
 CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`([^`\n]{2,80})`")
+EMPHASIS_TERM_RE = re.compile(r"(?:\*\*|__)([^*_\n]{2,40})(?:\*\*|__)")
+CHINESE_TECH_RE = re.compile(
+    r"(?<![\u4e00-\u9fff])([\u4e00-\u9fff]{2,12}(?:算法|协议|框架|模型|索引|队列|缓存|路由|"
+    r"线程|进程|协程|事务|依赖|接口|中间件|序列化|反序列化|调用链|事件循环))(?![\u4e00-\u9fff])"
+)
 IDENTIFIER_RE = re.compile(
     r"\b(?:[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|[A-Z]{2,}[A-Z0-9_-]*|[A-Za-z]+\.[A-Za-z0-9_.-]+)\b"
 )
@@ -132,6 +139,10 @@ def _local_candidates(project_id: int, content: str) -> list[tuple[str, str, flo
 
     for match in INLINE_CODE_RE.finditer(without_fences):
         add(match.group(1), "rule", 0.76)
+    for match in EMPHASIS_TERM_RE.finditer(without_fences):
+        add(match.group(1), "rule", 0.78)
+    for match in CHINESE_TECH_RE.finditer(without_fences):
+        add(match.group(1), "dictionary", 0.8)
     for term in KNOWN_TECH_TERMS:
         if term in without_fences:
             add(term, "rule", 0.84)
@@ -145,6 +156,15 @@ def _local_candidates(project_id: int, content: str) -> list[tuple[str, str, flo
     return candidates
 
 
+def _resolve_concept(
+    project_id: int,
+    term: str,
+    source: str,
+    confidence: float,
+) -> str:
+    return resolve_concept(project_id, term, source, confidence).id
+
+
 def register_document_terms(
     project_id: int,
     source_type: str,
@@ -152,6 +172,13 @@ def register_document_terms(
     content: str,
     model_terms: Optional[Iterable[str]] = None,
 ) -> list[DocumentTerm]:
+    content_hash = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
+    delete_stale_document_term_candidates(
+        project_id,
+        source_type,
+        source_path,
+        content_hash,
+    )
     weighted: list[tuple[str, str, float]] = []
     for value in model_terms or []:
         term = _clean_term(value)
@@ -164,16 +191,23 @@ def register_document_terms(
         if normalized in seen:
             continue
         seen.add(normalized)
-        upsert_document_term(project_id, source_type, source_path, term, source, confidence)
+        concept_id = _resolve_concept(project_id, term, source, confidence)
+        upsert_document_term(
+            project_id,
+            source_type,
+            source_path,
+            term,
+            source,
+            confidence,
+            concept_id=concept_id,
+            content_hash=content_hash,
+        )
         if len(seen) >= 20:
             break
     return list_document_terms(project_id, source_type, source_path)
 
 
 def ensure_document_terms(project_id: int, source_type: str, source_path: str) -> list[DocumentTerm]:
-    existing = list_document_terms(project_id, source_type, source_path)
-    if existing:
-        return existing
     content = ""
     if source_type == "course":
         target = (GENERATED_ROOT / str(project_id) / source_path).resolve()
@@ -190,4 +224,4 @@ def ensure_document_terms(project_id: int, source_type: str, source_path: str) -
             content = record.answer_md
     if content:
         return register_document_terms(project_id, source_type, source_path, content)
-    return []
+    return list_document_terms(project_id, source_type, source_path)

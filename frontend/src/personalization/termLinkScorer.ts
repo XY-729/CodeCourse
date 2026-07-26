@@ -63,7 +63,13 @@ export function scoreTermLink(
     W_CONTEXT * candidate.contextRelevance +
     W_EXPLORATION * explorationBonus;
 
-  const displayTier = getDisplayTier(linkScore, manualStatus);
+  // A high-confidence cold-start candidate should still be discoverable even
+  // before the learner has accumulated mastery evidence.
+  const displayTier = (
+    !mastery && candidate.termConfidence >= 0.78 && manualStatus !== "known"
+      ? (linkScore >= PROMINENT_THRESHOLD ? "prominent" : "subtle")
+      : getDisplayTier(linkScore, manualStatus)
+  );
 
   return {
     ...candidate,
@@ -118,6 +124,7 @@ export function selectTopTerms(
   scoredTerms: ScoredTerm[],
   textLength: number,
   explicitlyAskedConceptIds: Set<string> = new Set(),
+  terminologyDensity = 0.5,
 ): ScoredTerm[] {
   // Boost explicitly asked concepts to prominent
   const withOverrides = scoredTerms.map((t) => {
@@ -141,7 +148,13 @@ export function selectTopTerms(
 
   deduped.sort((a, b) => b.linkScore - a.linkScore);
 
-  const maxTerms = Math.max(1, Math.floor((textLength / 1000) * MAX_PER_1000_CHARS));
+  // Keep the historical default at six terms per 1000 characters while
+  // allowing the learner preference to move the cap between four and eight.
+  const densityRate = MAX_PER_1000_CHARS + Math.round((clamp(terminologyDensity, 0, 1) - 0.5) * 4);
+  const maxTerms = Math.min(
+    24,
+    Math.max(2, Math.ceil((textLength / 1000) * densityRate)),
+  );
   return deduped.slice(0, maxTerms);
 }
 

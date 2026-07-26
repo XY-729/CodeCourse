@@ -14,6 +14,7 @@ import com.getcapacitor.CapacitorWebView;
 public class CodeCourseWebView extends CapacitorWebView {
 
     private static final int ASK_SELECTION_MENU_ID = 0xCC01;
+    private static final int EXPLAIN_TERM_MENU_ID = 0xCC02;
     private static final String TAG = "CCSelection";
 
     public CodeCourseWebView(Context context, AttributeSet attrs) {
@@ -54,7 +55,7 @@ public class CodeCourseWebView extends CapacitorWebView {
             boolean created = delegate.onCreateActionMode(mode, menu);
             Log.d(TAG, "onCreateActionMode created=" + created);
             if (created) {
-                ensureAskMenuItem(menu);
+                ensureSelectionMenuItems(menu);
             }
             return created;
         }
@@ -63,7 +64,7 @@ public class CodeCourseWebView extends CapacitorWebView {
         public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
             // Delegate first — WebView may clear or regenerate the menu.
             boolean delegateChanged = delegate.onPrepareActionMode(mode, menu);
-            boolean askChanged = ensureAskMenuItem(menu);
+            boolean askChanged = ensureSelectionMenuItems(menu);
             Log.d(TAG, "onPrepareActionMode askPresent=" + (menu.findItem(ASK_SELECTION_MENU_ID) != null));
             return delegateChanged || askChanged;
         }
@@ -71,7 +72,10 @@ public class CodeCourseWebView extends CapacitorWebView {
         @Override
         public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
             if (item.getItemId() == ASK_SELECTION_MENU_ID) {
-                return handleAskSelection(mode);
+                return handleSelectionAction(mode, "codecourse-native-selection-ask");
+            }
+            if (item.getItemId() == EXPLAIN_TERM_MENU_ID) {
+                return handleSelectionAction(mode, "codecourse-native-selection-explain");
             }
             return delegate.onActionItemClicked(mode, item);
         }
@@ -93,7 +97,7 @@ public class CodeCourseWebView extends CapacitorWebView {
 
     // ---- helper methods ----
 
-    private boolean ensureAskMenuItem(Menu menu) {
+    private boolean ensureSelectionMenuItems(Menu menu) {
         MenuItem askItem = menu.findItem(ASK_SELECTION_MENU_ID);
         boolean added = false;
         if (askItem == null) {
@@ -103,16 +107,25 @@ public class CodeCourseWebView extends CapacitorWebView {
         askItem.setVisible(true);
         askItem.setEnabled(true);
         askItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+
+        MenuItem explainItem = menu.findItem(EXPLAIN_TERM_MENU_ID);
+        if (explainItem == null) {
+            explainItem = menu.add(Menu.NONE, EXPLAIN_TERM_MENU_ID, 1, "解释术语");
+            added = true;
+        }
+        explainItem.setVisible(true);
+        explainItem.setEnabled(true);
+        explainItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         return added;
     }
 
-    private boolean handleAskSelection(ActionMode mode) {
+    private boolean handleSelectionAction(ActionMode mode, String eventName) {
         String script = "(function(){"
                 + "var s=window.getSelection?window.getSelection():null;"
                 + "var t=String(s||'').trim();"
                 + "if(!t){return false;}"
                 + "window.dispatchEvent(new CustomEvent("
-                + "'codecourse-native-selection-ask',"
+                + "'" + eventName + "',"
                 + "{detail:{text:t}}"
                 + "));"
                 + "return true;"

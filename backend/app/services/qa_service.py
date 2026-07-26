@@ -13,6 +13,10 @@ from app.services.generation_service import extract_file_signals, project_course
 from app.services.knowledge_service import attach_learning_anchor, attach_qa_record, remove_learning_anchor_node
 from app.services.prompt_store import load_prompt
 from app.services.llm_client import call_openai_compatible_chat
+from app.services.personalization_service import (
+    build_learner_context,
+    record_question_learning,
+)
 from app.services.scanner import read_text_file
 from app.services.code_intelligence import hybrid_retrieve
 from app.services.storage import (
@@ -532,7 +536,7 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
     context_text = _build_assistant_context(project_id, payload, selected_text, retrieval_context)
     session_context = _session_context(project_id, session.id)
 
-    prompt = _render_prompt_template(
+    base_prompt = _render_prompt_template(
         load_prompt("prompt.qa.answer"),
         {
             "source_type": payload.source_type,
@@ -543,6 +547,14 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
             "session_context": session_context,
         },
     )
+    learner_context = build_learner_context(
+        project_id,
+        question,
+        selected_text,
+        payload.source_type,
+        payload.source_path,
+    )
+    prompt = f"{learner_context}\n\n{base_prompt}"
     return PreparedQuestion(
         project_id=project_id,
         payload=payload,
@@ -604,6 +616,7 @@ def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
     if prepared.term:
         update_document_term_status(project_id, prepared.term.id, "linked", written.id)
     _refresh_session_memory(project_id, prepared.session_id, payload.source_path)
+    record_question_learning(project_id, written)
     return written
 
 

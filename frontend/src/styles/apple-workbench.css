@@ -435,6 +435,43 @@ html:not(.platform-android) .assistant-drawer.open .qa-ask-section {
   animation: apple-inspector-section-in 240ms 45ms var(--apple-ease-out) both;
 }
 
+html:not(.platform-android) .qa-ask-section {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  box-shadow: 0 -10px 28px color-mix(in srgb, var(--apple-shadow-color, #17362d) 7%, transparent);
+}
+
+html:not(.platform-android) .qa-ask-scroll {
+  min-height: 0;
+  max-height: min(230px, 32vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+html:not(.platform-android) .qa-ask-section .ask-box {
+  flex: 0 0 auto;
+  padding-block: 10px;
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .qa-ask-section .selection-editor {
+  min-height: 96px;
+  max-height: 128px;
+  resize: none;
+}
+
+html:not(.platform-android) .qa-ask-section .ask-box textarea {
+  min-height: 78px;
+  max-height: 108px;
+  resize: none;
+}
+
+html:not(.platform-android) .qa-ask-bottom {
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 -8px 22px color-mix(in srgb, var(--apple-shadow-color, #17362d) 5%, transparent);
+}
+
 html:not(.platform-android) .assistant-thread-toolbar,
 html:not(.platform-android) .assistant-mini-tree,
 html:not(.platform-android) .qa-reference-sources,

@@ -171,4 +171,15 @@ describe("scoreTermLink with null mastery", () => {
     // 0.50*0.5 + 0.20*0.3 + 0.20*0.5 = 0.25 + 0.06 + 0.10 = 0.41
     expect(result.linkScore).toBeCloseTo(0.41, 2);
   });
+
+  it("keeps a high-confidence cold-start term discoverable", () => {
+    const candidate = makeCandidate({
+      text: "Tree-sitter",
+      conceptId: "concept-tree-sitter",
+      termConfidence: 0.92,
+      generalDifficulty: 0.65,
+      contextRelevance: 0.8,
+    });
+    expect(scoreTermLink(candidate, null, now, 0).displayTier).not.toBe("none");
+  });
 });

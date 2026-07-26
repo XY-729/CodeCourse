@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { Bot, Copy, Eraser, Highlighter, X } from "lucide-react";
+import { Bot, Copy, Eraser, Highlighter, Sparkles, X } from "lucide-react";
 import type { ViewerAnchorRect } from "./CodeViewer";
 
 type Props = {
@@ -7,6 +7,7 @@ type Props = {
   highlighted: boolean;
   anchorRect?: ViewerAnchorRect;
   onAsk: () => void;
+  onExplainTerm: () => void;
   onToggleHighlight: () => void;
   onCopy: () => void;
   onClose: () => void;
@@ -17,6 +18,7 @@ export default function SelectionQuickBar({
   highlighted,
   anchorRect,
   onAsk,
+  onExplainTerm,
   onToggleHighlight,
   onCopy,
   onClose,
@@ -83,6 +85,7 @@ export default function SelectionQuickBar({
       aria-label="选区操作"
     >
       <button onClick={onAsk}><Bot size={14} />提问</button>
+      <button onClick={onExplainTerm}><Sparkles size={14} />解释术语</button>
       {canHighlight ? (
         <button onClick={onToggleHighlight}>
           {highlighted ? <Eraser size={14} /> : <Highlighter size={14} />}

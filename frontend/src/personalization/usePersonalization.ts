@@ -3,14 +3,12 @@
  * Manages concept resolution, mastery batch loading, and feedback operations.
  */
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { PersonalizationMastery, PersonalizationConcept } from "../api/client";
+import type { PersonalizationMastery } from "../api/client";
 import {
-  listConcepts,
-  createConcept,
-  getMasteryBatch,
   markConceptKnown,
   markConceptUnknown,
   clearConceptOverride,
+  resolvePersonalizationTerms,
 } from "../api/client";
 import {
   scoreTermLinks,
@@ -19,7 +17,7 @@ import {
 import type { ScoredTerm, TermCandidate } from "./types";
 import { getEffectiveMastery } from "./types";
 import type { ResolvedConcept } from "./conceptResolver";
-import { normalizeTerm, globalConceptKey, projectConceptKey, buildConceptKey, guessDomain } from "./conceptResolver";
+import { normalizeTerm } from "./conceptResolver";
 
 // ---- Types ----
 
@@ -75,76 +73,47 @@ export function usePersonalization(): UsePersonalizationReturn {
     setLoading(true);
     setError(null);
     try {
-      const deduped = [...new Set(terms.map((t) => normalizeTerm(t)))].filter(Boolean);
-
-      // 1. Search existing concepts by name
+      const originals = new Map<string, string>();
+      for (const term of terms) {
+        const normalized = normalizeTerm(term);
+        if (normalized && !originals.has(normalized)) originals.set(normalized, term.trim());
+      }
       const existingConcepts = new Map<string, ResolvedConcept>();
-      for (const term of deduped) {
-        try {
-          const domain = guessDomain(term, { projectId, ...context });
-          const globalKey = buildConceptKey("global", domain, term);
-          // Try listing concepts matching this term
-          const results: PersonalizationConcept[] = await listConcepts(projectId, term);
-          const match = results.find(
-            (c) => c.canonicalName.toLowerCase() === term.toLowerCase() ||
-                   c.aliases.some((a) => a.toLowerCase() === term.toLowerCase()),
-          );
-          if (match) {
-            existingConcepts.set(term, {
-              conceptId: match.id,
-              conceptKey: match.conceptKey,
-              canonicalName: match.canonicalName,
-              displayName: match.displayName,
-              domain: match.domain,
-              aliases: match.aliases,
-              difficulty: match.difficulty,
-              isNew: false,
-            });
-          } else {
-            // 2. Create new concept (idempotent)
-            const key = context?.symbolHint
-              ? projectConceptKey(term, { projectId, symbolHint: context.symbolHint })
-              : globalKey;
-            const created = await createConcept(projectId, {
-              conceptKey: key,
-              canonicalName: term,
-              displayName: term,
-              domain,
-              aliases: [],
-              difficulty: 0.5,
-            });
-            existingConcepts.set(term, {
-              conceptId: created.id,
-              conceptKey: created.conceptKey,
-              canonicalName: created.canonicalName,
-              displayName: created.displayName,
-              domain: created.domain,
-              aliases: created.aliases,
-              difficulty: created.difficulty,
-              isNew: true,
-            });
-          }
-        } catch {
-          // Skip failed resolutions
-        }
+      const response = await resolvePersonalizationTerms(
+        projectId,
+        [...originals.values()].map((text) => ({
+          text,
+          source: context?.symbolHint ? "index" : "rule",
+          confidence: context?.symbolHint ? 0.9 : 0.75,
+        })),
+      );
+      const nextMastery = new Map<string, PersonalizationMastery>();
+      for (const item of response.terms) {
+        const normalized = normalizeTerm(item.text);
+        existingConcepts.set(normalized, {
+          conceptId: item.concept.id,
+          conceptKey: item.concept.conceptKey,
+          canonicalName: item.concept.canonicalName,
+          displayName: item.concept.displayName,
+          domain: item.concept.domain,
+          aliases: item.concept.aliases,
+          difficulty: item.concept.difficulty,
+          isNew: false,
+        });
+        if (item.mastery) nextMastery.set(item.concept.id, item.mastery);
       }
       setConcepts((prev) => { const m = new Map(prev); existingConcepts.forEach((v, k) => m.set(k, v)); return m; });
 
-      // 3. Batch load mastery
       const conceptIds = [...new Set([...existingConcepts.values()].map((c) => c.conceptId))];
       if (conceptIds.length > 0) {
-        const batch = await getMasteryBatch(projectId, conceptIds);
         setMasteryMap((prev) => {
           const m = new Map(prev);
-          for (const [id, mastery] of Object.entries(batch)) {
-            m.set(id, mastery);
-          }
-          // Fill missing with neutral
+          nextMastery.forEach((mastery, id) => m.set(id, mastery));
           for (const cid of conceptIds) {
-            if (!batch[cid]) {
+            if (!nextMastery.has(cid)) {
               m.set(cid, {
                 id: "", conceptId: cid,
-                scope: { type: "project", id: String(projectId) },
+                scope: { type: context?.symbolHint ? "project" : "global", id: context?.symbolHint ? String(projectId) : "local-user" },
                 knownEvidence: 1, unknownEvidence: 1,
                 mastery: 0.5, uncertainty: 0.7071,
                 manualStatus: null, sequence: 0,

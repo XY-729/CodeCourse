@@ -1,5 +1,5 @@
 import { Edit3, Loader2, Plus, Search, Send, Star, Trash2, X } from "lucide-react";
-import type { MouseEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { LLMSettings, QARecord, SourceType } from "../api/client";
 
 export type SelectionSummary = {
@@ -32,13 +32,11 @@ type Props = {
   selectedRecord: QARecord | null;
   settings: LLMSettings | null;
   panelError: string;
-  askHeight: number;
   upperTab: AssistantTab;
   mobileMode?: boolean;
   onUpperTabChange: (value: AssistantTab) => void;
   knowledgeContent?: ReactNode;
   knowledgeDisabled?: boolean;
-  onAskResizeStart: (event: MouseEvent<HTMLDivElement>) => void;
   onQuestionChange: (value: string) => void;
   onSelectionTextChange: (value: string) => void;
   onClearSelection: () => void;
@@ -74,8 +72,8 @@ function recordTitle(record: QARecord) {
 export default function ExplainPanel(props: Props) {
   const {
     selection, contextSummary, question, questionInput, loading, loadingLabel, streamContent, history, historyQuery, favoriteOnly,
-    selectedRecord, settings, panelError, askHeight, upperTab, mobileMode = false, onUpperTabChange, knowledgeContent,
-    knowledgeDisabled, onAskResizeStart, onQuestionChange, onSelectionTextChange, onClearSelection,
+    selectedRecord, settings, panelError, upperTab, mobileMode = false, onUpperTabChange, knowledgeContent,
+    knowledgeDisabled, onQuestionChange, onSelectionTextChange, onClearSelection,
     onAsk, onNewConversation, onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord,
     onOpenRecord, onDeleteRecord, onRenameRecord, onToggleFavorite, onOpenSettings, onClose,
   } = props;
@@ -88,7 +86,13 @@ export default function ExplainPanel(props: Props) {
   return (
     <aside
       className={`explain-panel qa-panel ${mobileKnowledge ? "mobile-knowledge-only" : ""} ${mobileAssistant ? "mobile-assistant-only" : ""}`}
-      style={{ gridTemplateRows: mobileKnowledge ? "minmax(0, 1fr) 0 0" : mobileAssistant ? "auto 0 minmax(0, 1fr)" : `minmax(0, 1fr) 6px var(--qa-ask-h, ${askHeight}px)` }}
+      style={{
+        gridTemplateRows: mobileKnowledge
+          ? "minmax(0, 1fr) 0"
+          : mobileAssistant
+            ? "auto minmax(0, 1fr)"
+            : "minmax(140px, 1fr) auto",
+      }}
     >
       <section className="qa-history-section">
         <div className="qa-panel-tabs">
@@ -164,8 +168,6 @@ export default function ExplainPanel(props: Props) {
         </div>
       </section>
 
-      <div className="resize-handle-y" onMouseDown={onAskResizeStart} title="上下拖动调整提问区高度" />
-
       <section className="qa-ask-section">
         <div className="qa-ask-scroll">
           <div className="qa-section selection-card">
@@ -182,13 +184,14 @@ export default function ExplainPanel(props: Props) {
             ) : <div className="selection-meta"><span>项目上下文</span></div>}
           </div>
 
-          <div className="qa-section ask-box">
-            <div className="ask-box-toolbar">
-              <span>{selectedRecord ? `继续：${recordTitle(selectedRecord)}` : "新问题"}</span>
-              <button className="icon-button" type="button" onClick={onNewConversation} title="新对话" aria-label="新对话"><Plus size={15} /></button>
-            </div>
-            <textarea value={questionInput ?? question} onChange={(event) => onQuestionChange(event.target.value)} placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"} disabled={loading} />
+        </div>
+
+        <div className="qa-section ask-box">
+          <div className="ask-box-toolbar">
+            <span>{selectedRecord ? `继续：${recordTitle(selectedRecord)}` : "新问题"}</span>
+            <button className="icon-button" type="button" onClick={onNewConversation} title="新对话" aria-label="新对话"><Plus size={15} /></button>
           </div>
+          <textarea value={questionInput ?? question} onChange={(event) => onQuestionChange(event.target.value)} placeholder={selectedRecord ? `继续追问“${recordTitle(selectedRecord)}”` : "问项目、文件、课件或选中内容"} disabled={loading} />
         </div>
 
         <div className="qa-ask-bottom">

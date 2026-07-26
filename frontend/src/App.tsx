@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import type { DragEvent, MouseEvent } from "react";
+import type { DragEvent } from "react";
 import { BookOpen, Bot, ChevronDown, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
 import {
   askQuestionStream,
@@ -42,6 +42,13 @@ import {
   resetLearningStates,
   regenerateProject,
   markDocumentTermKnown,
+  markConceptKnown,
+  markConceptUnknown,
+  getLearnerPreferences,
+  updateLearnerPreferences,
+  resolvePersonalizationTerms,
+  recordTermImpressions,
+  submitAnswerFeedback,
   saveLearningAnchor,
   setQAFavorite,
   updateQARecord,
@@ -74,6 +81,7 @@ import CodeViewer, { type CodeJumpRequest, ViewerRange, ViewerSelection } from "
 import CommandPalette, { type CommandPaletteItem } from "./components/CommandPalette";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
+import LearnerPreferencesDialog from "./components/LearnerPreferencesDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
 import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
@@ -83,9 +91,12 @@ import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolb
 import GenerationSheet from "./components/GenerationSheet";
 import TitleBar from "./components/TitleBar";
 import TaskFeedback from "./components/TaskFeedback";
+import TermActionPopover from "./components/TermActionPopover";
 import { GESTURE_COMPLETE_EVENT } from "./components/GestureLayer";
 import type { GesturePath } from "./gestures/GestureDrawer";
 import { recognizeGesture } from "./gestures/GestureRecognizer";
+import { normalizeTerm, scoreTermLinks, selectTopTerms } from "./personalization";
+import type { ConceptMastery, TermCandidate } from "./personalization";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
 import { getCodeCourseProvider } from "./platform/provider";
 import { canRetry, permissionNotice as buildPermissionNotice, type PermissionNotice } from "./platform/android/generationState";
@@ -96,7 +107,7 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
-type MobileSurface = "navigation" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts";
+type MobileSurface = "navigation" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts" | "preferences";
 type OpenItemType = "file" | "course" | "qa" | "knowledge_graph";
 type SplitDirection = "row" | "column";
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -154,7 +165,6 @@ type DragState =
   | { kind: "explain-width"; startX: number; startWidth: number }
   | { kind: "sidebar-project"; startY: number; startHeight: number }
   | { kind: "sidebar-course"; startY: number; startHeight: number }
-  | { kind: "qa-ask"; startY: number; startHeight: number }
   | {
       kind: "split";
       splitId: string;
@@ -404,6 +414,13 @@ function findOpenItem(node: LayoutNode, itemId: string): OpenItem | null {
   return findOpenItem(node.first, itemId) ?? findOpenItem(node.second, itemId);
 }
 
+function findOpenItemByPath(node: LayoutNode, path: string): OpenItem | null {
+  if (node.type === "group") {
+    return node.group.items.find((item) => item.path === path) ?? null;
+  }
+  return findOpenItemByPath(node.first, path) ?? findOpenItemByPath(node.second, path);
+}
+
 function findGroupIdForItem(node: LayoutNode, itemId: string): string | null {
   if (node.type === "group") return node.group.items.some((item) => item.id === itemId) ? node.group.id : null;
   return findGroupIdForItem(node.first, itemId) ?? findGroupIdForItem(node.second, itemId);
@@ -619,11 +636,29 @@ function closeItem(group: EditorGroup, itemId: string): EditorGroup {
   return { ...group, items: nextItems, activeItemId: nextActive };
 }
 
-function detectDropZone(event: DragEvent<HTMLElement>): DropZone {
+function detectDropZone(event: DragEvent<HTMLElement>, previousZone?: DropZone): DropZone {
   const rect = event.currentTarget.getBoundingClientRect();
   const x = (event.clientX - rect.left) / rect.width;
   const y = (event.clientY - rect.top) / rect.height;
   const edge = 0.2;
+  const hysteresis = 0.04;
+
+  // Native drag events can report tiny coordinate changes while the physical
+  // pointer is stationary. Keep the current zone until the pointer moves a
+  // meaningful distance across its boundary so the preview does not flicker.
+  if (previousZone === "top" && y <= edge + hysteresis) return "top";
+  if (previousZone === "bottom" && y >= 1 - edge - hysteresis) return "bottom";
+  if (previousZone === "left" && x <= edge + hysteresis) return "left";
+  if (previousZone === "right" && x >= 1 - edge - hysteresis) return "right";
+  if (
+    previousZone === "center"
+    && x > edge - hysteresis
+    && x < 1 - edge + hysteresis
+    && y > edge - hysteresis
+    && y < 1 - edge + hysteresis
+  ) {
+    return "center";
+  }
   if (y <= edge) {
     return "top";
   }
@@ -667,6 +702,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(() => !isAndroidRuntime());
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -689,7 +725,6 @@ export default function App() {
   });
   const [sidebarProjectHeight, setSidebarProjectHeight] = useState(150);
   const [sidebarCourseHeight, setSidebarCourseHeight] = useState(240);
-  const [qaAskHeight, setQAAskHeight] = useState(340);
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [layout, setLayout] = useState<LayoutNode>(() => createInitialLayout());
   const [activeGroupId, setActiveGroupId] = useState(ROOT_GROUP_ID);
@@ -712,6 +747,9 @@ export default function App() {
   const [qaSessionTree, setQASessionTree] = useState<QARecord[]>([]);
   const [documentTerms, setDocumentTerms] = useState<DocumentTerm[]>([]);
   const [documentTermsBySource, setDocumentTermsBySource] = useState<Record<string, DocumentTerm[]>>({});
+  const [termAction, setTermAction] = useState<{ term: DocumentTerm; position?: { x: number; y: number } } | null>(null);
+  const [styleSurveyDue, setStyleSurveyDue] = useState(false);
+  const [styleSurveyDismissed, setStyleSurveyDismissed] = useState(false);
   const [learningAnchor, setLearningAnchor] = useState<LearningAnchor | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
@@ -747,8 +785,13 @@ export default function App() {
   const pendingLearningUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
   const learningUpdateSequences = useRef<Map<string, number>>(new Map());
   const learningInFlightSequences = useRef<Map<string, number>>(new Map());
+  const recordedTermImpressionsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => () => learningSaveScheduler.current.cancelAll(), []);
+
+  useEffect(() => {
+    recordedTermImpressionsRef.current.clear();
+  }, [project?.id]);
   const streamingContentRef = useRef<Map<string, string>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
   const dropPrefetchRef = useRef<Map<string, Promise<OpenItem | null>>>(new Map());
@@ -764,6 +807,23 @@ export default function App() {
   const qaLoading = Boolean(activeQAGeneration);
   const anyQALoading = Object.keys(qaGenerations).length > 0;
   const showBusy = loading || isTaskRunning || anyQALoading;
+
+  useEffect(() => {
+    if (!project || qaHistory.length < 5 || styleSurveyDismissed || anyQALoading || selectionAnchor || appDialog) {
+      setStyleSurveyDue(false);
+      return;
+    }
+    let cancelled = false;
+    void getLearnerPreferences(project.id).then((preferences) => {
+      if (cancelled) return;
+      const alreadyAskedToday = preferences.lastSurveyAt
+        && new Date(preferences.lastSurveyAt).toDateString() === new Date().toDateString();
+      setStyleSurveyDue(Boolean(preferences.surveyEnabled && !alreadyAskedToday));
+    }).catch(() => setStyleSurveyDue(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id, qaHistory.length, styleSurveyDismissed, anyQALoading, selectionAnchor, appDialog]);
 
   const clearDropPreview = useCallback(() => {
     const current = dropPreviewRef.current;
@@ -976,9 +1036,31 @@ export default function App() {
       });
       openAssistant("history");
     }
+    function handleNativeSelectionExplain(event: Event) {
+      const text = String((event as CustomEvent<{ text?: string }>).detail?.text ?? "").trim().slice(0, 20000);
+      const item = activeOpenItemRef.current;
+      if (!text || !item || !["file", "course", "qa"].includes(item.type)) return;
+      const sourceType: ViewerSelection["sourceType"] = item.type === "file"
+        ? "file"
+        : item.type === "qa" || item.qaRecordId
+          ? "qa"
+          : "course";
+      const anchor: ViewerSelection = {
+        sourceType,
+        sourcePath: item.path,
+        selectedText: text,
+        language: item.language,
+      };
+      handleSelection(anchor);
+      void handleExplainSelectedTerm(anchor);
+    }
     window.addEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
-    return () => window.removeEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
-  }, [mobileRuntime]);
+    window.addEventListener("codecourse-native-selection-explain", handleNativeSelectionExplain);
+    return () => {
+      window.removeEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
+      window.removeEventListener("codecourse-native-selection-explain", handleNativeSelectionExplain);
+    };
+  }, [mobileRuntime, project, llmSettings, qaSessionId, selectedQA, activeQAKey]);
 
   useEffect(() => {
     learningStatesRef.current = learningStates;
@@ -1356,7 +1438,6 @@ export default function App() {
       document.documentElement.style.removeProperty("--explain-width");
       document.documentElement.style.removeProperty("--sidebar-project-h");
       document.documentElement.style.removeProperty("--sidebar-course-h");
-      document.documentElement.style.removeProperty("--qa-ask-h");
       return;
     }
     const currentDrag = dragState;
@@ -1384,9 +1465,6 @@ export default function App() {
       } else if (currentDrag.kind === "sidebar-course") {
         const h = clamp(currentDrag.startHeight - (latestY - currentDrag.startY), 120, 420);
         document.documentElement.style.setProperty("--sidebar-course-h", `${h}px`);
-      } else if (currentDrag.kind === "qa-ask") {
-        const h = clamp(currentDrag.startHeight + currentDrag.startY - latestY, 230, 720);
-        document.documentElement.style.setProperty("--qa-ask-h", `${h}px`);
       } else if (currentDrag.kind === "split") {
         const delta = currentDrag.direction === "row" ? latestX - currentDrag.startX : latestY - currentDrag.startY;
         const nextBoundary = clamp(
@@ -1435,9 +1513,6 @@ export default function App() {
       } else if (currentDrag.kind === "sidebar-course") {
         const h = clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420);
         setSidebarCourseHeight(h);
-      } else if (currentDrag.kind === "qa-ask") {
-        const h = clamp(currentDrag.startHeight + currentDrag.startY - event.clientY, 230, 720);
-        setQAAskHeight(h);
       } else if (currentDrag.kind === "split") {
         const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
         const requestedBoundary = currentDrag.startBoundary + delta;
@@ -1777,7 +1852,26 @@ export default function App() {
     try {
       const saved = await updateLearningState(projectId, payload);
       if (learningUpdateSequences.current.get(key) === sequence) {
-        setLearningStates((current) => [...current.filter((entry) => learningStateKey(entry.source_type, entry.source_path) !== key), saved]);
+        const previous = learningStatesRef.current.find(
+          (entry) => learningStateKey(entry.source_type, entry.source_path) === key,
+        );
+        const next = [
+          ...learningStatesRef.current.filter(
+            (entry) => learningStateKey(entry.source_type, entry.source_path) !== key,
+          ),
+          saved,
+        ];
+        learningStatesRef.current = next;
+        // Position-only writes happen after ordinary scrolling and must not
+        // rerender the entire workbench. Render only when visible course state
+        // (or a newly-created learning-state row) actually changes.
+        if (
+          !previous
+          || previous.status !== saved.status
+          || previous.completed_at !== saved.completed_at
+        ) {
+          setLearningStates(next);
+        }
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存学习位置失败");
@@ -1923,11 +2017,96 @@ export default function App() {
     if (!projectId || !sourcePath) return [];
     try {
       const terms = await listDocumentTerms(projectId, sourceType, sourcePath);
-      setDocumentTermsBySource((current) => ({ ...current, [`${sourceType}:${sourcePath}`]: terms }));
-      if (sourceType === "qa" && selectedQA && (selectedQA.output_path || String(selectedQA.id)) === sourcePath) {
-        setDocumentTerms(terms);
+      const linked = terms.filter((term) => term.status === "linked");
+      const candidates = terms.filter((term) => term.status === "candidate");
+      let displayedTerms = [...linked];
+      if (candidates.length > 0) {
+        const [resolved, preferences] = await Promise.all([
+          resolvePersonalizationTerms(projectId, candidates.map((term) => ({
+            text: term.term_text,
+            source: term.detection_source === "index" ? "index" : term.detection_source === "model" ? "model" : "rule",
+            confidence: term.confidence,
+            context_relevance: term.confidence,
+          }))),
+          getLearnerPreferences(projectId),
+        ]);
+        const resolvedByTerm = new Map(resolved.terms.map((item) => [normalizeTerm(item.text), item]));
+        const masteryMap = new Map<string, ConceptMastery>();
+        for (const item of resolved.terms) {
+          if (!item.mastery) continue;
+          masteryMap.set(item.concept.id, {
+            id: item.mastery.id,
+            conceptId: item.mastery.conceptId,
+            scope: item.mastery.scope,
+            knownEvidence: item.mastery.knownEvidence,
+            unknownEvidence: item.mastery.unknownEvidence,
+            mastery: item.mastery.mastery,
+            uncertainty: item.mastery.uncertainty,
+            manualStatus: item.mastery.manualStatus,
+            sequence: item.mastery.sequence,
+            lastSeenAt: item.mastery.lastSeenAt,
+            updatedAt: item.mastery.updatedAt,
+          });
+        }
+        const scoringCandidates: TermCandidate[] = candidates.map((term) => {
+          const resolvedTerm = resolvedByTerm.get(normalizeTerm(term.term_text));
+          return {
+            text: term.term_text,
+            conceptId: resolvedTerm?.concept.id ?? term.concept_id ?? undefined,
+            source: term.detection_source === "model"
+              ? "model"
+              : term.detection_source === "index"
+                ? "code"
+                : "dictionary",
+            termConfidence: term.confidence,
+            contextRelevance: Math.max(0.45, term.confidence),
+            generalDifficulty: resolvedTerm?.concept.difficulty ?? 0.62,
+          };
+        });
+        const openItem = findOpenItemByPath(layout, sourcePath);
+        const textLength = Math.max(1, openItem?.content.length ?? candidates.length * 160);
+        const selected = selectTopTerms(
+          scoreTermLinks(scoringCandidates, masteryMap, new Date().toISOString(), 0.5),
+          textLength,
+          new Set(),
+          preferences.terminologyDensity,
+        );
+        const visibleKeys = new Set(selected.map((term) => normalizeTerm(term.text)));
+        displayedTerms = [
+          ...linked,
+          ...candidates.filter((term) => visibleKeys.has(normalizeTerm(term.term_text))),
+        ];
+        const tierByTerm = new Map(selected.map((term) => [normalizeTerm(term.text), term.displayTier]));
+        const candidateImpressions = displayedTerms
+          .filter((term) => term.status === "candidate")
+          .map((term) => ({
+            concept_id: resolvedByTerm.get(normalizeTerm(term.term_text))?.concept.id ?? term.concept_id ?? null,
+            source_type: sourceType,
+            source_path: sourcePath,
+            term_text: term.term_text,
+            content_hash: term.content_hash ?? "",
+            displayed: true,
+            display_style: tierByTerm.get(normalizeTerm(term.term_text)) ?? "subtle",
+          }));
+        const impressionKey = [
+          projectId,
+          sourceType,
+          sourcePath,
+          candidateImpressions[0]?.content_hash ?? "",
+          candidateImpressions.map((item) => item.concept_id ?? item.term_text).sort().join(","),
+        ].join(":");
+        if (candidateImpressions.length > 0 && !recordedTermImpressionsRef.current.has(impressionKey)) {
+          recordedTermImpressionsRef.current.add(impressionKey);
+          void recordTermImpressions(projectId, candidateImpressions).catch(() => {
+            recordedTermImpressionsRef.current.delete(impressionKey);
+          });
+        }
       }
-      return terms;
+      setDocumentTermsBySource((current) => ({ ...current, [`${sourceType}:${sourcePath}`]: displayedTerms }));
+      if (sourceType === "qa" && selectedQA && (selectedQA.output_path || String(selectedQA.id)) === sourcePath) {
+        setDocumentTerms(displayedTerms);
+      }
+      return displayedTerms;
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "加载陌生术语失败");
       return [];
@@ -3199,7 +3378,7 @@ export default function App() {
     setQADraftId((value) => value + 1);
   }
 
-  async function handleGenerateTerm(term: DocumentTerm) {
+  async function generateTermExplanation(term: DocumentTerm) {
     if (!project) return;
     if (term.status === "linked" && term.qa_record_id) {
       const record = qaHistory.find((entry) => entry.id === term.qa_record_id) ?? await getQARecord(project.id, term.qa_record_id);
@@ -3253,6 +3432,25 @@ export default function App() {
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成术语解释失败");
     }
+  }
+
+  function handleGenerateTerm(term: DocumentTerm, position?: { x: number; y: number }) {
+    if (term.status === "linked") {
+      void generateTermExplanation(term);
+      return;
+    }
+    if (project) {
+      void recordTermImpressions(project.id, [{
+        concept_id: term.concept_id ?? null,
+        source_type: term.source_type,
+        source_path: term.source_path,
+        term_text: term.term_text,
+        content_hash: term.content_hash ?? "",
+        opened: true,
+        display_style: "subtle",
+      }]).catch(() => undefined);
+    }
+    setTermAction({ term, position });
   }
 
   async function handleTermAction(term: DocumentTerm) {
@@ -3404,6 +3602,121 @@ export default function App() {
       setToast("已取消高亮");
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "取消高亮失败");
+    }
+  }
+
+  async function handleTermMastery(term: DocumentTerm, status: "known" | "unknown") {
+    if (!project) return;
+    try {
+      if (term.concept_id) {
+        const key = `term-${status}:${project.id}:${term.concept_id}:${Date.now()}`;
+        if (status === "known") await markConceptKnown(project.id, term.concept_id, key, term.term_text);
+        else await markConceptUnknown(project.id, term.concept_id, key, term.term_text);
+      }
+      if (status === "known") {
+        await markDocumentTermKnown(project.id, term.id);
+      }
+      void recordTermImpressions(project.id, [{
+        concept_id: term.concept_id ?? null,
+        source_type: term.source_type,
+        source_path: term.source_path,
+        term_text: term.term_text,
+        content_hash: term.content_hash ?? "",
+        feedback: status,
+      }]).catch(() => undefined);
+      await refreshDocumentTerms(term.source_type, term.source_path, project.id);
+      setTermAction(null);
+      setToast(status === "known" ? `已记住你认识“${term.term_text}”` : `后续会先解释“${term.term_text}”`);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "术语状态更新失败");
+    }
+  }
+
+  async function handleDismissTerm(term: DocumentTerm) {
+    if (!project) return;
+    try {
+      await dismissDocumentTerm(project.id, term.id);
+      void recordTermImpressions(project.id, [{
+        concept_id: term.concept_id ?? null,
+        source_type: term.source_type,
+        source_path: term.source_path,
+        term_text: term.term_text,
+        content_hash: term.content_hash ?? "",
+        feedback: "dismissed",
+      }]).catch(() => undefined);
+      await refreshDocumentTerms(term.source_type, term.source_path, project.id);
+      setTermAction(null);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "忽略术语失败");
+    }
+  }
+
+  async function handleStyleSurvey(choice: "examples" | "principles" | "disable") {
+    if (!project) return;
+    try {
+      if (choice === "disable") {
+        await updateLearnerPreferences(project.id, { survey_enabled: false, scope: "global" });
+        setStyleSurveyDismissed(true);
+        setStyleSurveyDue(false);
+        setToast("已关闭风格选择题，可在学习偏好中重新开启");
+        return;
+      }
+      await submitAnswerFeedback(project.id, {
+        dimension: "explanation_order",
+        choice,
+        source: "survey",
+        idempotency_key: `style-survey:${new Date().toISOString().slice(0, 10)}:${choice}`,
+      });
+      setStyleSurveyDue(false);
+      setToast(choice === "examples" ? "之后会更偏向先看例子" : "之后会更偏向先讲原理");
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "回答偏好保存失败");
+    }
+  }
+
+  async function handleExplainSelectedTerm(anchor = selectionAnchor) {
+    if (!project || !anchor?.selectedText.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) return;
+    const term = anchor.selectedText.trim();
+    const ok = await confirmAction(
+      "解释术语",
+      `将调用 ${llmSettings.model}，结合当前项目和文档解释“${term}”。是否继续？`,
+      { confirmText: "生成解释", skipKey: "confirm.term-selection" },
+    );
+    if (!ok) return;
+    const generationKey = activeQAKey;
+    try {
+      const record = await runStreamingQuestion({
+        source_type: anchor.sourceType,
+        source_path: anchor.sourcePath,
+        selected_text: term,
+        question: `请解释“${term}”：先用通俗语言说明它是什么，再说明它在当前上下文中的作用，并给出下一步学习建议。`,
+        provider: llmSettings.provider,
+        base_url: llmSettings.base_url,
+        model: llmSettings.model,
+        session_id: qaSessionId,
+        parent_qa_id: selectedQA?.id ?? null,
+        relation_type: "term_explanation",
+        selection_range: anchor.range
+          ? {
+              start_line: anchor.range.startLineNumber,
+              start_column: anchor.range.startColumn,
+              end_line: anchor.range.endLineNumber,
+              end_column: anchor.range.endColumn,
+            }
+          : null,
+      }, generationKey);
+      setSelectedQA(record);
+      setQASessionId(record.session_id ?? qaSessionId);
+      setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
+      await Promise.all([
+        refreshCourses(project.id),
+        refreshQAHistory(project.id),
+        refreshKnowledgeLinks(project.id),
+      ]);
+      setKnowledgeRefreshKey((value) => value + 1);
+      openAssistant("history");
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "术语解释生成失败");
     }
   }
 
@@ -3599,7 +3912,10 @@ export default function App() {
         onDragOver={mobileRuntime ? undefined : (event) => {
           event.preventDefault();
           event.stopPropagation();
-          const zone = detectDropZone(event);
+          const previousZone = dropPreviewRef.current?.groupId === group.id
+            ? dropPreviewRef.current.zone
+            : undefined;
+          const zone = detectDropZone(event, previousZone);
           showDropPreview(event.currentTarget, group.id, zone);
         }}
         onDragLeave={mobileRuntime ? undefined : (event) => {
@@ -4049,6 +4365,7 @@ export default function App() {
     if (except !== "command") setCommandPaletteOpen(false);
     if (except !== "settings") setSettingsOpen(false);
     if (except !== "prompts") setPromptEditorOpen(false);
+    if (except !== "preferences") setPreferencesOpen(false);
   }
 
   async function handleTabDragEnd(event: DragEvent<HTMLElement>, groupId: string, item: OpenItem) {
@@ -4137,6 +4454,12 @@ export default function App() {
     setPromptEditorOpen(true);
   }
 
+  function openPreferences() {
+    closeMobileWorkspaceSurfaces("preferences");
+    setPreferencesOpen(true);
+    setMoreMenuOpen(false);
+  }
+
   function toggleMobileCommandPalette() {
     const next = !commandPaletteOpen;
     closeMobileWorkspaceSurfaces(next ? "command" : undefined);
@@ -4198,6 +4521,7 @@ export default function App() {
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenPrompts={() => setPromptEditorOpen(true)}
+          onOpenPreferences={openPreferences}
           onOpenGestureGuide={() => setGestureGuideOpen(true)}
           onBuildIndex={() => void handleBuildIndex()}
           onToggleTheme={() => setThemeMode((current) => current === "dark" ? "light" : "dark")}
@@ -4237,6 +4561,10 @@ export default function App() {
             <button type="button" role="menuitem" onClick={openPrompts}>
               <Sparkles size={15} />
               提示词编辑
+            </button>
+            <button type="button" role="menuitem" disabled={!project} onClick={openPreferences}>
+              <BookOpen size={15} />
+              学习偏好
             </button>
             <button type="button" role="menuitem" disabled={!project || isLearningPlanProject || indexBuilding} onClick={() => { void handleBuildIndex(); setMoreMenuOpen(false); }}>
               <RefreshCw size={15} />
@@ -4405,7 +4733,6 @@ export default function App() {
           selectedRecord={selectedQA}
           settings={llmSettings}
           panelError={qaPanelError}
-          askHeight={qaAskHeight}
           upperTab={qaUpperTab}
           mobileMode={mobileRuntime}
           onUpperTabChange={setQAUpperTab}
@@ -4443,7 +4770,6 @@ export default function App() {
               }}
             /></Suspense>
           ) : null}
-          onAskResizeStart={(event: MouseEvent<HTMLDivElement>) => setDragState({ kind: "qa-ask", startY: event.clientY, startHeight: qaAskHeight })}
           onQuestionChange={handleQAQuestionChange}
           onSelectionTextChange={handleSelectionTextChange}
           onClearSelection={handleClearSelection}
@@ -4556,6 +4882,37 @@ export default function App() {
           </section>
         </div>
       ) : null}
+      {styleSurveyDue && assistantOpen ? (
+        <section className={`style-survey-card ${mobileRuntime ? "mobile" : ""}`} aria-label="回答风格选择">
+          <div><strong>你更喜欢哪种讲解顺序？</strong><small>只用于调整本机回答风格</small></div>
+          <div>
+            <button type="button" onClick={() => void handleStyleSurvey("examples")}>先看例子</button>
+            <button type="button" onClick={() => void handleStyleSurvey("principles")}>先讲原理</button>
+            <button type="button" className="quiet" onClick={() => { setStyleSurveyDismissed(true); setStyleSurveyDue(false); }}>稍后</button>
+            <button type="button" className="quiet" onClick={() => void handleStyleSurvey("disable")}>以后不再询问</button>
+          </div>
+        </section>
+      ) : null}
+      {termAction ? (
+        <TermActionPopover
+          term={termAction.term}
+          position={termAction.position}
+          onGenerate={() => {
+            const term = termAction.term;
+            setTermAction(null);
+            void generateTermExplanation(term);
+          }}
+          onKnown={() => void handleTermMastery(termAction.term, "known")}
+          onUnknown={() => void handleTermMastery(termAction.term, "unknown")}
+          onDismiss={() => void handleDismissTerm(termAction.term)}
+          onClose={() => setTermAction(null)}
+        />
+      ) : null}
+      <LearnerPreferencesDialog
+        open={preferencesOpen}
+        projectId={project?.id ?? null}
+        onClose={() => setPreferencesOpen(false)}
+      />
       <LLMSettingsDialog
         open={settingsOpen}
         onConfirm={confirmAction}
@@ -4581,6 +4938,7 @@ export default function App() {
             setSelection({ ...selectionAnchor });
             openAssistant("history");
           }}
+          onExplainTerm={() => void handleExplainSelectedTerm()}
           onToggleHighlight={() => {
             if (selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa") {
               void handleToggleHighlight(selectionAnchor.sourceType, selectionAnchor.sourcePath ?? "", selectionAnchor.selectedText);

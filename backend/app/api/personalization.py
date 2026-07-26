@@ -14,12 +14,27 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 
+from app.models.schemas import (
+    AnswerFeedbackRequest,
+    LearnerPreferencesUpdate,
+    PersonalizationResolveRequest,
+    TermImpressionsBatchRequest,
+)
+from app.services.personalization_service import (
+    GLOBAL_SCOPE_ID,
+    apply_preference_feedback,
+    concept_scope,
+    effective_preferences,
+    resolve_concept,
+    update_preferences,
+)
 from app.services.storage import (
     Concept,
     ConceptMastery,
     LearningEventRecord,
     delete_concept_mastery_by_scope,
     delete_events_by_scope,
+    delete_preferences_by_scope,
     get_all_learning_events_for_scope,
     get_concept,
     get_concept_by_key,
@@ -31,10 +46,12 @@ from app.services.storage import (
     get_project,
     insert_learning_event,
     list_all_concepts,
+    list_preference_events,
     run_in_transaction,
     search_concepts,
     upsert_concept,
     upsert_concept_mastery,
+    upsert_term_impression,
 )
 
 router = APIRouter(prefix="/api/projects", tags=["personalization"])
@@ -63,8 +80,11 @@ def _require_project(project_id: int) -> None:
         raise HTTPException(status_code=404, detail="Project not found")
 
 
-def _project_scope(project_id: int) -> tuple[str, str]:
-    return ("project", str(project_id))
+def _scope_for_concept(project_id: int, concept_id: str) -> tuple[str, str]:
+    concept = get_concept(concept_id)
+    if concept is None:
+        raise HTTPException(status_code=404, detail="Concept not found")
+    return concept_scope(concept, project_id)
 
 
 # ---- Helpers ----
@@ -125,6 +145,33 @@ def _event_response(e: LearningEventRecord) -> dict:
     }
 
 
+def _preferences_response(preferences) -> dict:
+    today = datetime.now(timezone.utc).date().isoformat()
+    return {
+        "scope": {
+            "type": preferences.scope_type,
+            "id": preferences.scope_id,
+        },
+        "answerDepth": preferences.answer_depth,
+        "codeRatio": preferences.code_ratio,
+        "explanationOrder": preferences.explanation_order,
+        "prerequisiteDetail": preferences.prerequisite_detail,
+        "terminologyDensity": preferences.terminology_density,
+        "feedbackCount": preferences.feedback_count,
+        "surveyEnabled": preferences.survey_enabled,
+        "lastSurveyAt": preferences.last_survey_at,
+        "surveyDue": bool(
+            preferences.survey_enabled
+            and preferences.feedback_count >= 5
+            and (
+                not preferences.last_survey_at
+                or not preferences.last_survey_at.startswith(today)
+            )
+        ),
+        "updatedAt": preferences.updated_at,
+    }
+
+
 def _calculate_mastery(known: float, unknown: float) -> tuple[float, float]:
     total = known + unknown
     if total <= 0:
@@ -145,7 +192,7 @@ def _replay_events(events: list[LearningEventRecord]) -> tuple[float, float, Opt
             voided_ids.add(e.target_event_id)
 
     active = sorted(
-        [e for e in events if not e.is_voided and e.event_id not in voided_ids],
+        [e for e in events if not e.is_voided and e.id not in voided_ids],
         key=lambda x: (x.created_at, x.id),
     )
     for e in active:
@@ -224,12 +271,16 @@ def get_mastery_batch(
     concept_ids: str = Query(default="", description="Comma-separated concept IDs"),
 ) -> dict[str, dict]:
     _require_project(project_id)
-    scope_type, scope_id = _project_scope(project_id)
     ids = [cid.strip() for cid in concept_ids.split(",") if cid.strip()]
     if not ids:
         return {}
-    results = get_concept_mastery_batch(ids, scope_type, scope_id)
-    return {m.concept_id: _mastery_response(m) for m in results}
+    results = {}
+    for concept_id in ids:
+        scope_type, scope_id = _scope_for_concept(project_id, concept_id)
+        mastery = get_concept_mastery(concept_id, scope_type, scope_id)
+        if mastery:
+            results[concept_id] = _mastery_response(mastery)
+    return results
 
 
 # ---- Atomic explicit feedback (event + projection in one transaction) ----
@@ -244,21 +295,20 @@ def _atomic_feedback(
 ) -> dict:
     """Core: insert event + recompute projection in one transaction."""
     _require_project(project_id)
-    scope_type, scope_id = _project_scope(project_id)
-
     concept = get_concept(concept_id)
     if concept is None:
         raise HTTPException(status_code=404, detail="Concept not found")
+    scope_type, scope_id = concept_scope(concept, project_id)
 
     def do_tx(conn):
         now = datetime.now(timezone.utc).isoformat()
         event_id = str(uuid4())
 
         # Idempotency check
-        existing_evt = get_event_by_idempotency_key(idempotency_key)
+        existing_evt = get_event_by_idempotency_key(idempotency_key, conn=conn)
         if existing_evt is not None:
             # Return current mastery for idempotent calls
-            m = get_concept_mastery(concept_id, scope_type, scope_id)
+            m = get_concept_mastery(concept_id, scope_type, scope_id, conn=conn)
             return {
                 "event": _event_response(existing_evt),
                 "mastery": _mastery_response(m) if m else None,
@@ -278,14 +328,15 @@ def _atomic_feedback(
             strength=1.0,
             source="explicit_user",
             evidence_text=evidence_text,
+            conn=conn,
         )
 
         # Recompute projection from all events
-        all_events = get_learning_events(concept_id, scope_type, scope_id)
+        all_events = get_learning_events(concept_id, scope_type, scope_id, conn=conn)
         known, unknown, manual_status = _replay_events(all_events)
         mst, unc = _calculate_mastery(known, unknown)
 
-        existing_m = get_concept_mastery(concept_id, scope_type, scope_id)
+        existing_m = get_concept_mastery(concept_id, scope_type, scope_id, conn=conn)
         mastery_id = existing_m.id if existing_m else str(uuid4())
         seq = (existing_m.sequence + 1) if existing_m else 1
 
@@ -300,6 +351,7 @@ def _atomic_feedback(
             uncertainty=unc,
             manual_status=manual_status,
             sequence=seq,
+            conn=conn,
         )
         return {"event": _event_response(event), "mastery": _mastery_response(mastery), "idempotent": False}
 
@@ -372,7 +424,7 @@ def clear_concept_override(project_id: int, body: dict) -> dict:
 @router.get("/{project_id}/personalization/events/{concept_id}")
 def get_events(project_id: int, concept_id: str) -> list[dict]:
     _require_project(project_id)
-    scope_type, scope_id = _project_scope(project_id)
+    scope_type, scope_id = _scope_for_concept(project_id, concept_id)
     events = get_learning_events(concept_id, scope_type, scope_id)
     return [_event_response(e) for e in events]
 
@@ -384,13 +436,15 @@ def void_event(project_id: int, event_id: str, body: dict = {}) -> dict:
     Does NOT UPDATE the original event (preserves immutability).
     """
     _require_project(project_id)
-    scope_type, scope_id = _project_scope(project_id)
 
     original = get_event_by_id(event_id)
     if original is None:
         raise HTTPException(status_code=404, detail="Event not found")
 
     concept_id = str(body.get("conceptId", original.concept_id))
+    scope_type, scope_id = _scope_for_concept(project_id, concept_id)
+    if original.scope_type != scope_type or original.scope_id != scope_id:
+        raise HTTPException(status_code=404, detail="Event not found in this profile")
     idempotency_key = str(body.get("idempotencyKey", f"void:{event_id}:{datetime.now(timezone.utc).isoformat()}"))
     reason = body.get("reason", "User requested undo")
 
@@ -435,13 +489,176 @@ def void_event(project_id: int, event_id: str, body: dict = {}) -> dict:
 # ---- Profile Management (privacy reset) ----
 
 @router.delete("/{project_id}/personalization/profile")
-def reset_profile(project_id: int) -> dict:
+def reset_profile(
+    project_id: int,
+    scope: str = Query(default="project", pattern="^(project|global)$"),
+) -> dict:
     _require_project(project_id)
-    scope_type, scope_id = _project_scope(project_id)
+    scope_type = "global" if scope == "global" else "project"
+    scope_id = GLOBAL_SCOPE_ID if scope_type == "global" else str(project_id)
 
     def do_tx(conn):
         deleted_mastery = delete_concept_mastery_by_scope(scope_type, scope_id)
         deleted_events = delete_events_by_scope(scope_type, scope_id)
-        return {"status": "ok", "deletedMasteryCount": deleted_mastery, "deletedEventCount": deleted_events}
+        deleted_preferences, deleted_preference_events = delete_preferences_by_scope(
+            scope_type,
+            scope_id,
+        )
+        return {
+            "status": "ok",
+            "scope": scope,
+            "deletedMasteryCount": deleted_mastery,
+            "deletedEventCount": deleted_events,
+            "deletedPreferencesCount": deleted_preferences,
+            "deletedPreferenceEventsCount": deleted_preference_events,
+        }
 
     return run_in_transaction(do_tx)
+
+
+# ---- Cross-platform personalization contract ----
+
+@router.post("/{project_id}/personalization/resolve")
+def resolve_candidates(
+    project_id: int,
+    body: PersonalizationResolveRequest,
+) -> dict:
+    _require_project(project_id)
+    resolved = []
+    for candidate in body.terms:
+        try:
+            concept = resolve_concept(
+                project_id,
+                candidate.text,
+                candidate.source,
+                candidate.confidence,
+            )
+        except ValueError:
+            continue
+        scope_type, scope_id = concept_scope(concept, project_id)
+        mastery = get_concept_mastery(concept.id, scope_type, scope_id)
+        resolved.append(
+            {
+                "text": candidate.text,
+                "source": candidate.source,
+                "confidence": candidate.confidence,
+                "contextRelevance": candidate.context_relevance,
+                "concept": _concept_response(concept),
+                "mastery": _mastery_response(mastery) if mastery else None,
+            }
+        )
+    return {"terms": resolved}
+
+
+@router.get("/{project_id}/personalization/preferences")
+def get_preferences(project_id: int) -> dict:
+    _require_project(project_id)
+    return _preferences_response(effective_preferences(project_id))
+
+
+@router.put("/{project_id}/personalization/preferences")
+def put_preferences(project_id: int, body: LearnerPreferencesUpdate) -> dict:
+    _require_project(project_id)
+    values = body.model_dump(exclude_none=True, exclude={"scope"})
+    return _preferences_response(
+        update_preferences(project_id, values, scope=body.scope)
+    )
+
+
+@router.post("/{project_id}/personalization/answer-feedback")
+def answer_feedback(project_id: int, body: AnswerFeedbackRequest) -> dict:
+    _require_project(project_id)
+    preferences = apply_preference_feedback(
+        project_id,
+        dimension=body.dimension,
+        choice=body.choice,
+        source=body.source,
+        idempotency_key=body.idempotency_key,
+        qa_record_id=body.qa_record_id,
+        scope=body.scope,
+    )
+    return _preferences_response(preferences)
+
+
+@router.post("/{project_id}/personalization/term-impressions/batch")
+def record_term_impressions(
+    project_id: int,
+    body: TermImpressionsBatchRequest,
+) -> dict:
+    _require_project(project_id)
+    saved = 0
+    for impression in body.impressions:
+        upsert_term_impression(
+            project_id,
+            impression.source_type,
+            impression.source_path,
+            impression.term_text,
+            impression.content_hash,
+            concept_id=impression.concept_id,
+            displayed=impression.displayed,
+            opened=impression.opened,
+            feedback=impression.feedback,
+            display_style=impression.display_style,
+        )
+        saved += 1
+    return {"status": "ok", "saved": saved}
+
+
+@router.get("/{project_id}/personalization/profile")
+def get_profile(project_id: int) -> dict:
+    _require_project(project_id)
+    entries = []
+    for concept in list_all_concepts():
+        scope_type, scope_id = concept_scope(concept, project_id)
+        mastery = get_concept_mastery(concept.id, scope_type, scope_id)
+        if mastery is None:
+            continue
+        judgement = mastery.manual_status
+        if judgement == "unknown":
+            judgement = "unfamiliar"
+        if not judgement:
+            judgement = (
+                "known"
+                if mastery.mastery >= 0.75
+                else "unfamiliar"
+                if mastery.mastery <= 0.35
+                else "uncertain"
+            )
+        entries.append(
+            {
+                "concept": _concept_response(concept),
+                "mastery": _mastery_response(mastery),
+                "judgement": judgement,
+            }
+        )
+    entries.sort(
+        key=lambda item: (
+            {"unfamiliar": 0, "uncertain": 1, "known": 2}.get(
+                item["judgement"],
+                1,
+            ),
+            item["concept"]["displayName"].casefold(),
+        )
+    )
+    global_events = list_preference_events("global", GLOBAL_SCOPE_ID, 50)
+    project_events = list_preference_events("project", str(project_id), 50)
+    return {
+        "preferences": _preferences_response(effective_preferences(project_id)),
+        "concepts": entries,
+        "preferenceEvidence": [
+            {
+                "id": event.id,
+                "dimension": event.dimension,
+                "delta": event.delta,
+                "source": event.source,
+                "evidenceText": event.evidence_text,
+                "qaRecordId": event.qa_record_id,
+                "createdAt": event.created_at,
+            }
+            for event in sorted(
+                [*global_events, *project_events],
+                key=lambda event: event.created_at,
+                reverse=True,
+            )[:50]
+        ],
+    }

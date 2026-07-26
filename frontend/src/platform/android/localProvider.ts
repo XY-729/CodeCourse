@@ -25,7 +25,14 @@ import type {
   LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, Project, ProjectIndexStatus, ProjectSearchResult,
   QAAskPayload, QARecord, TreeNode,
   PersonalizationConcept, PersonalizationMastery, PersonalizationEvent,
+  LearnerPreferences, PersonalizationProfile,
 } from "../../api/client";
+import {
+  buildLearnerContext,
+  inferPreferenceSignals,
+  shouldOfferStyleSurvey,
+} from "../../personalization/preferenceEngine";
+import { normalizeTerm } from "../../personalization/conceptResolver";
 
 type ScopeTypeStr = "global" | "project" | "session";
 import promptDefaults from "./default-prompts.json";
@@ -550,6 +557,22 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if ((match = path.match(/^\/projects\/(\d+)\/personalization\/mastery$/))) {
       return this.getPersonalizationMasteryBatch(Number(match[1]), (url.searchParams.get("concept_ids") || "").split(",").filter(Boolean)) as Promise<T>;
     }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/resolve$/)) && method === "POST") {
+      return this.resolvePersonalizationTerms(Number(match[1]), Array.isArray(body.terms) ? body.terms : []) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/preferences$/))) {
+      if (method === "GET") return this.getLearnerPreferences(Number(match[1])) as Promise<T>;
+      if (method === "PUT") return this.updateLearnerPreferences(Number(match[1]), body) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/answer-feedback$/)) && method === "POST") {
+      return this.applyAnswerPreferenceFeedback(Number(match[1]), body) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/term-impressions\/batch$/)) && method === "POST") {
+      return this.saveTermImpressions(Number(match[1]), Array.isArray(body.impressions) ? body.impressions : []) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/profile$/)) && method === "GET") {
+      return this.getPersonalizationProfile(Number(match[1])) as Promise<T>;
+    }
     if ((match = path.match(/^\/projects\/(\d+)\/personalization\/mark-known$/)) && method === "POST") {
       if (body && typeof body === "object" && "conceptId" in body && "idempotencyKey" in body) {
         return this.markConceptKnown(Number(match[1]), String(body.conceptId), String(body.idempotencyKey), typeof body.evidenceText === "string" ? body.evidenceText : undefined) as Promise<T>;
@@ -572,7 +595,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       return this.voidPersonalizationEvent(Number(match[1]), decodeURIComponent(match[2]), body?.conceptId || "", body?.idempotencyKey || `void:${decodeURIComponent(match[2])}:${Date.now()}`, body?.reason) as Promise<T>;
     }
     if ((match = path.match(/^\/projects\/(\d+)\/personalization\/profile$/)) && method === "DELETE") {
-      return this.resetPersonalizationProfile(Number(match[1])) as Promise<T>;
+      return this.resetPersonalizationProfile(Number(match[1]), url.searchParams.get("scope") === "global" ? "global" : "project") as Promise<T>;
     }
     throw new Error(`移动端尚未实现此操作：${method} ${path}`);
   }
@@ -1294,6 +1317,140 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private formatQA(record: QARecord): string {
     return `# ${record.display_title || record.question}\n\n## 问题\n\n${record.question}\n\n## 附带上下文\n\n${record.selected_text || "无选区内容"}\n\n## 回答\n\n${record.answer_md}\n\n---\n\n来源：${record.source_type} ${record.source_path || "项目"}  \n模型：${record.model}  \n创建时间：${record.created_at}\n`;
   }
+  private async relevantConcepts(
+    projectId: number,
+    question: string,
+    selectedText: string,
+    sourceType?: string,
+    sourcePath?: string | null,
+  ): Promise<PersonalizationConcept[]> {
+    const haystack = `${question}\n${selectedText}`.toLocaleLowerCase();
+    if (selectedText.trim() && selectedText.trim().length <= 80) {
+      await this.resolvePersonalizationTerms(projectId, [{
+        text: selectedText.trim(),
+        source: "rule",
+        confidence: 0.9,
+      }]);
+    }
+    const concepts = await this.listPersonalizationConcepts(projectId);
+    const matched = new Map<string, PersonalizationConcept>();
+    for (const concept of concepts) {
+      if ([concept.canonicalName, ...concept.aliases].some(
+        (name) => name.length >= 2 && haystack.includes(name.toLocaleLowerCase()),
+      )) {
+        matched.set(concept.id, concept);
+      }
+    }
+    if ((sourceType === "course" || sourceType === "qa") && sourcePath) {
+      const terms = await db.query<Row>(
+        "SELECT concept_id,term_text FROM document_terms WHERE project_id=? AND source_type=? AND source_path=?",
+        [projectId, sourceType, sourcePath],
+      );
+      for (const term of terms) {
+        if (!haystack.includes(String(term.term_text).toLocaleLowerCase())) continue;
+        const concept = concepts.find((item) => item.id === String(term.concept_id));
+        if (concept) matched.set(concept.id, concept);
+      }
+    }
+    return [...matched.values()].slice(0, 8);
+  }
+
+  private async learnerContextForQuestion(
+    projectId: number,
+    payload: QAAskPayload,
+  ): Promise<string> {
+    const preferences = await this.getLearnerPreferences(projectId);
+    const concepts = await this.relevantConcepts(
+      projectId,
+      payload.question,
+      payload.selected_text || "",
+      payload.source_type,
+      payload.source_path,
+    );
+    const status = {
+      known: [] as string[],
+      unfamiliar: [] as string[],
+      uncertain: [] as string[],
+    };
+    for (const concept of concepts) {
+      const mastery = (await this.getPersonalizationMasteryBatch(projectId, [concept.id]))[concept.id];
+      if (mastery?.manualStatus === "known" || (mastery && mastery.mastery >= 0.75)) {
+        status.known.push(concept.displayName);
+      } else if (mastery?.manualStatus === "unknown" || (mastery && mastery.mastery <= 0.35)) {
+        status.unfamiliar.push(concept.displayName);
+      } else {
+        status.uncertain.push(concept.displayName);
+      }
+    }
+    return buildLearnerContext(preferences, status);
+  }
+
+  private async recordSuccessfulAnswerLearning(
+    projectId: number,
+    record: QARecord,
+  ): Promise<void> {
+    let concepts = await this.relevantConcepts(
+      projectId,
+      record.question,
+      record.selected_text,
+      record.source_type,
+      record.source_path,
+    );
+    if (!concepts.length && record.parent_qa_id) {
+      const parent = await this.getQA(projectId, record.parent_qa_id).catch(() => null);
+      if (parent) {
+        concepts = await this.relevantConcepts(
+          projectId,
+          parent.question,
+          parent.selected_text,
+          parent.source_type,
+          parent.source_path,
+        );
+      }
+    }
+    const isDefinition = /(是什么|什么意思|解释一下|不懂|what\s+is|define\b)/i.test(record.question)
+      || record.relation_type === "term_explanation";
+    const eventType = record.parent_qa_id ? "asked_clarification" : isDefinition ? "asked_definition" : "";
+    if (eventType) {
+      for (const concept of concepts) {
+        const idempotencyKey = `qa-learning:${record.id}:${concept.id}:${eventType}`;
+        const exists = (await db.query<Row>(
+          "SELECT id FROM learning_events WHERE idempotency_key=?",
+          [idempotencyKey],
+        ))[0];
+        if (exists) continue;
+        const scope = await this.scopeForConcept(projectId, concept.id);
+        const stamp = now();
+        await db.run(
+          "INSERT INTO learning_events(id,idempotency_key,schema_version,concept_id,scope_type,scope_id,event_type,direction,strength,source,evidence_text,session_id,qa_record_id,created_at) VALUES(?,?,1,?,?,?,?,?,1,'system_inference',?,?,?,?)",
+          [
+            crypto.randomUUID(),
+            idempotencyKey,
+            concept.id,
+            scope.type,
+            scope.id,
+            eventType,
+            "unknown",
+            record.question.slice(0, 200),
+            record.session_id ? String(record.session_id) : null,
+            record.id,
+            stamp,
+          ],
+        );
+        await this.updateProjection(concept.id, scope.type, scope.id, stamp);
+      }
+    }
+    for (const signal of inferPreferenceSignals(record.question)) {
+      await this.applyAnswerPreferenceFeedback(projectId, {
+        dimension: signal.dimension,
+        choice: signal.choice,
+        source: "implicit_question",
+        qa_record_id: record.id,
+        idempotency_key: `qa-pref:${record.id}:${signal.dimension}:${signal.choice}`,
+      });
+    }
+  }
+
   private async ask(projectId: number, payload: QAAskPayload): Promise<QARecord> {
     const prompts = await this.getPrompts(); const settings = await this.getLLMSettings();
     const previous = payload.session_id ? await this.sessionTree(projectId, payload.session_id) : [];
@@ -1308,9 +1465,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       session_context: sessionContext,
       context_text: context,
     });
+    const learnerContext = await this.learnerContextForQuestion(projectId, payload);
     const raw = await this.callLLM([
       { role: "system", content: prompts["prompt.system"] || "你是项目学习助手。" },
-      { role: "user", content: questionPrompt },
+      { role: "user", content: `${learnerContext}\n\n${questionPrompt}` },
     ], { provider: payload.provider, base_url: payload.base_url, model: payload.model });
     const parsed = this.parseAnswer(raw, payload); const stamp = now();
     const id = await db.run(`INSERT INTO qa_records(project_id,session_id,parent_qa_id,relation_type,source_type,source_path,display_title,selected_text,question,answer_md,provider,model,output_path,retrieval_trace,favorite,created_at,updated_at)
@@ -1325,7 +1483,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
     await this.registerTerms(projectId, "qa", outputPath, parsed.answer, parsed.terms);
     if (payload.term_candidate_id) await db.run("UPDATE document_terms SET status='linked',qa_record_id=?,updated_at=? WHERE project_id=? AND id=?", [id, stamp, projectId, payload.term_candidate_id]);
-    record = await this.getQA(projectId, id); return record;
+    record = await this.getQA(projectId, id);
+    await this.recordSuccessfulAnswerLearning(projectId, record);
+    return record;
   }
   private async getQA(projectId: number, qaId: number): Promise<QARecord> {
     const row = (await db.query<Row>("SELECT * FROM qa_records WHERE project_id=? AND id=?", [projectId, qaId]))[0];
@@ -1377,25 +1537,51 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       ...localTermCandidates(content),
     ].filter((item) => item.term && content.includes(item.term));
     const seen = new Set<string>();
+    const contentHash = hashText(content);
+    await db.run(
+      "DELETE FROM document_terms WHERE project_id=? AND source_type=? AND source_path=? AND status='candidate' AND COALESCE(content_hash,'')<>?",
+      [projectId, sourceType, sourcePath, contentHash],
+    );
+    const resolved = await this.resolvePersonalizationTerms(
+      projectId,
+      weighted.slice(0, 30).map((item) => ({
+        text: item.term,
+        source: item.source,
+        confidence: item.confidence,
+      })),
+    );
+    const conceptByTerm = new Map(
+      resolved.terms.map((item) => [String(item.text).toLocaleLowerCase(), String((item.concept as PersonalizationConcept).id)]),
+    );
     for (const item of weighted.sort((a, b) => b.term.length - a.term.length)) {
       const key = item.term.toLocaleLowerCase(); if (seen.has(key)) continue; seen.add(key);
-      await db.run("INSERT OR IGNORE INTO document_terms(project_id,source_type,source_path,term_text,detection_source,confidence,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)", [projectId, sourceType, sourcePath, item.term, item.source, item.confidence, "candidate", now(), now()]);
-      if (seen.size >= 20) break;
+      await db.run(
+        `INSERT INTO document_terms(project_id,source_type,source_path,term_text,detection_source,confidence,status,concept_id,content_hash,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(project_id,source_type,source_path,term_text) DO UPDATE SET
+           detection_source=CASE WHEN excluded.confidence>document_terms.confidence THEN excluded.detection_source ELSE document_terms.detection_source END,
+           confidence=MAX(document_terms.confidence,excluded.confidence),
+           concept_id=COALESCE(document_terms.concept_id,excluded.concept_id),
+           content_hash=excluded.content_hash,
+           updated_at=excluded.updated_at`,
+        [projectId, sourceType, sourcePath, item.term, item.source, item.confidence, "candidate", conceptByTerm.get(key) || null, contentHash, now(), now()],
+      );
+      if (seen.size >= 24) break;
     }
   }
   private async listTerms(projectId: number, params: URLSearchParams): Promise<Row[]> {
     const sourceType = params.get("source_type") as "course" | "qa";
     const sourcePath = params.get("source_path") || "";
-    let rows = await db.query<Row>("SELECT * FROM document_terms WHERE project_id=? AND source_type=? AND source_path=? ORDER BY length(term_text) DESC", [projectId, sourceType, sourcePath]);
-    if (!rows.length && sourcePath) {
+    let rows: Row[] = [];
+    if (sourcePath) {
       try {
         const content = sourceType === "qa"
           ? ((await db.query<Row>("SELECT answer_md FROM qa_records WHERE project_id=? AND (output_path=? OR CAST(id AS TEXT)=?)", [projectId, sourcePath, sourcePath]))[0]?.answer_md || "")
           : await readGeneratedFile(projectId, sourcePath);
         if (content) await this.registerTerms(projectId, sourceType, sourcePath, String(content));
-        rows = await db.query<Row>("SELECT * FROM document_terms WHERE project_id=? AND source_type=? AND source_path=? ORDER BY length(term_text) DESC", [projectId, sourceType, sourcePath]);
       } catch { /* Missing source documents simply have no term candidates. */ }
     }
+    rows = await db.query<Row>("SELECT * FROM document_terms WHERE project_id=? AND source_type=? AND source_path=? ORDER BY length(term_text) DESC", [projectId, sourceType, sourcePath]);
     return rows;
   }
   private async setTermStatus(termId: number, status: string): Promise<Row> { await db.run("UPDATE document_terms SET status=?,updated_at=? WHERE id=?", [status, now(), termId]); return (await db.query<Row>("SELECT * FROM document_terms WHERE id=?", [termId]))[0]; }
@@ -1451,6 +1637,20 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   // Mirrors Python backend. Evidence deltas match TypeScript AUTO_EVIDENCE_DELTAS.
 
   private scope(projectId: number) { return { type: "project" as const, id: String(projectId) }; }
+
+  private scopeForConceptRow(projectId: number, concept: Row) {
+    const isProjectSymbol = String(concept.concept_key || "").startsWith("project:")
+      || String(concept.concept_type || "") === "project_symbol";
+    return isProjectSymbol
+      ? { type: "project" as const, id: String(projectId) }
+      : { type: "global" as const, id: "local-user" };
+  }
+
+  private async scopeForConcept(projectId: number, conceptId: string) {
+    const concept = (await db.query<Row>("SELECT * FROM concepts WHERE id=?", [conceptId]))[0];
+    if (!concept) throw new Error("Concept not found");
+    return this.scopeForConceptRow(projectId, concept);
+  }
 
   private conceptFromRow(r: Row): PersonalizationConcept {
     return {
@@ -1570,17 +1770,21 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   async getPersonalizationMasteryBatch(projectId: number, conceptIds: string[]): Promise<Record<string, PersonalizationMastery>> {
     await db.init();
     if (!conceptIds.length) return {};
-    const { type: st, id: si } = this.scope(projectId);
-    const ph = conceptIds.map(() => "?").join(",");
-    const rows = await db.query<Row>(`SELECT * FROM concept_mastery WHERE concept_id IN (${ph}) AND scope_type=? AND scope_id=?`, [...conceptIds, st, si]);
     const result: Record<string, PersonalizationMastery> = {};
-    for (const r of rows) result[String(r.concept_id)] = this.masteryFromRow(r, st, si);
+    for (const conceptId of conceptIds) {
+      const { type: st, id: si } = await this.scopeForConcept(projectId, conceptId);
+      const row = (await db.query<Row>(
+        "SELECT * FROM concept_mastery WHERE concept_id=? AND scope_type=? AND scope_id=?",
+        [conceptId, st, si],
+      ))[0];
+      if (row) result[conceptId] = this.masteryFromRow(row, st, si);
+    }
     return result;
   }
 
   private async atomicFeedback(projectId: number, conceptId: string, eventType: "manual_override_known" | "manual_override_unknown" | "manual_override_cleared", direction: "known" | "unknown" | "neutral", idempotencyKey: string, evidenceText?: string): Promise<{ event: PersonalizationEvent; mastery: PersonalizationMastery; idempotent: boolean }> {
     await db.init();
-    const { type: st, id: si } = this.scope(projectId);
+    const { type: st, id: si } = await this.scopeForConcept(projectId, conceptId);
 
     return db.transaction(async () => {
       const stamp = now();
@@ -1663,14 +1867,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
   async getPersonalizationEvents(projectId: number, conceptId: string): Promise<PersonalizationEvent[]> {
     await db.init();
-    const { type: st, id: si } = this.scope(projectId);
+    const { type: st, id: si } = await this.scopeForConcept(projectId, conceptId);
     const rows = await db.query<Row>("SELECT * FROM learning_events WHERE concept_id=? AND scope_type=? AND scope_id=? AND is_voided=0 ORDER BY created_at ASC, id ASC", [conceptId, st, si]);
     return rows.map(r => this.eventFromRow(r));
   }
 
   async voidPersonalizationEvent(projectId: number, eventId: string, conceptId: string, idempotencyKey: string, reason?: string): Promise<PersonalizationEvent> {
     await db.init();
-    const { type: st, id: si } = this.scope(projectId);
+    const { type: st, id: si } = await this.scopeForConcept(projectId, conceptId);
     const stamp = now();
     const compensationId = crypto.randomUUID();
     await db.run(
@@ -1681,9 +1885,294 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return { eventId: compensationId, idempotencyKey, schemaVersion: 1, conceptId, scope: { type: st as unknown as ScopeTypeStr, id: si }, eventType: "event_voided", direction: "neutral", strength: 1.0, source: "explicit_user", targetEventId: eventId, evidenceText: reason, isVoided: false, createdAt: stamp };
   }
 
-  async resetPersonalizationProfile(projectId: number): Promise<{ status: string; deletedMasteryCount: number; deletedEventCount: number }> {
+  private async resolvePersonalizationTerms(
+    projectId: number,
+    candidates: Array<Record<string, unknown>>,
+  ): Promise<{ terms: Array<Record<string, unknown>> }> {
+    const terms: Array<Record<string, unknown>> = [];
+    for (const candidate of candidates.slice(0, 50)) {
+      const text = String(candidate.text || "").trim().slice(0, 80);
+      if (!text) continue;
+      const source = String(candidate.source || "rule");
+      const normalized = normalizeTerm(text);
+      if (!normalized) continue;
+      const isProject = ["index", "project", "code", "symbol"].includes(source);
+      const conceptKey = isProject
+        ? `project:${projectId}:symbol:${normalized}`
+        : `global:general:${normalized}`;
+      let concept = (await db.query<Row>("SELECT * FROM concepts WHERE concept_key=?", [conceptKey]))[0];
+      if (!concept && !isProject) {
+        const byName = (await db.query<Row>(
+          "SELECT * FROM concepts WHERE concept_key LIKE 'global:%' AND (lower(canonical_name)=lower(?) OR lower(aliases_json) LIKE lower(?)) LIMIT 1",
+          [text, `%"${text}"%`],
+        ))[0];
+        concept = byName;
+      }
+      if (!concept) {
+        const id = crypto.randomUUID();
+        const stamp = now();
+        const confidence = Number(candidate.confidence ?? 0.7);
+        await db.run(
+          "INSERT INTO concepts(id,concept_key,canonical_name,display_name,domain,concept_type,aliases_json,difficulty,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+          [
+            id,
+            conceptKey,
+            text,
+            text,
+            isProject ? "project-symbol" : "general",
+            isProject ? "project_symbol" : "theory",
+            "[]",
+            Math.max(0.2, Math.min(0.9, 0.45 + confidence - 0.7)),
+            stamp,
+          ],
+        );
+        concept = (await db.query<Row>("SELECT * FROM concepts WHERE id=?", [id]))[0];
+      }
+      const parsed = this.conceptFromRow(concept);
+      const { type: st, id: si } = this.scopeForConceptRow(projectId, concept);
+      const masteryRow = (await db.query<Row>(
+        "SELECT * FROM concept_mastery WHERE concept_id=? AND scope_type=? AND scope_id=?",
+        [parsed.id, st, si],
+      ))[0];
+      terms.push({
+        text,
+        source,
+        confidence: Number(candidate.confidence ?? 0.7),
+        contextRelevance: Number(candidate.context_relevance ?? 0.5),
+        concept: parsed,
+        mastery: masteryRow ? this.masteryFromRow(masteryRow, st, si) : null,
+      });
+    }
+    return { terms };
+  }
+
+  private preferencesFromRow(row: Row): LearnerPreferences {
+    const preferences = {
+      answerDepth: Number(row.answer_depth),
+      codeRatio: Number(row.code_ratio),
+      explanationOrder: String(row.explanation_order) as LearnerPreferences["explanationOrder"],
+      prerequisiteDetail: Number(row.prerequisite_detail),
+      terminologyDensity: Number(row.terminology_density),
+      feedbackCount: Number(row.feedback_count),
+      surveyEnabled: bool(row.survey_enabled),
+      lastSurveyAt: row.last_survey_at ? String(row.last_survey_at) : null,
+      updatedAt: String(row.updated_at),
+      scope: {
+        type: String(row.scope_type) as PersonalizationMastery["scope"]["type"],
+        id: String(row.scope_id),
+      },
+    };
+    return {
+      ...preferences,
+      surveyDue: shouldOfferStyleSurvey(preferences),
+    };
+  }
+
+  private async ensurePreferences(
+    projectId: number,
+    scope: "global" | "project" = "global",
+  ): Promise<LearnerPreferences> {
+    const st = scope;
+    const si = scope === "global" ? "local-user" : String(projectId);
+    let row = (await db.query<Row>(
+      "SELECT * FROM learner_preferences WHERE scope_type=? AND scope_id=?",
+      [st, si],
+    ))[0];
+    if (!row && scope === "project") {
+      return this.ensurePreferences(projectId, "global");
+    }
+    if (!row) {
+      const stamp = now();
+      await db.run(
+        "INSERT INTO learner_preferences(scope_type,scope_id,answer_depth,code_ratio,explanation_order,prerequisite_detail,terminology_density,feedback_count,survey_enabled,last_survey_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        [st, si, 0.5, 0.5, "balanced", 0.5, 0.5, 0, 1, null, stamp],
+      );
+      row = (await db.query<Row>(
+        "SELECT * FROM learner_preferences WHERE scope_type=? AND scope_id=?",
+        [st, si],
+      ))[0];
+    }
+    return this.preferencesFromRow(row);
+  }
+
+  private async getLearnerPreferences(projectId: number): Promise<LearnerPreferences> {
+    const project = (await db.query<Row>(
+      "SELECT * FROM learner_preferences WHERE scope_type='project' AND scope_id=?",
+      [String(projectId)],
+    ))[0];
+    return project ? this.preferencesFromRow(project) : this.ensurePreferences(projectId);
+  }
+
+  private async updateLearnerPreferences(
+    projectId: number,
+    payload: Record<string, unknown>,
+  ): Promise<LearnerPreferences> {
+    const scope = payload.scope === "project" ? "project" : "global";
+    const current = await this.ensurePreferences(projectId, scope);
+    const clamp01 = (value: unknown, fallback: number) => value == null
+      ? fallback
+      : Math.max(0, Math.min(1, Number(value)));
+    const order = ["balanced", "example_first", "principle_first", "code_first"].includes(String(payload.explanation_order))
+      ? String(payload.explanation_order)
+      : current.explanationOrder;
+    const st = scope;
+    const si = scope === "global" ? "local-user" : String(projectId);
+    await db.run(
+      `INSERT INTO learner_preferences(scope_type,scope_id,answer_depth,code_ratio,explanation_order,prerequisite_detail,terminology_density,feedback_count,survey_enabled,last_survey_at,updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(scope_type,scope_id) DO UPDATE SET answer_depth=excluded.answer_depth,code_ratio=excluded.code_ratio,explanation_order=excluded.explanation_order,prerequisite_detail=excluded.prerequisite_detail,terminology_density=excluded.terminology_density,feedback_count=excluded.feedback_count,survey_enabled=excluded.survey_enabled,last_survey_at=excluded.last_survey_at,updated_at=excluded.updated_at`,
+      [
+        st,
+        si,
+        clamp01(payload.answer_depth, current.answerDepth),
+        clamp01(payload.code_ratio, current.codeRatio),
+        order,
+        clamp01(payload.prerequisite_detail, current.prerequisiteDetail),
+        clamp01(payload.terminology_density, current.terminologyDensity),
+        Number(payload.feedback_count ?? current.feedbackCount),
+        payload.survey_enabled == null ? (current.surveyEnabled ? 1 : 0) : (bool(payload.survey_enabled) ? 1 : 0),
+        payload.last_survey_at === undefined ? current.lastSurveyAt : payload.last_survey_at,
+        now(),
+      ],
+    );
+    return this.preferencesFromRow((await db.query<Row>(
+      "SELECT * FROM learner_preferences WHERE scope_type=? AND scope_id=?",
+      [st, si],
+    ))[0]);
+  }
+
+  private async applyAnswerPreferenceFeedback(
+    projectId: number,
+    payload: Record<string, unknown>,
+  ): Promise<LearnerPreferences> {
+    const scope = payload.scope === "project" ? "project" : "global";
+    const st = scope;
+    const si = scope === "global" ? "local-user" : String(projectId);
+    const idempotencyKey = String(payload.idempotency_key || "");
+    const existing = (await db.query<Row>(
+      "SELECT id FROM preference_events WHERE idempotency_key=?",
+      [idempotencyKey],
+    ))[0];
+    if (existing) return this.ensurePreferences(projectId, scope);
+
+    const current = await this.ensurePreferences(projectId, scope);
+    const source = String(payload.source || "explicit_user");
+    const explicit = source === "explicit_user" || source === "survey";
+    const magnitude = (explicit ? 0.05 : 0.02)
+      * Math.max(0.35, 1 / Math.sqrt(1 + current.feedbackCount / 8));
+    const choice = String(payload.choice || "");
+    const positive = new Set(["more", "deeper", "code", "examples", "prerequisites", "terms", "too_shallow"]);
+    const negative = new Set(["less", "shorter", "principles", "fewer", "too_deep"]);
+    const delta = positive.has(choice) ? magnitude : negative.has(choice) ? -magnitude : 0;
+    const dimension = String(payload.dimension || "");
+    const updates: Record<string, unknown> = {
+      scope,
+      feedback_count: current.feedbackCount + 1,
+      last_survey_at: source === "survey" ? now() : current.lastSurveyAt,
+    };
+    const fields: Record<string, keyof LearnerPreferences> = {
+      answer_depth: "answerDepth",
+      code_ratio: "codeRatio",
+      prerequisite_detail: "prerequisiteDetail",
+      terminology_density: "terminologyDensity",
+    };
+    if (fields[dimension]) {
+      updates[dimension] = Math.max(0, Math.min(1, Number(current[fields[dimension]]) + delta));
+    } else if (dimension === "explanation_order") {
+      updates.explanation_order = {
+        examples: "example_first",
+        principles: "principle_first",
+        code: "code_first",
+        balanced: "balanced",
+      }[choice] || current.explanationOrder;
+    }
+    await db.run(
+      "INSERT INTO preference_events(id,idempotency_key,scope_type,scope_id,dimension,delta,source,qa_record_id,evidence_text,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      [crypto.randomUUID(), idempotencyKey, st, si, dimension, delta, source, payload.qa_record_id ?? null, choice, now()],
+    );
+    return this.updateLearnerPreferences(projectId, updates);
+  }
+
+  private async saveTermImpressions(
+    projectId: number,
+    impressions: Array<Record<string, unknown>>,
+  ): Promise<{ status: string; saved: number }> {
+    let saved = 0;
+    for (const item of impressions.slice(0, 100)) {
+      const stamp = now();
+      await db.run(
+        `INSERT INTO term_impressions(project_id,concept_id,source_type,source_path,term_text,content_hash,displayed_count,opened_count,feedback,display_style,last_displayed_at,last_opened_at,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(project_id,source_type,source_path,term_text,content_hash) DO UPDATE SET
+           concept_id=COALESCE(term_impressions.concept_id,excluded.concept_id),
+           displayed_count=term_impressions.displayed_count+excluded.displayed_count,
+           opened_count=term_impressions.opened_count+excluded.opened_count,
+           feedback=COALESCE(excluded.feedback,term_impressions.feedback),
+           display_style=excluded.display_style,
+           last_displayed_at=COALESCE(excluded.last_displayed_at,term_impressions.last_displayed_at),
+           last_opened_at=COALESCE(excluded.last_opened_at,term_impressions.last_opened_at),
+           updated_at=excluded.updated_at`,
+        [
+          projectId,
+          item.concept_id ?? null,
+          item.source_type,
+          item.source_path,
+          item.term_text,
+          item.content_hash || "",
+          bool(item.displayed) ? 1 : 0,
+          bool(item.opened) ? 1 : 0,
+          item.feedback ?? null,
+          item.display_style || "subtle",
+          bool(item.displayed) ? stamp : null,
+          bool(item.opened) ? stamp : null,
+          stamp,
+          stamp,
+        ],
+      );
+      saved += 1;
+    }
+    return { status: "ok", saved };
+  }
+
+  private async getPersonalizationProfile(projectId: number): Promise<PersonalizationProfile> {
+    const concepts = await this.listPersonalizationConcepts(projectId);
+    const entries: PersonalizationProfile["concepts"] = [];
+    for (const concept of concepts) {
+      const mastery = (await this.getPersonalizationMasteryBatch(projectId, [concept.id]))[concept.id];
+      if (!mastery) continue;
+      const manualJudgement = mastery.manualStatus === "known"
+        ? "known"
+        : mastery.manualStatus === "unknown"
+          ? "unfamiliar"
+          : null;
+      const judgement = manualJudgement
+        || (mastery.mastery >= 0.75 ? "known" : mastery.mastery <= 0.35 ? "unfamiliar" : "uncertain");
+      entries.push({ concept, mastery, judgement });
+    }
+    const preferenceRows = await db.query<Row>(
+      "SELECT * FROM preference_events WHERE (scope_type='global' AND scope_id='local-user') OR (scope_type='project' AND scope_id=?) ORDER BY created_at DESC LIMIT 50",
+      [String(projectId)],
+    );
+    return {
+      preferences: await this.getLearnerPreferences(projectId),
+      concepts: entries,
+      preferenceEvidence: preferenceRows.map((row) => ({
+        id: String(row.id),
+        dimension: String(row.dimension),
+        delta: Number(row.delta),
+        source: String(row.source),
+        evidenceText: row.evidence_text ? String(row.evidence_text) : null,
+        qaRecordId: row.qa_record_id == null ? null : Number(row.qa_record_id),
+        createdAt: String(row.created_at),
+      })),
+    };
+  }
+
+  async resetPersonalizationProfile(projectId: number, scope: "project" | "global" = "project"): Promise<{ status: string; deletedMasteryCount: number; deletedEventCount: number }> {
     await db.init();
-    const { type: st, id: si } = this.scope(projectId);
+    const { type: st, id: si } = scope === "global"
+      ? { type: "global" as const, id: "local-user" }
+      : this.scope(projectId);
     // Physical deletion for privacy reset
     const events = await db.query<Row>("SELECT COUNT(*) as c FROM learning_events WHERE scope_type=? AND scope_id=?", [st, si]);
     const eventCount = Number(events[0]?.c ?? 0);
@@ -1691,6 +2180,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const masteryCount = Number(mastery[0]?.c ?? 0);
     await db.run("DELETE FROM learning_events WHERE scope_type=? AND scope_id=?", [st, si]);
     await db.run("DELETE FROM concept_mastery WHERE scope_type=? AND scope_id=?", [st, si]);
+    await db.run("DELETE FROM preference_events WHERE scope_type=? AND scope_id=?", [st, si]);
+    await db.run("DELETE FROM learner_preferences WHERE scope_type=? AND scope_id=?", [st, si]);
     return { status: "ok", deletedMasteryCount: masteryCount, deletedEventCount: eventCount };
   }
 }

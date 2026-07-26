@@ -197,8 +197,62 @@ class DocumentTermResponse(BaseModel):
     confidence: float
     status: str
     qa_record_id: Optional[int] = None
+    concept_id: Optional[str] = None
+    content_hash: Optional[str] = None
     created_at: str
     updated_at: str
+
+
+class PersonalizationResolveCandidate(BaseModel):
+    text: str = Field(min_length=1, max_length=80)
+    source: str = Field(default="rule", max_length=30)
+    confidence: float = Field(default=0.7, ge=0, le=1)
+    context_relevance: float = Field(default=0.5, ge=0, le=1)
+
+
+class PersonalizationResolveRequest(BaseModel):
+    terms: list[PersonalizationResolveCandidate] = Field(default_factory=list, max_length=50)
+
+
+class LearnerPreferencesUpdate(BaseModel):
+    answer_depth: Optional[float] = Field(default=None, ge=0, le=1)
+    code_ratio: Optional[float] = Field(default=None, ge=0, le=1)
+    explanation_order: Optional[Literal["balanced", "example_first", "principle_first", "code_first"]] = None
+    prerequisite_detail: Optional[float] = Field(default=None, ge=0, le=1)
+    terminology_density: Optional[float] = Field(default=None, ge=0, le=1)
+    survey_enabled: Optional[bool] = None
+    scope: Literal["global", "project"] = "global"
+
+
+class AnswerFeedbackRequest(BaseModel):
+    dimension: Literal[
+        "answer_depth",
+        "code_ratio",
+        "prerequisite_detail",
+        "terminology_density",
+        "explanation_order",
+    ]
+    choice: str = Field(min_length=1, max_length=40)
+    qa_record_id: Optional[int] = None
+    source: Literal["explicit_user", "survey", "implicit_question"] = "explicit_user"
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    scope: Literal["global", "project"] = "global"
+
+
+class TermImpressionRequest(BaseModel):
+    concept_id: Optional[str] = None
+    source_type: Literal["course", "qa"]
+    source_path: str = Field(min_length=1, max_length=1000)
+    term_text: str = Field(min_length=1, max_length=80)
+    content_hash: str = Field(default="", max_length=128)
+    displayed: bool = False
+    opened: bool = False
+    feedback: Optional[str] = Field(default=None, max_length=30)
+    display_style: str = Field(default="subtle", max_length=30)
+
+
+class TermImpressionsBatchRequest(BaseModel):
+    impressions: list[TermImpressionRequest] = Field(default_factory=list, max_length=100)
 
 
 class LearningAnchorRequest(BaseModel):

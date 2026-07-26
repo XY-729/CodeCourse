@@ -173,6 +173,8 @@ class DocumentTerm:
     confidence: float
     status: str
     qa_record_id: Optional[int]
+    concept_id: Optional[str]
+    content_hash: Optional[str]
     created_at: str
     updated_at: str
 
@@ -262,6 +264,54 @@ class LearningEventRecord:
     qa_record_id: Optional[int]
     is_voided: bool
     created_at: str
+
+
+@dataclass
+class LearnerPreferences:
+    scope_type: str
+    scope_id: str
+    answer_depth: float
+    code_ratio: float
+    explanation_order: str
+    prerequisite_detail: float
+    terminology_density: float
+    feedback_count: int
+    survey_enabled: bool
+    last_survey_at: Optional[str]
+    updated_at: str
+
+
+@dataclass
+class PreferenceEventRecord:
+    id: str
+    idempotency_key: str
+    scope_type: str
+    scope_id: str
+    dimension: str
+    delta: float
+    source: str
+    qa_record_id: Optional[int]
+    evidence_text: Optional[str]
+    created_at: str
+
+
+@dataclass
+class TermImpression:
+    id: int
+    project_id: int
+    concept_id: Optional[str]
+    source_type: str
+    source_path: str
+    term_text: str
+    content_hash: str
+    displayed_count: int
+    opened_count: int
+    feedback: Optional[str]
+    display_style: str
+    last_displayed_at: Optional[str]
+    last_opened_at: Optional[str]
+    created_at: str
+    updated_at: str
 
 
 def init_storage() -> None:
@@ -668,6 +718,11 @@ def init_storage() -> None:
             ON document_terms(project_id, source_type, source_path, status)
             """
         )
+        document_term_cols = [row[1] for row in conn.execute("PRAGMA table_info(document_terms)").fetchall()]
+        if "concept_id" not in document_term_cols:
+            conn.execute("ALTER TABLE document_terms ADD COLUMN concept_id TEXT")
+        if "content_hash" not in document_term_cols:
+            conn.execute("ALTER TABLE document_terms ADD COLUMN content_hash TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS learning_anchors (
@@ -815,6 +870,74 @@ def init_storage() -> None:
         if "target_event_id" not in event_cols:
             conn.execute("ALTER TABLE learning_events ADD COLUMN target_event_id TEXT")
             conn.commit()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS learner_preferences (
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                answer_depth REAL NOT NULL DEFAULT 0.5,
+                code_ratio REAL NOT NULL DEFAULT 0.5,
+                explanation_order TEXT NOT NULL DEFAULT 'balanced',
+                prerequisite_detail REAL NOT NULL DEFAULT 0.5,
+                terminology_density REAL NOT NULL DEFAULT 0.5,
+                feedback_count INTEGER NOT NULL DEFAULT 0,
+                survey_enabled INTEGER NOT NULL DEFAULT 1,
+                last_survey_at TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(scope_type, scope_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS preference_events (
+                id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                dimension TEXT NOT NULL,
+                delta REAL NOT NULL,
+                source TEXT NOT NULL,
+                qa_record_id INTEGER,
+                evidence_text TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_preference_events_scope
+            ON preference_events(scope_type, scope_id, created_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS term_impressions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                concept_id TEXT,
+                source_type TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                term_text TEXT NOT NULL,
+                content_hash TEXT NOT NULL DEFAULT '',
+                displayed_count INTEGER NOT NULL DEFAULT 0,
+                opened_count INTEGER NOT NULL DEFAULT 0,
+                feedback TEXT,
+                display_style TEXT NOT NULL DEFAULT 'subtle',
+                last_displayed_at TEXT,
+                last_opened_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(project_id, source_type, source_path, term_text, content_hash)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_term_impressions_source
+            ON term_impressions(project_id, source_type, source_path)
+            """
+        )
         conn.commit()
 
 
@@ -888,6 +1011,8 @@ def _row_to_document_term(row: sqlite3.Row) -> DocumentTerm:
         confidence=float(row["confidence"]),
         status=row["status"],
         qa_record_id=row["qa_record_id"],
+        concept_id=row["concept_id"] if "concept_id" in row.keys() else None,
+        content_hash=row["content_hash"] if "content_hash" in row.keys() else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -1133,6 +1258,9 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM learning_anchors WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM learning_events WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM concept_mastery WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM preference_events WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM learner_preferences WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM term_impressions WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM document_terms WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_links WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_edges WHERE project_id = ?", (project_id,))
@@ -2567,6 +2695,8 @@ def upsert_document_term(
     term_text: str,
     detection_source: str,
     confidence: float = 0.7,
+    concept_id: Optional[str] = None,
+    content_hash: Optional[str] = None,
 ) -> DocumentTerm:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
@@ -2574,18 +2704,31 @@ def upsert_document_term(
             """
             INSERT INTO document_terms (
                 project_id, source_type, source_path, term_text, detection_source,
-                confidence, status, qa_record_id, created_at, updated_at
+                confidence, status, qa_record_id, concept_id, content_hash, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'candidate', NULL, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'candidate', NULL, ?, ?, ?, ?)
             ON CONFLICT(project_id, source_type, source_path, term_text) DO UPDATE SET
                 detection_source = CASE
                     WHEN document_terms.detection_source = 'model' THEN document_terms.detection_source
                     ELSE excluded.detection_source
                 END,
                 confidence = MAX(document_terms.confidence, excluded.confidence),
+                concept_id = COALESCE(document_terms.concept_id, excluded.concept_id),
+                content_hash = COALESCE(excluded.content_hash, document_terms.content_hash),
                 updated_at = excluded.updated_at
             """,
-            (project_id, source_type, source_path, term_text, detection_source, confidence, now, now),
+            (
+                project_id,
+                source_type,
+                source_path,
+                term_text,
+                detection_source,
+                confidence,
+                concept_id,
+                content_hash,
+                now,
+                now,
+            ),
         )
         conn.commit()
         row = conn.execute(
@@ -2710,6 +2853,27 @@ def list_document_terms(
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
         return [_row_to_document_term(row) for row in rows]
+
+
+def delete_stale_document_term_candidates(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    content_hash: str,
+) -> int:
+    """Remove obsolete auto-candidates while preserving linked and user-labelled terms."""
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM document_terms
+            WHERE project_id = ? AND source_type = ? AND source_path = ?
+              AND status = 'candidate'
+              AND COALESCE(content_hash, '') <> ?
+            """,
+            (project_id, source_type, source_path, content_hash),
+        )
+        conn.commit()
+        return cursor.rowcount
 
 
 def update_document_term_status(
@@ -3108,10 +3272,12 @@ def _row_to_concept_mastery(row: sqlite3.Row) -> ConceptMastery:
 def upsert_concept_mastery(mastery_id: str, concept_id: str, scope_type: str, scope_id: str,
                            known_evidence: float, unknown_evidence: float, mastery: float,
                            uncertainty: float, manual_status: Optional[str],
-                           sequence: int = 0) -> ConceptMastery:
+                           sequence: int = 0,
+                           conn: Optional[sqlite3.Connection] = None) -> ConceptMastery:
     now = datetime.now(timezone.utc).isoformat()
-    with _connect() as conn:
-        conn.execute(
+
+    def write(db: sqlite3.Connection) -> ConceptMastery:
+        db.execute(
             """
             INSERT INTO concept_mastery (id, concept_id, scope_type, scope_id, known_evidence,
                 unknown_evidence, mastery, uncertainty, manual_status, sequence, last_seen_at, updated_at)
@@ -3129,8 +3295,7 @@ def upsert_concept_mastery(mastery_id: str, concept_id: str, scope_type: str, sc
             (mastery_id, concept_id, scope_type, scope_id, known_evidence, unknown_evidence,
              mastery, uncertainty, manual_status, sequence, now, now),
         )
-        conn.commit()
-        row = conn.execute(
+        row = db.execute(
             "SELECT * FROM concept_mastery WHERE concept_id = ? AND scope_type = ? AND scope_id = ?",
             (concept_id, scope_type, scope_id),
         ).fetchone()
@@ -3138,14 +3303,27 @@ def upsert_concept_mastery(mastery_id: str, concept_id: str, scope_type: str, sc
             raise RuntimeError("concept mastery was not persisted")
         return _row_to_concept_mastery(row)
 
+    if conn is not None:
+        return write(conn)
+    with _connect() as db:
+        result = write(db)
+        db.commit()
+        return result
 
-def get_concept_mastery(concept_id: str, scope_type: str, scope_id: str) -> Optional[ConceptMastery]:
-    with _connect() as conn:
-        row = conn.execute(
+
+def get_concept_mastery(concept_id: str, scope_type: str, scope_id: str,
+                        conn: Optional[sqlite3.Connection] = None) -> Optional[ConceptMastery]:
+    def read(db: sqlite3.Connection) -> Optional[ConceptMastery]:
+        row = db.execute(
             "SELECT * FROM concept_mastery WHERE concept_id = ? AND scope_type = ? AND scope_id = ?",
             (concept_id, scope_type, scope_id),
         ).fetchone()
         return _row_to_concept_mastery(row) if row else None
+
+    if conn is not None:
+        return read(conn)
+    with _connect() as db:
+        return read(db)
 
 
 def get_concept_mastery_batch(concept_ids: list[str], scope_type: str, scope_id: str) -> list[ConceptMastery]:
@@ -3198,10 +3376,12 @@ def insert_learning_event(event_id: str, idempotency_key: str, schema_version: i
                           event_type: str, direction: str, strength: float, source: str,
                           evidence_text: Optional[str] = None, session_id: Optional[str] = None,
                           qa_record_id: Optional[int] = None,
-                          target_event_id: Optional[str] = None) -> LearningEventRecord:
+                          target_event_id: Optional[str] = None,
+                          conn: Optional[sqlite3.Connection] = None) -> LearningEventRecord:
     now = datetime.now(timezone.utc).isoformat()
-    with _connect() as conn:
-        conn.execute(
+
+    def write(db: sqlite3.Connection) -> LearningEventRecord:
+        db.execute(
             """
             INSERT OR IGNORE INTO learning_events (id, idempotency_key, schema_version, concept_id,
                 scope_type, scope_id, event_type, direction, strength, source,
@@ -3212,21 +3392,27 @@ def insert_learning_event(event_id: str, idempotency_key: str, schema_version: i
              event_type, direction, strength, source, target_event_id, evidence_text,
              session_id, qa_record_id, now),
         )
-        conn.commit()
-        row = conn.execute("SELECT * FROM learning_events WHERE id = ?", (event_id,)).fetchone()
+        row = db.execute("SELECT * FROM learning_events WHERE id = ?", (event_id,)).fetchone()
         if row is None:
-            row = conn.execute(
+            row = db.execute(
                 "SELECT * FROM learning_events WHERE idempotency_key = ?",
                 (idempotency_key,),
             ).fetchone()
         if row is None:
             raise RuntimeError("learning event was not persisted")
         return _row_to_learning_event(row)
+    if conn is not None:
+        return write(conn)
+    with _connect() as db:
+        result = write(db)
+        db.commit()
+        return result
 
 
-def get_learning_events(concept_id: str, scope_type: str, scope_id: str) -> list[LearningEventRecord]:
-    with _connect() as conn:
-        rows = conn.execute(
+def get_learning_events(concept_id: str, scope_type: str, scope_id: str,
+                        conn: Optional[sqlite3.Connection] = None) -> list[LearningEventRecord]:
+    def read(db: sqlite3.Connection) -> list[LearningEventRecord]:
+        rows = db.execute(
             """
             SELECT * FROM learning_events
             WHERE concept_id = ? AND scope_type = ? AND scope_id = ? AND is_voided = 0
@@ -3235,15 +3421,24 @@ def get_learning_events(concept_id: str, scope_type: str, scope_id: str) -> list
             (concept_id, scope_type, scope_id),
         ).fetchall()
         return [_row_to_learning_event(row) for row in rows]
+    if conn is not None:
+        return read(conn)
+    with _connect() as db:
+        return read(db)
 
 
-def get_event_by_idempotency_key(key: str) -> Optional[LearningEventRecord]:
-    with _connect() as conn:
-        row = conn.execute(
+def get_event_by_idempotency_key(key: str,
+                                 conn: Optional[sqlite3.Connection] = None) -> Optional[LearningEventRecord]:
+    def read(db: sqlite3.Connection) -> Optional[LearningEventRecord]:
+        row = db.execute(
             "SELECT * FROM learning_events WHERE idempotency_key = ?",
             (key,),
         ).fetchone()
         return _row_to_learning_event(row) if row else None
+    if conn is not None:
+        return read(conn)
+    with _connect() as db:
+        return read(db)
 
 
 def get_event_by_id(event_id: str) -> Optional[LearningEventRecord]:
@@ -3270,6 +3465,264 @@ def delete_events_by_scope(scope_type: str, scope_id: str) -> int:
         )
         conn.commit()
         return cursor.rowcount
+
+
+# ---- Personalization: Preferences and term impressions ----
+
+def _row_to_learner_preferences(row: sqlite3.Row) -> LearnerPreferences:
+    return LearnerPreferences(
+        scope_type=row["scope_type"],
+        scope_id=row["scope_id"],
+        answer_depth=float(row["answer_depth"]),
+        code_ratio=float(row["code_ratio"]),
+        explanation_order=row["explanation_order"],
+        prerequisite_detail=float(row["prerequisite_detail"]),
+        terminology_density=float(row["terminology_density"]),
+        feedback_count=int(row["feedback_count"]),
+        survey_enabled=bool(row["survey_enabled"]),
+        last_survey_at=row["last_survey_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def get_learner_preferences(scope_type: str, scope_id: str) -> Optional[LearnerPreferences]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM learner_preferences WHERE scope_type = ? AND scope_id = ?",
+            (scope_type, scope_id),
+        ).fetchone()
+        return _row_to_learner_preferences(row) if row else None
+
+
+def upsert_learner_preferences(
+    scope_type: str,
+    scope_id: str,
+    *,
+    answer_depth: float = 0.5,
+    code_ratio: float = 0.5,
+    explanation_order: str = "balanced",
+    prerequisite_detail: float = 0.5,
+    terminology_density: float = 0.5,
+    feedback_count: int = 0,
+    survey_enabled: bool = True,
+    last_survey_at: Optional[str] = None,
+) -> LearnerPreferences:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO learner_preferences (
+                scope_type, scope_id, answer_depth, code_ratio, explanation_order,
+                prerequisite_detail, terminology_density, feedback_count,
+                survey_enabled, last_survey_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scope_type, scope_id) DO UPDATE SET
+                answer_depth = excluded.answer_depth,
+                code_ratio = excluded.code_ratio,
+                explanation_order = excluded.explanation_order,
+                prerequisite_detail = excluded.prerequisite_detail,
+                terminology_density = excluded.terminology_density,
+                feedback_count = excluded.feedback_count,
+                survey_enabled = excluded.survey_enabled,
+                last_survey_at = excluded.last_survey_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                scope_type,
+                scope_id,
+                answer_depth,
+                code_ratio,
+                explanation_order,
+                prerequisite_detail,
+                terminology_density,
+                feedback_count,
+                1 if survey_enabled else 0,
+                last_survey_at,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM learner_preferences WHERE scope_type = ? AND scope_id = ?",
+            (scope_type, scope_id),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("learner preferences were not persisted")
+        return _row_to_learner_preferences(row)
+
+
+def insert_preference_event(
+    event_id: str,
+    idempotency_key: str,
+    scope_type: str,
+    scope_id: str,
+    dimension: str,
+    delta: float,
+    source: str,
+    qa_record_id: Optional[int] = None,
+    evidence_text: Optional[str] = None,
+) -> PreferenceEventRecord:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO preference_events (
+                id, idempotency_key, scope_type, scope_id, dimension, delta,
+                source, qa_record_id, evidence_text, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                idempotency_key,
+                scope_type,
+                scope_id,
+                dimension,
+                delta,
+                source,
+                qa_record_id,
+                evidence_text,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM preference_events WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("preference event was not persisted")
+        return PreferenceEventRecord(
+            id=row["id"],
+            idempotency_key=row["idempotency_key"],
+            scope_type=row["scope_type"],
+            scope_id=row["scope_id"],
+            dimension=row["dimension"],
+            delta=float(row["delta"]),
+            source=row["source"],
+            qa_record_id=row["qa_record_id"],
+            evidence_text=row["evidence_text"],
+            created_at=row["created_at"],
+        )
+
+
+def list_preference_events(scope_type: str, scope_id: str, limit: int = 100) -> list[PreferenceEventRecord]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM preference_events
+            WHERE scope_type = ? AND scope_id = ?
+            ORDER BY created_at DESC LIMIT ?
+            """,
+            (scope_type, scope_id, limit),
+        ).fetchall()
+        return [
+            PreferenceEventRecord(
+                id=row["id"],
+                idempotency_key=row["idempotency_key"],
+                scope_type=row["scope_type"],
+                scope_id=row["scope_id"],
+                dimension=row["dimension"],
+                delta=float(row["delta"]),
+                source=row["source"],
+                qa_record_id=row["qa_record_id"],
+                evidence_text=row["evidence_text"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+
+def delete_preferences_by_scope(scope_type: str, scope_id: str) -> tuple[int, int]:
+    with _connect() as conn:
+        preferences = conn.execute(
+            "DELETE FROM learner_preferences WHERE scope_type = ? AND scope_id = ?",
+            (scope_type, scope_id),
+        ).rowcount
+        events = conn.execute(
+            "DELETE FROM preference_events WHERE scope_type = ? AND scope_id = ?",
+            (scope_type, scope_id),
+        ).rowcount
+        conn.commit()
+        return preferences, events
+
+
+def upsert_term_impression(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    term_text: str,
+    content_hash: str,
+    *,
+    concept_id: Optional[str] = None,
+    displayed: bool = False,
+    opened: bool = False,
+    feedback: Optional[str] = None,
+    display_style: str = "subtle",
+) -> TermImpression:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO term_impressions (
+                project_id, concept_id, source_type, source_path, term_text,
+                content_hash, displayed_count, opened_count, feedback,
+                display_style, last_displayed_at, last_opened_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, source_type, source_path, term_text, content_hash) DO UPDATE SET
+                concept_id = COALESCE(term_impressions.concept_id, excluded.concept_id),
+                displayed_count = term_impressions.displayed_count + excluded.displayed_count,
+                opened_count = term_impressions.opened_count + excluded.opened_count,
+                feedback = COALESCE(excluded.feedback, term_impressions.feedback),
+                display_style = excluded.display_style,
+                last_displayed_at = COALESCE(excluded.last_displayed_at, term_impressions.last_displayed_at),
+                last_opened_at = COALESCE(excluded.last_opened_at, term_impressions.last_opened_at),
+                updated_at = excluded.updated_at
+            """,
+            (
+                project_id,
+                concept_id,
+                source_type,
+                source_path,
+                term_text,
+                content_hash,
+                1 if displayed else 0,
+                1 if opened else 0,
+                feedback,
+                display_style,
+                now if displayed else None,
+                now if opened else None,
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            """
+            SELECT * FROM term_impressions
+            WHERE project_id = ? AND source_type = ? AND source_path = ?
+              AND term_text = ? AND content_hash = ?
+            """,
+            (project_id, source_type, source_path, term_text, content_hash),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("term impression was not persisted")
+        return TermImpression(
+            id=row["id"],
+            project_id=row["project_id"],
+            concept_id=row["concept_id"],
+            source_type=row["source_type"],
+            source_path=row["source_path"],
+            term_text=row["term_text"],
+            content_hash=row["content_hash"],
+            displayed_count=int(row["displayed_count"]),
+            opened_count=int(row["opened_count"]),
+            feedback=row["feedback"],
+            display_style=row["display_style"],
+            last_displayed_at=row["last_displayed_at"],
+            last_opened_at=row["last_opened_at"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
 
 # ---- Transaction helper ----

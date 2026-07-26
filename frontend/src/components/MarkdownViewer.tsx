@@ -21,7 +21,7 @@ type Props = {
   tempSelectedText?: string | null;
   onSelectionChange?: (selection: ViewerSelection) => void;
   onOpenKnowledgeLink?: (term: string, links: KnowledgeLink[]) => void;
-  onGenerateTerm?: (term: DocumentTerm) => void;
+  onGenerateTerm?: (term: DocumentTerm, position?: { x: number; y: number }) => void;
   onTermAction?: (term: DocumentTerm) => void;
   onGenerateLesson?: (lessonNumber: number, title: string) => void;
   headerActions?: ReactNode;
@@ -196,7 +196,7 @@ function applyKnowledgeLinksToText(
 function applyTermCandidatesToText(
   text: string,
   terms: DocumentTerm[],
-  onGenerateTerm: ((term: DocumentTerm) => void) | undefined,
+  onGenerateTerm: ((term: DocumentTerm, position?: { x: number; y: number }) => void) | undefined,
   onTermAction: ((term: DocumentTerm) => void) | undefined,
   keyPrefix: string,
 ): ReactNode[] {
@@ -210,23 +210,32 @@ function applyTermCandidatesToText(
     return [text];
   }
   const result: ReactNode[] = [];
+  const visibleCandidateIds = new Set<number>();
   let index = 0;
   while (index < text.length) {
-    const term = candidates.find((candidate) => text.startsWith(candidate.term_text, index));
+    const term = candidates.find((candidate) =>
+      text.startsWith(candidate.term_text, index)
+      && (
+        candidate.status === "linked"
+        || visibleCandidateIds.has(candidate.id)
+        || visibleCandidateIds.size < 2
+      )
+    );
     if (!term) {
       result.push(text[index]);
       index += 1;
       continue;
     }
+    if (term.status === "candidate") visibleCandidateIds.add(term.id);
     if (isAndroidRuntime()) {
       result.push(
         <span
           key={`${keyPrefix}-term-${term.id}-${index}`}
           className={`document-term document-term-${term.status} ${term.status === "linked" ? "knowledge-inline-link" : "term-candidate-link"}`}
           data-term-id={term.id}
-          onClick={() => {
+          onClick={(event) => {
             if (window.getSelection() && !window.getSelection()?.isCollapsed) return;
-            onGenerateTerm(term);
+            onGenerateTerm(term, { x: event.clientX, y: event.clientY });
           }}
         >
           {term.term_text}
@@ -242,7 +251,7 @@ function applyTermCandidatesToText(
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            onGenerateTerm(term);
+            onGenerateTerm(term, { x: event.clientX, y: event.clientY });
           }}
           onContextMenu={(event) => {
             event.preventDefault();
@@ -270,7 +279,7 @@ function highlightChildren(
   annotations: Annotation[],
   tempText: string | null,
   onOpenKnowledgeLink?: (term: string, links: KnowledgeLink[]) => void,
-  onGenerateTerm?: (term: DocumentTerm) => void,
+  onGenerateTerm?: (term: DocumentTerm, position?: { x: number; y: number }) => void,
   onTermAction?: (term: DocumentTerm) => void,
 ): ReactNode {
   const groupedLinks = groupKnowledgeLinks(knowledgeLinks);
@@ -327,7 +336,8 @@ export default function MarkdownViewer({
   const articleRef = useRef<HTMLElement | null>(null);
   const progressFillRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  const scrollFrameRef = useRef(0);
+  const restoredSourceRef = useRef<string | null>(null);
+  const scrollRangeRef = useRef(0);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const androidRuntime = isAndroidRuntime();
   // Never inject <mark> temp-selection elements on Android — they would
@@ -369,27 +379,42 @@ export default function MarkdownViewer({
     return () => article.removeEventListener("wheel", handleWheel);
   }, [handleWheel]);
 
-  // Desktop only: restore reading position on open. Android never auto-scrolls.
+  // Restore once per opened document. Live learning-state updates must not be
+  // fed back into scrollTop or they create a save -> restore jump loop.
   useEffect(() => {
-    if (androidRuntime || !initialScrollRatio) return;
+    if (androidRuntime) return;
     const article = articleRef.current;
     if (!article) return;
+    const restoreKey = `${sourceType}:${sourcePath ?? title}`;
+    if (restoredSourceRef.current === restoreKey) return;
+    const ratio = Math.min(1, Math.max(0, initialScrollRatio ?? 0));
+    if (ratio === 0) {
+      restoredSourceRef.current = restoreKey;
+      article.scrollTop = 0;
+      return;
+    }
     const frame = window.requestAnimationFrame(() => {
       const maxScroll = Math.max(0, article.scrollHeight - article.clientHeight);
       if (maxScroll <= 0) return;
-      article.scrollTop = maxScroll * Math.min(1, Math.max(0, initialScrollRatio));
+      scrollRangeRef.current = maxScroll;
+      article.scrollTop = maxScroll * ratio;
+      restoredSourceRef.current = restoreKey;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [androidRuntime, sourcePath, initialScrollRatio]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [androidRuntime, content, initialScrollRatio, sourcePath, sourceType, title]);
 
   // Update progress bar whenever content size or scroll position changes
-  function refreshProgress() {
+  function refreshProgress(remeasure = false) {
     const article = articleRef.current;
     const fill = progressFillRef.current;
     if (!article || !fill) return;
-    const progress = calculateReadingProgress(article.scrollTop, article.scrollHeight, article.clientHeight);
+    if (remeasure) {
+      scrollRangeRef.current = Math.max(0, article.scrollHeight - article.clientHeight);
+    }
+    const range = scrollRangeRef.current;
+    const progress = range > 0 ? Math.min(1, Math.max(0, article.scrollTop / range)) : 0;
     fill.style.transform = `scaleX(${progress})`;
-    fill.style.opacity = article.scrollHeight <= article.clientHeight ? "0" : "1";
+    fill.style.opacity = range <= 0 ? "0" : "1";
   }
 
   // Unified progress refresh — multiple resize sources, single rAF per frame
@@ -397,7 +422,7 @@ export default function MarkdownViewer({
     if (progressRafRef.current) return;
     progressRafRef.current = window.requestAnimationFrame(() => {
       progressRafRef.current = 0;
-      refreshProgress();
+      refreshProgress(true);
     });
   }, []);
 
@@ -490,56 +515,52 @@ export default function MarkdownViewer({
   // Flush pending position on unmount — commit before setting unmounted flag
   useEffect(() => () => {
     window.clearTimeout(positionSaveTimerRef.current);
-    window.cancelAnimationFrame(scrollFrameRef.current);
     window.cancelAnimationFrame(progressRafRef.current);
     resizeObserverRef.current?.disconnect();
     commitReadingPosition(true);
     unmountedRef.current = true;
   }, []);
 
-  // rAF-throttled scroll: only updates the progress bar (visual).
-  function reportScrollRaf() {
-    if (scrollFrameRef.current) return;
-    scrollFrameRef.current = window.requestAnimationFrame(() => {
-      scrollFrameRef.current = 0;
-      refreshProgress();
-    });
-  }
-
-  // Unified scroll handler: update progress bar (visual) + track position
-  function onScrollHandler() {
-    reportScrollRaf();
+  function captureCurrentScrollPosition() {
     const article = articleRef.current;
-    if (article && onScrollRatioChange) {
-      scrollValueRef.current = calculateReadingProgress(
-        article.scrollTop, article.scrollHeight, article.clientHeight,
-      );
-    }
-    // Only set debounce if scrollend is NOT supported
-    if (article && !("onscrollend" in article)) {
-      if (hasActiveAndroidSelection()) return;
-      window.clearTimeout(positionSaveTimerRef.current);
-      positionSaveTimerRef.current = window.setTimeout(() => {
-        commitReadingPosition();
-      }, 700) as unknown as number;
+    if (article && onScrollRatioChangeRef.current) {
+      const range = scrollRangeRef.current;
+      scrollValueRef.current = range > 0
+        ? Math.min(1, Math.max(0, article.scrollTop / range))
+        : 0;
     }
   }
 
-  // scrollend listener (preferred path when supported)
+  // Keep ordinary scrolling entirely on Chromium's compositor path. Position
+  // persistence and the progress indicator update only after scrolling stops.
   useEffect(() => {
     const article = articleRef.current;
     if (!article || !onScrollRatioChange) return;
 
-    const handleScrollEnd = () => {
+    const settleScroll = () => {
+      captureCurrentScrollPosition();
+      refreshProgress();
       commitReadingPosition();
     };
 
-    if ("onscrollend" in article) {
-      article.addEventListener("scrollend", handleScrollEnd);
-      return () => article.removeEventListener("scrollend", handleScrollEnd);
+    const supportsScrollEnd = typeof (
+      article as unknown as { onscrollend?: unknown }
+    ).onscrollend !== "undefined";
+    if (supportsScrollEnd) {
+      article.addEventListener("scrollend", settleScroll);
+      return () => article.removeEventListener("scrollend", settleScroll);
     }
-    return undefined;
-  }, [onScrollRatioChange]);
+
+    const handleFallbackScroll = () => {
+      window.clearTimeout(positionSaveTimerRef.current);
+      positionSaveTimerRef.current = window.setTimeout(settleScroll, 180) as unknown as number;
+    };
+    article.addEventListener("scroll", handleFallbackScroll, { passive: true });
+    return () => {
+      article.removeEventListener("scroll", handleFallbackScroll);
+      window.clearTimeout(positionSaveTimerRef.current);
+    };
+  }, [androidRuntime, onScrollRatioChange, sourcePath, sourceType, title]);
 
   const captureSelection = useCallback(() => {
     // Android relies entirely on native WebView ActionMode. React state
@@ -659,7 +680,6 @@ export default function MarkdownViewer({
         className="markdown-scroll-viewport"
         onMouseUp={androidRuntime ? undefined : captureSelection}
         onKeyUp={androidRuntime ? undefined : captureSelection}
-        onScroll={onScrollHandler}
       >
         <div ref={bodyRef} className="markdown-body">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={highlightedComponents}>

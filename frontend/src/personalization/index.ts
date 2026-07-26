@@ -3,4 +3,5 @@ export * from "./types";
 export * from "./masteryEngine";
 export * from "./termLinkScorer";
 export * from "./conceptResolver";
+export * from "./preferenceEngine";
 export { usePersonalization } from "./usePersonalization";
