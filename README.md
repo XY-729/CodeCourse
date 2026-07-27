@@ -1,349 +1,391 @@
-# GitHub 项目学习器 CodeCourse
+# CodeCourse
 
-CodeCourse 是一个面向学习的 GitHub 项目阅读与课程生成工具。它不是 IDE，不运行代码，不调试代码，而是帮助用户把一个项目拆成“结构说明、学习总纲、文件课件、上下文问答和学习记录”。
+> 把陌生 GitHub 项目变成一套可以阅读、提问、复习和持续积累的课程。
 
-用户可以导入 GitHub 仓库，也可以创建一个不绑定仓库的学习计划。系统会把项目文件、课程 Markdown、AI 问答历史、本地检索索引都保存在本机 workspace 中，适合用来阅读陌生项目、整理源码学习路线、针对某段代码或某份课件持续提问。
+[下载 Windows 版](https://github.com/XY-729/CodeCourse/releases) · [查看源码](https://github.com/XY-729/CodeCourse)
 
-## 核心能力
+CodeCourse 是一个面向学习者的代码阅读与课程生成工具。它不是 IDE，不运行、编译或调试导入的代码，而是帮助你理解一个项目：
 
-### 项目导入与学习计划
+- 从哪里开始读；
+- 每个目录、文件、函数和概念承担什么职责；
+- 某段代码为什么这样写；
+- 哪些知识已经理解，哪些内容还需要继续追问；
+- 如何把零散问答沉淀为自己的课程和知识网络。
 
-- 支持输入 GitHub SSH / HTTPS 地址导入公开仓库或当前机器可访问的仓库。
-- 后端使用 `git clone --depth 1` 下载项目到 `workspace/repos/`。
-- 自动扫描项目目录树，并忽略 `.git`、`node_modules`、`build`、`dist`、`target`、`__pycache__`、`.venv`、`venv`、`.next`、`coverage` 等目录。
-- 自动识别关键文件，例如 `README.md`、`package.json`、`pyproject.toml`、`requirements.txt`、`CMakeLists.txt`、`Cargo.toml`、`go.mod`、`Dockerfile`、`docker-compose.yml`。
-- 支持创建“学习计划”项目，用于自定义知识点学习，不需要绑定 GitHub 仓库。
-- 仓库项目导入后会生成规则占位课程；学习计划项目不会创建默认课程，只有用户点击生成后才创建总纲。
+你可以导入 GitHub 仓库，也可以创建不依赖仓库的“学习计划”，围绕任意技术主题生成教材化课程。
 
-### 课程生成
+## 为什么需要 CodeCourse
 
-- 所有模型调用都需要用户主动点击并确认，不会在导入项目时自动调用 AI。
-- 支持三类生成范围：
-  - `全项目`：根据 README、目录树、关键文件和项目索引生成学习总纲。
-  - `指定文件`：从文件树选择文件后，只围绕这些文件生成内容。
-  - `学习计划`：根据用户输入的生成要求生成自定义学习总纲。
-- 支持按需生成文件课件：
-  - `粗略介绍`：低 token 消耗，适合快速理解文件职责和阅读顺序。
-  - `详细分析`：更深入解释关键结构、数据流、修改风险和练习任务。
-- 生成失败时不会覆盖旧内容。
-- 生成内容统一写入 `workspace/generated/<project_id>/`，避免污染被克隆项目。
+学习优秀开源项目时，真正困难的通常不是把代码下载下来，而是：
 
-### 代码与课件阅读
+- 文件很多，却不知道入口和推荐阅读顺序；
+- README 只能介绍项目，无法替代逐文件、逐概念的教学；
+- 遇到陌生术语时需要不断复制、粘贴和切换 AI 窗口；
+- 多轮问答散落在聊天记录里，难以回到原文件和原语境；
+- 学过的内容没有进度、关联和复习路径。
 
-- 前端是三栏布局：左侧项目与目录，中间工作区，右侧 AI 助手。
-- 代码阅读器使用 Monaco Editor，只读展示和语法高亮，不提供运行、调试或补全入口。
-- Markdown 阅读器支持标题、代码块、表格，后续可继续扩展 Mermaid。
-- 中间工作区采用类似 VS / VS Code 的递归拆分编辑组：
-  - 默认一个全屏工作区。
-  - 拖拽文件、课件或回答到工作区边缘，可自动拆出新的工作区。
-  - 支持横向、纵向、嵌套拆分。
-  - 分隔线可拖动调整大小，拖到很小或双击分隔线可折叠一侧工作区。
-  - 每个工作区有独立标签页，可同时阅读代码、课件和 AI 回答。
+CodeCourse 把这些步骤整理成一条连续工作流：
 
-### AI 助手
+```text
+导入仓库 / 创建学习计划
+          ↓
+扫描结构并建立本地索引
+          ↓
+生成学习总纲与按需课件
+          ↓
+同时阅读源码、课件和 AI 回答
+          ↓
+选中即问 / 基于当前文件直接提问
+          ↓
+沉淀问答、术语链接、学习进度和知识网络
+```
 
-右侧面板已经从“选区提问”升级为“AI 助手”。它不是只能回答选中文本，而是可以围绕项目、当前文件、当前课件、当前回答或用户选区进行上下文问答。
+## 核心功能
 
-- 没有选区时，可以直接问：
-  - “这个项目入口在哪？”
-  - “这个文件是干什么用的？”
-  - “我只想学判题核心，该先看哪些文件？”
-  - “这份课件应该怎么学？”
-- 有选区时，会把选区作为附带上下文发送给模型。
-- 选区文本可以在右侧编辑，也可以清空；清空后源页面蓝色临时选区会同步消失。
-- Markdown 课件和 AI 回答支持选中文本后打标记，例如荧光、高亮、加粗、下划线。
-- 问答记录会保存到历史中，支持搜索、收藏、重命名。
-- 双击历史记录可在中间工作区打开为 Markdown，可继续编辑并保存。
-- 每条回答会落盘为 Markdown，便于复习和归档。
+### 1. 导入项目或创建学习计划
 
-### 本地 RAG 与对话记忆
+- 支持 GitHub SSH / HTTPS 仓库地址。
+- 桌面端使用内置 Git 执行浅克隆，不要求用户额外安装 Git。
+- Android 支持公开 GitHub HTTPS 仓库快照和本地 ZIP。
+- 自动忽略 `.git`、`node_modules`、`build`、`dist`、`target`、`__pycache__`、`.venv`、`.next`、`coverage` 等目录。
+- 自动识别 README、依赖清单、构建配置、容器配置和常见项目入口。
+- 支持创建“学习计划”，不绑定任何代码仓库，适合系统学习语言、框架、算法或工程主题。
 
-CodeCourse 内置本地混合 RAG，不依赖外部 embedding API。
+### 2. 生成真正可学习的课程
 
-- 可以为项目构建本地索引。
-- 基础索引使用 SQLite FTS5、规则符号提取和带行号的文本块，构建完成后即可检索。
-- Windows 桌面版会在后台继续使用内置 `codebase-memory-mcp` 建立 Tree-sitter 结构图和本地语义索引；Web/VM 找不到结构引擎时自动回退到 FTS。
-- AI 助手会结合选区所属符号、调用者/被调用者、文件定义与导入关系、相关代码片段回答，而不是用关键词相似度冒充调用关系。
-- 回答下方的“参考代码”会保留真实路径、行号、符号、关系和检索引擎，点击可直接定位源码。
-- 回答会带上项目上下文、当前负责解释的文件或课件、最近对话摘要和检索片段。
-- 同一个对话会保留记忆，后续追问会知道当前项目、当前文件或当前课件的语境。
-- 项目删除时会同步清理文本索引、结构缓存和分析快照；结构分析不会修改被导入仓库或 Git 状态。
+所有模型调用都必须由用户主动点击并确认。导入项目本身不会自动消耗模型 API。
 
-## 模型 API
+- **全项目总纲**：综合 README、目录树、关键文件、文本索引和结构索引生成学习路线。
+- **指定文件总纲**：直接在文件树中选择需要学习的文件，避免手写路径。
+- **粗略介绍**：低 token 成本，快速说明文件职责、关键结构和阅读顺序。
+- **详细分析**：展开函数、类、数据流、控制流、调用关系、修改风险和练习任务。
+- **学习计划总纲**：只围绕学习目标和可靠教材知识安排课程，不虚构项目文件。
+- **教材化分课生成**：先规划章节，再逐章生成正文，并检查遗漏知识点；旧课件只有在完整生成成功后才会被替换。
+- **自定义提示词**：总体要求、项目课件、学习计划总纲、学习计划课件、粗略介绍、详细分析和 AI 助手提示词均可在界面中修改。
 
-点击页面右上角 `模型 API` 配置模型。当前设计支持 DeepSeek / OpenAI Compatible 风格接口。
+所有生成内容写入独立的 `workspace/generated/<project_id>/`，不会污染被导入仓库。
 
-默认配置示例：
+### 3. 为学习而设计的阅读工作区
 
-- Provider: `deepseek`
-- Base URL: `https://api.deepseek.com`
-- Model: `deepseek-v4-flash`
+- Monaco 只读代码阅读器，提供语法高亮、文件定位和精确代码选区。
+- Markdown 阅读器支持标题、代码块、表格、动态术语链接和学习标记。
+- 文件、课件和 AI 回答都可以作为标签打开。
+- 支持类似 VS / VS Code 的递归工作区：
+  - 将文件拖到编辑区边缘即可横向或纵向拆分；
+  - 每个编辑组保留独立标签；
+  - 分隔线可实时调整大小；
+  - 拖到极小或双击分隔线可折叠一侧；
+  - 可同时阅读源码、课件和回答。
+- 自动保存最近项目、打开标签、工作区布局、Markdown 滚动位置和代码行号。
+- 课程支持“未开始 / 学习中 / 已完成”，并提供继续学习、上一课、下一课和总体进度。
+- `Ctrl+K` 命令面板可以统一搜索课程、源码、最近文档、问答历史和常用命令。
 
-API Key 读取优先级：
+### 4. 不止能问选区的 AI 助手
 
-1. 环境变量 `DEEPSEEK_API_KEY` 或 `GPL_LLM_API_KEY`
-2. 项目根目录 `.env`
-3. 本地 SQLite 设置
+AI 助手可以围绕整个项目、当前文件、当前课件、当前回答或选中内容提问。
+
+例如：
+
+- “这个项目的入口在哪里？”
+- “这个文件负责什么？”
+- “谁调用了这个函数？”
+- “这段代码为什么这样写？”
+- “我只想学习网络部分，应该先看什么？”
+- “把这个概念换一种更适合初学者的方式解释。”
+
+有选区时，CodeCourse 会附带选区、前后文、文件路径、行号、所属符号和相关代码证据；没有选区时，会自动使用当前文档或项目上下文。
+
+问答体验包括：
+
+- 流式显示检索、等待模型、生成回答和保存记录的阶段；
+- 同一对话保留项目、文件和最近问答记忆；
+- 回答历史支持搜索、收藏、重命名、删除和 Markdown 编辑；
+- 回答可在中央工作区完整打开，也可以继续产生子问题和分支；
+- 同一会话严格串行，不同会话在单个项目内最多并发生成两个回答；
+- 失败或取消不会创建空文档、空节点，也不会覆盖已有回答。
+
+### 5. 本地 RAG 与结构化代码理解
+
+CodeCourse 会先建立快速可用的基础索引，再在支持的桌面环境中补充结构化代码索引。
+
+- SQLite FTS5 全文检索；
+- 带路径和行号的代码块；
+- 正则与语法规则提取函数、类、导入和配置项；
+- 桌面版内置 `codebase-memory-mcp`，使用 Tree-sitter 结构图与本地语义检索；
+- 根据问题查询所属符号、调用者、被调用者、定义、导入关系和架构摘要；
+- 结构引擎不可用时自动回退到基础 FTS，不影响阅读和问答；
+- 回答中的“参考代码”保留真实文件、行号、符号、关系和检索来源，可直接定位源码；
+- 索引使用仓库外的分析快照，不修改仓库内容或 Git 状态。
+
+### 6. 会逐渐适应你的个性化学习
+
+CodeCourse 在本机维护学习档案，用于调整解释深度和陌生术语密度。
+
+- 从定义类问题、追问、术语点击、学习总结和人工反馈中积累证据；
+- 区分全局通用概念与项目私有函数、类和符号；
+- 支持手动标记“我认识 / 我不认识”，人工判断优先级最高；
+- 可调整解释深度、代码比例、讲解顺序、前置知识详细度和术语密度；
+- 偶尔提供低频风格选择题，例如“先看例子 / 先讲原理”；
+- 可查看判断依据、撤销事件，或分别重置当前项目与全部学习档案；
+- 学习档案只影响回答方式，不会在回答中给用户贴“初学者”等标签。
+
+桌面端和 Android 使用相同的数据语义与个性化规则，但数据默认保存在各自设备，不自动同步。
+
+### 7. 陌生术语自动变成学习入口
+
+课件和 AI 回答会结合模型输出、本地词表、Markdown 结构和项目索引识别可能陌生的术语。
+
+- 候选术语以轻量点状下划线显示，不破坏原始 Markdown。
+- 点击术语后可以选择：
+  - 生成解释；
+  - 我认识；
+  - 我不认识；
+  - 忽略。
+- 只有确认“生成解释”后才会调用模型。
+- 已经有解释的术语会直接链接到原回答，避免重复消耗 token。
+- 课件术语生成根回答；回答中的术语生成当前回答的子回答。
+- 选区浮动工具栏提供“解释术语”，用于补充没有被自动识别的内容。
+- 生成成功后，课程目录、历史和知识网络会立即更新，无需刷新页面。
+
+### 8. 知识网络与学习沉淀
+
+- AI 回答直接挂在来源文件、课件或父回答下。
+- 在回答中继续提问，会形成清晰的父子解释链。
+- 课件中已解释的术语会变成指向回答文档的动态链接。
+- 知识网络支持全览、聚焦、整理布局、连线、重命名、删除和位置持久化。
+- 双击节点可以打开对应源码、课件或回答。
+- 用户可以填写“我已理解”的个人总结；总结不调用模型，并作为高权重知识锚点参与后续检索。
+
+### 9. 高亮、选区与桌面手势
+
+- Markdown 和 AI 回答支持荧光、高亮、加粗、下划线及取消高亮。
+- 选中内容后会出现锚定在选区附近的轻量工具栏，可直接提问、高亮或复制。
+- Monaco 选区在失焦后仍可保持，方便对照右侧回答。
+- 桌面端支持按住鼠标右键绘制手势，轨迹实时显示并在松开后执行操作。
+- 当前手势包括：
+  - 向左：撤销最近一次工作区布局调整；
+  - 向右：切换到下一个文档；
+  - 向上：恢复最近关闭的文档；
+  - 向下：关闭当前文档；
+  - `↑←`：打开源码；
+  - `↑→`：打开搜索；
+  - `↓→`：打开课程目录；
+  - `↓←`：打开 AI 助手。
+- 内置手势指南，无法识别时不会执行操作。
+
+## 平台支持
+
+### Windows 桌面版
+
+从 [GitHub Releases](https://github.com/XY-729/CodeCourse/releases) 下载：
+
+- **推荐：** `CodeCourse-<version>-setup.exe`
+  安装后可从开始菜单或桌面快捷方式启动，打开速度更快。
+- **免安装：** `CodeCourse-<version>-portable.exe`
+  可直接运行，但每次启动都需要先解压到临时目录，因此启动较慢。
+
+Windows 包内置：
+
+- Electron 前端；
+- PyInstaller 打包的 FastAPI 后端；
+- 精简 Git 运行时；
+- 本地结构索引引擎。
+
+用户无需另行安装 Python、Git 或代码分析工具。首次运行未签名版本时，Windows 可能显示 SmartScreen 提示。
+
+桌面数据位于：
+
+```text
+%APPDATA%/CodeCourse
+```
+
+### Android 竖屏版
+
+Android 使用 Capacitor 8 和独立的本地 TypeScript 服务，不启动 FastAPI，也不读取电脑端 workspace。
+
+- 导入公开 GitHub HTTPS 仓库快照或本地 ZIP；
+- 本地扫描、课程、索引、AI 历史、个性化档案和知识网络；
+- 轻量只读代码阅读器，不加载 Monaco；
+- 使用系统文本选区选择完整内容后提问；
+- API Key 使用 Android Keystore 安全保存；
+- 无网络时仍可阅读已有项目、课件、历史和知识网络。
+
+当前限制：
+
+- 不支持 SSH、私有仓库或 Git 历史；
+- 与电脑端数据相互独立；
+- 下载仓库和调用模型时需要联网。
+
+## 数据与隐私
+
+CodeCourse 采用本地优先的数据模型。
+
+```text
+workspace/
+  app.db                  # 项目、任务、问答、进度、偏好、知识网络
+  repos/                  # 导入的仓库
+  generated/<project_id>/ # 总纲、课件、AI 回答 Markdown
+  code-intelligence/      # 桌面结构索引缓存
+```
 
 安全约束：
 
-- API 不会回显完整 Key，只返回是否已配置和掩码后的 Key。
-- Key 不会写入日志。
-- `.env`、`workspace/app.db`、`workspace/repos/`、`workspace/generated/` 不应提交到 Git。
-- 所有调用模型 API 的动作都需要用户确认。
-- 项目源码、README 和课件内容会被当作不可信材料处理，提示词中会要求模型不要执行仓库文本里的指令，也不要泄露 Key、环境变量或本地敏感路径。
+- API 不返回完整 Key，也不会把 Key 写入日志。
+- 桌面 Web 设置优先读取环境变量、`.env` 和本地 SQLite。
+- Android API Key 使用系统安全存储。
+- 项目源码、README 和课件被视为不可信输入，不能覆盖系统指令。
+- 提示词明确禁止泄露 API Key、环境变量、系统提示词和本地敏感路径。
+- Release 构建执行隐私扫描，阻止 workspace、数据库、环境文件、签名文件和个人测试数据进入产物。
+- 删除项目时同步清理仓库、课程、问答、学习状态、知识网络和索引缓存。
 
-## 数据存储
+## 模型配置
+
+当前支持 DeepSeek 和 OpenAI Compatible 风格接口。模型设置界面可配置：
+
+- Provider；
+- Base URL；
+- Model；
+- API Key；
+- 是否启用模型。
+
+桌面后端读取 API Key 的优先级：
+
+1. `DEEPSEEK_API_KEY` 或 `GPL_LLM_API_KEY` 环境变量；
+2. 项目根目录 `.env`；
+3. 本地 SQLite 设置。
+
+无论采用哪种配置，所有模型生成操作都必须经过用户确认。
+
+## 技术架构
 
 ```text
-github-project-learner/
-  backend/
-  frontend/
-  workspace/
-    app.db                  # SQLite 本地数据库
-    repos/                  # 克隆下来的仓库
-    generated/<project_id>/ # 课程、回答、生成内容
+React + TypeScript + Vite
+├── Monaco / 轻量移动代码阅读器
+├── Markdown 阅读器
+├── Cytoscape.js 知识网络
+├── Electron Windows 桌面壳
+└── Capacitor Android 壳
+
+FastAPI
+├── 项目导入与安全文件访问
+├── 课程生成任务与流式输出
+├── QA 会话、历史与并发控制
+├── 个性化学习与术语服务
+└── SQLite + 本地文件系统
+
+本地代码理解
+├── SQLite FTS5
+├── 规则与符号切块
+└── Tree-sitter 结构图 / 本地语义检索
 ```
 
-主要数据：
+## 本地开发
 
-- `workspace/repos/`：GitHub 仓库克隆结果。
-- `workspace/generated/<project_id>/`：项目地图、学习总纲、文件课件、AI 回答 Markdown。
-- `workspace/app.db`：项目记录、生成任务、模型设置、QA 历史、高亮标记、RAG 索引、对话记忆。
-
-## 技术栈
-
-- 前端：React、TypeScript、Vite、Monaco Editor、react-markdown、remark-gfm、lucide-react
-- 后端：Python、FastAPI、Pydantic、Uvicorn
-- 存储：SQLite、本地文件系统
-- 项目分析：文件扫描、规则识别、SQLite FTS5、Tree-sitter 结构图、本地语义检索
-- AI 接入：DeepSeek / OpenAI Compatible API
-
-## Windows 桌面版
-
-从 [GitHub Releases](https://github.com/XY-729/CodeCourse/releases) 下载 Windows 版本：
-
-- 推荐：`CodeCourse-<version>-setup.exe`。安装一次后，后续可从开始菜单或桌面快捷方式直接启动；内置 Python 后端和 Git，不需要额外安装 Python 或 Git。
-- 备选：`CodeCourse-<version>-portable.exe`。免安装，但每次启动需要先解压到临时目录，启动速度会比安装版慢。
-
-首次运行时 Windows 可能显示 SmartScreen 提示，这是未签名个人软件的正常提示。确认下载来源为本仓库后，选择“更多信息”并运行即可。
-
-## 本地运行
-
-### 后端
+### 1. 后端
 
 ```bash
-cd /home/xiyuan729/github-project-learner/backend
-python3 -m venv .venv
+cd backend
+python -m venv .venv
+```
+
+Linux / macOS：
+
+```bash
 source .venv/bin/activate
 pip install -r requirements.txt
 PYTHONPATH=. uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 前端
+Windows PowerShell：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+$env:PYTHONPATH = "."
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 2. Web 前端
 
 ```bash
-cd /home/xiyuan729/github-project-learner/frontend
+cd frontend
 npm install
 npm run dev -- --host 0.0.0.0
 ```
 
-### Windows 通过 SSH 隧道访问 VM
-
-如果服务跑在 VM 上，可以在 Windows 本机执行：
-
-```bash
-ssh -L 5173:127.0.0.1:5173 -L 8000:127.0.0.1:8000 linux-vm
-```
-
-然后打开：
+浏览器访问：
 
 ```text
 http://localhost:5173
 ```
 
-## 桌面软件运行
+### 3. Electron 开发模式
 
-当前项目已加入 Electron 桌面壳，可以把 Web 前端和本地 FastAPI 后端一起作为桌面软件启动。Windows Release 会内置 PyInstaller 打包的 `backend.exe`、精简 Git 运行时和固定版本的本地结构索引引擎，下载后无需另装 Python、Git 或代码分析工具。
-
-### 桌面开发模式
-
-先确保后端依赖和前端依赖已经安装：
+在项目根目录安装依赖后运行：
 
 ```bash
-cd /home/xiyuan729/github-project-learner/backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-cd /home/xiyuan729/github-project-learner/frontend
 npm install
-
-cd /home/xiyuan729/github-project-learner
-npm install
-```
-
-如果 VM 访问 GitHub 下载 Electron 二进制失败，可以临时使用镜像安装，不修改全局配置：
-
-```bash
-ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install
-```
-
-启动桌面开发版：
-
-```bash
 npm run desktop:dev
 ```
 
-这个命令会启动 Vite 前端开发服务，然后 Electron 主进程会自动寻找空闲端口并启动 FastAPI 后端。
+### 4. Windows 桌面打包
 
-### Windows Portable Release
-
-GitHub Release 中的 `CodeCourse-<version>-portable.exe` 可直接双击运行。首次启动会在 `%APPDATA%/CodeCourse` 建立本地 workspace；模型 API Key、SQLite、导入仓库和生成课件都只保存在这个目录，不包含在安装包中。
-
-源码发布时推送 `v*` 标签会在 GitHub Actions 的 Windows runner 上自动构建并上传 portable exe 到对应 Release。
-
-### 桌面打包
-
-生成未压缩的本机桌面目录：
-
-```bash
-ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run desktop:pack
+```powershell
+npm run desktop:pack
+npm run desktop:release
 ```
 
-生成安装包或 AppImage：
-
-```bash
-ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm run desktop:build
-```
-
-Linux 未压缩产物默认在：
+输出目录：
 
 ```text
-dist-desktop/linux-unpacked/
+dist-desktop/
 ```
 
-### 桌面数据目录
+### 5. Android Debug APK
 
-桌面版不会把用户数据写进安装目录，而是写入系统用户数据目录：
-
-- Windows：`%APPDATA%/CodeCourse`
-- Linux：`~/.config/CodeCourse`
-
-其中仍保持原有结构：`app.db`、`repos/`、`generated/`、后端日志等都在这个目录下。
-
-Web 开发模式仍然保留，可以继续使用后端 `8000` 和前端 `5173` 的启动方式。
-
-## Android 竖屏版
-
-Android 版使用 Capacitor 8，并采用独立本地运行架构。APK 不启动 FastAPI、不携带 Python 或 Git，也不读取电脑端 workspace。项目、课件、问答、索引和知识网络全部保存在手机应用数据目录中。
-
-主要能力：
-
-- 导入公开 GitHub HTTPS 仓库快照，或从系统文件选择器导入本地 ZIP。
-- 使用加密 SQLite 保存项目数据；模型 API Key 使用 Android Keystore 加密保存。
-- 本地扫描文件、识别关键配置、建立 FTS5/FTS4 索引并提供 RAG 检索。
-- 支持学习总纲、文件课件、学习计划分章节课件、AI 助手会话记忆、陌生术语、个人总结与知识网络。
-- 使用轻量只读代码阅读器，支持行号、语法高亮、横向滚动和选区提问；手机端不加载 Monaco。
-- 无网络时仍可阅读项目、课程、历史和知识网络；下载仓库和模型生成需要联网。
-
-移动端限制：
-
-- 只支持公开 GitHub 仓库和本地 ZIP，不支持 SSH、私有仓库或 Git 历史。
-- Android 与电脑端数据相互独立，第一版不提供跨设备同步。
-- 不运行、编译或调试导入项目。
-
-同步 Android 工程：
+需要 JDK 21、Android SDK 36 和 Gradle Wrapper：
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm run mobile:sync
+npm install
+npm run mobile:build
 ```
 
-本地构建 debug APK 需要 JDK 21、Android SDK 36 和 Gradle Wrapper：
+APK 默认输出到：
 
-```bash
-cd android
-./gradlew assembleDebug
+```text
+android/app/build/outputs/apk/debug/
 ```
 
-GitHub Actions 的 `Android APK Build` 支持手动生成 debug APK。推送 `v*` 标签时会构建签名 Release APK，并上传到对应 GitHub Release。签名发布前需要配置以下仓库 Secrets：
+## 验证
 
-- `CODECOURSE_ANDROID_KEYSTORE_BASE64`
-- `CODECOURSE_ANDROID_STORE_PASSWORD`
-- `CODECOURSE_ANDROID_KEY_ALIAS`
-- `CODECOURSE_ANDROID_KEY_PASSWORD`
-
-Release APK 构建后会执行隐私扫描，阻止个人仓库名、本地路径、数据库、workspace、环境文件或签名文件进入产物。
-
-## 常用 API
-
-### 项目
-
-- `POST /api/projects/import`：导入 GitHub 仓库。
-- `POST /api/projects/learning-plan`：创建学习计划项目。
-- `GET /api/projects`：项目列表。
-- `GET /api/projects/{project_id}`：项目详情。
-- `DELETE /api/projects/{project_id}`：删除项目记录和本地数据。
-- `GET /api/projects/{project_id}/tree`：读取项目文件树。
-- `GET /api/projects/{project_id}/file?path=...`：读取安全范围内的文本文件。
-
-### 课程
-
-- `GET /api/projects/{project_id}/course`：课程文件列表。
-- `GET /api/projects/{project_id}/course/{filename}`：读取课程 Markdown。
-- `POST /api/projects/{project_id}/outline/generate`：生成 AI 总纲。
-- `POST /api/projects/{project_id}/lessons/file`：生成指定文件课件。
-- `GET /api/projects/{project_id}/tasks`：生成任务列表。
-- `GET /api/projects/{project_id}/tasks/{task_id}`：任务详情。
-
-### AI 助手
-
-- `POST /api/projects/{project_id}/qa/ask`：发起上下文问答。
-- `GET /api/projects/{project_id}/qa`：问答历史。
-- `GET /api/projects/{project_id}/qa/{qa_id}`：问答详情。
-- `PUT /api/projects/{project_id}/qa/{qa_id}`：编辑问答标题或 Markdown。
-- `POST /api/projects/{project_id}/qa/{qa_id}/favorite`：收藏或取消收藏。
-
-### 高亮与索引
-
-- `POST /api/projects/{project_id}/highlights`：创建高亮标记。
-- `GET /api/projects/{project_id}/highlights`：读取高亮标记。
-- `DELETE /api/projects/{project_id}/highlights/{highlight_id}`：删除高亮标记。
-- `POST /api/projects/{project_id}/index/build`：构建本地 RAG 索引。
-- `GET /api/projects/{project_id}/index/status`：查看索引状态。
-- `POST /api/projects/{project_id}/search`：搜索本地索引。
-
-### 设置
-
-- `GET /api/settings/llm`：读取模型配置状态。
-- `PUT /api/settings/llm`：保存模型配置。
-- `POST /api/settings/llm/test`：测试模型连通性。
-- `GET /api/settings/prompts`：读取提示词配置。
-- `PUT /api/settings/prompts/{key}`：保存指定提示词。
-- `POST /api/settings/prompts/{key}/reset`：重置指定提示词。
-
-## 验证命令
-
-后端测试：
+后端：
 
 ```bash
-cd /home/xiyuan729/github-project-learner/backend
+cd backend
 PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
 ```
 
-前端构建：
+前端：
 
 ```bash
-cd /home/xiyuan729/github-project-learner/frontend
-npm run build
+npm --prefix frontend run build
 ```
 
-## 当前边界
+Android：
 
-- 不运行被导入项目的代码。
-- 不提供调试、断点、终端运行或自动补全。
-- 不做多人协作。
-- 不追求完整 AST 或完整调用图。
-- RAG 第一版使用 SQLite FTS5 和规则符号提取，不使用 embedding。
-- Tree-sitter、向量检索、桌面端封装可以作为后续阶段增强。
+```bash
+npm run mobile:sync
+cd android
+./gradlew testDebugUnitTest assembleDebug
+```
+
+## 产品边界
+
+CodeCourse 的目标是帮助用户阅读和学习代码，不是替代 IDE。
+
+- 不运行、编译或调试导入项目；
+- 不提供终端、断点或代码补全；
+- 不做多人协作；
+- 不保证生成完整、静态可证明的全项目调用图；
+- 模型回答仍可能出错，重要结论应结合“参考代码”回到源码验证；
+- Android 第一版只支持公开仓库快照和本地 ZIP。
