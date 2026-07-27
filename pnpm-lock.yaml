@@ -87,9 +87,15 @@ importers:
       remark-gfm:
         specifier: ^4.0.0
         version: 4.0.1(supports-color@7.2.0)
+      remark-parse:
+        specifier: ^11.0.0
+        version: 11.0.0(supports-color@7.2.0)
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      unified:
+        specifier: ^11.0.5
+        version: 11.0.5
       vite:
         specifier: ^6.0.7
         version: 6.4.3(@types/node@26.1.1)
