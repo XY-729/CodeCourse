@@ -571,33 +571,39 @@ export default function MarkdownViewer({
     }
   }
 
-  // Keep ordinary scrolling entirely on Chromium's compositor path. Position
-  // persistence and the progress indicator update only after scrolling stops.
+  // Progress indicator updates on every scroll frame for instant visual sync.
+  // Position persistence (commitReadingPosition) only fires after scrolling
+  // stops to avoid competing with the compositor.
   useEffect(() => {
     const article = articleRef.current;
     if (!article || !onScrollRatioChange) return;
 
     const settleScroll = () => {
       captureCurrentScrollPosition();
-      refreshProgress();
       commitReadingPosition();
+    };
+
+    const onScroll = () => {
+      refreshProgress();
+      window.clearTimeout(positionSaveTimerRef.current);
+      positionSaveTimerRef.current = window.setTimeout(settleScroll, 180) as unknown as number;
     };
 
     const supportsScrollEnd = typeof (
       article as unknown as { onscrollend?: unknown }
     ).onscrollend !== "undefined";
     if (supportsScrollEnd) {
+      article.addEventListener("scroll", onScroll, { passive: true });
       article.addEventListener("scrollend", settleScroll);
-      return () => article.removeEventListener("scrollend", settleScroll);
+      return () => {
+        article.removeEventListener("scroll", onScroll);
+        article.removeEventListener("scrollend", settleScroll);
+      };
     }
 
-    const handleFallbackScroll = () => {
-      window.clearTimeout(positionSaveTimerRef.current);
-      positionSaveTimerRef.current = window.setTimeout(settleScroll, 180) as unknown as number;
-    };
-    article.addEventListener("scroll", handleFallbackScroll, { passive: true });
+    article.addEventListener("scroll", onScroll, { passive: true });
     return () => {
-      article.removeEventListener("scroll", handleFallbackScroll);
+      article.removeEventListener("scroll", onScroll);
       window.clearTimeout(positionSaveTimerRef.current);
     };
   }, [androidRuntime, onScrollRatioChange, sourcePath, sourceType, title]);
