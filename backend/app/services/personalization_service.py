@@ -230,29 +230,17 @@ def apply_preference_feedback(
 
 
 def infer_preferences_from_question(project_id: int, qa_record: QARecord) -> None:
-    text = qa_record.question.casefold()
-    signals: list[tuple[str, str]] = []
-    if re.search(r"(详细|一步一步|深入|展开|detail|step by step)", text):
-        signals.append(("answer_depth", "more"))
-    if re.search(r"(简单|简短|一句话|直接说|concise|brief)", text):
-        signals.append(("answer_depth", "less"))
-    if re.search(r"(代码|示例代码|code|实现)", text):
-        signals.append(("code_ratio", "code"))
-    if re.search(r"(举例|例子|example|类比)", text):
-        signals.append(("explanation_order", "examples"))
-    if re.search(r"(原理|为什么|底层|principle|why)", text):
-        signals.append(("explanation_order", "principles"))
-    if re.search(r"(小白|前置|基础|从头|prerequisite)", text):
-        signals.append(("prerequisite_detail", "more"))
-    for dimension, choice in signals:
-        apply_preference_feedback(
-            project_id,
-            dimension=dimension,
-            choice=choice,
-            source="implicit_question",
-            idempotency_key=f"qa-pref:{qa_record.id}:{dimension}:{choice}",
-            qa_record_id=qa_record.id,
-        )
+    """
+    Legacy compatibility hook.
+
+    Automatic long-term preference inference based on keywords has been
+    disabled. Phrases such as "为什么", "代码", "基础" or "详细" describe
+    the current request and must not be treated as stable user preferences.
+
+    Model-driven observations are recorded separately by Interaction Observer
+    in shadow mode.
+    """
+    return None
 
 
 def _record_learning_signal(
@@ -359,27 +347,17 @@ def _parent_concepts(project_id: int, qa_record: QARecord) -> list[Concept]:
 
 
 def record_question_learning(project_id: int, qa_record: QARecord) -> None:
-    concepts = concepts_for_question(
-        project_id,
-        qa_record.question,
-        qa_record.selected_text,
-        qa_record.source_type,
-        qa_record.source_path,
-    )
-    if qa_record.parent_qa_id and not concepts:
-        concepts = _parent_concepts(project_id, qa_record)
-    event_type = (
-        "asked_clarification"
-        if qa_record.parent_qa_id
-        else "asked_definition"
-        if DEFINITION_RE.search(qa_record.question)
-        or qa_record.relation_type == "term_explanation"
-        else ""
-    )
-    if event_type:
-        for concept in concepts:
-            _record_learning_signal(project_id, concept, event_type, qa_record)
-    infer_preferences_from_question(project_id, qa_record)
+    """
+    Legacy compatibility hook.
+
+    A follow-up is not automatically evidence of unfamiliarity. This function
+    intentionally performs no automatic mastery or preference updates.
+
+    Explicit user feedback continues to use the existing personalization API.
+    Model-generated evidence is written to shadow observation tables and must
+    not mutate concept_mastery or learner_preferences in this phase.
+    """
+    return None
 
 
 def build_learner_context(

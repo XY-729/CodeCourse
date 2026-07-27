@@ -314,6 +314,116 @@ class TermImpression:
     updated_at: str
 
 
+# ---------- Phase 1: Interaction Observer Shadow Tables ----------
+
+class ObservationRun:
+    id: str
+    idempotency_key: str
+    project_id: int
+    session_id: Optional[int]
+    qa_record_id: int
+    parent_qa_record_id: Optional[int]
+    mode: str
+    provider: Optional[str]
+    model: Optional[str]
+    prompt_version: str
+    input_hash: str
+    status: str
+    latency_ms: Optional[int]
+    error_message: Optional[str]
+    raw_output_json: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class InteractionObservationRow:
+    id: str
+    idempotency_key: str
+    run_id: str
+    project_id: int
+    session_id: Optional[int]
+    qa_record_id: int
+    observation_type: str
+    subject_key: Optional[str]
+    scope_type: str
+    scope_id: str
+    confidence: float
+    payload_json: str
+    evidence_text: str
+    status: str
+    created_at: str
+
+
+class ConceptCapabilityRow:
+    concept_id: str
+    scope_type: str
+    scope_id: str
+    familiarity: float
+    conceptual_understanding: float
+    code_reading: float
+    implementation: float
+    debugging: float
+    transfer: float
+    confidence: float
+    evidence_count: int
+    last_observed_at: Optional[str]
+    updated_at: str
+
+
+class LearnerHypothesisRow:
+    id: str
+    hypothesis_key: str
+    category: str
+    statement: str
+    scope_type: str
+    scope_id: str
+    confidence: float
+    support_count: int
+    contrary_count: int
+    status: str
+    evidence_observation_ids_json: str
+    last_validated_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class MisconceptionHypothesisRow:
+    id: str
+    concept_id: Optional[str]
+    concept_text: str
+    statement: str
+    scope_type: str
+    scope_id: str
+    confidence: float
+    support_count: int
+    contrary_count: int
+    status: str
+    evidence_observation_ids_json: str
+    resolved_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+def _row_to_observation_run(row: sqlite3.Row) -> ObservationRun:
+    return ObservationRun(*row)
+
+
+def _row_to_interaction_observation(row: sqlite3.Row) -> InteractionObservationRow:
+    return InteractionObservationRow(*row)
+
+
+def _row_to_concept_capability(row: sqlite3.Row) -> ConceptCapabilityRow:
+    return ConceptCapabilityRow(*row)
+
+
+def _row_to_learner_hypothesis(row: sqlite3.Row) -> LearnerHypothesisRow:
+    return LearnerHypothesisRow(*row)
+
+
+def _row_to_misconception_hypothesis(row: sqlite3.Row) -> MisconceptionHypothesisRow:
+    return MisconceptionHypothesisRow(*row)
+
+
 def init_storage() -> None:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     REPOS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -938,6 +1048,135 @@ def init_storage() -> None:
             ON term_impressions(project_id, source_type, source_path)
             """
         )
+        # ---------- Phase 1: Interaction Observer Shadow Tables ----------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS observer_runs (
+                id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                project_id INTEGER NOT NULL,
+                session_id INTEGER,
+                qa_record_id INTEGER NOT NULL,
+                parent_qa_record_id INTEGER,
+                mode TEXT NOT NULL DEFAULT 'shadow',
+                provider TEXT,
+                model TEXT,
+                prompt_version TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                latency_ms INTEGER,
+                error_message TEXT,
+                raw_output_json TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(qa_record_id) REFERENCES qa_records(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observer_runs_qa ON observer_runs(project_id, qa_record_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observer_runs_status ON observer_runs(status, created_at)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS interaction_observations (
+                id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                run_id TEXT NOT NULL,
+                project_id INTEGER NOT NULL,
+                session_id INTEGER,
+                qa_record_id INTEGER NOT NULL,
+                observation_type TEXT NOT NULL,
+                subject_key TEXT,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                payload_json TEXT NOT NULL,
+                evidence_text TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'candidate',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(run_id) REFERENCES observer_runs(id),
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(qa_record_id) REFERENCES qa_records(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_observations_qa ON interaction_observations(project_id, qa_record_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_observations_subject ON interaction_observations(observation_type, subject_key, scope_type, scope_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_interaction_observations_status ON interaction_observations(status, created_at)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS concept_capabilities (
+                concept_id TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                familiarity REAL NOT NULL DEFAULT 0.5,
+                conceptual_understanding REAL NOT NULL DEFAULT 0.5,
+                code_reading REAL NOT NULL DEFAULT 0.5,
+                implementation REAL NOT NULL DEFAULT 0.5,
+                debugging REAL NOT NULL DEFAULT 0.5,
+                transfer REAL NOT NULL DEFAULT 0.5,
+                confidence REAL NOT NULL DEFAULT 0,
+                evidence_count INTEGER NOT NULL DEFAULT 0,
+                last_observed_at TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(concept_id, scope_type, scope_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS learner_hypotheses (
+                id TEXT PRIMARY KEY,
+                hypothesis_key TEXT NOT NULL,
+                category TEXT NOT NULL,
+                statement TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                support_count INTEGER NOT NULL DEFAULT 0,
+                contrary_count INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'candidate',
+                evidence_observation_ids_json TEXT NOT NULL DEFAULT '[]',
+                last_validated_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(hypothesis_key, scope_type, scope_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS misconception_hypotheses (
+                id TEXT PRIMARY KEY,
+                concept_id TEXT,
+                concept_text TEXT NOT NULL,
+                statement TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                support_count INTEGER NOT NULL DEFAULT 0,
+                contrary_count INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'candidate',
+                evidence_observation_ids_json TEXT NOT NULL DEFAULT '[]',
+                resolved_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_misconception_scope ON misconception_hypotheses(scope_type, scope_id, concept_id, status)"
+        )
         conn.commit()
 
 
@@ -1262,6 +1501,11 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM learner_preferences WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM term_impressions WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM document_terms WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM interaction_observations WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM observer_runs WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM concept_capabilities WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM learner_hypotheses WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM misconception_hypotheses WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM knowledge_links WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_edges WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_nodes WHERE project_id = ?", (project_id,))
@@ -3738,3 +3982,264 @@ def run_in_transaction(fn) -> object:
         except Exception:
             conn.rollback()
             raise
+
+
+# ---------- Phase 1: Interaction Observer CRUD ----------
+
+def insert_observer_run(
+    run_id: str,
+    idempotency_key: str,
+    project_id: int,
+    session_id: Optional[int],
+    qa_record_id: int,
+    parent_qa_record_id: Optional[int],
+    mode: str,
+    provider: Optional[str],
+    model: Optional[str],
+    prompt_version: str,
+    input_hash: str,
+    status: str = "pending",
+    *,
+    conn: Optional[sqlite3.Connection] = None,
+) -> ObservationRun:
+    now = datetime.now(timezone.utc).isoformat()
+    if conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO observer_runs
+               (id, idempotency_key, project_id, session_id, qa_record_id,
+                parent_qa_record_id, mode, provider, model, prompt_version,
+                input_hash, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, idempotency_key, project_id, session_id, qa_record_id,
+             parent_qa_record_id, mode, provider, model, prompt_version,
+             input_hash, status, now, now),
+        )
+        conn.execute(
+            "SELECT * FROM observer_runs WHERE id = ?", (run_id,)
+        )
+        return _row_to_observation_run(conn.execute("SELECT * FROM observer_runs WHERE id = ?", (run_id,)).fetchone())
+    with _connect() as c:
+        c.execute(
+            """INSERT OR IGNORE INTO observer_runs
+               (id, idempotency_key, project_id, session_id, qa_record_id,
+                parent_qa_record_id, mode, provider, model, prompt_version,
+                input_hash, status, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, idempotency_key, project_id, session_id, qa_record_id,
+             parent_qa_record_id, mode, provider, model, prompt_version,
+             input_hash, status, now, now),
+        )
+        row = c.execute("SELECT * FROM observer_runs WHERE id = ?", (run_id,)).fetchone()
+        return _row_to_observation_run(row)
+
+
+def get_observer_run(idempotency_key: str, *, conn: Optional[sqlite3.Connection] = None) -> Optional[ObservationRun]:
+    if conn:
+        row = conn.execute(
+            "SELECT * FROM observer_runs WHERE idempotency_key = ?", (idempotency_key,)
+        ).fetchone()
+        return _row_to_observation_run(row) if row else None
+    with _connect() as c:
+        row = c.execute(
+            "SELECT * FROM observer_runs WHERE idempotency_key = ?", (idempotency_key,)
+        ).fetchone()
+        return _row_to_observation_run(row) if row else None
+
+
+def update_observer_run_status(
+    idempotency_key: str,
+    status: str,
+    *,
+    raw_output_json: Optional[str] = None,
+    error_message: Optional[str] = None,
+    latency_ms: Optional[int] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    conn: Optional[sqlite3.Connection] = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    sets = ["status = ?", "updated_at = ?"]
+    params: list[Any] = [status, now]
+    if raw_output_json is not None:
+        sets.append("raw_output_json = ?")
+        params.append(raw_output_json)
+    if error_message is not None:
+        sets.append("error_message = ?")
+        params.append(error_message)
+    if latency_ms is not None:
+        sets.append("latency_ms = ?")
+        params.append(latency_ms)
+    if provider is not None:
+        sets.append("provider = ?")
+        params.append(provider)
+    if model is not None:
+        sets.append("model = ?")
+        params.append(model)
+    params.append(idempotency_key)
+    sql = f"UPDATE observer_runs SET {', '.join(sets)} WHERE idempotency_key = ?"
+    if conn:
+        conn.execute(sql, params)
+    else:
+        with _connect() as c:
+            c.execute(sql, params)
+
+
+def list_observer_runs(
+    project_id: int,
+    *,
+    status: Optional[str] = None,
+    limit: int = 50,
+) -> list[ObservationRun]:
+    with _connect() as conn:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM observer_runs WHERE project_id = ? AND status = ? ORDER BY created_at DESC LIMIT ?",
+                (project_id, status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM observer_runs WHERE project_id = ? ORDER BY created_at DESC LIMIT ?",
+                (project_id, limit),
+            ).fetchall()
+        return [_row_to_observation_run(r) for r in rows]
+
+
+def get_observer_run_by_id(run_id: str) -> Optional[ObservationRun]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM observer_runs WHERE id = ?", (run_id,)).fetchone()
+        return _row_to_observation_run(row) if row else None
+
+
+def insert_interaction_observation(
+    obs_id: str,
+    idempotency_key: str,
+    run_id: str,
+    project_id: int,
+    session_id: Optional[int],
+    qa_record_id: int,
+    observation_type: str,
+    subject_key: Optional[str],
+    scope_type: str,
+    scope_id: str,
+    confidence: float,
+    payload_json: str,
+    evidence_text: str,
+    status: str = "candidate",
+    *,
+    conn: Optional[sqlite3.Connection] = None,
+) -> InteractionObservationRow:
+    now = datetime.now(timezone.utc).isoformat()
+    if conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO interaction_observations
+               (id, idempotency_key, run_id, project_id, session_id, qa_record_id,
+                observation_type, subject_key, scope_type, scope_id, confidence,
+                payload_json, evidence_text, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (obs_id, idempotency_key, run_id, project_id, session_id, qa_record_id,
+             observation_type, subject_key, scope_type, scope_id, confidence,
+             payload_json, evidence_text, status, now),
+        )
+        row = conn.execute("SELECT * FROM interaction_observations WHERE id = ?", (obs_id,)).fetchone()
+        return _row_to_interaction_observation(row) if row else None
+    with _connect() as c:
+        c.execute(
+            """INSERT OR IGNORE INTO interaction_observations
+               (id, idempotency_key, run_id, project_id, session_id, qa_record_id,
+                observation_type, subject_key, scope_type, scope_id, confidence,
+                payload_json, evidence_text, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (obs_id, idempotency_key, run_id, project_id, session_id, qa_record_id,
+             observation_type, subject_key, scope_type, scope_id, confidence,
+             payload_json, evidence_text, status, now),
+        )
+        row = c.execute("SELECT * FROM interaction_observations WHERE id = ?", (obs_id,)).fetchone()
+        return _row_to_interaction_observation(row) if row else None
+
+
+def list_interaction_observations(
+    project_id: int,
+    *,
+    session_id: Optional[int] = None,
+    qa_record_id: Optional[int] = None,
+    observation_type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+) -> list[InteractionObservationRow]:
+    conditions = ["project_id = ?"]
+    params: list[Any] = [project_id]
+    if session_id is not None:
+        conditions.append("session_id = ?")
+        params.append(session_id)
+    if qa_record_id is not None:
+        conditions.append("qa_record_id = ?")
+        params.append(qa_record_id)
+    if observation_type is not None:
+        conditions.append("observation_type = ?")
+        params.append(observation_type)
+    if status is not None:
+        conditions.append("status = ?")
+        params.append(status)
+    sql = f"SELECT * FROM interaction_observations WHERE {' AND '.join(conditions)} ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_row_to_interaction_observation(r) for r in rows]
+
+
+def list_concept_capabilities(
+    scope_type: str,
+    scope_id: str,
+) -> list[ConceptCapabilityRow]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM concept_capabilities WHERE scope_type = ? AND scope_id = ?",
+            (scope_type, scope_id),
+        ).fetchall()
+        return [_row_to_concept_capability(r) for r in rows]
+
+
+def list_learner_hypotheses(
+    scope_type: str,
+    scope_id: str,
+    *,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+) -> list[LearnerHypothesisRow]:
+    conditions = ["scope_type = ? AND scope_id = ?"]
+    params: list[Any] = [scope_type, scope_id]
+    if category is not None:
+        conditions.append("category = ?")
+        params.append(category)
+    if status is not None:
+        conditions.append("status = ?")
+        params.append(status)
+    sql = f"SELECT * FROM learner_hypotheses WHERE {' AND '.join(conditions)} ORDER BY updated_at DESC LIMIT ?"
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_row_to_learner_hypothesis(r) for r in rows]
+
+
+def list_misconception_hypotheses(
+    scope_type: str,
+    scope_id: str,
+    *,
+    concept_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+) -> list[MisconceptionHypothesisRow]:
+    conditions = ["scope_type = ? AND scope_id = ?"]
+    params: list[Any] = [scope_type, scope_id]
+    if concept_id is not None:
+        conditions.append("concept_id = ?")
+        params.append(concept_id)
+    if status is not None:
+        conditions.append("status = ?")
+        params.append(status)
+    sql = f"SELECT * FROM misconception_hypotheses WHERE {' AND '.join(conditions)} ORDER BY updated_at DESC LIMIT ?"
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [_row_to_misconception_hypothesis(r) for r in rows]

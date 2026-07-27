@@ -1,5 +1,6 @@
 // Barrel export for personalization module
 export * from "./types";
+export * from "./observationTypes";
 export * from "./masteryEngine";
 export * from "./termLinkScorer";
 export * from "./conceptResolver";

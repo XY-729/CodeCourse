@@ -676,3 +676,259 @@ def get_profile(project_id: int) -> dict:
             )[:50]
         ],
     }
+
+
+# ---------- Phase 1: Observer Settings & Shadow Debug APIs ----------
+
+OBSERVER_SETTINGS_PREFIX = "personalization.observer"
+
+
+def _get_observer_setting(key: str, default: str = "") -> str:
+    from app.services.storage import get_setting
+    val = get_setting(f"{OBSERVER_SETTINGS_PREFIX}.{key}")
+    return val if val else default
+
+
+def _set_observer_setting(key: str, value: str) -> None:
+    from app.services.storage import set_setting
+    set_setting(f"{OBSERVER_SETTINGS_PREFIX}.{key}", value)
+
+
+@router.get("/observer-settings")
+def get_observer_settings() -> dict:
+    return {
+        "enabled": _get_observer_setting("enabled", "false"),
+        "mode": _get_observer_setting("mode", "shadow"),
+        "provider": _get_observer_setting("provider", "inherit"),
+        "base_url": _get_observer_setting("base_url", "inherit"),
+        "model": _get_observer_setting("model", "inherit"),
+        "sample_rate": _get_observer_setting("sample_rate", "0.35"),
+        "timeout_seconds": _get_observer_setting("timeout_seconds", "20"),
+        "max_history_records": _get_observer_setting("max_history_records", "4"),
+        "store_raw_output": _get_observer_setting("store_raw_output", "false"),
+    }
+
+
+@router.put("/observer-settings")
+def put_observer_settings(body: dict) -> dict:
+    allowed = {
+        "enabled", "mode", "provider", "base_url", "model",
+        "sample_rate", "timeout_seconds", "max_history_records",
+        "store_raw_output",
+    }
+    for key, value in body.items():
+        if key in allowed and isinstance(value, str):
+            _set_observer_setting(key, value)
+    return get_observer_settings()
+
+
+@router.get("/observer-runs")
+def list_observer_runs_endpoint(
+    project_id: int,
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, le=200),
+) -> list[dict]:
+    from app.services.storage import list_observer_runs
+    runs = list_observer_runs(project_id, status=status, limit=limit)
+    return [
+        {
+            "id": r.id,
+            "projectId": r.project_id,
+            "qaRecordId": r.qa_record_id,
+            "parentQaRecordId": r.parent_qa_record_id,
+            "mode": r.mode,
+            "provider": r.provider,
+            "model": r.model,
+            "promptVersion": r.prompt_version,
+            "status": r.status,
+            "latencyMs": r.latency_ms,
+            "errorMessage": r.error_message,
+            "createdAt": r.created_at,
+        }
+        for r in runs
+    ]
+
+
+@router.get("/observer-runs/{run_id}")
+def get_observer_run_endpoint(run_id: str) -> dict:
+    from app.services.storage import get_observer_run_by_id
+    run = get_observer_run_by_id(run_id)
+    if run is None:
+        raise HTTPException(404, "Observer run not found")
+    return {
+        "id": run.id,
+        "projectId": run.project_id,
+        "qaRecordId": run.qa_record_id,
+        "parentQaRecordId": run.parent_qa_record_id,
+        "mode": run.mode,
+        "provider": run.provider,
+        "model": run.model,
+        "promptVersion": run.prompt_version,
+        "status": run.status,
+        "latencyMs": run.latency_ms,
+        "errorMessage": run.error_message,
+        "rawOutputJson": run.raw_output_json if json.loads(_get_observer_setting("store_raw_output", "false") or "false") else None,
+        "createdAt": run.created_at,
+    }
+
+
+# ---------- Phase 1: Shadow Debug APIs ----------
+
+@router.get("/shadow/observations")
+def list_shadow_observations(
+    project_id: int,
+    session_id: Optional[int] = Query(None),
+    qa_record_id: Optional[int] = Query(None),
+    observation_type: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(100, le=500),
+) -> list[dict]:
+    from app.services.storage import list_interaction_observations
+    obs = list_interaction_observations(
+        project_id=project_id,
+        session_id=session_id,
+        qa_record_id=qa_record_id,
+        observation_type=observation_type,
+        status=status,
+        limit=limit,
+    )
+    return [
+        {
+            "id": o.id,
+            "runId": o.run_id,
+            "qaRecordId": o.qa_record_id,
+            "observationType": o.observation_type,
+            "subjectKey": o.subject_key,
+            "scopeType": o.scope_type,
+            "scopeId": o.scope_id,
+            "confidence": o.confidence,
+            "payload": json.loads(o.payload_json) if o.payload_json else None,
+            "evidenceText": o.evidence_text,
+            "status": o.status,
+            "createdAt": o.created_at,
+        }
+        for o in obs
+    ]
+
+
+@router.get("/shadow/hypotheses")
+def list_shadow_hypotheses(
+    project_id: int,
+    category: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(100, le=500),
+) -> list[dict]:
+    from app.services.storage import list_learner_hypotheses
+    hyps = list_learner_hypotheses(
+        scope_type="project",
+        scope_id=str(project_id),
+        category=category,
+        status=status,
+        limit=limit,
+    )
+    return [
+        {
+            "id": h.id,
+            "hypothesisKey": h.hypothesis_key,
+            "category": h.category,
+            "statement": h.statement,
+            "scopeType": h.scope_type,
+            "scopeId": h.scope_id,
+            "confidence": h.confidence,
+            "supportCount": h.support_count,
+            "contraryCount": h.contrary_count,
+            "status": h.status,
+            "createdAt": h.created_at,
+            "updatedAt": h.updated_at,
+        }
+        for h in hyps
+    ]
+
+
+@router.get("/shadow/misconceptions")
+def list_shadow_misconceptions(
+    project_id: int,
+    concept_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    limit: int = Query(100, le=500),
+) -> list[dict]:
+    from app.services.storage import list_misconception_hypotheses
+    miscons = list_misconception_hypotheses(
+        scope_type="project",
+        scope_id=str(project_id),
+        concept_id=concept_id,
+        status=status,
+        limit=limit,
+    )
+    return [
+        {
+            "id": m.id,
+            "conceptId": m.concept_id,
+            "conceptText": m.concept_text,
+            "statement": m.statement,
+            "scopeType": m.scope_type,
+            "scopeId": m.scope_id,
+            "confidence": m.confidence,
+            "supportCount": m.support_count,
+            "contraryCount": m.contrary_count,
+            "status": m.status,
+            "resolvedAt": m.resolved_at,
+            "createdAt": m.created_at,
+        }
+        for m in miscons
+    ]
+
+
+@router.get("/shadow/capabilities")
+def list_shadow_capabilities(
+    project_id: int,
+) -> list[dict]:
+    from app.services.storage import list_concept_capabilities
+    caps = list_concept_capabilities(
+        scope_type="project",
+        scope_id=str(project_id),
+    )
+    return [
+        {
+            "conceptId": c.concept_id,
+            "scopeType": c.scope_type,
+            "scopeId": c.scope_id,
+            "familiarity": c.familiarity,
+            "conceptualUnderstanding": c.conceptual_understanding,
+            "codeReading": c.code_reading,
+            "implementation": c.implementation,
+            "debugging": c.debugging,
+            "transfer": c.transfer,
+            "confidence": c.confidence,
+            "evidenceCount": c.evidence_count,
+            "lastObservedAt": c.last_observed_at,
+            "updatedAt": c.updated_at,
+        }
+        for c in caps
+    ]
+
+
+@router.get("/shadow/runs")
+def list_shadow_runs(
+    project_id: int,
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, le=200),
+) -> list[dict]:
+    from app.services.storage import list_observer_runs
+    runs = list_observer_runs(project_id, status=status, limit=limit)
+    return [
+        {
+            "id": r.id,
+            "projectId": r.project_id,
+            "qaRecordId": r.qa_record_id,
+            "mode": r.mode,
+            "provider": r.provider,
+            "model": r.model,
+            "promptVersion": r.prompt_version,
+            "status": r.status,
+            "latencyMs": r.latency_ms,
+            "errorMessage": r.error_message,
+            "createdAt": r.created_at,
+        }
+        for r in runs
+    ]

@@ -13,11 +13,15 @@ from app.services.generation_service import extract_file_signals, project_course
 from app.services.knowledge_service import attach_learning_anchor, attach_qa_record, remove_learning_anchor_node
 from app.services.prompt_store import load_prompt
 from app.services.llm_client import call_openai_compatible_chat
-from app.services.personalization_service import (
-    build_learner_context,
-    record_question_learning,
+from app.services.personalization_service import build_learner_context
+from app.services.personalization.interaction_observer import (
+    schedule_interaction_observation,
 )
 from app.services.scanner import read_text_file
+
+import logging
+
+logger = logging.getLogger(__name__)
 from app.services.code_intelligence import hybrid_retrieve
 from app.services.storage import (
     DocumentTerm,
@@ -615,8 +619,31 @@ def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
     register_document_terms(project_id, "qa", relative_path, written.answer_md, model_terms)
     if prepared.term:
         update_document_term_status(project_id, prepared.term.id, "linked", written.id)
-    _refresh_session_memory(project_id, prepared.session_id, payload.source_path)
-    record_question_learning(project_id, written)
+    _refresh_session_memory(
+        project_id,
+        prepared.session_id,
+        payload.source_path,
+    )
+
+    try:
+        schedule_interaction_observation(
+            project_id=project_id,
+            qa_record_id=written.id,
+            parent_qa_id=written.parent_qa_id,
+            relation_type=written.relation_type,
+            question=written.question,
+        )
+    except Exception:
+        # Observer is best-effort shadow analysis.
+        # It must never break a completed QA response.
+        logger.exception(
+            "Failed to schedule interaction observer",
+            extra={
+                "project_id": project_id,
+                "qa_record_id": written.id,
+            },
+        )
+
     return written
 
 
