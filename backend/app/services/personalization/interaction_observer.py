@@ -510,9 +510,19 @@ def _execute_observer_run(
 
         if trial is not None:
             previous_trial_record = trial
+            taught_question = ""
+            taught_answer = ""
+            try:
+                taught_qa = get_qa_record(project_id, trial["qa_record_id"])
+                if taught_qa is not None:
+                    taught_question = taught_qa.question[:1000]
+                    taught_answer = (taught_qa.answer_md or "")[:2500]
+            except Exception:
+                pass
             previous_trial_json = json.dumps({
                 "trial_id": trial["id"],
-                "taught_question": qa_record.question[:1000],
+                "taught_question": taught_question,
+                "taught_answer": taught_answer,
                 "teaching_goal": trial.get("teaching_goal", ""),
                 "strategies": trial.get("strategies", []),
             }, ensure_ascii=False)
@@ -639,8 +649,8 @@ def _execute_observer_run(
                     conn=conn,
                 )
 
-            if previous_trial_record is not None and observation.previous_teaching_outcome is not None:
-                pto = observation.previous_teaching_outcome
+            if previous_trial_record is not None and filtered_obs is not None and filtered_obs.previous_teaching_outcome is not None:
+                pto = filtered_obs.previous_teaching_outcome
                 if pto.confidence >= 0.55 and qa_record_id > previous_trial_record["qa_record_id"]:
                     outcome_key = f"teaching-outcome:v1:trial:{previous_trial_record['id']}:evaluation-qa:{qa_record_id}"
                     now_iso = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()

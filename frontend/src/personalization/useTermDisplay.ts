@@ -81,6 +81,7 @@ function buildOccurrences(
     const para = paragraphs[pi];
     const paraOffset = globalOffset;
     const paraId = stableParagraphId(sourcePath, pi);
+    const matchCountInPara = new Map<string, number>();
 
     for (const term of sorted) {
       const searchText = term.term_text || "";
@@ -103,8 +104,11 @@ function buildOccurrences(
         }
         usedRanges.add(rangeKey);
 
+        const prevCount = matchCountInPara.get(searchText) || 0;
+        matchCountInPara.set(searchText, prevCount + 1);
+
         result.push({
-          candidateId: candidateIdForRendering(String(term.id), globalIndex),
+          candidateId: candidateIdForRendering(String(term.id), para, prevCount),
           text: searchText,
           normalizedText: normalizeText(searchText),
           conceptKey: term.concept_id || `term:${normalizeText(searchText)}`,

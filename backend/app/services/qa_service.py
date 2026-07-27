@@ -647,26 +647,27 @@ def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
             },
         )
 
-    try:
-        schedule_teacher_plan(
-            project_id=project_id,
-            session_id=written.session_id,
-            qa_record_id=written.id,
-            parent_qa_id=written.parent_qa_id,
-            relation_type=written.relation_type,
-            question=written.question,
-            selected_text=written.selected_text or "",
-            source_type=written.source_type,
-            source_path=written.source_path,
-        )
-    except Exception:
-        logger.exception(
-            "Failed to schedule teacher planner",
-            extra={
-                "project_id": project_id,
-                "qa_record_id": written.id,
-            },
-        )
+    if not _is_planner_assist_enabled():
+        try:
+            schedule_teacher_plan(
+                project_id=project_id,
+                session_id=written.session_id,
+                qa_record_id=written.id,
+                parent_qa_id=written.parent_qa_id,
+                relation_type=written.relation_type,
+                question=written.question,
+                selected_text=written.selected_text or "",
+                source_type=written.source_type,
+                source_path=written.source_path,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to schedule teacher planner",
+                extra={
+                    "project_id": project_id,
+                    "qa_record_id": written.id,
+                },
+            )
 
     return written
 
@@ -725,11 +726,16 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
             concepts = concepts_for_question(project_id, question, selected_text)
             concept_keys = [c.concept_key for c in concepts[:12]]
 
+            history_cutoff = conn.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM qa_records WHERE project_id = ? AND (? IS NULL OR session_id = ?)",
+                (project_id, prepared.session_id, prepared.session_id),
+            ).fetchone()[0]
+
             snapshot = build_shadow_snapshot(
                 project_id=project_id,
                 session_id=prepared.session_id,
-                target_qa_record_id=0,
-                as_of_qa_record_id=None,
+                target_qa_record_id=int(history_cutoff),
+                as_of_qa_record_id=int(history_cutoff),
                 relevant_concept_keys=concept_keys,
                 question=question,
                 conn=conn,
@@ -760,9 +766,7 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
             manual_prefs = {}
             if prefs:
                 manual_prefs = {
-                    "answer_depth": prefs.answer_depth,
-                    "code_ratio": prefs.code_ratio,
-                    "explanation_order": prefs.explanation_order,
+                    "terminology_density": getattr(prefs, "terminology_density", 0.5),
                 }
 
             source_summary = json.dumps({
@@ -825,17 +829,18 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
         previous_trial_failed = False
         try:
             from app.services.personalization.teaching.teaching_history import (
-                get_latest_evaluable_teaching_trial,
+                get_recent_assessed_teaching_history,
             )
             from app.services.storage import _connect as _hist_connect
             with _hist_connect() as hist_conn:
-                prev_trial = get_latest_evaluable_teaching_trial(
+                recent = get_recent_assessed_teaching_history(
                     project_id=project_id,
                     session_id=prepared.session_id,
-                    before_qa_record_id=2_147_483_647,
+                    through_qa_record_id=int(history_cutoff),
+                    limit=1,
                     conn=hist_conn,
                 )
-            if prev_trial is not None and prev_trial.get("previous_outcome") == "unsuccessful":
+            if recent and recent[0].get("outcome") == "unsuccessful":
                 previous_trial_failed = True
         except Exception:
             pass

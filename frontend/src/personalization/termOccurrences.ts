@@ -7,17 +7,27 @@ export interface TermOccurrence {
   absoluteOffset: number;
 }
 
+function hashParagraphText(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
 export function buildTermCandidateId(
   termId: string,
-  paragraphIndex: number,
-  occurrenceIndex: number,
+  paragraphText: string,
+  matchIndex: number,
 ): string {
-  return `term:${encodeURIComponent(termId)}:p${paragraphIndex}:o${occurrenceIndex}`;
+  return `term:${encodeURIComponent(termId)}:ph${hashParagraphText(paragraphText)}:n${matchIndex}`;
 }
 
 export function candidateIdForRendering(
   termId: string,
-  occurrenceCounter: number,
+  paragraphText: string,
+  matchIndex: number,
 ): string {
-  return `term:${encodeURIComponent(termId)}:occ:${occurrenceCounter}`;
+  return buildTermCandidateId(termId, paragraphText, matchIndex);
 }

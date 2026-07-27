@@ -205,9 +205,6 @@ function applyKnowledgeLinksToText(
   return result;
 }
 
-let _occurrenceCounter = 0;
-export function resetTermOccurrenceCounter(v = 0) { _occurrenceCounter = v; }
-
 function applyTermCandidatesToText(
   text: string,
   terms: DocumentTerm[],
@@ -227,7 +224,7 @@ function applyTermCandidatesToText(
     return [text];
   }
   const result: ReactNode[] = [];
-  const renderedCandidateIds = new Set<number>();
+  const renderedPerTermInNode = new Map<string, number>();
   let index = 0;
   while (index < text.length) {
     const foundTerm = candidates.find((candidate) =>
@@ -238,22 +235,22 @@ function applyTermCandidatesToText(
       index += 1;
       continue;
     }
+    const prevCount = renderedPerTermInNode.get(foundTerm.term_text) || 0;
+    renderedPerTermInNode.set(foundTerm.term_text, prevCount + 1);
     const isManual = (foundTerm.link_origin ?? "legacy_unknown") === "manual";
-    const candidateId = candidateIdForRendering(String(foundTerm.id), _occurrenceCounter);
-    _occurrenceCounter++;
+    const candidateId = candidateIdForRendering(String(foundTerm.id), text, prevCount);
     const isVisible = isManual || (visibleTermCandidateIds?.has(candidateId) ?? false);
     if (!isVisible) {
       result.push(text[index]);
       index += 1;
       continue;
     }
-    if (foundTerm.status === "candidate") renderedCandidateIds.add(foundTerm.id);
     const tier = termDisplayTiers?.get(candidateId) || "subtle";
     const tierClass = foundTerm.status === "linked" ? "knowledge-inline-link" : `term-candidate-link personalized-term--${tier}`;
     if (isAndroidRuntime()) {
       result.push(
         <span
-          key={`${keyPrefix}-term-${foundTerm.id}-${_occurrenceCounter}`}
+          key={`${keyPrefix}-term-${foundTerm.id}-${index}`}
           className={`personalized-term document-term document-term-${foundTerm.status} ${tierClass}`}
           data-term-id={foundTerm.id}
           role="button"
@@ -276,7 +273,7 @@ function applyTermCandidatesToText(
     } else {
       result.push(
         <button
-          key={`${keyPrefix}-term-${foundTerm.id}-${_occurrenceCounter}`}
+          key={`${keyPrefix}-term-${foundTerm.id}-${index}`}
           className={`personalized-term ${tierClass}`}
           type="button"
           title={foundTerm.status === "linked" ? `打开"${foundTerm.term_text}"的解释` : `生成"${foundTerm.term_text}"的解释；右键可标记为已认识或忽略`}
@@ -388,8 +385,6 @@ export default function MarkdownViewer({
   });
   const docFontSizeRef = useRef(docFontSize);
   docFontSizeRef.current = docFontSize;
-
-  resetTermOccurrenceCounter(0);
 
   // Apply persisted doc font size on mount
   useEffect(() => {
