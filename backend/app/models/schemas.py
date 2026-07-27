@@ -454,3 +454,16 @@ class LLMTestResponse(BaseModel):
     ok: bool
     provider: str
     message: str
+
+
+class PersonalizationRuntimeSettingsRequest(BaseModel):
+    teacher_planner_enabled: Optional[bool] = None
+    observer_enabled: Optional[bool] = None
+
+
+class PersonalizationRuntimeSettingsResponse(BaseModel):
+    supported: bool = True
+    teacher_planner_enabled: bool = False
+    observer_enabled: bool = False
+    teacher_planner_mode: Literal["assist"] = "assist"
+    observer_mode: Literal["shadow"] = "shadow"

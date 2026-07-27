@@ -279,6 +279,19 @@ export type LLMTestResponse = {
   message: string;
 };
 
+export type PersonalizationRuntimeSettings = {
+  supported: boolean;
+  teacher_planner_enabled: boolean;
+  observer_enabled: boolean;
+  teacher_planner_mode: "assist";
+  observer_mode: "shadow";
+};
+
+export type SavePersonalizationRuntimeSettingsPayload = Partial<Pick<
+  PersonalizationRuntimeSettings,
+  "teacher_planner_enabled" | "observer_enabled"
+>>;
+
 export type LearningScope = {
   type: "full_project" | "files" | "learning_plan";
   paths: string[];
@@ -362,6 +375,19 @@ export function saveLLMSettings(payload: SaveLLMSettingsPayload): Promise<LLMSet
 export function testLLMSettings(): Promise<LLMTestResponse> {
   return request<LLMTestResponse>("/settings/llm/test", {
     method: "POST",
+  });
+}
+
+export function getPersonalizationRuntimeSettings(): Promise<PersonalizationRuntimeSettings> {
+  return request<PersonalizationRuntimeSettings>("/settings/personalization");
+}
+
+export function savePersonalizationRuntimeSettings(
+  payload: SavePersonalizationRuntimeSettingsPayload,
+): Promise<PersonalizationRuntimeSettings> {
+  return request<PersonalizationRuntimeSettings>("/settings/personalization", {
+    method: "PUT",
+    body: JSON.stringify(payload),
   });
 }
 
@@ -1084,9 +1110,23 @@ export function getPersonalizationProfile(projectId: number): Promise<Personaliz
 
 export function resetPersonalizationProfile(
   projectId: number,
-  scope: "project" | "global" = "project",
-): Promise<{ status: string; deletedMasteryCount: number; deletedEventCount: number }> {
-  return request<{ status: string; deletedMasteryCount: number; deletedEventCount: number }>(`/projects/${projectId}/personalization/profile?scope=${scope}`, {
+  scope: "project" | "global" | "all" = "project",
+): Promise<{
+  status: string;
+  deletedMasteryCount: number;
+  deletedEventCount: number;
+  deletedPreferencesCount?: number;
+  deletedPreferenceEventsCount?: number;
+  deletedShadowCount?: number;
+}> {
+  return request<{
+    status: string;
+    deletedMasteryCount: number;
+    deletedEventCount: number;
+    deletedPreferencesCount?: number;
+    deletedPreferenceEventsCount?: number;
+    deletedShadowCount?: number;
+  }>(`/projects/${projectId}/personalization/profile?scope=${scope}`, {
     method: "DELETE",
   });
 }

@@ -32,9 +32,6 @@ from app.services.storage import (
     Concept,
     ConceptMastery,
     LearningEventRecord,
-    delete_concept_mastery_by_scope,
-    delete_events_by_scope,
-    delete_preferences_by_scope,
     get_all_learning_events_for_scope,
     get_concept,
     get_concept_by_key,
@@ -505,30 +502,82 @@ def void_event(project_id: int, event_id: str, body: dict = {}) -> dict:
 @router.delete("/{project_id}/personalization/profile")
 def reset_profile(
     project_id: int,
-    scope: str = Query(default="project", pattern="^(project|global)$"),
+    scope: str = Query(default="project", pattern="^(project|global|all)$"),
 ) -> dict:
     _require_project(project_id)
-    scope_type = "global" if scope == "global" else "project"
-    scope_id = GLOBAL_SCOPE_ID if scope_type == "global" else str(project_id)
+
+    def delete_where(conn, table: str, where: str = "", params: tuple = ()) -> int:
+        sql = f"DELETE FROM {table}" + (f" WHERE {where}" if where else "")
+        return int(conn.execute(sql, params).rowcount)
+
+    def delete_project_shadow_data(conn, target_project_id: int | None) -> int:
+        where = "project_id = ?" if target_project_id is not None else ""
+        params = (target_project_id,) if target_project_id is not None else ()
+        deleted = 0
+        # Delete children before parents so the reset also works when FK checks are enabled.
+        for table in (
+            "teaching_outcomes",
+            "teaching_trials",
+            "teacher_plans",
+            "teacher_plan_runs",
+            "interaction_observations",
+            "observer_runs",
+            "shadow_learner_snapshots",
+            "term_impressions",
+        ):
+            deleted += delete_where(conn, table, where, params)
+        return deleted
 
     def do_tx(conn):
-        deleted_mastery = delete_concept_mastery_by_scope(scope_type, scope_id)
-        deleted_events = delete_events_by_scope(scope_type, scope_id)
-        deleted_preferences, deleted_preference_events = delete_preferences_by_scope(
-            scope_type,
-            scope_id,
+        if scope == "all":
+            deleted_mastery = delete_where(conn, "concept_mastery")
+            deleted_events = delete_where(conn, "learning_events")
+            deleted_preferences = delete_where(conn, "learner_preferences")
+            deleted_preference_events = delete_where(conn, "preference_events")
+            deleted_shadow = 0
+            for table in (
+                "concept_capabilities",
+                "learner_hypotheses",
+                "misconception_hypotheses",
+            ):
+                deleted_shadow += delete_where(conn, table)
+            deleted_shadow += delete_project_shadow_data(conn, None)
+            return {
+                "status": "ok",
+                "scope": scope,
+                "deletedMasteryCount": deleted_mastery,
+                "deletedEventCount": deleted_events,
+                "deletedPreferencesCount": deleted_preferences,
+                "deletedPreferenceEventsCount": deleted_preference_events,
+                "deletedShadowCount": deleted_shadow,
+            }
+
+        scope_type = "global" if scope == "global" else "project"
+        scope_id = GLOBAL_SCOPE_ID if scope_type == "global" else str(project_id)
+        params = (scope_type, scope_id)
+        deleted_mastery = delete_where(
+            conn, "concept_mastery", "scope_type = ? AND scope_id = ?", params
         )
-        conn.execute("DELETE FROM concept_capabilities WHERE scope_type = ? AND scope_id = ?", (scope_type, scope_id))
-        conn.execute("DELETE FROM learner_hypotheses WHERE scope_type = ? AND scope_id = ?", (scope_type, scope_id))
-        conn.execute("DELETE FROM misconception_hypotheses WHERE scope_type = ? AND scope_id = ?", (scope_type, scope_id))
+        deleted_events = delete_where(
+            conn, "learning_events", "scope_type = ? AND scope_id = ?", params
+        )
+        deleted_preferences = delete_where(
+            conn, "learner_preferences", "scope_type = ? AND scope_id = ?", params
+        )
+        deleted_preference_events = delete_where(
+            conn, "preference_events", "scope_type = ? AND scope_id = ?", params
+        )
+        deleted_shadow = 0
+        for table in (
+            "concept_capabilities",
+            "learner_hypotheses",
+            "misconception_hypotheses",
+        ):
+            deleted_shadow += delete_where(
+                conn, table, "scope_type = ? AND scope_id = ?", params
+            )
         if scope_type == "project":
-            conn.execute("DELETE FROM teaching_outcomes WHERE project_id = ?", (project_id,))
-            conn.execute("DELETE FROM teaching_trials WHERE project_id = ?", (project_id,))
-            conn.execute("DELETE FROM teacher_plans WHERE project_id = ?", (project_id,))
-            conn.execute("DELETE FROM teacher_plan_runs WHERE project_id = ?", (project_id,))
-            conn.execute("DELETE FROM interaction_observations WHERE project_id = ?", (project_id,))
-            conn.execute("DELETE FROM observer_runs WHERE project_id = ?", (project_id,))
-            conn.execute("DELETE FROM shadow_learner_snapshots WHERE project_id = ?", (project_id,))
+            deleted_shadow += delete_project_shadow_data(conn, project_id)
         return {
             "status": "ok",
             "scope": scope,
@@ -536,6 +585,7 @@ def reset_profile(
             "deletedEventCount": deleted_events,
             "deletedPreferencesCount": deleted_preferences,
             "deletedPreferenceEventsCount": deleted_preference_events,
+            "deletedShadowCount": deleted_shadow,
         }
 
     return run_in_transaction(do_tx)

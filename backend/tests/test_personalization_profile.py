@@ -118,6 +118,100 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertFalse(_survey_is_due("2026-07-26T01:00:00+08:00", now))
         self.assertTrue(_survey_is_due("2026-07-25T03:59:59Z", now))
 
+    def test_personalization_runtime_settings_are_explicit_and_default_off(self):
+        initial = self.client.get("/api/settings/personalization")
+        self.assertEqual(initial.status_code, 200)
+        self.assertEqual(
+            initial.json(),
+            {
+                "supported": True,
+                "teacher_planner_enabled": False,
+                "observer_enabled": False,
+                "teacher_planner_mode": "assist",
+                "observer_mode": "shadow",
+            },
+        )
+
+        saved = self.client.put(
+            "/api/settings/personalization",
+            json={
+                "teacher_planner_enabled": True,
+                "observer_enabled": True,
+            },
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertTrue(saved.json()["teacher_planner_enabled"])
+        self.assertTrue(saved.json()["observer_enabled"])
+
+        from app.services.storage import get_setting
+
+        self.assertEqual(get_setting("personalization.teacher_planner.mode"), "assist")
+        self.assertEqual(get_setting("personalization.observer.mode"), "shadow")
+
+    def test_reset_all_clears_global_and_project_personalization(self):
+        global_term = self._resolve(self.project_a["id"], "RAG")
+        project_term = self._resolve(self.project_b["id"], "JudgeRunner", "index")
+
+        for project, term, status in (
+            (self.project_a, global_term, "unknown"),
+            (self.project_b, project_term, "known"),
+        ):
+            response = self.client.post(
+                f"/api/projects/{project['id']}/personalization/mark-{status}",
+                json={
+                    "conceptId": term["concept"]["id"],
+                    "idempotencyKey": f"reset-all-{status}",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+
+        self.client.put(
+            f"/api/projects/{self.project_a['id']}/personalization/preferences",
+            json={"terminology_density": 0.75, "scope": "global"},
+        )
+
+        reset = self.client.delete(
+            f"/api/projects/{self.project_a['id']}/personalization/profile",
+            params={"scope": "all"},
+        )
+        self.assertEqual(reset.status_code, 200)
+        self.assertEqual(reset.json()["scope"], "all")
+        self.assertGreaterEqual(reset.json()["deletedMasteryCount"], 2)
+
+        global_mastery = self.client.get(
+            f"/api/projects/{self.project_a['id']}/personalization/mastery",
+            params={"concept_ids": global_term["concept"]["id"]},
+        ).json()
+        project_mastery = self.client.get(
+            f"/api/projects/{self.project_b['id']}/personalization/mastery",
+            params={"concept_ids": project_term["concept"]["id"]},
+        ).json()
+        self.assertEqual(global_mastery, {})
+        self.assertEqual(project_mastery, {})
+
+        preferences = self.client.get(
+            f"/api/projects/{self.project_a['id']}/personalization/preferences"
+        ).json()
+        self.assertEqual(preferences["terminologyDensity"], 0.5)
+        self.assertEqual(preferences["feedbackCount"], 0)
+
+    def test_planner_assist_eligibility_keeps_simple_questions_fast(self):
+        from types import SimpleNamespace
+        from app.services.qa_service import _should_use_planner_assist
+
+        def prepared(question: str, *, parent_id=None, relation_type="follow_up"):
+            return SimpleNamespace(
+                question=question,
+                parent_id=parent_id,
+                payload=SimpleNamespace(relation_type=relation_type),
+            )
+
+        self.assertFalse(_should_use_planner_assist(prepared("这个报错是什么意思")))
+        self.assertTrue(_should_use_planner_assist(prepared("为什么 accept 会返回新的 socket？")))
+        self.assertTrue(_should_use_planner_assist(prepared("还是没懂，换种方式解释", parent_id=12)))
+        self.assertTrue(_should_use_planner_assist(prepared("再解释一次", relation_type="alternate")))
+        self.assertFalse(_should_use_planner_assist(prepared("解释 socket", parent_id=12, relation_type="term_explanation")))
+
     def test_changed_document_rescans_and_removes_stale_candidates(self):
         import app.services.storage as storage
 

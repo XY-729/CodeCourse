@@ -218,7 +218,7 @@ export default function DesktopToolbar(props: Props) {
           </button>
           {menu === "more" ? (
             <div className="apple-popover more-popover" role="menu">
-              <button onClick={() => { setMenu(null); onOpenSettings(); }}><Bot size={15} />模型 API</button>
+              <button onClick={() => { setMenu(null); onOpenSettings(); }}><Settings2 size={15} />设置</button>
               <button onClick={() => { setMenu(null); onOpenPrompts(); }}><Sparkles size={15} />提示词编辑</button>
               <button onClick={() => { setMenu(null); onBuildIndex(); }} disabled={indexDisabled}><RefreshCw size={15} />{indexLabel}</button>
               <button onClick={() => { setMenu(null); onOpenGestureGuide(); }}><MousePointer2 size={15} />鼠标手势指南</button>

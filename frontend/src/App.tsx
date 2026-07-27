@@ -45,9 +45,7 @@ import {
   markConceptKnown,
   markConceptUnknown,
   getLearnerPreferences,
-  updateLearnerPreferences,
   resolvePersonalizationTerms,
-  resetPersonalizationProfile,
   recordTermImpressions,
   submitAnswerFeedback,
   saveLearningAnchor,
@@ -108,7 +106,7 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
-type MobileSurface = "navigation" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts" | "preferences";
+type MobileSurface = "navigation" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts";
 type OpenItemType = "file" | "course" | "qa" | "knowledge_graph";
 type SplitDirection = "row" | "column";
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -747,6 +745,8 @@ export default function App() {
   const [qaSessionTree, setQASessionTree] = useState<QARecord[]>([]);
   const [rawDocumentTermsBySource, setRawDocumentTermsBySource] = useState<Record<string, DocumentTerm[]>>({});
   const [activeDocumentTerms, setActiveDocumentTerms] = useState<DocumentTerm[]>([]);
+  const [terminologyDensity, setTerminologyDensity] = useState(0.5);
+  const [personalizationRevision, setPersonalizationRevision] = useState(0);
   const [termAction, setTermAction] = useState<{ term: DocumentTerm; position?: { x: number; y: number } } | null>(null);
   const [learningAnchor, setLearningAnchor] = useState<LearningAnchor | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
@@ -779,7 +779,8 @@ export default function App() {
     sourceKey: activeTermSourceKey,
     content: activeTermContent,
     rawTerms: activeTermRawTerms,
-    terminologyDensity: 0.5,
+    terminologyDensity,
+    profileRevision: personalizationRevision,
     loadProfiles: getTermDisplayProfiles,
   });
   const awaitingNotificationSettingsRef = useRef(false);
@@ -2590,7 +2591,7 @@ export default function App() {
       const freshProject = await getProject(nextProject.id);
       setProject(freshProject);
       window.localStorage.setItem(LAST_PROJECT_STORAGE_KEY, String(freshProject.id));
-      const [nextTree, nextCourses, tasks, settings, nextIndexStatus, nextLearningStates, nextQARecords] = await Promise.all([
+      const [nextTree, nextCourses, tasks, settings, nextIndexStatus, nextLearningStates, nextQARecords, nextPreferences] = await Promise.all([
         getTree(freshProject.id),
         getCourseFiles(freshProject.id),
         listGenerationTasks(freshProject.id),
@@ -2598,11 +2599,14 @@ export default function App() {
         getProjectIndexStatus(freshProject.id).catch(() => null),
         getLearningStates(freshProject.id).catch(() => []),
         listQARecords(freshProject.id).catch(() => []),
+        getLearnerPreferences(freshProject.id).catch(() => null),
       ]);
       const initialLayout = createInitialLayout();
       setTree(nextTree);
       setCourses(nextCourses);
       setLLMSettings(settings);
+      setTerminologyDensity(nextPreferences?.terminologyDensity ?? 0.5);
+      setPersonalizationRevision((value) => value + 1);
       setActiveTask(tasks[0] ?? null);
       setIndexStatus(nextIndexStatus);
       setLearningStates(nextLearningStates);
@@ -4230,7 +4234,7 @@ export default function App() {
       { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", run: () => openGeneration("outline") },
       { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => openMobileNavigation("courses") },
       { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => openMobileNavigation("files") },
-      { id: "command:settings", label: "模型 API 设置", section: "命令", keywords: "deepseek key 模型", run: openSettings },
+      { id: "command:settings", label: "设置", section: "命令", keywords: "deepseek key 模型 个性化 术语 隐私", run: openSettings },
       { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: openPrompts },
       { id: "command:index", label: "构建项目索引", section: "命令", keywords: "rag 搜索 索引", run: () => void handleBuildIndex() },
       { id: "command:reset-progress", label: "重置学习进度", section: "命令", keywords: "清除 完成 阅读位置", run: () => void handleResetLearningProgress() },
@@ -4456,7 +4460,7 @@ export default function App() {
             <div className="more-menu-divider" />
             <button type="button" role="menuitem" onClick={openSettings}>
               <Bot size={15} />
-              模型 API
+              设置
             </button>
             <button type="button" role="menuitem" onClick={openPrompts}>
               <Sparkles size={15} />
@@ -4795,8 +4799,13 @@ export default function App() {
       ) : null}
       <LLMSettingsDialog
         open={settingsOpen}
+        projectId={project?.id ?? null}
         onConfirm={confirmAction}
         onOpenExternal={openExternal}
+        onPreferencesChanged={(density) => {
+          setTerminologyDensity(density);
+          setPersonalizationRevision((value) => value + 1);
+        }}
         onClose={() => {
           setSettingsOpen(false);
           loadLLMSettings();

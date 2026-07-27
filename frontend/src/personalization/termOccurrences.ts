@@ -364,13 +364,16 @@ function occurrenceNode(
   });
 
   return {
-    type: "emphasis",
-    children: [{ type: "text", value: match.term.term_text }],
+    type: "termOccurrence",
+    value: match.term.term_text,
     data: {
       hName: "span",
       hProperties: {
         "data-term-candidate-id": candidateId,
         "data-term-id": termId,
+        "data-term-text": match.term.term_text,
+        "data-term-link-origin": linkOriginOf(match.term),
+        "data-term-status": match.term.status,
       },
     },
   };
@@ -379,45 +382,52 @@ function occurrenceNode(
 export const remarkTermOccurrences: Plugin<[RemarkTermOccurrencesOptions]> =
   function remarkTermOccurrencesPlugin(options) {
     return (tree: unknown) => {
-      const root = tree as AstNode;
-      const orderedTerms = prepareTermsForMatching(options.terms);
-      const { entries } = collectTextNodeEntries(root);
+      try {
+        const root = tree as AstNode;
+        const orderedTerms = prepareTermsForMatching(options?.terms ?? []);
+        if (orderedTerms.length === 0) return;
+        const { entries } = collectTextNodeEntries(root);
 
-      const replacements = entries
-        .map((entry) => ({
-          entry,
-          matches: matchTermsInTextNode(entry.node.value, orderedTerms),
-        }))
-        .filter((item) => item.matches.length > 0)
-        .sort((left, right) => {
-          if (left.entry.parent === right.entry.parent) {
-            return right.entry.childIndex - left.entry.childIndex;
-          }
-          return right.entry.nodePath.localeCompare(left.entry.nodePath, undefined, {
-            numeric: true,
+        const replacements = entries
+          .map((entry) => ({
+            entry,
+            matches: matchTermsInTextNode(entry.node.value, orderedTerms),
+          }))
+          .filter((item) => item.matches.length > 0)
+          .sort((left, right) => {
+            if (left.entry.parent === right.entry.parent) {
+              return right.entry.childIndex - left.entry.childIndex;
+            }
+            return right.entry.nodePath.localeCompare(left.entry.nodePath, undefined, {
+              numeric: true,
+            });
           });
-        });
 
-      for (const { entry, matches } of replacements) {
-        const nextChildren: AstNode[] = [];
-        let cursor = 0;
-        for (const match of matches) {
-          if (match.localStart > cursor) {
+        for (const { entry, matches } of replacements) {
+          const nextChildren: AstNode[] = [];
+          let cursor = 0;
+          for (const match of matches) {
+            if (match.localStart > cursor) {
+              nextChildren.push({
+                type: "text",
+                value: entry.node.value.slice(cursor, match.localStart),
+              });
+            }
+            nextChildren.push(occurrenceNode(options?.sourceKey ?? "document", entry, match));
+            cursor = match.localEnd;
+          }
+          if (cursor < entry.node.value.length) {
             nextChildren.push({
               type: "text",
-              value: entry.node.value.slice(cursor, match.localStart),
+              value: entry.node.value.slice(cursor),
             });
           }
-          nextChildren.push(occurrenceNode(options.sourceKey, entry, match));
-          cursor = match.localEnd;
+          entry.parent.children.splice(entry.childIndex, 1, ...nextChildren);
         }
-        if (cursor < entry.node.value.length) {
-          nextChildren.push({
-            type: "text",
-            value: entry.node.value.slice(cursor),
-          });
-        }
-        entry.parent.children.splice(entry.childIndex, 1, ...nextChildren);
+      } catch (error) {
+        // Term links are an enhancement. A malformed term or AST must never
+        // prevent the underlying Markdown document from rendering.
+        console.warn("Term occurrence rendering failed; using plain Markdown", error);
       }
     };
   };

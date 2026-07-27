@@ -2,9 +2,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.models.schemas import LLMSettingsRequest, LLMSettingsResponse, LLMTestResponse
+from app.models.schemas import (
+    LLMSettingsRequest,
+    LLMSettingsResponse,
+    LLMTestResponse,
+    PersonalizationRuntimeSettingsRequest,
+    PersonalizationRuntimeSettingsResponse,
+)
 from app.services.llm_client import call_openai_compatible_chat, mask_api_key
-from app.services.storage import get_llm_settings, save_llm_settings
+from app.services.storage import get_llm_settings, get_setting, save_llm_settings, set_setting
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -37,6 +43,38 @@ def write_llm_settings(payload: LLMSettingsRequest) -> LLMSettingsResponse:
         payload.clear_api_key,
     )
     return _response_from_settings(settings)
+
+
+@router.get("/personalization", response_model=PersonalizationRuntimeSettingsResponse)
+def read_personalization_runtime_settings() -> PersonalizationRuntimeSettingsResponse:
+    return PersonalizationRuntimeSettingsResponse(
+        supported=True,
+        teacher_planner_enabled=(
+            get_setting("personalization.teacher_planner.enabled") == "true"
+        ),
+        observer_enabled=(
+            get_setting("personalization.observer.enabled") == "true"
+        ),
+    )
+
+
+@router.put("/personalization", response_model=PersonalizationRuntimeSettingsResponse)
+def write_personalization_runtime_settings(
+    payload: PersonalizationRuntimeSettingsRequest,
+) -> PersonalizationRuntimeSettingsResponse:
+    if payload.teacher_planner_enabled is not None:
+        set_setting(
+            "personalization.teacher_planner.enabled",
+            "true" if payload.teacher_planner_enabled else "false",
+        )
+        set_setting("personalization.teacher_planner.mode", "assist")
+    if payload.observer_enabled is not None:
+        set_setting(
+            "personalization.observer.enabled",
+            "true" if payload.observer_enabled else "false",
+        )
+        set_setting("personalization.observer.mode", "shadow")
+    return read_personalization_runtime_settings()
 
 
 @router.post("/llm/test", response_model=LLMTestResponse)

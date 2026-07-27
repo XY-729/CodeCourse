@@ -479,6 +479,24 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if (path === "/settings/llm" && method === "GET") return this.getLLMSettings() as Promise<T>;
     if (path === "/settings/llm" && method === "PUT") return this.saveLLMSettings(body) as Promise<T>;
     if (path === "/settings/llm/test" && method === "POST") return this.testLLMSettings() as Promise<T>;
+    if (path === "/settings/personalization" && method === "GET") {
+      return Promise.resolve({
+        supported: false,
+        teacher_planner_enabled: false,
+        observer_enabled: false,
+        teacher_planner_mode: "assist",
+        observer_mode: "shadow",
+      }) as Promise<T>;
+    }
+    if (path === "/settings/personalization" && method === "PUT") {
+      return Promise.resolve({
+        supported: false,
+        teacher_planner_enabled: false,
+        observer_enabled: false,
+        teacher_planner_mode: "assist",
+        observer_mode: "shadow",
+      }) as Promise<T>;
+    }
     if (path === "/settings/prompts" && method === "GET") return this.getPrompts() as Promise<T>;
     if (path === "/settings/prompts" && method === "PUT") return this.savePrompts(body) as Promise<T>;
 
@@ -2168,20 +2186,42 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     };
   }
 
-  async resetPersonalizationProfile(projectId: number, scope: "project" | "global" = "project"): Promise<{ status: string; deletedMasteryCount: number; deletedEventCount: number }> {
+  async resetPersonalizationProfile(projectId: number, scope: "project" | "global" | "all" = "project"): Promise<{ status: string; deletedMasteryCount: number; deletedEventCount: number }> {
     await db.init();
+
+    if (scope === "all") {
+      return db.transaction(async () => {
+        const events = await db.queryInTx<Row>("SELECT COUNT(*) as c FROM learning_events");
+        const mastery = await db.queryInTx<Row>("SELECT COUNT(*) as c FROM concept_mastery");
+        await db.runInTx("DELETE FROM learning_events");
+        await db.runInTx("DELETE FROM concept_mastery");
+        await db.runInTx("DELETE FROM preference_events");
+        await db.runInTx("DELETE FROM learner_preferences");
+        await db.runInTx("DELETE FROM term_impressions");
+        return {
+          status: "ok",
+          deletedMasteryCount: Number(mastery[0]?.c ?? 0),
+          deletedEventCount: Number(events[0]?.c ?? 0),
+        };
+      });
+    }
+
     const { type: st, id: si } = scope === "global"
       ? { type: "global" as const, id: "local-user" }
       : this.scope(projectId);
-    // Physical deletion for privacy reset
-    const events = await db.query<Row>("SELECT COUNT(*) as c FROM learning_events WHERE scope_type=? AND scope_id=?", [st, si]);
-    const eventCount = Number(events[0]?.c ?? 0);
-    const mastery = await db.query<Row>("SELECT COUNT(*) as c FROM concept_mastery WHERE scope_type=? AND scope_id=?", [st, si]);
-    const masteryCount = Number(mastery[0]?.c ?? 0);
-    await db.run("DELETE FROM learning_events WHERE scope_type=? AND scope_id=?", [st, si]);
-    await db.run("DELETE FROM concept_mastery WHERE scope_type=? AND scope_id=?", [st, si]);
-    await db.run("DELETE FROM preference_events WHERE scope_type=? AND scope_id=?", [st, si]);
-    await db.run("DELETE FROM learner_preferences WHERE scope_type=? AND scope_id=?", [st, si]);
-    return { status: "ok", deletedMasteryCount: masteryCount, deletedEventCount: eventCount };
+    return db.transaction(async () => {
+      const events = await db.queryInTx<Row>("SELECT COUNT(*) as c FROM learning_events WHERE scope_type=? AND scope_id=?", [st, si]);
+      const eventCount = Number(events[0]?.c ?? 0);
+      const mastery = await db.queryInTx<Row>("SELECT COUNT(*) as c FROM concept_mastery WHERE scope_type=? AND scope_id=?", [st, si]);
+      const masteryCount = Number(mastery[0]?.c ?? 0);
+      await db.runInTx("DELETE FROM learning_events WHERE scope_type=? AND scope_id=?", [st, si]);
+      await db.runInTx("DELETE FROM concept_mastery WHERE scope_type=? AND scope_id=?", [st, si]);
+      await db.runInTx("DELETE FROM preference_events WHERE scope_type=? AND scope_id=?", [st, si]);
+      await db.runInTx("DELETE FROM learner_preferences WHERE scope_type=? AND scope_id=?", [st, si]);
+      if (scope === "project") {
+        await db.runInTx("DELETE FROM term_impressions WHERE project_id=?", [projectId]);
+      }
+      return { status: "ok", deletedMasteryCount: masteryCount, deletedEventCount: eventCount };
+    });
   }
 }

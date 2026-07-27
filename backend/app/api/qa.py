@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -32,6 +33,8 @@ from app.services.qa_service import (
 )
 from app.services.llm_client import stream_openai_compatible_chat
 from app.services.storage import LearningAnchor, QARecord, get_project, get_qa_record
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["qa"])
 _PROJECT_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
@@ -157,7 +160,10 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
                                     break
                             trial_draft = tc.trial_draft
                     except Exception:
-                        pass
+                        logger.exception(
+                            "Teacher planner failed before streaming answer; using normal answer",
+                            extra={"project_id": project_id},
+                        )
                     yield _sse("stage", {"stage": "waiting_model", "label": "等待模型"})
                     chunks: list[str] = []
                     emitted_answer_stage = False
@@ -190,7 +196,10 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
                                 answer_model=trial_draft.answer_model,
                             )
                         except Exception:
-                            pass
+                            logger.exception(
+                                "Failed to persist streaming teaching trial",
+                                extra={"project_id": project_id, "qa_record_id": record.id},
+                            )
                     yield _sse("completed", _to_response(record).model_dump(mode="json"))
 
                 if lock is None:

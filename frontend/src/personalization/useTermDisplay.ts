@@ -105,6 +105,7 @@ export interface UseTermDisplayParams {
   content: string;
   rawTerms: DocumentTerm[];
   terminologyDensity: number;
+  profileRevision?: number;
   loadProfiles: (
     projectId: number,
     conceptKeys: string[],
@@ -127,7 +128,7 @@ const EMPTY_IDS: ReadonlySet<string> = new Set();
 const EMPTY_TIERS: ReadonlyMap<string, TermDisplayTier> = new Map();
 
 export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResult {
-  const { projectId, sourceKey, content, rawTerms, terminologyDensity, loadProfiles } = params;
+  const { projectId, sourceKey, content, rawTerms, terminologyDensity, profileRevision = 0, loadProfiles } = params;
 
   const [profiles, setProfiles] = useState<Map<string, TermPersonalizationProfile>>(new Map());
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "fallback">("idle");
@@ -141,16 +142,17 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
   }, []);
 
   const revisionKey = buildContentRevisionKey(sourceKey, content);
+  const profileRequestRevision = `${revisionKey}:profile:${profileRevision}`;
 
   useEffect(() => {
-    if (projectId == null || !content || rawTerms.length === 0) {
+    if (projectId == null || !content || rawTerms.length === 0 || terminologyDensity <= 0) {
       setProfiles(new Map());
       setStatus("idle");
       return;
     }
 
     const controller = new AbortController();
-    const requestRevision = revisionKey;
+    const requestRevision = profileRequestRevision;
     revisionRef.current = requestRevision;
 
     const conceptKeys = [...new Set(rawTerms.map((t) => t.concept_id || `term:${normalizeText(t.term_text || "")}`).filter(Boolean))];
@@ -193,7 +195,7 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     return () => {
       controller.abort();
     };
-  }, [projectId, revisionKey, content, rawTerms, loadProfiles]);
+  }, [projectId, profileRequestRevision, content, rawTerms, terminologyDensity, loadProfiles]);
 
   const patchProfile = useCallback(
     (conceptKey: string, patch: Partial<TermPersonalizationProfile>) => {
@@ -207,20 +209,33 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     [],
   );
 
-  const markdownAnalysis = useMemo(
-    () => analyzeMarkdownTermOccurrences(content, rawTerms, sourceKey),
-    [content, rawTerms, sourceKey],
-  );
-
-  const neutralProfiles = useMemo(() => {
-    const keys = [...new Set(markdownAnalysis.occurrences.map((o) => o.conceptKey))];
-    const map = new Map<string, TermPersonalizationProfile>();
-    for (const k of keys) map.set(k, createNeutralTermProfile(k));
-    return map;
-  }, [markdownAnalysis]);
+  const markdownAnalysis = useMemo(() => {
+    try {
+      return {
+        analysis: analyzeMarkdownTermOccurrences(content, rawTerms, sourceKey),
+        failed: false,
+      };
+    } catch (error) {
+      console.warn("Term occurrence analysis failed; rendering plain Markdown terms", error);
+      return {
+        analysis: {
+          occurrences: [],
+          occurrenceByCandidateId: new Map(),
+          paragraphCount: 1,
+        },
+        failed: true,
+      };
+    }
+  }, [content, rawTerms, sourceKey]);
 
   const computed = useMemo(() => {
-    if (status === "idle") {
+    if (
+      terminologyDensity <= 0
+      || markdownAnalysis.failed
+      || status === "idle"
+      || status === "loading"
+      || status === "fallback"
+    ) {
       return {
         decisions: new Map() as ReadonlyMap<string, TermDisplayDecision>,
         visibleOccurrences: [] as VisibleTermOccurrence[],
@@ -228,15 +243,14 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
         tiersById: EMPTY_TIERS,
       };
     }
-    const effectiveProfiles = status === "loading" ? neutralProfiles : profiles;
     return computeTermDisplay({
-      occurrences: markdownAnalysis.occurrences,
-      paragraphCount: markdownAnalysis.paragraphCount,
-      termProfiles: effectiveProfiles,
+      occurrences: markdownAnalysis.analysis.occurrences,
+      paragraphCount: markdownAnalysis.analysis.paragraphCount,
+      termProfiles: profiles,
       terminologyDensity,
-      profileAvailable: status !== "fallback" && profileAvailable,
+      profileAvailable: (status as string) !== "fallback" && profileAvailable,
     });
-  }, [markdownAnalysis, profiles, neutralProfiles, terminologyDensity, profileAvailable, status]);
+  }, [markdownAnalysis, profiles, terminologyDensity, profileAvailable, status]);
 
   return {
     visibleCandidateIds: computed.visibleCandidateIds,
@@ -244,8 +258,8 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     visibleOccurrences: computed.visibleOccurrences,
     decisions: computed.decisions,
     profilesByConceptKey: profiles,
-    status,
-    profileAvailable: status !== "fallback" && profileAvailable,
+    status: markdownAnalysis.failed ? "fallback" : status,
+    profileAvailable: !markdownAnalysis.failed && status !== "fallback" && profileAvailable,
     patchProfile,
   };
 }

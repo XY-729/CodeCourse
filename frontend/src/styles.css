@@ -4138,3 +4138,116 @@ html.platform-android[data-theme="dark"] .field-label > span {
   .learning-progress-track span { transition: none; }
   .task-feedback-indeterminate::after { animation: none; left: 28%; }
 }
+
+/* ---- Consolidated settings: model, personalization, reading, privacy ---- */
+.settings-modal--complete {
+  display: flex;
+  max-height: min(760px, calc(100dvh - 32px));
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.settings-section {
+  padding: 14px 16px 4px;
+  border-bottom: 1px solid #e2e7ed;
+}
+
+.settings-section:last-child {
+  border-bottom: 0;
+}
+
+.settings-section h3 {
+  margin: 0 0 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #18212f;
+  font-size: 14px;
+}
+
+.settings-section .settings-grid {
+  padding-inline: 0;
+}
+
+.settings-grid--single {
+  grid-template-columns: 1fr;
+}
+
+.settings-toggle-card {
+  padding: 10px 12px;
+  border: 1px solid #d7dee7;
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.settings-toggle-card > span {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-toggle-card strong {
+  color: #18212f;
+  font-size: 13px;
+}
+
+.settings-toggle-card small,
+.settings-grid label small,
+.settings-note {
+  color: #667085;
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.5;
+}
+
+.settings-note {
+  margin: 0 0 12px;
+}
+
+.settings-platform-note {
+  margin: 12px 0 14px;
+  padding: 11px 12px;
+  border-radius: 8px;
+  background: #f3f6f8;
+  color: #475467;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.settings-danger-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0 8px;
+}
+
+.settings-loading {
+  padding: 18px 0;
+}
+
+.platform-android .settings-modal--complete {
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
+}
+
+.platform-android .settings-section {
+  padding-inline: 12px;
+}
+
+.platform-android .settings-actions {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.platform-android .settings-danger-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+.platform-android .settings-modal--complete .settings-actions > button:last-child {
+  width: auto;
+  min-width: 88px;
+  padding-inline: 12px;
+}

@@ -689,9 +689,58 @@ def _render_teaching_for_prompt(context) -> str:
     return render_effective_teaching_context(context)
 
 
+_PLANNER_ASSIST_MARKERS = (
+    "没懂",
+    "不懂",
+    "不理解",
+    "还是不明白",
+    "换种",
+    "换一个",
+    "另一种讲法",
+    "为什么",
+    "原理",
+    "机制",
+    "区别",
+    "关系",
+    "流程",
+    "生命周期",
+    "怎么理解",
+    "讲清楚",
+    "一步一步",
+    "举例",
+    "类比",
+    "推导",
+    "边界",
+    "取舍",
+    "并发",
+)
+
+
+def _should_use_planner_assist(prepared) -> bool:
+    """Return whether this question benefits enough to pay Planner latency/cost.
+
+    The Planner is an optional enhancement, not a prerequisite for ordinary QA.
+    Follow-ups and explicit requests for deeper/alternate teaching qualify; short
+    one-off lookups keep the original fast answer path.
+    """
+    payload = prepared.payload
+    if payload.relation_type == "term_explanation":
+        return False
+    if prepared.parent_id is not None or payload.relation_type == "alternate":
+        return True
+
+    question = (prepared.question or "").strip().lower()
+    if any(marker in question for marker in _PLANNER_ASSIST_MARKERS):
+        return True
+
+    # Long, multi-part learning questions often benefit from an explicit plan.
+    separators = question.count("？") + question.count("?") + question.count("；") + question.count(";")
+    return len(question) >= 120 or (len(question) >= 60 and separators >= 2)
+
+
 def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
     try:
-        if not _is_planner_assist_enabled():
+        if not _is_planner_assist_enabled() or not _should_use_planner_assist(prepared):
             return None
 
         from app.services.personalization.teaching.effective_context import (
@@ -811,7 +860,7 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
                 "base_url": llm.get("base_url", ""),
                 "api_key": llm.get("api_key", ""),
                 "model": llm.get("model", ""),
-                "timeout": 12,
+                "timeout": 8,
             }
         except Exception:
             pass
@@ -820,25 +869,18 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
             return None
 
         start = time.time()
-        plan = None
-        for attempt in range(2):
-            try:
-                raw = _call_planner_model(messages, settings)
-                plan = parse_teaching_plan(raw)
-                break
-            except Exception:
-                if attempt == 1:
-                    logger.warning(
-                        "Teacher planner failed in assist mode; falling back",
-                        extra={"project_id": project_id, "elapsed": time.time() - start},
-                    )
-                    return None
-                messages.append({
-                    "role": "user",
-                    "content": "Please output ONLY valid JSON matching the schema.",
-                })
-
-        if plan is None:
+        try:
+            raw = _call_planner_model(messages, settings)
+            plan = parse_teaching_plan(raw)
+        except Exception:
+            # Planner is an optional enhancement. Do not retry synchronously:
+            # a malformed plan or network timeout must fall through to the
+            # original answer path with a bounded first-token delay.
+            logger.warning(
+                "Teacher planner failed in assist mode; falling back",
+                extra={"project_id": project_id, "elapsed": time.time() - start},
+                exc_info=True,
+            )
             return None
 
         context = build_effective_teaching_context(
