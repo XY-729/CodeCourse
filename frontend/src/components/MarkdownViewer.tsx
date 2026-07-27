@@ -571,9 +571,9 @@ export default function MarkdownViewer({
     }
   }
 
-  // Progress indicator updates on every scroll frame for instant visual sync.
-  // Position persistence (commitReadingPosition) only fires after scrolling
-  // stops to avoid competing with the compositor.
+  // Progress bar updates at most once per animation frame via rAF.
+  // scroll events can fire many times per frame; throttling to rAF
+  // keeps the compositor happy while still looking real-time.
   useEffect(() => {
     const article = articleRef.current;
     if (!article || !onScrollRatioChange) return;
@@ -584,7 +584,12 @@ export default function MarkdownViewer({
     };
 
     const onScroll = () => {
-      refreshProgress();
+      if (!progressRafRef.current) {
+        progressRafRef.current = window.requestAnimationFrame(() => {
+          progressRafRef.current = 0;
+          refreshProgress();
+        });
+      }
       window.clearTimeout(positionSaveTimerRef.current);
       positionSaveTimerRef.current = window.setTimeout(settleScroll, 180) as unknown as number;
     };
@@ -598,6 +603,7 @@ export default function MarkdownViewer({
       return () => {
         article.removeEventListener("scroll", onScroll);
         article.removeEventListener("scrollend", settleScroll);
+        window.cancelAnimationFrame(progressRafRef.current);
       };
     }
 
@@ -605,6 +611,7 @@ export default function MarkdownViewer({
     return () => {
       article.removeEventListener("scroll", onScroll);
       window.clearTimeout(positionSaveTimerRef.current);
+      window.cancelAnimationFrame(progressRafRef.current);
     };
   }, [androidRuntime, onScrollRatioChange, sourcePath, sourceType, title]);
 
