@@ -157,9 +157,9 @@ export default function ExplainPanel(props: Props) {
                     }}
                   >
                     <span>{recordTitle(record)}</span><small>{record.model}</small>
-                    <button className="icon-button compact" onClick={(event) => { event.stopPropagation(); onDeleteRecord?.(record); }} aria-label="删除记录"><Trash2 size={14} /></button>
-                    <button className="icon-button compact" onClick={(event) => { event.stopPropagation(); onRenameRecord(record); }} aria-label="重命名记录"><Edit3 size={14} /></button>
-                    <button className="icon-button compact" onClick={(event) => { event.stopPropagation(); onToggleFavorite(record); }} aria-label={record.favorite ? "取消收藏" : "收藏"}><Star size={14} className={record.favorite ? "starred" : ""} /></button>
+                    <Trash2 size={14} className="history-delete" role="button" tabIndex={0} aria-label="删除记录" onClick={(event) => { event.stopPropagation(); onDeleteRecord?.(record); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onDeleteRecord?.(record); } }} />
+                    <Edit3 size={14} className="history-rename" role="button" tabIndex={0} aria-label="重命名记录" onClick={(event) => { event.stopPropagation(); onRenameRecord(record); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onRenameRecord(record); } }} />
+                    <Star size={14} className={record.favorite ? "history-star starred" : "history-star"} role="button" tabIndex={0} aria-label={record.favorite ? "取消收藏" : "收藏"} onClick={(event) => { event.stopPropagation(); onToggleFavorite(record); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onToggleFavorite(record); } }} />
                   </button>
                 )) : <div className="empty small">暂无问答历史</div>}
               </div>

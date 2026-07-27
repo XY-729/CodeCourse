@@ -617,8 +617,12 @@ export default function MarkdownViewer({
       node?: unknown;
     }) => {
       const rawProps = spanProps as Record<string, unknown>;
-      const candidateId = String(rawProps["data-term-candidate-id"] ?? "");
-      const termId = String(rawProps["data-term-id"] ?? "");
+      const candidateId = String(
+        rawProps["data-term-candidate-id"] ?? rawProps["dataTermCandidateId"] ?? "",
+      );
+      const termId = String(
+        rawProps["data-term-id"] ?? rawProps["dataTermId"] ?? "",
+      );
       if (!candidateId || !termId) {
         const { node: _node, children, ...plainProps } = spanProps;
         return <span {...plainProps}>{children}</span>;

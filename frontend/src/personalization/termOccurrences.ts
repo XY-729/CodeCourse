@@ -364,16 +364,13 @@ function occurrenceNode(
   });
 
   return {
-    type: "termOccurrence",
-    value: match.term.term_text,
+    type: "emphasis",
+    children: [{ type: "text", value: match.term.term_text }],
     data: {
       hName: "span",
       hProperties: {
         "data-term-candidate-id": candidateId,
         "data-term-id": termId,
-        "data-term-text": match.term.term_text,
-        "data-term-link-origin": linkOriginOf(match.term),
-        "data-term-status": match.term.status,
       },
     },
   };
