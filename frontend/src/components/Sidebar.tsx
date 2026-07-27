@@ -157,7 +157,7 @@ export default function Sidebar({
                 {complete ? "复习" : "继续"}<ArrowRight size={13} />
               </button>
               <div className="learning-progress-track" role="progressbar" aria-label="课程学习进度" aria-valuemin={0} aria-valuemax={lessons.length} aria-valuenow={completed}>
-                <span style={{ transform: `scaleX(${progress / 100})` }} />
+                <span style={{ width: `${progress}%` }} />
               </div>
               <small>{complete ? `已完成全部 ${lessons.length} 课` : `${completed}/${lessons.length} 课已完成`}</small>
             </section>

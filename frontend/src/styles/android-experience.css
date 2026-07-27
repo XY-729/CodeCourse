@@ -345,10 +345,9 @@ html.platform-android .learning-progress-track {
 
 html.platform-android .learning-progress-track span {
   background: var(--mobile-accent);
-  width: 100%;
   transform-origin: left center;
   animation: mobile-progress-reveal 620ms var(--mobile-ease-out) both;
-  transition: transform 320ms var(--mobile-ease-out);
+  transition: width 460ms var(--mobile-ease-out);
 }
 
 html.platform-android .continue-learning-card > small {
@@ -1127,12 +1126,10 @@ html.platform-android .apple-feedback-progress {
 
 html.platform-android .apple-feedback-progress i {
   display: block;
-  width: 100%;
   height: 100%;
   border-radius: inherit;
   background: currentColor;
-  transform-origin: left center;
-  transition: transform 300ms var(--mobile-ease-out);
+  transition: width 420ms var(--mobile-ease-out);
 }
 
 html.platform-android .selection-quick-bar {
