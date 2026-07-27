@@ -932,3 +932,152 @@ def list_shadow_runs(
         }
         for r in runs
     ]
+
+
+# ---------- Phase 2: Shadow Snapshots & Teacher Plan APIs ----------
+
+def _api_db_connect():
+    from app.services.storage import _connect
+    return _connect()
+
+
+@router.get("/shadow/snapshots")
+def list_shadow_snapshots_endpoint(
+    project_id: int,
+    limit: int = Query(50, le=200),
+) -> list[dict]:
+    with _api_db_connect() as conn:
+        rows = conn.execute(
+            """SELECT id, project_id, session_id, target_qa_record_id,
+               as_of_qa_record_id, builder_version, snapshot_hash,
+               source_observation_ids_json, created_at
+               FROM shadow_learner_snapshots
+               WHERE project_id = ?
+               ORDER BY created_at DESC LIMIT ?""",
+            (project_id, limit),
+        ).fetchall()
+    return [
+        {
+            "id": r[0],
+            "projectId": r[1],
+            "sessionId": r[2],
+            "targetQaRecordId": r[3],
+            "asOfQaRecordId": r[4],
+            "builderVersion": r[5],
+            "snapshotHash": r[6],
+            "sourceObservationIds": json.loads(r[7]) if r[7] else [],
+            "createdAt": r[8],
+        }
+        for r in rows
+    ]
+
+
+@router.get("/shadow/snapshots/{snapshot_id}")
+def get_shadow_snapshot_endpoint(
+    project_id: int,
+    snapshot_id: str,
+) -> dict:
+    with _api_db_connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM shadow_learner_snapshots WHERE id = ? AND project_id = ?",
+            (snapshot_id, project_id),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "Snapshot not found")
+    return {
+        "id": row[0],
+        "projectId": row[1],
+        "targetQaRecordId": row[3],
+        "asOfQaRecordId": row[4],
+        "builderVersion": row[5],
+        "snapshotHash": row[7],
+        "payload": json.loads(row[8]) if row[8] else None,
+        "sourceObservationIds": json.loads(row[9]) if row[9] else [],
+        "createdAt": row[10],
+    }
+
+
+@router.get("/shadow/teacher-plans")
+def list_teacher_plans_endpoint(
+    project_id: int,
+    qa_record_id: Optional[int] = Query(None),
+    limit: int = Query(50, le=200),
+) -> list[dict]:
+    with _api_db_connect() as conn:
+        if qa_record_id is not None:
+            rows = conn.execute(
+                """SELECT id, run_id, project_id, session_id, qa_record_id,
+                   snapshot_id, planner_version, plan_confidence, created_at
+                   FROM teacher_plans
+                   WHERE project_id = ? AND qa_record_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (project_id, qa_record_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, run_id, project_id, session_id, qa_record_id,
+                   snapshot_id, planner_version, plan_confidence, created_at
+                   FROM teacher_plans
+                   WHERE project_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (project_id, limit),
+            ).fetchall()
+    return [
+        {"id": r[0], "runId": r[1], "projectId": r[2], "sessionId": r[3],
+         "qaRecordId": r[4], "snapshotId": r[5], "plannerVersion": r[6],
+         "planConfidence": r[7], "createdAt": r[8]}
+        for r in rows
+    ]
+
+
+@router.get("/shadow/teacher-plans/{plan_id}")
+def get_teacher_plan_endpoint(
+    project_id: int,
+    plan_id: str,
+) -> dict:
+    with _api_db_connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM teacher_plans WHERE id = ? AND project_id = ?",
+            (plan_id, project_id),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "Teacher plan not found")
+    return {
+        "id": row[0], "runId": row[1], "projectId": row[2], "sessionId": row[3],
+        "qaRecordId": row[4], "snapshotId": row[5], "plannerVersion": row[6],
+        "payload": json.loads(row[7]) if row[7] else None,
+        "planConfidence": row[8], "createdAt": row[9],
+    }
+
+
+@router.get("/shadow/teacher-plan-runs")
+def list_teacher_plan_runs_endpoint(
+    project_id: int,
+    status: Optional[str] = Query(None),
+    limit: int = Query(50, le=200),
+) -> list[dict]:
+    with _api_db_connect() as conn:
+        if status is not None:
+            rows = conn.execute(
+                """SELECT id, project_id, session_id, qa_record_id,
+                   status, provider, model, planner_version, error_message, created_at
+                   FROM teacher_plan_runs
+                   WHERE project_id = ? AND status = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (project_id, status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, project_id, session_id, qa_record_id,
+                   status, provider, model, planner_version, error_message, created_at
+                   FROM teacher_plan_runs
+                   WHERE project_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (project_id, limit),
+            ).fetchall()
+    return [
+        {"id": r[0], "projectId": r[1], "sessionId": r[2], "qaRecordId": r[3],
+         "status": r[4], "provider": r[5], "model": r[6],
+         "plannerVersion": r[7], "errorMessage": r[8], "createdAt": r[9]}
+        for r in rows
+    ]

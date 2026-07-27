@@ -1,0 +1,193 @@
+[
+  {
+    "id": "case_1_basic_not_understood",
+    "description": "基础未懂：用户追问 bind 的含义",
+    "question": "还是没懂，bind 到底把什么和什么绑定在一起？",
+    "selected_text": "",
+    "source_type": "qa",
+    "source_path": "",
+    "parent_question": "bind 函数的作用是什么？",
+    "parent_answer_summary": "bind 用于将 socket 绑定到一个地址上。",
+    "shadow_profile": {
+      "capabilities": [
+        {"concept_key": "socket", "dimension": "familiarity", "value": 0.6, "confidence": 0.2}
+      ],
+      "hypotheses": [],
+      "misconceptions": []
+    },
+    "manual_preferences": {"answer_depth": 0.5, "code_ratio": 0.5, "explanation_order": "balanced"},
+    "expected": {
+      "user_goal": "understand_mechanism",
+      "blocker_type_in": ["relationship", "mechanism"],
+      "strategies_contains": ["direct_answer", "role_comparison"],
+      "strategies_not_contains": ["brief_definition"],
+      "must_not_assume_known": ["bind"],
+      "must_skip": ["epoll"]
+    }
+  },
+  {
+    "id": "case_2_advanced_boundary",
+    "description": "高级边界追问：SO_REUSEPORT 分发机制",
+    "question": "bind 配合 SO_REUSEPORT 时，多个进程之间的连接是怎么分发的？",
+    "selected_text": "",
+    "source_type": "qa",
+    "source_path": "",
+    "parent_question": "SO_REUSEPORT 有什么作用？",
+    "parent_answer_summary": "SO_REUSEPORT 允许多个 socket 绑定同一端口。",
+    "shadow_profile": {
+      "capabilities": [
+        {"concept_key": "bind", "dimension": "conceptual_understanding", "value": 0.8, "confidence": 0.4}
+      ],
+      "hypotheses": [],
+      "misconceptions": []
+    },
+    "manual_preferences": {"answer_depth": 0.5, "code_ratio": 0.5, "explanation_order": "balanced"},
+    "expected": {
+      "user_goal": "explore_boundary",
+      "strategies_not_contains": ["brief_definition", "prerequisite_bridge"],
+      "must_not_reteach": ["socket basics"]
+    }
+  },
+  {
+    "id": "case_3_quick_fix",
+    "description": "快速排错：用户赶时间",
+    "question": "这次别讲原理，直接告诉我怎么修，我正在赶时间。",
+    "selected_text": "",
+    "source_type": "code",
+    "source_path": "/src/main.cpp",
+    "parent_question": null,
+    "parent_answer_summary": null,
+    "shadow_profile": {
+      "capabilities": [],
+      "hypotheses": [
+        {"hypothesis_key": "prefer_multiple_choice", "statement": "用户通常喜欢选择题检查理解", "category": "learning_style", "confidence": 0.75, "support_count": 3}
+      ],
+      "misconceptions": []
+    },
+    "manual_preferences": {"answer_depth": 0.5, "code_ratio": 0.5, "explanation_order": "balanced"},
+    "expected": {
+      "user_goal_in": ["quick_fix", "debug"],
+      "assessment_needed": false,
+      "must_not_treat_as_permanent_preference": "不讲原理"
+    }
+  },
+  {
+    "id": "case_4_build_mental_model",
+    "description": "建立心智模型：理解 accept 为什么返回新 socket",
+    "question": "我想系统理解 accept 为什么返回新的 socket。",
+    "selected_text": "",
+    "source_type": "qa",
+    "source_path": "",
+    "parent_question": null,
+    "parent_answer_summary": null,
+    "shadow_profile": {
+      "capabilities": [
+        {"concept_key": "socket", "dimension": "familiarity", "value": 0.75, "confidence": 0.3}
+      ],
+      "hypotheses": [],
+      "misconceptions": []
+    },
+    "manual_preferences": {"answer_depth": 0.5, "code_ratio": 0.5, "explanation_order": "balanced"},
+    "expected": {
+      "user_goal": "build_mental_model",
+      "strategies_contains": ["execution_sequence", "role_comparison"],
+      "can_include": "assessment"
+    }
+  },
+  {
+    "id": "case_5_preference_override",
+    "description": "偏好选择题但当前不需要测试",
+    "question": "先帮我定位这个崩溃，不要测试。",
+    "selected_text": "",
+    "source_type": "code",
+    "source_path": "/src/crash.cpp",
+    "parent_question": null,
+    "parent_answer_summary": null,
+    "shadow_profile": {
+      "capabilities": [],
+      "hypotheses": [
+        {"hypothesis_key": "prefer_choice_check", "statement": "用户通常喜欢用选择题检查理解", "category": "learning_style", "confidence": 0.8, "support_count": 4}
+      ],
+      "misconceptions": [],
+      "explicit_facts": [
+        {"fact_type": "interaction_preference", "statement": "用户偏好选择题作为理解检查方式", "value": "选择题", "scope_type": "global", "confidence": 0.92, "evidence_quote": "以后检查理解时尽量给选择题"}
+      ]
+    },
+    "manual_preferences": {"answer_depth": 0.5, "code_ratio": 0.5, "explanation_order": "balanced"},
+    "expected": {
+      "assessment_needed": false,
+      "current_request_overrides_preference": true
+    }
+  },
+  {
+    "id": "case_6_only_knows_socket",
+    "description": "只认识 socket，问 TCP 服务端构建",
+    "question": "一个最简单的 TCP 服务端是怎么工作的？",
+    "selected_text": "",
+    "source_type": "qa",
+    "source_path": "",
+    "parent_question": null,
+    "parent_answer_summary": null,
+    "shadow_profile": {
+      "capabilities": [
+        {"concept_key": "socket", "dimension": "familiarity", "value": 0.85, "confidence": 0.5, "evidence_count": 5}
+      ],
+      "hypotheses": [],
+      "misconceptions": []
+    },
+    "manual_preferences": {"answer_depth": 0.5, "code_ratio": 0.5, "explanation_order": "balanced"},
+    "expected": {
+      "can_skip_intro": ["socket"],
+      "must_not_assume_known": ["bind", "listen", "accept"],
+      "needs_execution_sequence": true
+    }
+  },
+  {
+    "id": "case_7_code_reading_high_but_implementation_low",
+    "description": "代码能读懂但不会独立实现",
+    "question": "让我自己写一个 epoll 服务端应该怎么开始？",
+    "selected_text": "",
+    "source_type": "qa",
+    "source_path": "",
+    "parent_question": null,
+    "parent_answer_summary": null,
+    "shadow_profile": {
+      "capabilities": [
+        {"concept_key": "epoll", "dimension": "code_reading", "value": 0.8, "confidence": 0.4, "evidence_count": 3},
+        {"concept_key": "epoll", "dimension": "implementation", "value": 0.25, "confidence": 0.15, "evidence_count": 2}
+      ],
+      "hypotheses": [],
+      "misconceptions": []
+    },
+    "manual_preferences": {"answer_depth": 0.5, "code_ratio": 0.5, "explanation_order": "balanced"},
+    "expected": {
+      "user_goal": "implement",
+      "strategies_not_contains": ["direct_answer"],
+      "strategies_contains": ["progressive_hint"],
+      "must_not_assume_can_implement": true
+    }
+  },
+  {
+    "id": "case_8_same_approach_failed",
+    "description": "同一种解释已失败，需换策略",
+    "question": "我还是没理解 ActionMode callback 为什么被丢掉。",
+    "selected_text": "",
+    "source_type": "qa",
+    "source_path": "",
+    "parent_question": "ActionMode 的 callback 是在什么时候触发的？",
+    "parent_answer_summary": "ActionMode 的 callback 在 action mode 结束时触发。当用户完成操作或切换焦点时，系统会调用 registered callback。",
+    "shadow_profile": {
+      "hypotheses": [
+        {"hypothesis_key": "abstract_definition_ineffective", "statement": "抽象定义此前效果不佳", "category": "teaching_effectiveness", "confidence": 0.72, "support_count": 2},
+        {"hypothesis_key": "execution_trace_effective", "statement": "执行流程追踪此前有效", "category": "teaching_effectiveness", "confidence": 0.8, "support_count": 3}
+      ],
+      "capabilities": [],
+      "misconceptions": []
+    },
+    "manual_preferences": {"answer_depth": 0.5, "code_ratio": 0.5, "explanation_order": "balanced"},
+    "expected": {
+      "avoid_strategy": "detailed_derivation",
+      "prefer_strategy_in": ["execution_sequence", "state_transition", "project_code"]
+    }
+  }
+]

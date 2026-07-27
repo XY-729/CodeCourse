@@ -20,6 +20,9 @@ from app.services.personalization.observer_prompt import (
 from app.services.personalization.shadow_learner_model_updater import (
     apply_shadow_updates,
 )
+from app.services.personalization.evidence_validator import (
+    validate_evidence_quote,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +47,64 @@ def _get_executor() -> ThreadPoolExecutor:
                     thread_name_prefix="codecourse-observer",
                 )
     return _OBSERVER_EXECUTOR
+
+
+def _mark_run_failed_async(
+    run_key: str,
+    project_id: int,
+    qa_record_id: int,
+    reason: str,
+) -> None:
+    try:
+        from app.services.storage import (
+            insert_observer_run,
+            update_observer_run_status,
+        )
+        now = datetime.now(timezone.utc).isoformat()
+        insert_observer_run(
+            run_id=run_key,
+            idempotency_key=run_key,
+            project_id=project_id,
+            session_id=None,
+            qa_record_id=qa_record_id,
+            parent_qa_record_id=None,
+            mode="shadow",
+            provider=None,
+            model=None,
+            prompt_version=OBSERVER_PROMPT_VERSION,
+            input_hash=_compute_input_hash(project_id, qa_record_id),
+            status="failed",
+        )
+        update_observer_run_status(run_key, "failed", error_message=reason)
+    except Exception:
+        logger.exception("Failed to mark observer run as failed", extra={"run_key": run_key})
+
+
+def recover_stale_runs() -> int:
+    try:
+        from app.services.storage import (
+            list_observer_runs,
+            update_observer_run_status,
+        )
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        timeout = timedelta(seconds=OBSERVER_TIMEOUT_SECONDS * 2)
+        recovered = 0
+
+        for status in ("pending", "running"):
+            runs = list_observer_runs(project_id=0, status=status, limit=200)
+            for run in runs:
+                created = datetime.fromisoformat(run.created_at)
+                if now - created > timeout:
+                    update_observer_run_status(
+                        run.idempotency_key, "failed",
+                        error_message=f"stale_{status}",
+                    )
+                    recovered += 1
+        return recovered
+    except Exception:
+        logger.exception("Failed to recover stale observer runs")
+        return 0
 
 
 def shutdown_observer(wait: bool = True) -> None:
@@ -226,35 +287,57 @@ def _build_observer_messages(
     ]
 
 
-def _validate_evidence_quotes(
+def _validate_all_evidence(
     observation: InteractionObservation,
     user_message_set: set[str],
-) -> InteractionObservation:
-    all_quotes: list[tuple[str, str]] = []
+) -> tuple[list[dict], list[dict]]:
+    accepted: list[dict] = []
+    rejected: list[dict] = []
 
-    for i, ev in enumerate(observation.knowledge_evidence):
-        all_quotes.append(("knowledge_evidence", ev.evidence_quote))
-    for i, ev in enumerate(observation.behavior_evidence):
-        all_quotes.append(("behavior_evidence", ev.evidence_quote))
-    for i, ev in enumerate(observation.possible_misconceptions):
-        all_quotes.append(("misconception", ev.evidence_quote))
-    for i, ev in enumerate(observation.explicit_user_facts):
-        all_quotes.append(("explicit_user_fact", ev.evidence_quote))
-
-    for field, quote in all_quotes:
-        found = False
-        quote_lower = quote.strip().casefold()
-        for msg in user_message_set:
-            if quote_lower in msg.casefold():
-                found = True
-                break
-        if not found:
+    def _check(obs_type: str, subject_key: str | None, payload: dict, quote: str, idx: int):
+        result = validate_evidence_quote(quote, user_message_set)
+        entry = {
+            "obs_type": obs_type,
+            "subject_key": subject_key,
+            "payload": payload,
+            "evidence_text": quote,
+            "idx": idx,
+        }
+        if result.valid:
+            accepted.append(entry)
+        else:
+            entry["rejection_reason"] = result.rejection_reason
+            rejected.append(entry)
             logger.warning(
-                "Observer evidence quote not found in user messages",
-                extra={"field": field, "quote": quote[:100]},
+                "Observer evidence quote REJECTED",
+                extra={
+                    "obs_type": obs_type,
+                    "reason": result.rejection_reason,
+                    "quote": quote[:100],
+                },
             )
 
-    return observation
+    idx = 0
+    cs = observation.current_state.model_dump()
+    _check("current_state", None, cs, "", idx); idx += 1
+
+    if observation.previous_teaching_outcome:
+        pto = observation.previous_teaching_outcome.model_dump()
+        _check("previous_teaching_outcome", None, pto, observation.previous_teaching_outcome.evidence_quote, idx); idx += 1
+
+    for i, ev in enumerate(observation.knowledge_evidence):
+        _check("knowledge_evidence", ev.concept_key or ev.concept_text, ev.model_dump(), ev.evidence_quote, idx); idx += 1
+
+    for i, ev in enumerate(observation.behavior_evidence):
+        _check("behavior_evidence", ev.hypothesis_key or f"behavior:{i}", ev.model_dump(), ev.evidence_quote, idx); idx += 1
+
+    for i, ev in enumerate(observation.possible_misconceptions):
+        _check("misconception", ev.concept_key or ev.concept_text, ev.model_dump(), ev.evidence_quote, idx); idx += 1
+
+    for i, ev in enumerate(observation.explicit_user_facts):
+        _check("explicit_user_fact", f"fact:{ev.fact_type}:{i}", ev.model_dump(), ev.evidence_quote, idx); idx += 1
+
+    return accepted, rejected
 
 
 def _call_observer_model(
@@ -391,11 +474,11 @@ def _execute_observer_run(
         raw_output: Optional[str] = None
         last_error: Optional[str] = None
 
+        start_time = __import__("time").time()
         for attempt in range(MAX_RETRIES + 1):
             try:
                 raw_output = _call_observer_model(messages, settings)
                 observation = parse_observer_output(raw_output)
-                observation = _validate_evidence_quotes(observation, user_message_set)
                 break
             except ValueError as exc:
                 last_error = str(exc)
@@ -406,6 +489,7 @@ def _execute_observer_run(
                     })
                     continue
                 raise
+        elapsed_ms = int((__import__("time").time() - start_time) * 1000)
 
         should_store_raw = False
         try:
@@ -414,75 +498,69 @@ def _execute_observer_run(
         except Exception:
             pass
 
+        accepted, rejected = _validate_all_evidence(observation, user_message_set)
+
+        def _build_accepted_observation() -> InteractionObservation | None:
+            if not accepted:
+                return None
+            from app.services.personalization.observation_schema import (
+                CurrentLearningState, PreviousTeachingOutcome,
+                KnowledgeEvidence, BehaviorEvidence,
+                MisconceptionObservation as MisObs, ExplicitUserFact,
+            )
+            cs_data = None
+            pto_data = None
+            k_evs: list[dict] = []
+            b_evs: list[dict] = []
+            m_evs: list[dict] = []
+            f_evs: list[dict] = []
+            for a in accepted:
+                t = a["obs_type"]
+                p = a["payload"]
+                if t == "current_state": cs_data = p
+                elif t == "previous_teaching_outcome": pto_data = p
+                elif t == "knowledge_evidence": k_evs.append(p)
+                elif t == "behavior_evidence": b_evs.append(p)
+                elif t == "misconception": m_evs.append(p)
+                elif t == "explicit_user_fact": f_evs.append(p)
+            if cs_data is None:
+                return None
+            return InteractionObservation(
+                schema_version=1,
+                current_state=CurrentLearningState(**cs_data),
+                previous_teaching_outcome=PreviousTeachingOutcome(**pto_data) if pto_data else None,
+                knowledge_evidence=[KnowledgeEvidence(**e) for e in k_evs],
+                behavior_evidence=[BehaviorEvidence(**e) for e in b_evs],
+                possible_misconceptions=[MisObs(**e) for e in m_evs],
+                explicit_user_facts=[ExplicitUserFact(**e) for e in f_evs],
+                notes=observation.notes,
+            )
+
+        filtered_obs = _build_accepted_observation()
+
         def _write_observations(conn):
             update_observer_run_status(
                 run_key, "completed",
                 raw_output_json=raw_output if should_store_raw else None,
-                latency_ms=0,
+                latency_ms=elapsed_ms,
                 provider=settings.get("provider"),
                 model=settings.get("model"),
                 conn=conn,
             )
 
-            idx = 0
-            obs_rows: list[tuple[str, str, Any, str]] = []
-
-            current_state = observation.current_state
-            obs_rows.append((
-                "current_state",
-                None,
-                current_state.model_dump(),
-                "",
-            ))
-
-            if observation.previous_teaching_outcome:
-                obs_rows.append((
-                    "previous_teaching_outcome",
-                    None,
-                    observation.previous_teaching_outcome.model_dump(),
-                    observation.previous_teaching_outcome.evidence_quote,
-                ))
-
-            for i, ev in enumerate(observation.knowledge_evidence):
-                obs_rows.append((
-                    "knowledge_evidence",
-                    ev.concept_key or ev.concept_text,
-                    ev.model_dump(),
-                    ev.evidence_quote,
-                ))
-
-            for i, ev in enumerate(observation.behavior_evidence):
-                obs_rows.append((
-                    "behavior_evidence",
-                    ev.hypothesis_key or f"behavior:{i}",
-                    ev.model_dump(),
-                    ev.evidence_quote,
-                ))
-
-            for i, ev in enumerate(observation.possible_misconceptions):
-                obs_rows.append((
-                    "misconception",
-                    ev.concept_key or ev.concept_text,
-                    ev.model_dump(),
-                    ev.evidence_quote,
-                ))
-
-            for i, ev in enumerate(observation.explicit_user_facts):
-                obs_rows.append((
-                    "explicit_user_fact",
-                    f"fact:{ev.fact_type}:{i}",
-                    ev.model_dump(),
-                    ev.evidence_quote,
-                ))
-
-            for obs_type, subject_key, payload, evidence_text in obs_rows:
-                obs_key = _observation_idempotency_key(qa_record_id, obs_type, idx)
+            for entry in accepted + rejected:
+                obs_type = entry["obs_type"]
+                subject_key = entry.get("subject_key")
+                payload = entry["payload"]
+                evidence_text = entry["evidence_text"]
+                obs_key = _observation_idempotency_key(qa_record_id, obs_type, entry["idx"])
                 scope_type = "project"
                 scope_id = str(project_id)
                 if obs_type == "current_state" or obs_type == "previous_teaching_outcome":
                     scope_type = "session"
                     scope_id = str(qa_record.session_id) if qa_record.session_id else str(qa_record_id)
 
+                status = "accepted_shadow" if entry in accepted else "rejected"
                 insert_interaction_observation(
                     obs_id=obs_key,
                     idempotency_key=obs_key,
@@ -499,17 +577,17 @@ def _execute_observer_run(
                     ),
                     payload_json=json.dumps(payload, ensure_ascii=False),
                     evidence_text=evidence_text,
-                    status="candidate",
+                    status=status,
                     conn=conn,
                 )
-                idx += 1
 
-            apply_shadow_updates(
-                project_id=project_id,
-                session_id=qa_record.session_id,
-                observation=observation,
-                conn=conn,
-            )
+            if filtered_obs is not None:
+                apply_shadow_updates(
+                    project_id=project_id,
+                    session_id=qa_record.session_id,
+                    observation=filtered_obs,
+                    conn=conn,
+                )
 
         run_in_transaction(_write_observations)
 
@@ -553,7 +631,7 @@ def schedule_interaction_observation(
         if run_key in _QUEUED_KEYS:
             return
         if len(_QUEUED_KEYS) >= MAX_QUEUE_DEPTH:
-            logger.warning("Observer queue full, dropping run", extra={"run_key": run_key})
+            _mark_run_failed_async(run_key, project_id, qa_record_id, "observer_queue_full")
             return
         _QUEUED_KEYS.add(run_key)
 
@@ -570,6 +648,7 @@ def schedule_interaction_observation(
     except Exception:
         with _OBSERVER_LOCK:
             _QUEUED_KEYS.discard(run_key)
+        _mark_run_failed_async(run_key, project_id, qa_record_id, "executor_submit_failed")
         logger.exception(
             "Failed to submit observer task",
             extra={

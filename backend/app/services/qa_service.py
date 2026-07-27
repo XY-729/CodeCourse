@@ -17,6 +17,9 @@ from app.services.personalization_service import build_learner_context
 from app.services.personalization.interaction_observer import (
     schedule_interaction_observation,
 )
+from app.services.personalization.teaching.planner_scheduler import (
+    schedule_teacher_plan,
+)
 from app.services.scanner import read_text_file
 
 import logging
@@ -634,10 +637,29 @@ def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
             question=written.question,
         )
     except Exception:
-        # Observer is best-effort shadow analysis.
-        # It must never break a completed QA response.
         logger.exception(
             "Failed to schedule interaction observer",
+            extra={
+                "project_id": project_id,
+                "qa_record_id": written.id,
+            },
+        )
+
+    try:
+        schedule_teacher_plan(
+            project_id=project_id,
+            session_id=written.session_id,
+            qa_record_id=written.id,
+            parent_qa_id=written.parent_qa_id,
+            relation_type=written.relation_type,
+            question=written.question,
+            selected_text=written.selected_text or "",
+            source_type=written.source_type,
+            source_path=written.source_path,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to schedule teacher planner",
             extra={
                 "project_id": project_id,
                 "qa_record_id": written.id,

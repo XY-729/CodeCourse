@@ -1177,6 +1177,84 @@ def init_storage() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_misconception_scope ON misconception_hypotheses(scope_type, scope_id, concept_id, status)"
         )
+        # Phase 2: Shadow Learner Snapshots and Teacher Plans
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS shadow_learner_snapshots (
+                id TEXT PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                session_id INTEGER,
+                target_qa_record_id INTEGER NOT NULL,
+                as_of_qa_record_id INTEGER,
+                builder_version TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                snapshot_hash TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                source_observation_ids_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                UNIQUE(target_qa_record_id, builder_version),
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(target_qa_record_id) REFERENCES qa_records(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_shadow_snapshots_project ON shadow_learner_snapshots(project_id, target_qa_record_id)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS teacher_plan_runs (
+                id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                project_id INTEGER NOT NULL,
+                session_id INTEGER,
+                qa_record_id INTEGER NOT NULL,
+                snapshot_id TEXT,
+                mode TEXT NOT NULL DEFAULT 'shadow',
+                provider TEXT,
+                model TEXT,
+                planner_version TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                latency_ms INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                estimated_cost REAL,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(qa_record_id) REFERENCES qa_records(id),
+                FOREIGN KEY(snapshot_id) REFERENCES shadow_learner_snapshots(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_teacher_plan_runs_project ON teacher_plan_runs(project_id, qa_record_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_teacher_plan_runs_status ON teacher_plan_runs(status, created_at)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS teacher_plans (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL UNIQUE,
+                project_id INTEGER NOT NULL,
+                session_id INTEGER,
+                qa_record_id INTEGER NOT NULL,
+                snapshot_id TEXT NOT NULL,
+                planner_version TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                plan_confidence REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(run_id) REFERENCES teacher_plan_runs(id),
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(qa_record_id) REFERENCES qa_records(id),
+                FOREIGN KEY(snapshot_id) REFERENCES shadow_learner_snapshots(id)
+            )
+            """
+        )
         conn.commit()
 
 
@@ -1506,6 +1584,9 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM concept_capabilities WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM learner_hypotheses WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM misconception_hypotheses WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM teacher_plans WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM teacher_plan_runs WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM shadow_learner_snapshots WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_links WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_edges WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM knowledge_nodes WHERE project_id = ?", (project_id,))
