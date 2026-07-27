@@ -212,8 +212,15 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     [content, rawTerms, sourceKey],
   );
 
+  const neutralProfiles = useMemo(() => {
+    const keys = [...new Set(markdownAnalysis.occurrences.map((o) => o.conceptKey))];
+    const map = new Map<string, TermPersonalizationProfile>();
+    for (const k of keys) map.set(k, createNeutralTermProfile(k));
+    return map;
+  }, [markdownAnalysis]);
+
   const computed = useMemo(() => {
-    if (status === "idle" || status === "loading") {
+    if (status === "idle") {
       return {
         decisions: new Map() as ReadonlyMap<string, TermDisplayDecision>,
         visibleOccurrences: [] as VisibleTermOccurrence[],
@@ -221,14 +228,15 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
         tiersById: EMPTY_TIERS,
       };
     }
+    const effectiveProfiles = status === "loading" ? neutralProfiles : profiles;
     return computeTermDisplay({
       occurrences: markdownAnalysis.occurrences,
       paragraphCount: markdownAnalysis.paragraphCount,
-      termProfiles: profiles,
+      termProfiles: effectiveProfiles,
       terminologyDensity,
       profileAvailable: status !== "fallback" && profileAvailable,
     });
-  }, [markdownAnalysis, profiles, terminologyDensity, profileAvailable, status]);
+  }, [markdownAnalysis, profiles, neutralProfiles, terminologyDensity, profileAvailable, status]);
 
   return {
     visibleCandidateIds: computed.visibleCandidateIds,
