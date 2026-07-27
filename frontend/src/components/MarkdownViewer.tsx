@@ -1,6 +1,7 @@
 import { Children, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
+import { candidateIdForRendering } from "../personalization/termOccurrences";
 import remarkGfm from "remark-gfm";
 import hljs from "highlight.js";
 import type { DocumentTerm, HighlightRecord, KnowledgeLink } from "../api/client";
@@ -204,6 +205,9 @@ function applyKnowledgeLinksToText(
   return result;
 }
 
+let _occurrenceCounter = 0;
+export function resetTermOccurrenceCounter(v = 0) { _occurrenceCounter = v; }
+
 function applyTermCandidatesToText(
   text: string,
   terms: DocumentTerm[],
@@ -226,74 +230,74 @@ function applyTermCandidatesToText(
   const renderedCandidateIds = new Set<number>();
   let index = 0;
   while (index < text.length) {
-    const term = candidates.find((candidate) =>
+    const foundTerm = candidates.find((candidate) =>
       text.startsWith(candidate.term_text, index)
-      && (
-        ((candidate.link_origin ?? "legacy_unknown") === "manual")
-        || (visibleTermCandidateIds && visibleTermCandidateIds.has(String(candidate.id)))
-      )
     );
-    if (!term) {
+    if (!foundTerm) {
       result.push(text[index]);
       index += 1;
       continue;
     }
-    if (!term) {
+    const isManual = (foundTerm.link_origin ?? "legacy_unknown") === "manual";
+    const candidateId = candidateIdForRendering(String(foundTerm.id), _occurrenceCounter);
+    _occurrenceCounter++;
+    const isVisible = isManual || (visibleTermCandidateIds?.has(candidateId) ?? false);
+    if (!isVisible) {
       result.push(text[index]);
       index += 1;
       continue;
     }
-    if (term.status === "candidate") renderedCandidateIds.add(term.id);
-    const tier = termDisplayTiers?.get(String(term.id)) || "subtle";
-    const tierClass = term.status === "linked" ? "knowledge-inline-link" : `term-candidate-link personalized-term--${tier}`;
+    if (foundTerm.status === "candidate") renderedCandidateIds.add(foundTerm.id);
+    const tier = termDisplayTiers?.get(candidateId) || "subtle";
+    const tierClass = foundTerm.status === "linked" ? "knowledge-inline-link" : `term-candidate-link personalized-term--${tier}`;
     if (isAndroidRuntime()) {
       result.push(
         <span
-          key={`${keyPrefix}-term-${term.id}-${index}`}
-          className={`personalized-term document-term document-term-${term.status} ${tierClass}`}
-          data-term-id={term.id}
+          key={`${keyPrefix}-term-${foundTerm.id}-${_occurrenceCounter}`}
+          className={`personalized-term document-term document-term-${foundTerm.status} ${tierClass}`}
+          data-term-id={foundTerm.id}
           role="button"
           tabIndex={0}
-          aria-label={`查看术语 "${term.term_text}"`}
+          aria-label={`查看术语 "${foundTerm.term_text}"`}
           onClick={(event) => {
             if (window.getSelection() && !window.getSelection()?.isCollapsed) return;
-            onGenerateTerm(term, { x: event.clientX, y: event.clientY });
+            onGenerateTerm(foundTerm, { x: event.clientX, y: event.clientY });
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              onGenerateTerm(term, { x: 0, y: 0 });
+              onGenerateTerm(foundTerm, { x: 0, y: 0 });
             }
           }}
         >
-          {term.term_text}
+          {foundTerm.term_text}
         </span>,
       );
     } else {
       result.push(
         <button
-          key={`${keyPrefix}-term-${term.id}-${index}`}
+          key={`${keyPrefix}-term-${foundTerm.id}-${_occurrenceCounter}`}
           className={`personalized-term ${tierClass}`}
           type="button"
-          title={term.status === "linked" ? `打开"${term.term_text}"的解释` : `生成"${term.term_text}"的解释；右键可标记为已认识或忽略`}
+          title={foundTerm.status === "linked" ? `打开"${foundTerm.term_text}"的解释` : `生成"${foundTerm.term_text}"的解释；右键可标记为已认识或忽略`}
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            onGenerateTerm(term, { x: event.clientX, y: event.clientY });
+            onGenerateTerm(foundTerm, { x: event.clientX, y: event.clientY });
           }}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
-            if (term.status === "candidate") {
-              onTermAction?.(term);
+            if (foundTerm.status === "candidate") {
+              onTermAction?.(foundTerm);
             }
           }}
         >
-          {term.term_text}
+          {foundTerm.term_text}
         </button>,
       );
     }
-    index += term.term_text.length;
+    index += foundTerm.term_text.length;
   }
   return result;
 }
@@ -384,6 +388,8 @@ export default function MarkdownViewer({
   });
   const docFontSizeRef = useRef(docFontSize);
   docFontSizeRef.current = docFontSize;
+
+  resetTermOccurrenceCounter(0);
 
   // Apply persisted doc font size on mount
   useEffect(() => {

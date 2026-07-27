@@ -4386,3 +4386,57 @@ def list_misconception_hypotheses(
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
         return [_row_to_misconception_hypothesis(r) for r in rows]
+
+
+def persist_applied_teaching_trial(
+    project_id: int,
+    session_id: int | None,
+    qa_record_id: int,
+    planner_run_id: str | None,
+    teaching_plan_id: str | None,
+    effective_context_json: str,
+    mode: str,
+    answer_model: str | None = None,
+) -> str:
+    import uuid
+    trial_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    conn = sqlite3.connect(DB_PATH, timeout=15)
+    conn.execute("PRAGMA busy_timeout=15000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    try:
+        conn.execute(
+            """INSERT INTO teaching_trials (
+                id, project_id, session_id, qa_record_id,
+                planner_run_id, teaching_plan_id, snapshot_id,
+                effective_context_json, mode, was_applied,
+                fallback_reason, answer_model, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)""",
+            (trial_id, project_id, session_id, qa_record_id,
+             planner_run_id, teaching_plan_id, "",
+             effective_context_json, mode, answer_model, now),
+        )
+        conn.commit()
+        return trial_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def update_link_origin_automatic(document_term_id: int) -> None:
+    conn = sqlite3.connect(DB_PATH, timeout=15)
+    conn.execute("PRAGMA busy_timeout=15000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    try:
+        conn.execute(
+            "UPDATE document_terms SET link_origin = 'automatic' WHERE id = ?",
+            (document_term_id,),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

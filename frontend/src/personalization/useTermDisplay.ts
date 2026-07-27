@@ -10,6 +10,7 @@ import type {
 } from "./termDisplayTypes";
 import { buildPreliminaryTermDecision } from "./termDisplayDecision";
 import { allocateTermDisplays } from "./termDisplayAllocator";
+import { candidateIdForRendering } from "./termOccurrences";
 
 function normalizeText(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
@@ -103,7 +104,7 @@ function buildOccurrences(
         usedRanges.add(rangeKey);
 
         result.push({
-          candidateId: `term:${term.id}:${pi}:${absStart}`,
+          candidateId: candidateIdForRendering(String(term.id), globalIndex),
           text: searchText,
           normalizedText: normalizeText(searchText),
           conceptKey: term.concept_id || `term:${normalizeText(searchText)}`,
@@ -179,8 +180,7 @@ function computeTermDisplay(props: {
     tiersById.set(d.candidateId, d.tier);
 
     if (d.visible) {
-      const termId = d.candidateId.split(":")[1] || d.candidateId;
-      visibleCandidateIds.add(termId);
+      visibleCandidateIds.add(d.candidateId);
       visibleOccurrences.push({
         candidateId: d.candidateId,
         conceptKey: d.conceptKey,

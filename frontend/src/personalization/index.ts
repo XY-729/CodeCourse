@@ -4,6 +4,7 @@ export * from "./observationTypes";
 export * from "./termDisplayTypes";
 export * from "./termDisplayDecision";
 export * from "./termDisplayAllocator";
+export * from "./termOccurrences";
 export * from "./masteryEngine";
 export * from "./termLinkScorer";
 export * from "./conceptResolver";

@@ -142,19 +142,20 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
                     if prepared.existing_record is not None:
                         yield _sse("completed", _to_response(prepared.existing_record).model_dump(mode="json"))
                         return
+                    trial_draft = None
                     try:
-                        from app.services.qa_service import _maybe_plan_teaching, _render_teaching_for_prompt
+                        from app.services.qa_service import _maybe_plan_teaching
                         tc = await asyncio.to_thread(_maybe_plan_teaching, project_id, prepared)
-                        if tc is not None:
-                            rendered = _render_teaching_for_prompt(tc)
-                            if rendered:
-                                for i, msg in enumerate(prepared.messages):
-                                    if msg.get("role") == "system":
-                                        prepared.messages[i] = {
-                                            "role": "system",
-                                            "content": (msg.get("content") or "") + "\n\n<trusted_teaching_context>\n" + rendered + "\n</trusted_teaching_context>",
-                                        }
-                                        break
+                        if tc is not None and tc.rendered_context:
+                            rendered = tc.rendered_context
+                            for i, msg in enumerate(prepared.messages):
+                                if msg.get("role") == "system":
+                                    prepared.messages[i] = {
+                                        "role": "system",
+                                        "content": (msg.get("content") or "") + "\n\n<trusted_teaching_context>\n" + rendered + "\n</trusted_teaching_context>",
+                                    }
+                                    break
+                            trial_draft = tc.trial_draft
                     except Exception:
                         pass
                     yield _sse("stage", {"stage": "waiting_model", "label": "等待模型"})
@@ -174,6 +175,22 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
                         yield _sse("delta", {"text": chunk})
                     yield _sse("stage", {"stage": "saving", "label": "保存记录"})
                     record = await asyncio.to_thread(finalize_question, prepared, "".join(chunks))
+                    if trial_draft is not None and trial_draft.should_persist:
+                        try:
+                            from app.services.storage import persist_applied_teaching_trial
+                            await asyncio.to_thread(
+                                persist_applied_teaching_trial,
+                                project_id=project_id,
+                                session_id=record.session_id,
+                                qa_record_id=record.id,
+                                planner_run_id=trial_draft.planner_run_id,
+                                teaching_plan_id=trial_draft.teaching_plan_id,
+                                effective_context_json=trial_draft.effective_context_json,
+                                mode=trial_draft.mode,
+                                answer_model=trial_draft.answer_model,
+                            )
+                        except Exception:
+                            pass
                     yield _sse("completed", _to_response(record).model_dump(mode="json"))
 
                 if lock is None:

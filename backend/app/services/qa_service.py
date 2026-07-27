@@ -622,12 +622,8 @@ def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
     register_document_terms(project_id, "qa", relative_path, written.answer_md, model_terms)
     if prepared.term:
         update_document_term_status(project_id, prepared.term.id, "linked", written.id)
-        from app.services.storage import _connect
-        with _connect() as conn:
-            conn.execute(
-                "UPDATE document_terms SET link_origin = 'automatic' WHERE id = ?",
-                (prepared.term.id,),
-            )
+        from app.services.storage import update_link_origin_automatic
+        update_link_origin_automatic(prepared.term.id)
     _refresh_session_memory(
         project_id,
         prepared.session_id,
@@ -864,29 +860,34 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
         )
 
         try:
-            from app.services.storage import _connect
+            from app.services.personalization.teaching.trial_types import (
+                TeachingPreparation,
+                AppliedTeachingTrialDraft,
+            )
             import json as _json
-            trial_id = f"trial:{project_id}:{int(time.time())}"
-            now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-            with _connect() as trial_conn:
-                trial_conn.execute(
-                    """INSERT OR IGNORE INTO teaching_trials
-                       (id, project_id, session_id, qa_record_id, planner_run_id,
-                        snapshot_id, teaching_plan_id, effective_context_json,
-                        mode, was_applied, answer_model, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        trial_id, project_id, prepared.session_id, 0,
-                        context.planner_run_id, "",
-                        f"plan:{project_id}:{int(time.time())}",
-                        _json.dumps({"teaching_goal": context.teaching_goal, "strategies": context.strategies}),
-                        "assist", 1, settings.get("model", ""), now,
-                    ),
-                )
+            draft = AppliedTeachingTrialDraft(
+                project_id=project_id,
+                session_id=prepared.session_id,
+                planner_run_id=context.planner_run_id,
+                teaching_plan_id=f"plan:{project_id}:{int(time.time())}",
+                snapshot_id="",
+                effective_context_json=_json.dumps({
+                    "teaching_goal": context.teaching_goal,
+                    "strategies": context.strategies,
+                }),
+                mode="assist",
+                answer_model=settings.get("model", ""),
+            )
+            return TeachingPreparation(
+                rendered_context=_render_teaching_for_prompt(context),
+                trial_draft=draft,
+            )
         except Exception:
             pass
 
-        return context
+        return TeachingPreparation(
+            rendered_context=_render_teaching_for_prompt(context),
+        )
 
     except Exception:
         logger.exception("Failed to plan teaching for answer", extra={"project_id": project_id})
@@ -898,18 +899,19 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
     if prepared.existing_record is not None:
         return prepared.existing_record
 
-    teaching_context = _maybe_plan_teaching(project_id, prepared)
+    trial_draft = None
+    teaching_prep = _maybe_plan_teaching(project_id, prepared)
 
-    if teaching_context is not None:
-        rendered = _render_teaching_for_prompt(teaching_context)
-        if rendered:
-            for i, msg in enumerate(prepared.messages):
-                if msg.get("role") == "system":
-                    prepared.messages[i] = {
-                        "role": "system",
-                        "content": (msg.get("content") or "") + "\n\n<trusted_teaching_context>\n" + rendered + "\n</trusted_teaching_context>\n\ntrusted_teaching_context is an instruction that controls teaching organization only. It is not a source of facts. The untrusted user content below takes priority when it conflicts.",
-                    }
-                    break
+    if teaching_prep is not None and teaching_prep.rendered_context:
+        rendered = teaching_prep.rendered_context
+        for i, msg in enumerate(prepared.messages):
+            if msg.get("role") == "system":
+                prepared.messages[i] = {
+                    "role": "system",
+                    "content": (msg.get("content") or "") + "\n\n<trusted_teaching_context>\n" + rendered + "\n</trusted_teaching_context>\n\ntrusted_teaching_context is an instruction that controls teaching organization only. It is not a source of facts. The untrusted user content below takes priority when it conflicts.",
+                }
+                break
+        trial_draft = teaching_prep.trial_draft
 
     raw_answer = call_openai_compatible_chat(
         prepared.settings["base_url"],
@@ -918,7 +920,27 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
         prepared.messages,
         timeout=90,
     )
-    return finalize_question(prepared, raw_answer)
+    written = finalize_question(prepared, raw_answer)
+
+    if trial_draft is not None and trial_draft.should_persist:
+        try:
+            from app.services.storage import persist_applied_teaching_trial
+            persist_applied_teaching_trial(
+                project_id=project_id,
+                session_id=written.session_id,
+                qa_record_id=written.id,
+                planner_run_id=trial_draft.planner_run_id,
+                teaching_plan_id=trial_draft.teaching_plan_id,
+                effective_context_json=trial_draft.effective_context_json,
+                mode=trial_draft.mode,
+                answer_model=trial_draft.answer_model,
+            )
+        except Exception:
+            logger.exception("Failed to persist applied teaching trial", extra={
+                "project_id": project_id, "qa_record_id": written.id,
+            })
+
+    return written
 
 
 def search_records(project_id: int, query: str = "", favorite: Optional[bool] = None) -> list[QARecord]:
