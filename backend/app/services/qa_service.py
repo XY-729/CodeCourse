@@ -622,6 +622,12 @@ def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
     register_document_terms(project_id, "qa", relative_path, written.answer_md, model_terms)
     if prepared.term:
         update_document_term_status(project_id, prepared.term.id, "linked", written.id)
+        from app.services.storage import _connect
+        with _connect() as conn:
+            conn.execute(
+                "UPDATE document_terms SET link_origin = 'automatic' WHERE id = ?",
+                (prepared.term.id,),
+            )
     _refresh_session_memory(
         project_id,
         prepared.session_id,

@@ -1482,7 +1482,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await db.run("INSERT INTO knowledge_links(project_id,source_type,source_path,term_text,qa_record_id,node_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", [projectId, "course", payload.source_path, payload.selected_text.trim(), id, qaNode.id, stamp, stamp]);
     }
     await this.registerTerms(projectId, "qa", outputPath, parsed.answer, parsed.terms);
-    if (payload.term_candidate_id) await db.run("UPDATE document_terms SET status='linked',qa_record_id=?,updated_at=? WHERE project_id=? AND id=?", [id, stamp, projectId, payload.term_candidate_id]);
+    if (payload.term_candidate_id) await db.run("UPDATE document_terms SET status='linked',link_origin='automatic',qa_record_id=?,updated_at=? WHERE project_id=? AND id=?", [id, stamp, projectId, payload.term_candidate_id]);
     record = await this.getQA(projectId, id);
     await this.recordSuccessfulAnswerLearning(projectId, record);
     return record;
