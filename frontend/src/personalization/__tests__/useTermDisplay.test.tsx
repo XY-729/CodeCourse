@@ -10,17 +10,13 @@ import { allocateTermDisplays } from "../termDisplayAllocator";
 
 function makeTerm(overrides: Partial<DocumentTerm> = {}): DocumentTerm {
   return {
-    id: 1,
-    project_id: 1,
-    source_type: "course",
-    source_path: "test.md",
-    term_text: "bind",
-    detection_source: "model",
-    confidence: 0.7,
-    status: "candidate",
-    link_origin: "legacy_unknown",
+    id: 1, project_id: 1, source_type: "course", source_path: "test.md",
+    term_text: "bind", detection_source: "model", confidence: 0.7,
+    status: "candidate", link_origin: "legacy_unknown",
+    qa_record_id: null, concept_id: null, content_hash: null,
+    created_at: "2024-01-01", updated_at: "2024-01-01",
     ...overrides,
-  };
+  } as DocumentTerm;
 }
 
 describe("term display integration", () => {

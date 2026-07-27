@@ -1259,6 +1259,31 @@ def init_storage() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS teaching_trials (
+                id TEXT PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                session_id INTEGER,
+                qa_record_id INTEGER NOT NULL,
+                planner_run_id TEXT,
+                snapshot_id TEXT,
+                teaching_plan_id TEXT,
+                effective_context_json TEXT,
+                mode TEXT NOT NULL DEFAULT 'default',
+                was_applied INTEGER NOT NULL DEFAULT 0,
+                fallback_reason TEXT,
+                answer_model TEXT,
+                previous_outcome TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(qa_record_id) REFERENCES qa_records(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_teaching_trials_qa ON teaching_trials(project_id, qa_record_id)"
+        )
         conn.commit()
 
 
@@ -1589,6 +1614,7 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM concept_capabilities WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM learner_hypotheses WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM misconception_hypotheses WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM teaching_trials WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM teacher_plans WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM teacher_plan_runs WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM shadow_learner_snapshots WHERE project_id = ?", (project_id,))

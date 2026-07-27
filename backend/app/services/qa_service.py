@@ -675,10 +675,200 @@ def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
     return written
 
 
+def _is_planner_assist_enabled() -> bool:
+    try:
+        from app.services.storage import get_setting
+        enabled = get_setting("personalization.teacher_planner.enabled")
+        mode = get_setting("personalization.teacher_planner.mode")
+        return enabled == "true" and mode == "assist"
+    except Exception:
+        return False
+
+
+def _render_teaching_for_prompt(context) -> str:
+    from app.services.personalization.teaching.effective_context import (
+        render_effective_teaching_context,
+    )
+    return render_effective_teaching_context(context)
+
+
+def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
+    try:
+        if not _is_planner_assist_enabled():
+            return None
+
+        from app.services.personalization.teaching.effective_context import (
+            build_effective_teaching_context,
+        )
+        from app.services.personalization.profile_retrieval.snapshot_builder import (
+            build_shadow_snapshot,
+        )
+        from app.services.personalization.teaching.teacher_planner import (
+            TEACHER_PLANNER_VERSION,
+            _call_planner_model,
+            _build_planner_messages,
+            parse_teaching_plan,
+        )
+        from app.services.personalization.teaching.teacher_planner_prompt import (
+            TEACHER_PLANNER_SYSTEM_PROMPT,
+        )
+        from app.services.storage import (
+            _connect,
+            get_qa_record,
+            get_qa_session,
+            list_recent_qa_records,
+            get_learner_preferences,
+        )
+        from app.services.personalization_service import concepts_for_question
+        import json, time
+
+        question = prepared.question
+        selected_text = prepared.selected_text or ""
+
+        with _connect() as conn:
+            concepts = concepts_for_question(project_id, question, selected_text)
+            concept_keys = [c.concept_key for c in concepts[:12]]
+
+            snapshot = build_shadow_snapshot(
+                project_id=project_id,
+                session_id=prepared.session_id,
+                target_qa_record_id=0,
+                as_of_qa_record_id=None,
+                relevant_concept_keys=concept_keys,
+                question=question,
+                conn=conn,
+            )
+
+            parent_question = ""
+            parent_answer_summary = ""
+            if prepared.parent_id:
+                parent = get_qa_record(project_id, prepared.parent_id)
+                if parent:
+                    parent_question = parent.question
+                    parent_answer_summary = (parent.answer_md or "")[:2500]
+
+            recent = (
+                list_recent_qa_records(project_id, session_id=prepared.session_id, limit=4)
+                if prepared.session_id
+                else []
+            )
+            recent_history = json.dumps(
+                [
+                    {"q": r.question[:600], "a": (r.answer_md or "")[:600]}
+                    for r in recent
+                ],
+                ensure_ascii=False,
+            )[:2000]
+
+            prefs = get_learner_preferences("global", "local-user")
+            manual_prefs = {}
+            if prefs:
+                manual_prefs = {
+                    "answer_depth": prefs.answer_depth,
+                    "code_ratio": prefs.code_ratio,
+                    "explanation_order": prefs.explanation_order,
+                }
+
+            source_summary = json.dumps({
+                "source_type": prepared.payload.source_type or "unknown",
+                "source_path": prepared.payload.source_path or "",
+            }, ensure_ascii=False)[:2500]
+
+            snapshot_json = snapshot.model_dump_json(exclude_none=True)[:5000]
+            manual_prefs_json = json.dumps(manual_prefs, ensure_ascii=False)
+
+        messages = _build_planner_messages(
+            question=question,
+            selected_text=selected_text,
+            source_summary=source_summary,
+            parent_question=parent_question,
+            parent_answer_summary=parent_answer_summary,
+            recent_history=recent_history,
+            snapshot_json=snapshot_json,
+            manual_prefs_json=manual_prefs_json,
+        )
+
+        settings = {}
+        try:
+            from app.services.storage import get_llm_settings
+            llm = get_llm_settings()
+            settings = {
+                "base_url": llm.get("base_url", ""),
+                "api_key": llm.get("api_key", ""),
+                "model": llm.get("model", ""),
+                "timeout": 12,
+            }
+        except Exception:
+            pass
+
+        if not settings.get("api_key") or not settings.get("base_url"):
+            return None
+
+        start = time.time()
+        plan = None
+        for attempt in range(2):
+            try:
+                raw = _call_planner_model(messages, settings)
+                plan = parse_teaching_plan(raw)
+                break
+            except Exception:
+                if attempt == 1:
+                    logger.warning(
+                        "Teacher planner failed in assist mode; falling back",
+                        extra={"project_id": project_id, "elapsed": time.time() - start},
+                    )
+                    return None
+                messages.append({
+                    "role": "user",
+                    "content": "Please output ONLY valid JSON matching the schema.",
+                })
+
+        if plan is None:
+            return None
+
+        context = build_effective_teaching_context(
+            teaching_plan=plan,
+            current_question=question,
+            manual_preferences=manual_prefs,
+            mode="assist",
+            planner_run_id=f"assist:{project_id}:{int(time.time())}",
+        )
+
+        logger.info(
+            "Teacher planner assist applied",
+            extra={
+                "project_id": project_id,
+                "user_goal": context.user_goal,
+                "strategies": context.strategies,
+                "elapsed_ms": int((time.time() - start) * 1000),
+            },
+        )
+
+        return context
+
+    except Exception:
+        logger.exception("Failed to plan teaching for answer", extra={"project_id": project_id})
+        return None
+
+
 def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
     prepared = prepare_question(project_id, payload)
     if prepared.existing_record is not None:
         return prepared.existing_record
+
+    teaching_context = _maybe_plan_teaching(project_id, prepared)
+
+    if teaching_context is not None:
+        rendered = _render_teaching_for_prompt(teaching_context)
+        if rendered:
+            for i, msg in enumerate(prepared.messages):
+                if msg.get("role") == "user":
+                    prepared.messages[i] = {
+                        "role": "user",
+                        "content": rendered + "\n\n" + (msg.get("content") or ""),
+                    }
+                    break
+
     raw_answer = call_openai_compatible_chat(
         prepared.settings["base_url"],
         prepared.settings["api_key"],
