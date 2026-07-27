@@ -392,43 +392,11 @@ def build_learner_context(
         else:
             uncertain.append(concept.display_name)
 
-    order_labels = {
-        "balanced": "结论、直觉、示例和原理保持平衡",
-        "example_first": "先给直观例子，再解释原理",
-        "principle_first": "先说明原因和原理，再给例子",
-        "code_first": "先给可读代码，再拆解概念",
-    }
-    depth = (
-        "简洁"
-        if preferences.answer_depth < 0.35
-        else "深入"
-        if preferences.answer_depth > 0.65
-        else "适中"
-    )
-    code = (
-        "代码示例较多"
-        if preferences.code_ratio > 0.65
-        else "文字解释较多"
-        if preferences.code_ratio < 0.35
-        else "代码与解释平衡"
-    )
-    prerequisites = (
-        "主动补充必要前置知识"
-        if preferences.prerequisite_detail > 0.6
-        else "只补充直接相关的前置知识"
-    )
-
     def lines(values: Iterable[str]) -> str:
         items = list(values)
         return "\n".join(f"- {value}" for value in items) if items else "- 无"
 
     return f"""<learner_context>
-回答偏好：
-- 回答深度：{depth}
-- 组织顺序：{order_labels.get(preferences.explanation_order, order_labels["balanced"])}
-- 示例比例：{code}
-- 前置知识：{prerequisites}
-
 本轮相关已掌握概念：
 {lines(known)}
 
@@ -443,4 +411,5 @@ def build_learner_context(
 - 已掌握概念不要重复做入门定义。
 - 可能陌生概念第一次使用前先用一句大白话解释。
 - 不要向用户展示掌握度数值，也不要给用户贴水平标签。
+- 教学方式由当前问题决定：调试优先解决，学习优先建立理解。
 </learner_context>"""

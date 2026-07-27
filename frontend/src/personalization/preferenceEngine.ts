@@ -78,34 +78,17 @@ export function shouldOfferStyleSurvey(
 }
 
 export function buildLearnerContext(
-  preferences: LearnerPreferences,
+  _preferences: LearnerPreferences,
   concepts: {
     known: string[];
     unfamiliar: string[];
     uncertain: string[];
   },
 ): string {
-  const depth = preferences.answerDepth < 0.35
-    ? "简洁"
-    : preferences.answerDepth > 0.65
-      ? "深入"
-      : "适中";
-  const order: Record<ExplanationOrder, string> = {
-    balanced: "结论、直觉、示例和原理保持平衡",
-    example_first: "先给直观例子，再解释原理",
-    principle_first: "先说明原因和原理，再给例子",
-    code_first: "先给可读代码，再拆解概念",
-  };
   const list = (items: string[]) => items.length
     ? items.map((item) => `- ${item}`).join("\n")
     : "- 无";
   return `<learner_context>
-回答偏好：
-- 回答深度：${depth}
-- 组织顺序：${order[preferences.explanationOrder]}
-- 示例比例：${preferences.codeRatio > 0.65 ? "代码较多" : preferences.codeRatio < 0.35 ? "解释较多" : "平衡"}
-- 前置知识：${preferences.prerequisiteDetail > 0.6 ? "主动补充必要前置知识" : "只补充直接相关前置知识"}
-
 本轮相关已掌握概念：
 ${list(concepts.known)}
 
@@ -115,6 +98,8 @@ ${list(concepts.unfamiliar)}
 本轮相关不确定概念：
 ${list(concepts.uncertain)}
 
-要求：当前问题的明确要求优先；不要展示掌握度数值或给用户贴水平标签。
+要求：当前问题的明确要求优先；已掌握概念不重复入门定义；
+可能陌生概念第一次出现时先用一句话解释；不要展示掌握度数值或给用户贴水平标签；
+教学方式由当前问题决定：调试优先解决，学习优先建立理解。
 </learner_context>`;
 }

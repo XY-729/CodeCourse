@@ -47,6 +47,7 @@ import {
   getLearnerPreferences,
   updateLearnerPreferences,
   resolvePersonalizationTerms,
+  resetPersonalizationProfile,
   recordTermImpressions,
   submitAnswerFeedback,
   saveLearningAnchor,
@@ -81,7 +82,7 @@ import CodeViewer, { type CodeJumpRequest, ViewerRange, ViewerSelection } from "
 import CommandPalette, { type CommandPaletteItem } from "./components/CommandPalette";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
-import LearnerPreferencesDialog from "./components/LearnerPreferencesDialog";
+import PersonalizedTeachingDialog from "./components/PersonalizedTeachingDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
 import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
@@ -95,7 +96,7 @@ import TermActionPopover from "./components/TermActionPopover";
 import { GESTURE_COMPLETE_EVENT } from "./components/GestureLayer";
 import type { GesturePath } from "./gestures/GestureDrawer";
 import { recognizeGesture } from "./gestures/GestureRecognizer";
-import { shouldOfferStyleSurvey, useTermDisplay } from "./personalization";
+import { useTermDisplay } from "./personalization";
 import type { UseTermDisplayParams } from "./personalization";
 import { getTermDisplayProfiles } from "./api/client";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
@@ -703,7 +704,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
-  const [preferencesOpen, setPreferencesOpen] = useState(false);
+  const [personalizedTeachingOpen, setPersonalizedTeachingOpen] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(() => !isAndroidRuntime());
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -749,8 +750,7 @@ export default function App() {
   const [rawDocumentTermsBySource, setRawDocumentTermsBySource] = useState<Record<string, DocumentTerm[]>>({});
   const [activeDocumentTerms, setActiveDocumentTerms] = useState<DocumentTerm[]>([]);
   const [termAction, setTermAction] = useState<{ term: DocumentTerm; position?: { x: number; y: number } } | null>(null);
-  const [styleSurveyDue, setStyleSurveyDue] = useState(false);
-  const [styleSurveyDismissed, setStyleSurveyDismissed] = useState(false);
+  const [personalizedSettings, setPersonalizedSettings] = useState({ teachingEnabled: false, observationEnabled: false });
   const [learningAnchor, setLearningAnchor] = useState<LearningAnchor | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
@@ -832,21 +832,6 @@ export default function App() {
   const qaLoading = Boolean(activeQAGeneration);
   const anyQALoading = Object.keys(qaGenerations).length > 0;
   const showBusy = loading || isTaskRunning || anyQALoading;
-
-  useEffect(() => {
-    if (!project || qaHistory.length < 5 || styleSurveyDismissed || anyQALoading || selectionAnchor || appDialog) {
-      setStyleSurveyDue(false);
-      return;
-    }
-    let cancelled = false;
-    void getLearnerPreferences(project.id).then((preferences) => {
-      if (cancelled) return;
-      setStyleSurveyDue(shouldOfferStyleSurvey(preferences));
-    }).catch(() => setStyleSurveyDue(false));
-    return () => {
-      cancelled = true;
-    };
-  }, [project?.id, qaHistory.length, styleSurveyDismissed, anyQALoading, selectionAnchor, appDialog]);
 
   const clearDropPreview = useCallback(() => {
     const current = dropPreviewRef.current;
@@ -3597,28 +3582,7 @@ export default function App() {
     }
   }
 
-  async function handleStyleSurvey(choice: "examples" | "principles" | "disable") {
-    if (!project) return;
-    try {
-      if (choice === "disable") {
-        await updateLearnerPreferences(project.id, { survey_enabled: false, scope: "global" });
-        setStyleSurveyDismissed(true);
-        setStyleSurveyDue(false);
-        setToast("已关闭风格选择题，可在学习偏好中重新开启");
-        return;
-      }
-      await submitAnswerFeedback(project.id, {
-        dimension: "explanation_order",
-        choice,
-        source: "survey",
-        idempotency_key: `style-survey:${new Date().toISOString().slice(0, 10)}:${choice}`,
-      });
-      setStyleSurveyDue(false);
-      setToast(choice === "examples" ? "之后会更偏向先看例子" : "之后会更偏向先讲原理");
-    } catch (caught) {
-      setQAPanelError(caught instanceof Error ? caught.message : "回答偏好保存失败");
-    }
-  }
+  /** @deprecated handleStyleSurvey removed — replaced by PersonalizedTeachingDialog */
 
   async function handleExplainSelectedTerm(anchor = selectionAnchor) {
     if (!project || !anchor?.selectedText.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) return;
@@ -4313,7 +4277,7 @@ export default function App() {
     if (except !== "command") setCommandPaletteOpen(false);
     if (except !== "settings") setSettingsOpen(false);
     if (except !== "prompts") setPromptEditorOpen(false);
-    if (except !== "preferences") setPreferencesOpen(false);
+    if (except !== "preferences") setPersonalizedTeachingOpen(false);
   }
 
   async function handleTabDragEnd(event: DragEvent<HTMLElement>, groupId: string, item: OpenItem) {
@@ -4402,9 +4366,9 @@ export default function App() {
     setPromptEditorOpen(true);
   }
 
-  function openPreferences() {
+  function openPersonalizedTeaching() {
     closeMobileWorkspaceSurfaces("preferences");
-    setPreferencesOpen(true);
+    setPersonalizedTeachingOpen(true);
     setMoreMenuOpen(false);
   }
 
@@ -4469,7 +4433,7 @@ export default function App() {
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
           onOpenPrompts={() => setPromptEditorOpen(true)}
-          onOpenPreferences={openPreferences}
+          onOpenPreferences={openPersonalizedTeaching}
           onOpenGestureGuide={() => setGestureGuideOpen(true)}
           onBuildIndex={() => void handleBuildIndex()}
           onToggleTheme={() => setThemeMode((current) => current === "dark" ? "light" : "dark")}
@@ -4510,9 +4474,9 @@ export default function App() {
               <Sparkles size={15} />
               提示词编辑
             </button>
-            <button type="button" role="menuitem" disabled={!project} onClick={openPreferences}>
+            <button type="button" role="menuitem" disabled={!project} onClick={openPersonalizedTeaching}>
               <BookOpen size={15} />
-              学习偏好
+              个性化教学
             </button>
             <button type="button" role="menuitem" disabled={!project || isLearningPlanProject || indexBuilding} onClick={() => { void handleBuildIndex(); setMoreMenuOpen(false); }}>
               <RefreshCw size={15} />
@@ -4830,17 +4794,6 @@ export default function App() {
           </section>
         </div>
       ) : null}
-      {styleSurveyDue && assistantOpen ? (
-        <section className={`style-survey-card ${mobileRuntime ? "mobile" : ""}`} aria-label="回答风格选择">
-          <div><strong>你更喜欢哪种讲解顺序？</strong><small>只用于调整本机回答风格</small></div>
-          <div>
-            <button type="button" onClick={() => void handleStyleSurvey("examples")}>先看例子</button>
-            <button type="button" onClick={() => void handleStyleSurvey("principles")}>先讲原理</button>
-            <button type="button" className="quiet" onClick={() => { setStyleSurveyDismissed(true); setStyleSurveyDue(false); }}>稍后</button>
-            <button type="button" className="quiet" onClick={() => void handleStyleSurvey("disable")}>以后不再询问</button>
-          </div>
-        </section>
-      ) : null}
       {termAction ? (
         <TermActionPopover
           term={termAction.term}
@@ -4856,10 +4809,29 @@ export default function App() {
           onClose={() => setTermAction(null)}
         />
       ) : null}
-      <LearnerPreferencesDialog
-        open={preferencesOpen}
-        projectId={project?.id ?? null}
-        onClose={() => setPreferencesOpen(false)}
+      <PersonalizedTeachingDialog
+        open={personalizedTeachingOpen}
+        modelConfigured={true}
+        settings={personalizedSettings}
+        onClose={() => setPersonalizedTeachingOpen(false)}
+        onChangeTeachingEnabled={async (enabled) => {
+          setPersonalizedSettings((prev) => ({ ...prev, teachingEnabled: enabled }));
+        }}
+        onChangeObservationEnabled={async (enabled) => {
+          setPersonalizedSettings((prev) => ({ ...prev, observationEnabled: enabled }));
+        }}
+        onOpenModelSettings={() => { setPersonalizedTeachingOpen(false); setSettingsOpen(true); }}
+        onResetCurrentProject={async () => {
+          if (!project) return;
+          await resetPersonalizationProfile(project.id, "project");
+          setToast("当前项目个性化数据已清除");
+        }}
+        onResetAllPersonalization={async () => {
+          if (!project) return;
+          await resetPersonalizationProfile(project.id, "global");
+          setToast("全部个性化数据已清除");
+        }}
+        onConfirm={confirmAction}
       />
       <LLMSettingsDialog
         open={settingsOpen}

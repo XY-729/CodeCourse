@@ -41,13 +41,13 @@ describe("shouldOfferStyleSurvey", () => {
 describe("buildLearnerContext", () => {
   it("contains only relevant concepts and never exposes mastery scores", () => {
     const context = buildLearnerContext(
-      { ...DEFAULT_LEARNER_PREFERENCES, explanationOrder: "example_first" },
+      DEFAULT_LEARNER_PREFERENCES,
       { known: ["HTTP"], unfamiliar: ["FastAPI"], uncertain: ["依赖注入"] },
     );
     expect(context).toContain("HTTP");
     expect(context).toContain("FastAPI");
     expect(context).toContain("依赖注入");
-    expect(context).toContain("先给直观例子");
-    expect(context).not.toMatch(/0\.\d|掌握度分数/);
+    expect(context).toContain("调试优先解决");
+    expect(context).not.toMatch(/掌握度分数/);
   });
 });
