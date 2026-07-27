@@ -1284,6 +1284,36 @@ def init_storage() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_teaching_trials_qa ON teaching_trials(project_id, qa_record_id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS teaching_outcomes (
+                id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                project_id INTEGER NOT NULL,
+                session_id INTEGER,
+                teaching_trial_id TEXT NOT NULL,
+                taught_qa_record_id INTEGER NOT NULL,
+                evaluation_qa_record_id INTEGER NOT NULL,
+                result TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                reason TEXT NOT NULL,
+                evidence_quote TEXT NOT NULL,
+                source_observation_id TEXT,
+                observer_run_id TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(teaching_trial_id) REFERENCES teaching_trials(id),
+                FOREIGN KEY(taught_qa_record_id) REFERENCES qa_records(id),
+                FOREIGN KEY(evaluation_qa_record_id) REFERENCES qa_records(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_teaching_outcomes_trial ON teaching_outcomes(teaching_trial_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_teaching_outcomes_session ON teaching_outcomes(project_id, session_id, evaluation_qa_record_id)"
+        )
         conn.commit()
 
 
@@ -1614,6 +1644,7 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM concept_capabilities WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM learner_hypotheses WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM misconception_hypotheses WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM teaching_outcomes WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM teaching_trials WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM teacher_plans WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM teacher_plan_runs WHERE project_id = ?", (project_id,))

@@ -826,12 +826,29 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
         if plan is None:
             return None
 
+        previous_trial_failed = False
+        try:
+            from app.services.personalization.teaching.teaching_history import (
+                get_latest_evaluable_teaching_trial,
+            )
+            prev_trial = get_latest_evaluable_teaching_trial(
+                project_id=project_id,
+                session_id=prepared.session_id,
+                before_qa_record_id=0,
+                conn=None,
+            )
+            if prev_trial is not None and prev_trial.get("previous_outcome") == "unsuccessful":
+                previous_trial_failed = True
+        except Exception:
+            pass
+
         context = build_effective_teaching_context(
             teaching_plan=plan,
             current_question=question,
             manual_preferences=manual_prefs,
             mode="assist",
             planner_run_id=f"assist:{project_id}:{int(time.time())}",
+            previous_trial_failed=previous_trial_failed,
         )
 
         logger.info(
@@ -862,10 +879,10 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
         rendered = _render_teaching_for_prompt(teaching_context)
         if rendered:
             for i, msg in enumerate(prepared.messages):
-                if msg.get("role") == "user":
+                if msg.get("role") == "system":
                     prepared.messages[i] = {
-                        "role": "user",
-                        "content": rendered + "\n\n" + (msg.get("content") or ""),
+                        "role": "system",
+                        "content": (msg.get("content") or "") + "\n\n<trusted_teaching_context>\n" + rendered + "\n</trusted_teaching_context>\n\ntrusted_teaching_context is an instruction that controls teaching organization only. It is not a source of facts. The untrusted user content below takes priority when it conflicts.",
                     }
                     break
 

@@ -518,6 +518,17 @@ def reset_profile(
             scope_type,
             scope_id,
         )
+        conn.execute("DELETE FROM concept_capabilities WHERE scope_type = ? AND scope_id = ?", (scope_type, scope_id))
+        conn.execute("DELETE FROM learner_hypotheses WHERE scope_type = ? AND scope_id = ?", (scope_type, scope_id))
+        conn.execute("DELETE FROM misconception_hypotheses WHERE scope_type = ? AND scope_id = ?", (scope_type, scope_id))
+        if scope_type == "project":
+            conn.execute("DELETE FROM teaching_outcomes WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM teaching_trials WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM teacher_plans WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM teacher_plan_runs WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM interaction_observations WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM observer_runs WHERE project_id = ?", (project_id,))
+            conn.execute("DELETE FROM shadow_learner_snapshots WHERE project_id = ?", (project_id,))
         return {
             "status": "ok",
             "scope": scope,

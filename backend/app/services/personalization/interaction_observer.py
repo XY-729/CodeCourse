@@ -267,8 +267,11 @@ def _build_observer_messages(
     manual_known: str,
     manual_unfamiliar: str,
     preferences_summary: str,
+    previous_trial_json_for_msg: str = "",
 ) -> list[dict[str, str]]:
-    user_prompt = OBSERVER_USER_PROMPT_TEMPLATE.format(
+    user_prompt = OBSERVER_USER_PROMPT_TEMPLATE.replace(
+        "{previous_applied_teaching}", ""
+    ).format(
         current_user_message=question[:2000],
         current_selected_text=(selected_text or "")[:1500],
         source_type=source_type or "unknown",
@@ -280,6 +283,12 @@ def _build_observer_messages(
         manual_unfamiliar_concepts=manual_unfamiliar,
         current_preferences=preferences_summary,
     )
+
+    if previous_trial_json_for_msg:
+        user_prompt = user_prompt.replace(
+            "(no previous teaching to evaluate)",
+            previous_trial_json_for_msg,
+        )
 
     return [
         {"role": "system", "content": OBSERVER_SYSTEM_PROMPT},
@@ -471,6 +480,47 @@ def _execute_observer_run(
             preferences_summary=preferences_summary,
         )
 
+        previous_trial_json = ""
+        previous_trial_record = None
+        try:
+            from app.services.personalization.teaching.teaching_history import (
+                get_latest_evaluable_teaching_trial,
+            )
+            trial = get_latest_evaluable_teaching_trial(
+                project_id=project_id,
+                session_id=qa_record.session_id,
+                before_qa_record_id=qa_record_id,
+                conn=run_in_transaction.__globals__.get("_connect", lambda: None)(),
+            ) if False else None
+        except Exception:
+            trial = None
+
+        if trial is None and qa_record.session_id:
+            try:
+                from app.services.storage import _connect as _db_connect
+                with _db_connect() as trial_conn:
+                    trial = get_latest_evaluable_teaching_trial(
+                        project_id=project_id,
+                        session_id=qa_record.session_id,
+                        before_qa_record_id=qa_record_id,
+                        conn=trial_conn,
+                    )
+            except Exception:
+                pass
+
+        if trial is not None:
+            previous_trial_record = trial
+            previous_trial_json = json.dumps({
+                "trial_id": trial["id"],
+                "taught_question": qa_record.question[:1000],
+                "teaching_goal": trial.get("teaching_goal", ""),
+                "strategies": trial.get("strategies", []),
+            }, ensure_ascii=False)
+            messages[1]["content"] = messages[1]["content"].replace(
+                "(no previous teaching to evaluate)",
+                previous_trial_json,
+            )
+
         raw_output: Optional[str] = None
         last_error: Optional[str] = None
 
@@ -588,6 +638,33 @@ def _execute_observer_run(
                     observation=filtered_obs,
                     conn=conn,
                 )
+
+            if previous_trial_record is not None and observation.previous_teaching_outcome is not None:
+                pto = observation.previous_teaching_outcome
+                if pto.confidence >= 0.55 and qa_record_id > previous_trial_record["qa_record_id"]:
+                    outcome_key = f"teaching-outcome:v1:trial:{previous_trial_record['id']}:evaluation-qa:{qa_record_id}"
+                    now_iso = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+                    conn.execute(
+                        """INSERT OR IGNORE INTO teaching_outcomes
+                           (id, idempotency_key, project_id, session_id,
+                            teaching_trial_id, taught_qa_record_id, evaluation_qa_record_id,
+                            result, confidence, reason, evidence_quote,
+                            source_observation_id, observer_run_id, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            outcome_key, outcome_key, project_id, qa_record.session_id,
+                            previous_trial_record["id"], previous_trial_record["qa_record_id"],
+                            qa_record_id,
+                            pto.result, pto.confidence, pto.reason, pto.evidence_quote,
+                            f"observer:v1:qa:{qa_record_id}:previous_teaching_outcome:0",
+                            run_key, now_iso,
+                        ),
+                    )
+                    if pto.result in ("unsuccessful", "partially_successful", "successful"):
+                        conn.execute(
+                            "UPDATE teaching_trials SET previous_outcome = ? WHERE id = ?",
+                            (pto.result, previous_trial_record["id"]),
+                        )
 
         run_in_transaction(_write_observations)
 
