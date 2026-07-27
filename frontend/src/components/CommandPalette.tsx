@@ -77,6 +77,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索课程、源码、回答或命令"
+            aria-label="搜索命令"
             onKeyDown={(event) => {
               if (event.key === "Escape") onClose();
               if (event.key === "ArrowDown") {

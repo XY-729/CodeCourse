@@ -63,7 +63,7 @@ export default function Sidebar({
       <aside className="sidebar navigation-panel">
         <header className="navigation-panel-header">
           <span>项目</span>
-          <button className="icon-button" onClick={onCreateLearningPlan} title="新建学习计划">
+          <button className="icon-button" onClick={onCreateLearningPlan} title="新建学习计划" aria-label="新建学习计划">
             <Plus size={16} />
           </button>
         </header>
@@ -76,16 +76,16 @@ export default function Sidebar({
                   <small>{item.project_type === "learning_plan" ? "学习计划" : item.status}</small>
                 </button>
                 {item.project_type === "learning_plan" ? <span /> : (
-                  <button className="icon-button" onClick={() => onRegenerateProject(item)} disabled={busyProjectId === item.id} title="重新生成规则课程">
+                  <button className="icon-button" onClick={() => onRegenerateProject(item)} disabled={busyProjectId === item.id} title="重新生成规则课程" aria-label="重新生成规则课程">
                     <RefreshCw size={14} />
                   </button>
                 )}
-                <button className="icon-button danger" onClick={() => onDeleteProject(item)} disabled={busyProjectId === item.id} title="删除项目">
+                <button className="icon-button danger" onClick={() => onDeleteProject(item)} disabled={busyProjectId === item.id} title="删除项目" aria-label="删除项目">
                   <Trash2 size={14} />
                 </button>
               </div>
             ))
-          ) : <div className="empty">还没有项目</div>}
+          ) : <div className="empty">还没有项目<div style={{ marginTop: 10 }}><button className="secondary-button compact" onClick={onCreateLearningPlan}><Plus size={14} />新建学习计划</button></div></div>}
         </div>
       </aside>
     );
@@ -130,7 +130,7 @@ export default function Sidebar({
           </div>
         ) : <span>课程</span>}
         {onCreateCourse ? (
-          <button className="icon-button" onClick={onCreateCourse} disabled={!currentProjectId} title="新建文档">
+          <button className="icon-button" onClick={onCreateCourse} disabled={!currentProjectId} title="新建文档" aria-label="新建文档">
             <Plus size={16} />
           </button>
         ) : null}
@@ -157,14 +157,14 @@ export default function Sidebar({
                 {complete ? "复习" : "继续"}<ArrowRight size={13} />
               </button>
               <div className="learning-progress-track" role="progressbar" aria-label="课程学习进度" aria-valuemin={0} aria-valuemax={lessons.length} aria-valuenow={completed}>
-                <span style={{ width: `${progress}%` }} />
+                <span style={{ transform: `scaleX(${progress / 100})` }} />
               </div>
               <small>{complete ? `已完成全部 ${lessons.length} 课` : `${completed}/${lessons.length} 课已完成`}</small>
             </section>
           ) : null;
         })()}
         {courses.length ? <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDragItem={onDragItem} onDelete={onDeleteCourse} learningStates={learningStates} /> : (
-          <div className="empty">还没有课程内容</div>
+          <div className="empty">还没有课程内容{onCreateCourse ? <div style={{ marginTop: 10 }}><button className="secondary-button compact" onClick={onCreateCourse} disabled={!currentProjectId}><Plus size={14} />新建文档</button></div> : null}</div>
         )}
       </div>
     </aside>

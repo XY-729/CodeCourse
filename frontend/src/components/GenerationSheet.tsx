@@ -63,7 +63,7 @@ export default function GenerationSheet(props: Props) {
             <strong>{copy.title}</strong>
             <small>仅在确认后调用模型 API</small>
           </div>
-          <button className="apple-icon-button" onClick={onClose} title="关闭"><X size={17} /></button>
+          <button className="apple-icon-button" onClick={onClose} title="关闭" aria-label="关闭"><X size={17} /></button>
         </header>
         <div className="apple-sheet-body">
           <p className="generation-sheet-intro">{copy.help}</p>

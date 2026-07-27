@@ -238,7 +238,7 @@ html:not(.platform-android) .workbench {
   flex: 1;
   min-height: 0;
   background: var(--apple-canvas);
-  transition: grid-template-columns 210ms var(--apple-ease-drawer);
+  transition: grid-template-columns 180ms var(--apple-ease-drawer);
 }
 html:not(.platform-android) .workbench.assistant-resizing { transition: none; }
 
@@ -312,6 +312,10 @@ html:not(.platform-android) .workbench {
 }
 html:not(.platform-android) .navigation-panel,
 html:not(.platform-android) .explain-panel {
+  will-change: auto;
+}
+html:not(.platform-android) .workbench.navigation-resizing .navigation-panel,
+html:not(.platform-android) .workbench.assistant-resizing .explain-panel {
   will-change: width;
 }
 html:not(.platform-android) .reader-pane { background: var(--apple-surface); }

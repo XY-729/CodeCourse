@@ -114,7 +114,7 @@ export default function DesktopToolbar(props: Props) {
   return (
     <header className="apple-toolbar desktop-only" ref={rootRef}>
       <div className="apple-toolbar-leading">
-        <button className="apple-icon-button" onClick={onToggleNavigation} title={navigationOpen ? "隐藏侧栏" : "显示侧栏"}>
+        <button className="apple-icon-button" onClick={onToggleNavigation} title={navigationOpen ? "隐藏侧栏" : "显示侧栏"} aria-label={navigationOpen ? "隐藏侧栏" : "显示侧栏"}>
           {navigationOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
         </button>
 
@@ -144,11 +144,11 @@ export default function DesktopToolbar(props: Props) {
                       <small>{item.project_type === "learning_plan" ? "学习计划" : item.status}</small>
                     </button>
                     {item.project_type === "repository" ? (
-                      <button className="apple-icon-button subtle" onClick={() => onRegenerateProject(item)} disabled={busyProjectId === item.id} title="重新扫描并生成规则课程">
+                      <button className="apple-icon-button subtle" onClick={() => onRegenerateProject(item)} disabled={busyProjectId === item.id} title="重新扫描并生成规则课程" aria-label="重新扫描并生成规则课程">
                         <RefreshCw size={13} />
                       </button>
                     ) : null}
-                    <button className="apple-icon-button subtle danger" onClick={() => onDeleteProject(item)} disabled={busyProjectId === item.id} title="删除项目">
+                    <button className="apple-icon-button subtle danger" onClick={() => onDeleteProject(item)} disabled={busyProjectId === item.id} title="删除项目" aria-label="删除项目">
                       <Trash2 size={13} />
                     </button>
                   </div>
@@ -199,7 +199,7 @@ export default function DesktopToolbar(props: Props) {
           ) : null}
         </div>
 
-        <button className={`apple-icon-button ${assistantOpen ? "active" : ""}`} onClick={onToggleAssistant} title={assistantOpen ? "关闭 AI 助手" : "打开 AI 助手"}>
+        <button className={`apple-icon-button ${assistantOpen ? "active" : ""}`} onClick={onToggleAssistant} title={assistantOpen ? "关闭 AI 助手" : "打开 AI 助手"} aria-label={assistantOpen ? "关闭 AI 助手" : "打开 AI 助手"}>
           <Bot size={17} />
         </button>
 
@@ -213,7 +213,7 @@ export default function DesktopToolbar(props: Props) {
         </button>
 
         <div className="apple-menu-anchor">
-          <button className={`apple-icon-button ${menu === "more" ? "active" : ""}`} onClick={() => setMenu((current) => current === "more" ? null : "more")} title="更多">
+          <button className={`apple-icon-button ${menu === "more" ? "active" : ""}`} onClick={() => setMenu((current) => current === "more" ? null : "more")} title="更多" aria-label="更多">
             <MoreHorizontal size={18} />
           </button>
           {menu === "more" ? (

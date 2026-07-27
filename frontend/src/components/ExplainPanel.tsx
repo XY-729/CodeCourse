@@ -140,7 +140,7 @@ export default function ExplainPanel(props: Props) {
                 </div>
               ) : null}
               <div className="qa-section history-tools">
-                <div className="search-row"><Search size={14} /><input value={historyQuery} onChange={(event) => onHistoryQueryChange(event.target.value)} placeholder="搜索历史" /></div>
+                <div className="search-row"><Search size={14} /><input value={historyQuery} onChange={(event) => onHistoryQueryChange(event.target.value)} placeholder="搜索历史" aria-label="搜索历史" /></div>
                 <label className="favorite-filter"><input type="checkbox" checked={favoriteOnly} onChange={(event) => onFavoriteOnlyChange(event.target.checked)} />只看收藏</label>
               </div>
               <div className="qa-history">
@@ -157,9 +157,9 @@ export default function ExplainPanel(props: Props) {
                     }}
                   >
                     <span>{recordTitle(record)}</span><small>{record.model}</small>
-                    <Trash2 size={14} className="history-delete" onClick={(event) => { event.stopPropagation(); onDeleteRecord?.(record); }} />
-                    <Edit3 size={14} className="history-rename" onClick={(event) => { event.stopPropagation(); onRenameRecord(record); }} />
-                    <Star size={14} className={record.favorite ? "history-star starred" : "history-star"} onClick={(event) => { event.stopPropagation(); onToggleFavorite(record); }} />
+                    <button className="icon-button compact" onClick={(event) => { event.stopPropagation(); onDeleteRecord?.(record); }} aria-label="删除记录"><Trash2 size={14} /></button>
+                    <button className="icon-button compact" onClick={(event) => { event.stopPropagation(); onRenameRecord(record); }} aria-label="重命名记录"><Edit3 size={14} /></button>
+                    <button className="icon-button compact" onClick={(event) => { event.stopPropagation(); onToggleFavorite(record); }} aria-label={record.favorite ? "取消收藏" : "收藏"}><Star size={14} className={record.favorite ? "starred" : ""} /></button>
                   </button>
                 )) : <div className="empty small">暂无问答历史</div>}
               </div>
@@ -176,7 +176,7 @@ export default function ExplainPanel(props: Props) {
               <>
                 <div className="selection-meta"><span>{sourceLabel(selection.sourceType)}</span><span>{selectedLength} 字符</span></div>
                 <div className="selection-path">{selection.sourcePath ?? "未命名来源"}</div>
-                <textarea className="selection-editor" value={selection.selectedText} onChange={(event) => onSelectionTextChange(event.target.value)} disabled={loading} />
+                <textarea className="selection-editor" value={selection.selectedText} onChange={(event) => onSelectionTextChange(event.target.value)} disabled={loading} aria-label="附带上下文文本" />
                 <button type="button" className="secondary-button compact" onClick={onClearSelection} disabled={loading}><Trash2 size={14} />清空文本</button>
               </>
             ) : contextSummary ? (
@@ -191,13 +191,13 @@ export default function ExplainPanel(props: Props) {
             <span>{selectedRecord ? `继续：${recordTitle(selectedRecord)}` : "新问题"}</span>
             <button className="icon-button" type="button" onClick={onNewConversation} title="新对话" aria-label="新对话"><Plus size={15} /></button>
           </div>
-          <textarea value={questionInput ?? question} onChange={(event) => onQuestionChange(event.target.value)} placeholder={selectedRecord ? `继续追问“${recordTitle(selectedRecord)}”` : "问项目、文件、课件或选中内容"} disabled={loading} />
+          <textarea value={questionInput ?? question} onChange={(event) => onQuestionChange(event.target.value)} placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"} disabled={loading} aria-label="输入问题" />
         </div>
 
         <div className="qa-ask-bottom">
-          {panelError ? <div className="qa-local-error">{panelError}</div> : null}
+          {panelError ? <div className="qa-local-error" role="alert">{panelError}</div> : null}
           <div className="model-row">
-            <select value={modelReady ? "configured" : "missing"} disabled><option>{configuredModelLabel(settings)}</option></select>
+            <select value={modelReady ? "configured" : "missing"} disabled aria-label="当前模型"><option>{configuredModelLabel(settings)}</option></select>
             {!modelReady ? <button type="button" className="secondary-button compact" onClick={onOpenSettings}>配置</button> : null}
           </div>
           <button className="primary-button" onClick={onAsk} disabled={loading || !modelReady || !question.trim()}>

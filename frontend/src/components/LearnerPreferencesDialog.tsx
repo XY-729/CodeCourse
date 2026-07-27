@@ -150,10 +150,10 @@ export default function LearnerPreferencesDialog({ open, projectId, onClose }: P
           <span className={`preference-save-status ${saving ? "visible" : ""}`} aria-live="polite">
             {saving ? "保存中" : ""}
           </span>
-          <button className="icon-button" onClick={closeDialog}><X size={17} /></button>
+          <button className="icon-button" onClick={closeDialog} aria-label="关闭"><X size={17} /></button>
         </header>
         {loading && !profile ? <div className="viewer-loading">正在读取学习档案...</div> : null}
-        {error ? <div className="form-error">{error}</div> : null}
+        {error ? <div className="form-error" role="alert">{error}</div> : null}
         {preferences ? (
           <div className="preferences-content">
             <section>
@@ -185,20 +185,20 @@ export default function LearnerPreferencesDialog({ open, projectId, onClose }: P
                         className={item.judgement === "known" ? "active" : ""}
                         disabled={busyConceptId === item.concept.id}
                         onClick={() => void setConceptStatus(item.concept.id, "known")}
-                        title="我认识"
+                        aria-label="我认识"
                       ><Check size={13} /></button>
                       <button
                         type="button"
                         className={item.judgement === "unfamiliar" ? "active" : ""}
                         disabled={busyConceptId === item.concept.id}
                         onClick={() => void setConceptStatus(item.concept.id, "unknown")}
-                        title="我不认识"
+                        aria-label="我不认识"
                       ><CircleHelp size={13} /></button>
                       <button
                         type="button"
                         disabled={busyConceptId === item.concept.id}
                         onClick={() => void setConceptStatus(item.concept.id, "clear")}
-                        title="撤销人工判断"
+                        aria-label="撤销人工判断"
                       ><Undo2 size={13} /></button>
                     </div>
                   </div>

@@ -93,7 +93,7 @@ export default function SelectionQuickBar({
         </button>
       ) : null}
       <button onClick={onCopy}><Copy size={14} />复制</button>
-      <button className="icon-button" onClick={onClose} title="取消选区"><X size={14} /></button>
+      <button className="icon-button" onClick={onClose} title="取消选区" aria-label="取消选区"><X size={14} /></button>
     </div>
   );
 }

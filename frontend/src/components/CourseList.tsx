@@ -45,7 +45,7 @@ export default function CourseList({ files, selected, onSelect, onDragItem, onDe
     <div className="course-list">
       {Array.from(groups.entries()).map(([group, groupFiles]) => (
         <div key={group} className="course-group">
-          <button className="course-group-header" onClick={() => toggleGroup(group)}>
+          <button className="course-group-header" onClick={() => toggleGroup(group)} aria-expanded={!collapsedGroups.has(group)}>
             {collapsedGroups.has(group) ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
             <span>{group}</span>
             <small>({groupFiles.length})</small>
@@ -85,6 +85,7 @@ export default function CourseList({ files, selected, onSelect, onDragItem, onDe
                       onDelete(file);
                     }}
                     title="删除此课件"
+                    aria-label="删除此课件"
                   >
                     <Trash2 size={12} />
                   </button>

@@ -68,7 +68,7 @@ export default function PromptEditor({ onClose }: Props) {
       >
         <div className="modal-title">
           <span>提示词编辑</span>
-          <button className="icon-button" onClick={onClose} title="关闭"><X size={16} /></button>
+          <button className="icon-button" onClick={onClose} title="关闭" aria-label="关闭"><X size={16} /></button>
         </div>
 
         {loading ? (
@@ -106,10 +106,11 @@ export default function PromptEditor({ onClose }: Props) {
                 onChange={(e) =>
                   setEdited((prev) => ({ ...prev, [activeTab]: e.target.value }))
                 }
+                aria-label={PROMPT_LABELS[activeTab]}
               />
             </div>
 
-            {error ? <div className="qa-local-error" style={{ padding: "0 16px" }}>{error}</div> : null}
+            {error ? <div className="qa-local-error" style={{ padding: "0 16px" }} role="alert">{error}</div> : null}
 
             <div className="settings-actions">
               <button className="secondary-button" onClick={onClose}>

@@ -50,6 +50,7 @@ function TreeItem({
           event.stopPropagation();
           onOpenFile?.(node.path);
         }}
+        aria-expanded={!isFile ? open : undefined}
         title={isFile ? `${node.path}${fileSelectionMode ? " - 点击选择，双击打开" : " - 可拖拽到中间工作区"}` : node.path || node.name}
         draggable={isFile}
         onDragStart={(event) => {

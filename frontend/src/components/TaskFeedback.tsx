@@ -17,7 +17,7 @@ export default function TaskFeedback({ error, busy, label, progressCurrent = 0, 
         <div className="apple-feedback error" role="alert">
           <AlertCircle size={15} />
           <span>{error}</span>
-          {onDismissError ? <button onClick={onDismissError} title="关闭"><X size={14} /></button> : null}
+          {onDismissError ? <button onClick={onDismissError} title="关闭" aria-label="关闭"><X size={14} /></button> : null}
         </div>
       ) : null}
       {busy ? (
@@ -25,7 +25,7 @@ export default function TaskFeedback({ error, busy, label, progressCurrent = 0, 
           <Loader2 size={15} className="spin" />
           <span>{label || "正在处理"}</span>
           {progressTotal > 0 ? (
-            <><div className="apple-feedback-progress"><i style={{ width: `${Math.min(100, Math.max(0, (progressCurrent / progressTotal) * 100))}%` }} /></div><small>{progressCurrent}/{progressTotal}</small></>
+            <><div className="apple-feedback-progress"><i style={{ transform: `scaleX(${Math.min(1, Math.max(0, progressCurrent / progressTotal))})` }} /></div><small>{progressCurrent}/{progressTotal}</small></>
           ) : null}
         </div>
       ) : null}

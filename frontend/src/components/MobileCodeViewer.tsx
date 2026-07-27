@@ -382,17 +382,17 @@ export default function MobileCodeViewer({
         <span>{path ?? "代码"}</span>
         <div className="viewer-actions">
           <strong>{shouldVirtualize ? `${language} · 大文件` : language}</strong>
-          <button className="icon-button" onClick={() => setSearchOpen(o => !o)} title="搜索"><Search size={15} /></button>
+          <button className="icon-button" onClick={() => setSearchOpen(o => !o)} title="搜索" aria-label="搜索"><Search size={15} /></button>
         </div>
       </div>
       {shouldVirtualize && <div className="mobile-code-notice">大文件：虚拟列表仅渲染可见行</div>}
       {searchOpen && (
         <div className="mobile-code-search">
-          <Search size={14} /><input autoFocus value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="搜索" />
+          <Search size={14} /><input autoFocus value={searchInput} onChange={e => setSearchInput(e.target.value)} placeholder="搜索" aria-label="在代码中搜索" />
           <span>{matches.length ? (activeMatch < 0 ? `0/${matches.length}` : `${activeMatch + 1}/${matches.length}`) : "0/0"}</span>
-          <button className="icon-button" onClick={() => moveMatch(-1)} disabled={!matches.length}><ChevronUp size={15} /></button>
-          <button className="icon-button" onClick={() => moveMatch(1)} disabled={!matches.length}><ChevronDown size={15} /></button>
-          <button className="icon-button" onClick={() => { setSearchOpen(false); setSearchInput(""); setDebouncedQuery(""); }}><X size={15} /></button>
+          <button className="icon-button" onClick={() => moveMatch(-1)} disabled={!matches.length} aria-label="上一个匹配"><ChevronUp size={15} /></button>
+          <button className="icon-button" onClick={() => moveMatch(1)} disabled={!matches.length} aria-label="下一个匹配"><ChevronDown size={15} /></button>
+          <button className="icon-button" onClick={() => { setSearchOpen(false); setSearchInput(""); setDebouncedQuery(""); }} aria-label="关闭搜索"><X size={15} /></button>
         </div>
       )}
       <div ref={scrollRef} className="mobile-code-scroll" onScroll={handleCodeScroll}>

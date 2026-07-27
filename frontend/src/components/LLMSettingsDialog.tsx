@@ -113,7 +113,7 @@ export default function LLMSettingsDialog({ open, onClose, onConfirm, onOpenExte
             <KeyRound size={17} />
             模型 API
           </span>
-          <button type="button" className="icon-button" onClick={onClose} title="关闭">
+          <button type="button" className="icon-button" onClick={onClose} title="关闭" aria-label="关闭">
             <X size={16} />
           </button>
         </div>
@@ -197,11 +197,11 @@ export default function LLMSettingsDialog({ open, onClose, onConfirm, onOpenExte
             <Save size={15} />
             {saving ? "保存中..." : "保存"}
           </button>
-          <button type="button" className="secondary-button" onClick={() => setClearApiKey(true)} title="标记清除 Key">
+          <button type="button" className="secondary-button" onClick={() => setClearApiKey(true)} title="标记清除 Key" aria-label="标记清除 Key">
             <Trash2 size={15} />
           </button>
         </div>
-        {message ? <div className="settings-message">{message}</div> : null}
+        {message ? <div className="settings-message" role="alert">{message}</div> : null}
       </form>
     </div>
   );

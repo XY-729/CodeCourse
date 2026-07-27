@@ -163,9 +163,18 @@ function applyKnowledgeLinksToText(
           key={`${keyPrefix}-knowledge-${index}`}
           className="knowledge-inline-link document-term"
           data-knowledge-term={term}
+          role="button"
+          tabIndex={0}
+          aria-label={`查看 "${term}" 的知识链接`}
           onClick={() => {
             if (window.getSelection() && !window.getSelection()?.isCollapsed) return;
             onOpenKnowledgeLink(term, links);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onOpenKnowledgeLink(term, links);
+            }
           }}
         >
           {term}
@@ -233,9 +242,18 @@ function applyTermCandidatesToText(
           key={`${keyPrefix}-term-${term.id}-${index}`}
           className={`document-term document-term-${term.status} ${term.status === "linked" ? "knowledge-inline-link" : "term-candidate-link"}`}
           data-term-id={term.id}
+          role="button"
+          tabIndex={0}
+          aria-label={`查看术语 "${term.term_text}"`}
           onClick={(event) => {
             if (window.getSelection() && !window.getSelection()?.isCollapsed) return;
             onGenerateTerm(term, { x: event.clientX, y: event.clientY });
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onGenerateTerm(term, { x: 0, y: 0 });
+            }
           }}
         >
           {term.term_text}

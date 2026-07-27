@@ -67,7 +67,7 @@ textarea {
 }
 
 .app-shell {
-  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -3955,7 +3955,7 @@ html.platform-android[data-theme="dark"] .field-label > span {
 .continue-learning-copy strong { overflow: hidden; color: #26312d; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .continue-learning-card > small { grid-column: 1 / -1; color: #74807b; font-size: 11px; }
 .learning-progress-track { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 999px; background: #e3e9e6; }
-.learning-progress-track span { display: block; height: 100%; border-radius: inherit; background: #337a70; transition: width 200ms ease; }
+.learning-progress-track span { display: block; width: 100%; height: 100%; border-radius: inherit; background: #337a70; transform-origin: left center; transition: transform 200ms ease; }
 .course-state { flex: 0 0 auto; color: #aab2ae; }
 .course-state.in-progress { color: #43877c; fill: #d8ebe6; }
 .course-state.completed { color: #287369; }
@@ -3967,11 +3967,12 @@ html.platform-android[data-theme="dark"] .field-label > span {
 }
 .reader-progress-fill {
   display: block;
+  width: 100%;
   height: 100%;
   background: #337a70;
   transform-origin: left center;
   transform: scaleX(0);
-  will-change: transform;
+  transition: transform 200ms ease;
 }
 @media (prefers-reduced-motion: reduce) {
   .reader-progress-fill {
@@ -4012,7 +4013,7 @@ html.platform-android[data-theme="dark"] .field-label > span {
 
 .command-palette {
   width: min(680px, calc(100vw - 32px));
-  max-height: min(590px, calc(100vh - 120px));
+  max-height: min(590px, calc(100dvh - 120px));
   overflow: hidden;
   border: 1px solid #d6dcd9;
   border-radius: 10px;
@@ -4095,7 +4096,7 @@ html.platform-android[data-theme="dark"] .field-label > span {
 .task-feedback-bar > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-feedback-bar > small { flex: 0 0 auto; font-size: 11px; font-variant-numeric: tabular-nums; }
 .task-feedback-progress { width: min(220px, 24vw); height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, 0.5); }
-.task-feedback-progress span { display: block; height: 100%; border-radius: inherit; background: currentColor; transition: width 180ms ease; }
+.task-feedback-progress span { display: block; width: 100%; height: 100%; border-radius: inherit; background: currentColor; transform-origin: left center; transition: transform 180ms ease; }
 .task-feedback-indeterminate { width: 72px; height: 4px; overflow: hidden; position: relative; border-radius: 999px; background: rgba(255, 255, 255, 0.42); }
 .task-feedback-indeterminate::after { content: ""; position: absolute; inset: 0 auto 0 -45%; width: 45%; border-radius: inherit; background: currentColor; animation: task-indeterminate 1.1s ease-in-out infinite; }
 @keyframes task-indeterminate { to { left: 100%; } }

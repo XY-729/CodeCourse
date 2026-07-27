@@ -12,7 +12,7 @@
   z-index: 2147483000;
   display: block;
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   pointer-events: none;
   contain: strict;
 }
