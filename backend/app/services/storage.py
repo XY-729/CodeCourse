@@ -175,6 +175,7 @@ class DocumentTerm:
     qa_record_id: Optional[int]
     concept_id: Optional[str]
     content_hash: Optional[str]
+    link_origin: str
     created_at: str
     updated_at: str
 
@@ -814,6 +815,7 @@ def init_storage() -> None:
                 confidence REAL NOT NULL DEFAULT 0.7,
                 status TEXT NOT NULL DEFAULT 'candidate',
                 qa_record_id INTEGER,
+                link_origin TEXT NOT NULL DEFAULT 'legacy_unknown',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id),
@@ -833,6 +835,8 @@ def init_storage() -> None:
             conn.execute("ALTER TABLE document_terms ADD COLUMN concept_id TEXT")
         if "content_hash" not in document_term_cols:
             conn.execute("ALTER TABLE document_terms ADD COLUMN content_hash TEXT")
+        if "link_origin" not in document_term_cols:
+            conn.execute("ALTER TABLE document_terms ADD COLUMN link_origin TEXT NOT NULL DEFAULT 'legacy_unknown'")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS learning_anchors (
@@ -1330,6 +1334,7 @@ def _row_to_document_term(row: sqlite3.Row) -> DocumentTerm:
         qa_record_id=row["qa_record_id"],
         concept_id=row["concept_id"] if "concept_id" in row.keys() else None,
         content_hash=row["content_hash"] if "content_hash" in row.keys() else None,
+        link_origin=row["link_origin"] if "link_origin" in row.keys() else "legacy_unknown",
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -3029,9 +3034,9 @@ def upsert_document_term(
             """
             INSERT INTO document_terms (
                 project_id, source_type, source_path, term_text, detection_source,
-                confidence, status, qa_record_id, concept_id, content_hash, created_at, updated_at
+                confidence, status, qa_record_id, concept_id, content_hash, link_origin, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'candidate', NULL, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'candidate', NULL, ?, ?, 'legacy_unknown', ?, ?)
             ON CONFLICT(project_id, source_type, source_path, term_text) DO UPDATE SET
                 detection_source = CASE
                     WHEN document_terms.detection_source = 'model' THEN document_terms.detection_source

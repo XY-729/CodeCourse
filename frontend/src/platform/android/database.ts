@@ -174,6 +174,7 @@ export class MobileDatabase {
           qa_record_id INTEGER,
           concept_id TEXT,
           content_hash TEXT,
+          link_origin TEXT NOT NULL DEFAULT 'legacy_unknown',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           UNIQUE(project_id, source_type, source_path, term_text) ON CONFLICT IGNORE,
@@ -238,6 +239,7 @@ export class MobileDatabase {
     for (const statement of [
       "ALTER TABLE document_terms ADD COLUMN concept_id TEXT",
       "ALTER TABLE document_terms ADD COLUMN content_hash TEXT",
+      "ALTER TABLE document_terms ADD COLUMN link_origin TEXT NOT NULL DEFAULT 'legacy_unknown'",
     ]) {
       try {
         await CapacitorSQLite.execute({

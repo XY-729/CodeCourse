@@ -153,6 +153,8 @@ export type QAStreamHandlers = {
   onDelta?: (text: string) => void;
 };
 
+export type TermLinkOrigin = "manual" | "automatic" | "legacy_unknown";
+
 export type DocumentTerm = {
   id: number;
   project_id: number;
@@ -162,6 +164,7 @@ export type DocumentTerm = {
   detection_source: "model" | "index" | "rule" | string;
   confidence: number;
   status: "candidate" | "linked" | "known" | "dismissed" | string;
+  link_origin?: TermLinkOrigin | string;
   qa_record_id?: number | null;
   concept_id?: string | null;
   content_hash?: string | null;

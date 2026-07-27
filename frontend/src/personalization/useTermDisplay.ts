@@ -122,7 +122,7 @@ function buildOccurrences(
           isInCodeBlock: false,
           isInlineCode: false,
           isInTable: false,
-          manualLink: term.status === "linked",
+          manualLink: (term.link_origin ?? "legacy_unknown") === "manual",
         });
         globalIndex++;
         searchFrom = idx + searchText.length;
