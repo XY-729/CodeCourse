@@ -98,7 +98,7 @@ def _collect_explicit_facts(
         """SELECT id, observation_type, subject_key, payload_json, evidence_text,
            scope_type, scope_id, confidence
            FROM interaction_observations
-           WHERE project_id = ? AND qa_record_id < ?
+           WHERE project_id = ? AND qa_record_id <= ?
            AND observation_type = 'explicit_user_fact'
            AND status = 'accepted_shadow'
            AND confidence >= ?
@@ -273,25 +273,27 @@ def _collect_misconceptions(
 
 
 def _get_manual_preferences(project_id: int, conn: sqlite3.Connection) -> dict[str, object]:
+    """Return only user-facing preferences that remain part of the product.
+
+    Legacy answer_depth/code_ratio/explanation_order values are retained in the
+    database for migration compatibility, but must not influence Planner input.
+    """
     row = conn.execute(
-        "SELECT * FROM learner_preferences WHERE scope_type = 'project' AND scope_id = ?",
+        """SELECT terminology_density
+           FROM learner_preferences
+           WHERE scope_type = 'project' AND scope_id = ?""",
         (str(project_id),),
     ).fetchone()
     if row:
-        return {
-            "answer_depth": float(row[3]),
-            "code_ratio": float(row[4]),
-            "explanation_order": row[5],
-        }
+        return {"terminology_density": float(row[0])}
+
     row = conn.execute(
-        "SELECT * FROM learner_preferences WHERE scope_type = 'global' AND scope_id = 'local-user'"
+        """SELECT terminology_density
+           FROM learner_preferences
+           WHERE scope_type = 'global' AND scope_id = 'local-user'"""
     ).fetchone()
     if row:
-        return {
-            "answer_depth": float(row[3]),
-            "code_ratio": float(row[4]),
-            "explanation_order": row[5],
-        }
+        return {"terminology_density": float(row[0])}
     return {}
 
 

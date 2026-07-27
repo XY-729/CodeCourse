@@ -10,20 +10,16 @@ import type {
 } from "./termDisplayTypes";
 import { buildPreliminaryTermDecision } from "./termDisplayDecision";
 import { allocateTermDisplays } from "./termDisplayAllocator";
-import { candidateIdForRendering } from "./termOccurrences";
+import { analyzeMarkdownTermOccurrences } from "./termOccurrences";
 
 function normalizeText(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-function stableParagraphId(sourcePath: string, paraIndex: number): string {
-  return `${sourcePath || "doc"}:p${paraIndex}`;
-}
-
 function simpleHash(content: string): string {
   let hash = 0x811c9dc5;
-  for (let i = 0; i < content.length; i++) {
-    hash ^= content.charCodeAt(i);
+  for (let index = 0; index < content.length; index += 1) {
+    hash ^= content.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193);
   }
   return (hash >>> 0).toString(16).padStart(8, "0");
@@ -46,103 +42,9 @@ export function createNeutralTermProfile(conceptKey: string): TermPersonalizatio
   };
 }
 
-function isLikelyNoise(
-  candidate: TermCandidateInput,
-  content: string,
-): boolean {
-  const text = candidate.normalizedText.trim();
-  if (!text) return true;
-  if (candidate.isInCodeBlock) return true;
-  if (candidate.isInHeading) return true;
-  if (candidate.isInTable) return true;
-  if (/^[\d\s.,;:!?()[\]{}'"`~\-_/\\]+$/.test(text)) return true;
-  if (text.length > 64) return true;
-  if (text.length <= 2 && candidate.source !== "code_symbol" && candidate.source !== "inline_code") {
-    return true;
-  }
-  return false;
-}
-
-function buildOccurrences(
-  content: string,
-  terms: DocumentTerm[],
-  sourcePath: string,
-): TermCandidateInput[] {
-  const paragraphs = content.split(/\n\n+/);
-  const result: TermCandidateInput[] = [];
-  let globalIndex = 0;
-  const usedRanges = new Set<string>();
-
-  const filtered = terms.filter((t) => t.status === "candidate" || t.status === "linked");
-  const sorted = [...filtered].sort((a, b) => (b.term_text?.length || 0) - (a.term_text?.length || 0));
-
-  let globalOffset = 0;
-  for (let pi = 0; pi < paragraphs.length; pi++) {
-    const para = paragraphs[pi];
-    const paraOffset = globalOffset;
-    const paraId = stableParagraphId(sourcePath, pi);
-    const matchCountInPara = new Map<string, number>();
-
-    for (const term of sorted) {
-      const searchText = term.term_text || "";
-      if (!searchText) continue;
-      let searchFrom = 0;
-      while (searchFrom < para.length) {
-        const idx = para.indexOf(searchText, searchFrom);
-        if (idx < 0) break;
-
-        const absStart = paraOffset + idx;
-        const rangeKey = `${pi}:${absStart}:${searchText.length}`;
-        const overlapping = [...usedRanges].some((r) => {
-          const parts = r.split(":").map(Number);
-          if (parts[0] !== pi) return false;
-          return absStart < parts[1] + parts[2] && absStart + searchText.length > parts[1];
-        });
-        if (overlapping) {
-          searchFrom = idx + 1;
-          continue;
-        }
-        usedRanges.add(rangeKey);
-
-        const prevCount = matchCountInPara.get(searchText) || 0;
-        matchCountInPara.set(searchText, prevCount + 1);
-
-        result.push({
-          candidateId: candidateIdForRendering(String(term.id), para, prevCount),
-          text: searchText,
-          normalizedText: normalizeText(searchText),
-          conceptKey: term.concept_id || `term:${normalizeText(searchText)}`,
-          conceptName: searchText,
-          paragraphId: paraId,
-          occurrenceIndex: globalIndex,
-          source: term.detection_source === "model"
-            ? "model"
-            : term.detection_source === "index"
-              ? "code_symbol"
-              : "unknown",
-          sourceConfidence: term.confidence || 0.5,
-          contextRelevance: Math.max(0.45, term.confidence || 0.5),
-          difficulty: 0.5,
-          isInHeading: false,
-          isInCodeBlock: false,
-          isInlineCode: false,
-          isInTable: false,
-          manualLink: (term.link_origin ?? "legacy_unknown") === "manual",
-        });
-        globalIndex++;
-        searchFrom = idx + searchText.length;
-      }
-    }
-    globalOffset += para.length + 2;
-  }
-
-  return result;
-}
-
 function computeTermDisplay(props: {
-  content: string;
-  documentTerms: DocumentTerm[];
-  sourcePath: string;
+  occurrences: TermCandidateInput[];
+  paragraphCount: number;
   termProfiles: Map<string, TermPersonalizationProfile>;
   terminologyDensity: number;
   profileAvailable: boolean;
@@ -152,9 +54,7 @@ function computeTermDisplay(props: {
   visibleCandidateIds: Set<string>;
   tiersById: Map<string, TermDisplayTier>;
 } {
-  const { content, documentTerms, sourcePath, termProfiles, terminologyDensity, profileAvailable } = props;
-  const occurrences = buildOccurrences(content, documentTerms, sourcePath);
-  const paragraphCount = Math.max(1, content.split(/\n\n+/).length);
+  const { occurrences, paragraphCount, termProfiles, terminologyDensity, profileAvailable } = props;
 
   const preliminary = occurrences.map((occ) =>
     buildPreliminaryTermDecision(
@@ -307,6 +207,11 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     [],
   );
 
+  const markdownAnalysis = useMemo(
+    () => analyzeMarkdownTermOccurrences(content, rawTerms, sourceKey),
+    [content, rawTerms, sourceKey],
+  );
+
   const computed = useMemo(() => {
     if (status === "idle" || status === "loading") {
       return {
@@ -317,14 +222,13 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
       };
     }
     return computeTermDisplay({
-      content,
-      documentTerms: rawTerms,
-      sourcePath: sourceKey,
+      occurrences: markdownAnalysis.occurrences,
+      paragraphCount: markdownAnalysis.paragraphCount,
       termProfiles: profiles,
       terminologyDensity,
       profileAvailable: status !== "fallback" && profileAvailable,
     });
-  }, [content, rawTerms, sourceKey, profiles, terminologyDensity, profileAvailable, status]);
+  }, [markdownAnalysis, profiles, terminologyDensity, profileAvailable, status]);
 
   return {
     visibleCandidateIds: computed.visibleCandidateIds,

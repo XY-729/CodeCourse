@@ -4003,6 +4003,7 @@ export default function App() {
                 sourcePath={activeItem.path}
                 sourceType={activeItem.qaRecordId ? "qa" : "course"}
                 content={activeItem.content}
+                termSourceKey={activeTermSourceKey}
                 highlights={highlights.filter((highlight) => highlight.source_type === (activeItem.qaRecordId ? "qa" : "course") && highlight.source_path === activeItem.path)}
                 knowledgeLinks={knowledgeLinks.filter((link) => link.source_type === "course" && link.source_path === activeItem.path)}
                 documentTerms={activeTermRawTerms}

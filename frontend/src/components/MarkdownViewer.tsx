@@ -1,7 +1,8 @@
 import { Children, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
-import { candidateIdForRendering } from "../personalization/termOccurrences";
+import type { PluggableList } from "unified";
+import { remarkTermOccurrences } from "../personalization/termOccurrences";
 import remarkGfm from "remark-gfm";
 import hljs from "highlight.js";
 import type { DocumentTerm, HighlightRecord, KnowledgeLink } from "../api/client";
@@ -15,6 +16,7 @@ type Props = {
   sourcePath?: string | null;
   sourceType?: "course" | "qa";
   content: string;
+  termSourceKey?: string;
   highlights?: HighlightRecord[];
   knowledgeLinks?: KnowledgeLink[];
   documentTerms?: DocumentTerm[];
@@ -205,113 +207,14 @@ function applyKnowledgeLinksToText(
   return result;
 }
 
-function applyTermCandidatesToText(
-  text: string,
-  terms: DocumentTerm[],
-  onGenerateTerm: ((term: DocumentTerm, position?: { x: number; y: number }) => void) | undefined,
-  onTermAction: ((term: DocumentTerm) => void) | undefined,
-  keyPrefix: string,
-  visibleTermCandidateIds?: Set<string>,
-  termDisplayTiers?: Map<string, string>,
-): ReactNode[] {
-  if (!onGenerateTerm || terms.length === 0) {
-    return [text];
-  }
-  const candidates = terms
-    .filter((term) => term.status === "candidate" || term.status === "linked")
-    .sort((a, b) => b.term_text.length - a.term_text.length);
-  if (!candidates.length) {
-    return [text];
-  }
-  const result: ReactNode[] = [];
-  const renderedPerTermInNode = new Map<string, number>();
-  let index = 0;
-  while (index < text.length) {
-    const foundTerm = candidates.find((candidate) =>
-      text.startsWith(candidate.term_text, index)
-    );
-    if (!foundTerm) {
-      result.push(text[index]);
-      index += 1;
-      continue;
-    }
-    const prevCount = renderedPerTermInNode.get(foundTerm.term_text) || 0;
-    renderedPerTermInNode.set(foundTerm.term_text, prevCount + 1);
-    const isManual = (foundTerm.link_origin ?? "legacy_unknown") === "manual";
-    const candidateId = candidateIdForRendering(String(foundTerm.id), text, prevCount);
-    const isVisible = isManual || (visibleTermCandidateIds?.has(candidateId) ?? false);
-    if (!isVisible) {
-      result.push(text[index]);
-      index += 1;
-      continue;
-    }
-    const tier = termDisplayTiers?.get(candidateId) || "subtle";
-    const tierClass = foundTerm.status === "linked" ? "knowledge-inline-link" : `term-candidate-link personalized-term--${tier}`;
-    if (isAndroidRuntime()) {
-      result.push(
-        <span
-          key={`${keyPrefix}-term-${foundTerm.id}-${index}`}
-          className={`personalized-term document-term document-term-${foundTerm.status} ${tierClass}`}
-          data-term-id={foundTerm.id}
-          role="button"
-          tabIndex={0}
-          aria-label={`查看术语 "${foundTerm.term_text}"`}
-          onClick={(event) => {
-            if (window.getSelection() && !window.getSelection()?.isCollapsed) return;
-            onGenerateTerm(foundTerm, { x: event.clientX, y: event.clientY });
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              onGenerateTerm(foundTerm, { x: 0, y: 0 });
-            }
-          }}
-        >
-          {foundTerm.term_text}
-        </span>,
-      );
-    } else {
-      result.push(
-        <button
-          key={`${keyPrefix}-term-${foundTerm.id}-${index}`}
-          className={`personalized-term ${tierClass}`}
-          type="button"
-          title={foundTerm.status === "linked" ? `打开"${foundTerm.term_text}"的解释` : `生成"${foundTerm.term_text}"的解释；右键可标记为已认识或忽略`}
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onGenerateTerm(foundTerm, { x: event.clientX, y: event.clientY });
-          }}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            if (foundTerm.status === "candidate") {
-              onTermAction?.(foundTerm);
-            }
-          }}
-        >
-          {foundTerm.term_text}
-        </button>,
-      );
-    }
-    index += foundTerm.term_text.length;
-  }
-  return result;
-}
-
 /* ---- Combined rendering (highlights -> annotations -> temp -> knowledge links) ---- */
 function highlightChildren(
   children: ReactNode,
   highlights: HighlightRecord[],
   knowledgeLinks: KnowledgeLink[],
-  documentTerms: DocumentTerm[],
   annotations: Annotation[],
   tempText: string | null,
   onOpenKnowledgeLink?: (term: string, links: KnowledgeLink[]) => void,
-  onGenerateTerm?: (term: DocumentTerm, position?: { x: number; y: number }) => void,
-  onTermAction?: (term: DocumentTerm) => void,
-  visibleTermCandidateIds?: Set<string>,
-  termDisplayTiers?: Map<string, string>,
 ): ReactNode {
   const groupedLinks = groupKnowledgeLinks(knowledgeLinks);
   return Children.map(children, (child) => {
@@ -320,27 +223,36 @@ function highlightChildren(
     }
     let parts: ReactNode[] = [child];
     for (const hl of highlights) {
-      parts = parts.flatMap((p, i) =>
-        typeof p === "string" ? applyHighlightToText(p, hl, `hl-${i}`) : [p],
+      parts = parts.flatMap((part, index) =>
+        typeof part === "string"
+          ? applyHighlightToText(part, hl, `hl-${index}`)
+          : [part],
       );
     }
-    for (const ann of annotations) {
-      parts = parts.flatMap((p, i) =>
-        typeof p === "string" ? applyAnnotationToText(p, ann, `ann-${i}`) : [p],
+    for (const annotation of annotations) {
+      parts = parts.flatMap((part, index) =>
+        typeof part === "string"
+          ? applyAnnotationToText(part, annotation, `ann-${index}`)
+          : [part],
       );
     }
     if (tempText) {
-      parts = parts.flatMap((p, i) =>
-        typeof p === "string" ? applyTempSelection(p, tempText, `tmp-${i}`) : [p],
+      parts = parts.flatMap((part, index) =>
+        typeof part === "string"
+          ? applyTempSelection(part, tempText, `tmp-${index}`)
+          : [part],
       );
     }
-    parts = parts.flatMap((p, i) =>
-      typeof p === "string" ? applyKnowledgeLinksToText(p, groupedLinks, onOpenKnowledgeLink, `kl-${i}`) : [p],
+    return parts.flatMap((part, index) =>
+      typeof part === "string"
+        ? applyKnowledgeLinksToText(
+            part,
+            groupedLinks,
+            onOpenKnowledgeLink,
+            `kl-${index}`,
+          )
+        : [part],
     );
-    parts = parts.flatMap((p, i) =>
-      typeof p === "string" ? applyTermCandidatesToText(p, documentTerms, onGenerateTerm, onTermAction, `term-${i}`, visibleTermCandidateIds, termDisplayTiers) : [p],
-    );
-    return parts;
   });
 }
 
@@ -349,6 +261,7 @@ export default function MarkdownViewer({
   sourcePath,
   sourceType = "course",
   content,
+  termSourceKey,
   highlights = [],
   knowledgeLinks = [],
   documentTerms = [],
@@ -644,6 +557,28 @@ export default function MarkdownViewer({
     }
   }, [onSelectionChange, sourcePath, sourceType, title, androidRuntime]);
 
+  const resolvedTermSourceKey =
+    termSourceKey ?? `${sourceType}:${sourcePath ?? title ?? "document"}`;
+
+  const termById = useMemo(
+    () => new Map(documentTerms.map((term) => [String(term.id), term])),
+    [documentTerms],
+  );
+
+  const markdownRemarkPlugins = useMemo<PluggableList>(
+    () => [
+      remarkGfm,
+      [
+        remarkTermOccurrences,
+        {
+          sourceKey: resolvedTermSourceKey,
+          terms: documentTerms,
+        },
+      ],
+    ],
+    [resolvedTermSourceKey, documentTerms],
+  );
+
   const highlightedComponents = useMemo(() => ({
     code: ({ className, children, ...props }: { className?: string; children?: ReactNode; node?: unknown }) => {
       const codeText = String(children ?? "").replace(/\n$/, "");
@@ -677,37 +612,135 @@ export default function MarkdownViewer({
       }
       return <a href={href}>{children}</a>;
     },
+    span: (spanProps: React.HTMLAttributes<HTMLSpanElement> & {
+      children?: ReactNode;
+      node?: unknown;
+    }) => {
+      const rawProps = spanProps as Record<string, unknown>;
+      const candidateId = String(rawProps["data-term-candidate-id"] ?? "");
+      const termId = String(rawProps["data-term-id"] ?? "");
+      if (!candidateId || !termId) {
+        const { node: _node, children, ...plainProps } = spanProps;
+        return <span {...plainProps}>{children}</span>;
+      }
+
+      const term = termById.get(termId);
+      if (!term || !onGenerateTerm) {
+        return <>{spanProps.children}</>;
+      }
+
+      const isManual = (term.link_origin ?? "legacy_unknown") === "manual";
+      const isVisible =
+        isManual || (visibleTermCandidateIds?.has(candidateId) ?? false);
+      if (!isVisible) {
+        return <>{spanProps.children}</>;
+      }
+
+      const tier = termDisplayTiers?.get(candidateId) ?? "subtle";
+      const tierClass =
+        term.status === "linked"
+          ? "knowledge-inline-link"
+          : `term-candidate-link personalized-term--${tier}`;
+
+      if (androidRuntime) {
+        return (
+          <span
+            className={`personalized-term document-term document-term-${term.status} ${tierClass}`}
+            data-term-candidate-id={candidateId}
+            data-term-id={term.id}
+            role="button"
+            tabIndex={0}
+            aria-label={`查看术语 "${term.term_text}"`}
+            onClick={(event) => {
+              if (window.getSelection() && !window.getSelection()?.isCollapsed) {
+                return;
+              }
+              onGenerateTerm(term, { x: event.clientX, y: event.clientY });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onGenerateTerm(term, { x: 0, y: 0 });
+              }
+            }}
+          >
+            {spanProps.children}
+          </span>
+        );
+      }
+
+      return (
+        <button
+          className={`personalized-term ${tierClass}`}
+          type="button"
+          data-term-candidate-id={candidateId}
+          data-term-id={term.id}
+          title={
+            term.status === "linked"
+              ? `打开"${term.term_text}"的解释`
+              : `生成"${term.term_text}"的解释；右键可标记为已认识或忽略`
+          }
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onGenerateTerm(term, { x: event.clientX, y: event.clientY });
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (term.status === "candidate") {
+              onTermAction?.(term);
+            }
+          }}
+        >
+          {spanProps.children}
+        </button>
+      );
+    },
     p: ({ children }: { children?: ReactNode }) => (
-      <p>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</p>
+      <p>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</p>
     ),
     li: ({ children }: { children?: ReactNode }) => (
-      <li>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</li>
+      <li>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</li>
     ),
     td: ({ children }: { children?: ReactNode }) => (
-      <td>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</td>
+      <td>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</td>
     ),
     th: ({ children }: { children?: ReactNode }) => (
-      <th>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</th>
+      <th>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</th>
     ),
     h1: ({ children }: { children?: ReactNode }) => (
-      <h1>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</h1>
+      <h1>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h1>
     ),
     h2: ({ children }: { children?: ReactNode }) => (
-      <h2>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</h2>
+      <h2>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h2>
     ),
     h3: ({ children }: { children?: ReactNode }) => (
-      <h3>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</h3>
+      <h3>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h3>
     ),
     h4: ({ children }: { children?: ReactNode }) => (
-      <h4>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</h4>
+      <h4>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h4>
     ),
     strong: ({ children }: { children?: ReactNode }) => (
-      <strong>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</strong>
+      <strong>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</strong>
     ),
     em: ({ children }: { children?: ReactNode }) => (
-      <em>{highlightChildren(children, highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers)}</em>
+      <em>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</em>
     ),
-  }), [highlights, knowledgeLinks, documentTerms, annotations, effectiveTempSelectedText, onOpenKnowledgeLink, onGenerateTerm, onTermAction, visibleTermCandidateIds, termDisplayTiers, onGenerateLesson]);
+  }), [
+    highlights,
+    knowledgeLinks,
+    annotations,
+    effectiveTempSelectedText,
+    onOpenKnowledgeLink,
+    onGenerateTerm,
+    onTermAction,
+    visibleTermCandidateIds,
+    termDisplayTiers,
+    onGenerateLesson,
+    termById,
+    androidRuntime,
+  ]);
 
   return (
     <div className={`viewer markdown-viewer ${embedded ? "embedded" : ""}`}>
@@ -728,7 +761,7 @@ export default function MarkdownViewer({
         onKeyUp={androidRuntime ? undefined : captureSelection}
       >
         <div ref={bodyRef} className="markdown-body">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={highlightedComponents}>
+          <ReactMarkdown remarkPlugins={markdownRemarkPlugins} components={highlightedComponents}>
             {content}
           </ReactMarkdown>
         </div>

@@ -20,7 +20,9 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.1",
     "remark-gfm": "^4.0.0",
+    "remark-parse": "^11.0.0",
     "typescript": "^5.7.2",
+    "unified": "^11.0.5",
     "vite": "^6.0.7"
   },
   "devDependencies": {

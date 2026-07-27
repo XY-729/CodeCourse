@@ -754,13 +754,28 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
                 if prepared.session_id
                 else []
             )
+            qa_history_payload = [
+                {"q": r.question[:600], "a": (r.answer_md or "")[:600]}
+                for r in recent
+            ]
+
+            from app.services.personalization.teaching.teaching_history import (
+                get_recent_assessed_teaching_history,
+            )
+            assessed_teaching_history = get_recent_assessed_teaching_history(
+                project_id=project_id,
+                session_id=prepared.session_id,
+                through_qa_record_id=int(history_cutoff),
+                limit=3,
+                conn=conn,
+            )
             recent_history = json.dumps(
-                [
-                    {"q": r.question[:600], "a": (r.answer_md or "")[:600]}
-                    for r in recent
-                ],
+                {
+                    "qa_history": qa_history_payload,
+                    "teaching_history": assessed_teaching_history,
+                },
                 ensure_ascii=False,
-            )[:2000]
+            )[:3500]
 
             prefs = get_learner_preferences("global", "local-user")
             manual_prefs = {}
@@ -826,32 +841,21 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
         if plan is None:
             return None
 
-        previous_trial_failed = False
-        try:
-            from app.services.personalization.teaching.teaching_history import (
-                get_recent_assessed_teaching_history,
-            )
-            from app.services.storage import _connect as _hist_connect
-            with _hist_connect() as hist_conn:
-                recent = get_recent_assessed_teaching_history(
-                    project_id=project_id,
-                    session_id=prepared.session_id,
-                    through_qa_record_id=int(history_cutoff),
-                    limit=1,
-                    conn=hist_conn,
-                )
-            if recent and recent[0].get("outcome") == "unsuccessful":
-                previous_trial_failed = True
-        except Exception:
-            pass
-
         context = build_effective_teaching_context(
             teaching_plan=plan,
             current_question=question,
             manual_preferences=manual_prefs,
             mode="assist",
             planner_run_id=f"assist:{project_id}:{int(time.time())}",
-            previous_trial_failed=previous_trial_failed,
+        )
+
+        from app.services.personalization.teaching.strategy_policy import (
+            apply_teaching_history_policy,
+        )
+        context = apply_teaching_history_policy(
+            context=context,
+            blocker_type=plan.blocker_type,
+            recent_history=assessed_teaching_history,
         )
 
         logger.info(
@@ -876,10 +880,7 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
                 planner_run_id=context.planner_run_id,
                 teaching_plan_id=f"plan:{project_id}:{int(time.time())}",
                 snapshot_id="",
-                effective_context_json=_json.dumps({
-                    "teaching_goal": context.teaching_goal,
-                    "strategies": context.strategies,
-                }),
+                effective_context_json=context.model_dump_json(exclude_none=True),
                 mode="assist",
                 answer_model=settings.get("model", ""),
             )

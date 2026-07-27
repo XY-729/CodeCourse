@@ -379,15 +379,21 @@ def execute_teacher_planner(
 
 
 def _get_manual_preferences(project_id: int, conn) -> dict[str, object]:
+    """Exclude deprecated fixed answer-style controls from Planner input."""
     row = conn.execute(
-        "SELECT * FROM learner_preferences WHERE scope_type = 'project' AND scope_id = ?",
+        """SELECT terminology_density
+           FROM learner_preferences
+           WHERE scope_type = 'project' AND scope_id = ?""",
         (str(project_id),),
     ).fetchone()
     if row:
-        return {"answer_depth": float(row[3]), "code_ratio": float(row[4]), "explanation_order": row[5]}
+        return {"terminology_density": float(row[0])}
+
     row = conn.execute(
-        "SELECT * FROM learner_preferences WHERE scope_type = 'global' AND scope_id = 'local-user'"
+        """SELECT terminology_density
+           FROM learner_preferences
+           WHERE scope_type = 'global' AND scope_id = 'local-user'"""
     ).fetchone()
     if row:
-        return {"answer_depth": float(row[3]), "code_ratio": float(row[4]), "explanation_order": row[5]}
+        return {"terminology_density": float(row[0])}
     return {}
