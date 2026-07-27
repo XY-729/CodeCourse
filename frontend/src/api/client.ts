@@ -1,5 +1,6 @@
 import { httpApiUrl, providerRequest } from "../platform/provider";
 import { isAndroidRuntime } from "../platform/runtime";
+import type { TermPersonalizationProfile } from "../personalization/termDisplayTypes";
 
 export type Project = {
   id: number;
@@ -975,6 +976,33 @@ export function clearConceptOverride(projectId: number, conceptId: string, idemp
     method: "POST",
     body: JSON.stringify({ conceptId, idempotencyKey }),
   });
+}
+
+export async function getTermDisplayProfiles(
+  projectId: number,
+  conceptKeys: string[],
+  signal?: AbortSignal,
+): Promise<TermPersonalizationProfile[]> {
+  const uniqueKeys = [...new Set(conceptKeys.map((k) => k.trim()).filter(Boolean))];
+  if (uniqueKeys.length === 0) return [];
+
+  const profiles: TermPersonalizationProfile[] = [];
+  const batchSize = 200;
+
+  for (let i = 0; i < uniqueKeys.length; i += batchSize) {
+    const batch = uniqueKeys.slice(i, i + batchSize);
+    const response = await request<{ profiles: TermPersonalizationProfile[] }>(
+      `/projects/${projectId}/personalization/term-display-profiles`,
+      {
+        method: "POST",
+        signal,
+        body: JSON.stringify({ concept_keys: batch }),
+      },
+    );
+    profiles.push(...response.profiles);
+  }
+
+  return profiles;
 }
 
 export function getPersonalizationEvents(projectId: number, conceptId: string): Promise<PersonalizationEvent[]> {

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { BookOpen, Bot, ChevronDown, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
 import {
@@ -95,8 +95,9 @@ import TermActionPopover from "./components/TermActionPopover";
 import { GESTURE_COMPLETE_EVENT } from "./components/GestureLayer";
 import type { GesturePath } from "./gestures/GestureDrawer";
 import { recognizeGesture } from "./gestures/GestureRecognizer";
-import { normalizeTerm, scoreTermLinks, selectTopTerms, shouldOfferStyleSurvey } from "./personalization";
-import type { ConceptMastery, TermCandidate } from "./personalization";
+import { shouldOfferStyleSurvey, useTermDisplay } from "./personalization";
+import type { UseTermDisplayParams } from "./personalization";
+import { getTermDisplayProfiles } from "./api/client";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
 import { getCodeCourseProvider } from "./platform/provider";
 import { canRetry, permissionNotice as buildPermissionNotice, type PermissionNotice } from "./platform/android/generationState";
@@ -745,8 +746,8 @@ export default function App() {
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
   const [qaSessionId, setQASessionId] = useState<number | null>(null);
   const [qaSessionTree, setQASessionTree] = useState<QARecord[]>([]);
-  const [documentTerms, setDocumentTerms] = useState<DocumentTerm[]>([]);
-  const [documentTermsBySource, setDocumentTermsBySource] = useState<Record<string, DocumentTerm[]>>({});
+  const [rawDocumentTermsBySource, setRawDocumentTermsBySource] = useState<Record<string, DocumentTerm[]>>({});
+  const [activeDocumentTerms, setActiveDocumentTerms] = useState<DocumentTerm[]>([]);
   const [termAction, setTermAction] = useState<{ term: DocumentTerm; position?: { x: number; y: number } } | null>(null);
   const [styleSurveyDue, setStyleSurveyDue] = useState(false);
   const [styleSurveyDismissed, setStyleSurveyDismissed] = useState(false);
@@ -760,6 +761,30 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [permissionNotice, setPermissionNotice] = useState<PermissionNotice>(null);
   const dismissedPermissionStatusRef = useRef<string | null>(null);
+
+  const activeTermSourceKey = useMemo(() => {
+    const item = getActiveOpenItem();
+    if (!item) return "";
+    return `${item.qaRecordId ? "qa" : "course"}:${item.path}`;
+  }, [layout, activeGroupId]);
+
+  const activeTermRawTerms = useMemo(() => {
+    return rawDocumentTermsBySource[activeTermSourceKey] ?? [];
+  }, [rawDocumentTermsBySource, activeTermSourceKey]);
+
+  const activeTermContent = useMemo(() => {
+    const item = getActiveOpenItem();
+    return item?.content ?? "";
+  }, [layout, activeGroupId]);
+
+  const termDisplay = useTermDisplay({
+    projectId: project?.id ?? null,
+    sourceKey: activeTermSourceKey,
+    content: activeTermContent,
+    rawTerms: activeTermRawTerms,
+    terminologyDensity: 0.5,
+    loadProfiles: getTermDisplayProfiles,
+  });
   const awaitingNotificationSettingsRef = useRef(false);
   const [retryingTaskId, setRetryingTaskId] = useState<number | null>(null);
   const handledCompletionNavRef = useRef(new Set<string>());
@@ -1565,7 +1590,7 @@ export default function App() {
   useEffect(() => {
     if (!project || !selectedQA) {
       setQASessionTree([]);
-      setDocumentTerms([]);
+      setActiveDocumentTerms([]);
       setLearningAnchor(null);
       return;
     }
@@ -1578,9 +1603,9 @@ export default function App() {
     ]).then(([tree, terms, anchor]) => {
       if (cancelled) return;
       setQASessionTree(tree);
-      setDocumentTerms(terms);
+      setActiveDocumentTerms(terms);
       setLearningAnchor(anchor);
-      setDocumentTermsBySource((current) => ({ ...current, [`qa:${sourcePath}`]: terms }));
+      setRawDocumentTermsBySource((current) => ({ ...current, [`qa:${sourcePath}`]: terms }));
     }).catch((caught) => {
       if (!cancelled) setQAPanelError(caught instanceof Error ? caught.message : "加载问答分支失败");
     });
@@ -2012,102 +2037,13 @@ export default function App() {
   }
 
   async function refreshDocumentTerms(sourceType: "course" | "qa", sourcePath: string, projectId = project?.id) {
-    if (!projectId || !sourcePath) return [];
+    if (!projectId || !sourcePath) return;
+    const key = `${sourceType}:${sourcePath}`;
     try {
       const terms = await listDocumentTerms(projectId, sourceType, sourcePath);
-      const linked = terms.filter((term) => term.status === "linked");
-      const candidates = terms.filter((term) => term.status === "candidate");
-      let displayedTerms = [...linked];
-      if (candidates.length > 0) {
-        const [resolved, preferences] = await Promise.all([
-          resolvePersonalizationTerms(projectId, candidates.map((term) => ({
-            text: term.term_text,
-            source: term.detection_source === "index" ? "index" : term.detection_source === "model" ? "model" : "rule",
-            confidence: term.confidence,
-            context_relevance: term.confidence,
-          }))),
-          getLearnerPreferences(projectId),
-        ]);
-        const resolvedByTerm = new Map(resolved.terms.map((item) => [normalizeTerm(item.text), item]));
-        const masteryMap = new Map<string, ConceptMastery>();
-        for (const item of resolved.terms) {
-          if (!item.mastery) continue;
-          masteryMap.set(item.concept.id, {
-            id: item.mastery.id,
-            conceptId: item.mastery.conceptId,
-            scope: item.mastery.scope,
-            knownEvidence: item.mastery.knownEvidence,
-            unknownEvidence: item.mastery.unknownEvidence,
-            mastery: item.mastery.mastery,
-            uncertainty: item.mastery.uncertainty,
-            manualStatus: item.mastery.manualStatus,
-            sequence: item.mastery.sequence,
-            lastSeenAt: item.mastery.lastSeenAt,
-            updatedAt: item.mastery.updatedAt,
-          });
-        }
-        const scoringCandidates: TermCandidate[] = candidates.map((term) => {
-          const resolvedTerm = resolvedByTerm.get(normalizeTerm(term.term_text));
-          return {
-            text: term.term_text,
-            conceptId: resolvedTerm?.concept.id ?? term.concept_id ?? undefined,
-            source: term.detection_source === "model"
-              ? "model"
-              : term.detection_source === "index"
-                ? "code"
-                : "dictionary",
-            termConfidence: term.confidence,
-            contextRelevance: Math.max(0.45, term.confidence),
-            generalDifficulty: resolvedTerm?.concept.difficulty ?? 0.62,
-          };
-        });
-        const openItem = findOpenItemByPath(layout, sourcePath);
-        const textLength = Math.max(1, openItem?.content.length ?? candidates.length * 160);
-        const selected = selectTopTerms(
-          scoreTermLinks(scoringCandidates, masteryMap, new Date().toISOString(), 0.5),
-          textLength,
-          new Set(),
-          preferences.terminologyDensity,
-        );
-        const visibleKeys = new Set(selected.map((term) => normalizeTerm(term.text)));
-        displayedTerms = [
-          ...linked,
-          ...candidates.filter((term) => visibleKeys.has(normalizeTerm(term.term_text))),
-        ];
-        const tierByTerm = new Map(selected.map((term) => [normalizeTerm(term.text), term.displayTier]));
-        const candidateImpressions = displayedTerms
-          .filter((term) => term.status === "candidate")
-          .map((term) => ({
-            concept_id: resolvedByTerm.get(normalizeTerm(term.term_text))?.concept.id ?? term.concept_id ?? null,
-            source_type: sourceType,
-            source_path: sourcePath,
-            term_text: term.term_text,
-            content_hash: term.content_hash ?? "",
-            displayed: true,
-            display_style: tierByTerm.get(normalizeTerm(term.term_text)) ?? "subtle",
-          }));
-        const impressionKey = [
-          projectId,
-          sourceType,
-          sourcePath,
-          candidateImpressions[0]?.content_hash ?? "",
-          candidateImpressions.map((item) => item.concept_id ?? item.term_text).sort().join(","),
-        ].join(":");
-        if (candidateImpressions.length > 0 && !recordedTermImpressionsRef.current.has(impressionKey)) {
-          recordedTermImpressionsRef.current.add(impressionKey);
-          void recordTermImpressions(projectId, candidateImpressions).catch(() => {
-            recordedTermImpressionsRef.current.delete(impressionKey);
-          });
-        }
-      }
-      setDocumentTermsBySource((current) => ({ ...current, [`${sourceType}:${sourcePath}`]: displayedTerms }));
-      if (sourceType === "qa" && selectedQA && (selectedQA.output_path || String(selectedQA.id)) === sourcePath) {
-        setDocumentTerms(displayedTerms);
-      }
-      return displayedTerms;
+      setRawDocumentTermsBySource((current) => ({ ...current, [key]: terms }));
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "加载陌生术语失败");
-      return [];
     }
   }
 
@@ -2702,8 +2638,8 @@ export default function App() {
       setSelectedQA(null);
       setQASessionId(null);
       setQASessionTree([]);
-      setDocumentTerms([]);
-      setDocumentTermsBySource({});
+      setActiveDocumentTerms([]);
+      setRawDocumentTermsBySource({});
       setLearningAnchor(null);
       setQAUpperTab("history");
       setQAPanelError("");
@@ -3369,7 +3305,7 @@ export default function App() {
     setSelectedQA(null);
     setQASessionId(null);
     setQASessionTree([]);
-    setDocumentTerms([]);
+    setActiveDocumentTerms([]);
     setLearningAnchor(null);
     setQAQuestion("");
     setQAUpperTab("history");
@@ -3424,7 +3360,7 @@ export default function App() {
         refreshCourses(project.id),
         refreshQAHistory(project.id),
         refreshKnowledgeLinks(project.id),
-        refreshDocumentTerms(term.source_type, term.source_path, project.id),
+        refreshDocumentTerms(term.source_type, term.source_path, project.id).catch(() => {}),
       ]);
       setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
@@ -3458,17 +3394,29 @@ export default function App() {
       { value: "dismiss", label: "忽略", description: "隐藏当前候选，不生成解释" },
     ]);
     if (!action) return;
+
+    const conceptKey = term.concept_id || `term:${(term.term_text || "").trim().toLowerCase()}`;
+    const previousProfile = termDisplay.profilesByConceptKey.get(conceptKey);
+
     try {
+      termDisplay.patchProfile(conceptKey, {
+        manualStatus: action === "known" ? "known" : null,
+      });
       const updated = action === "known"
         ? await markDocumentTermKnown(project.id, term.id)
         : await dismissDocumentTerm(project.id, term.id);
       const key = `${term.source_type}:${term.source_path}`;
-      setDocumentTermsBySource((current) => ({
+      setRawDocumentTermsBySource((current) => ({
         ...current,
         [key]: (current[key] ?? []).map((item) => item.id === updated.id ? updated : item),
       }));
-      setDocumentTerms((items) => items.map((item) => item.id === updated.id ? updated : item));
+      setActiveDocumentTerms((items) => items.map((item) => item.id === updated.id ? updated : item));
     } catch (caught) {
+      if (previousProfile) {
+        termDisplay.patchProfile(conceptKey, previousProfile);
+      } else {
+        termDisplay.patchProfile(conceptKey, { manualStatus: null });
+      }
       setQAPanelError(caught instanceof Error ? caught.message : "更新术语状态失败");
     }
   }
@@ -4098,7 +4046,9 @@ export default function App() {
                 content={activeItem.content}
                 highlights={highlights.filter((highlight) => highlight.source_type === (activeItem.qaRecordId ? "qa" : "course") && highlight.source_path === activeItem.path)}
                 knowledgeLinks={knowledgeLinks.filter((link) => link.source_type === "course" && link.source_path === activeItem.path)}
-                documentTerms={documentTermsBySource[`${activeItem.qaRecordId ? "qa" : "course"}:${activeItem.path}`] ?? []}
+                documentTerms={activeTermRawTerms}
+                visibleTermCandidateIds={new Set(termDisplay.visibleCandidateIds)}
+                termDisplayTiers={new Map(termDisplay.tiersByCandidateId)}
                 tempSelectedText={
                   !mobileRuntime && selectionAnchor?.sourceType === (activeItem.qaRecordId ? "qa" : "course") && selectionAnchor.sourcePath === activeItem.path
                     ? selectionAnchor.selectedText

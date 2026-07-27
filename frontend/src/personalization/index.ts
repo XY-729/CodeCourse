@@ -9,4 +9,5 @@ export * from "./termLinkScorer";
 export * from "./conceptResolver";
 export * from "./preferenceEngine";
 export { usePersonalization } from "./usePersonalization";
-export { computeTermDisplay } from "./useTermDisplay";
+export { useTermDisplay, createNeutralTermProfile } from "./useTermDisplay";
+export type { UseTermDisplayParams, UseTermDisplayResult } from "./useTermDisplay";
