@@ -15,7 +15,7 @@ def get_latest_evaluable_teaching_trial(
 
     row = conn.execute(
         """SELECT t.id, t.qa_record_id, t.effective_context_json,
-           t.strategies_json, t.teaching_goal, t.was_applied
+           t.previous_outcome, t.was_applied
            FROM teaching_trials t
            WHERE t.project_id = ?
              AND t.session_id = ?
@@ -35,13 +35,17 @@ def get_latest_evaluable_teaching_trial(
         return None
 
     import json
+    ctx = json.loads(row[2]) if row[2] else {}
+    strategies = ctx.get("strategies", []) if isinstance(ctx, dict) else []
+    teaching_goal = ctx.get("teaching_goal", "") if isinstance(ctx, dict) else ""
     return {
         "id": row[0],
         "qa_record_id": row[1],
         "effective_context_json": row[2],
-        "strategies": json.loads(row[3]) if row[3] else [],
-        "teaching_goal": row[4],
-        "was_applied": bool(row[5]),
+        "strategies": strategies,
+        "teaching_goal": teaching_goal,
+        "was_applied": bool(row[4]),
+        "previous_outcome": row[3],
     }
 
 

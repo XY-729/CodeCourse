@@ -229,22 +229,14 @@ function applyTermCandidatesToText(
     const term = candidates.find((candidate) =>
       text.startsWith(candidate.term_text, index)
       && (
-        candidate.status === "linked"
-        || (visibleTermCandidateIds && visibleTermCandidateIds.has(
-          `term:${candidate.id}:${0}:${index}`
-        ))
+        ((candidate.link_origin ?? "legacy_unknown") === "manual")
+        || (visibleTermCandidateIds && visibleTermCandidateIds.has(String(candidate.id)))
       )
     );
     if (!term) {
-      const linkedOnly = candidates.find((candidate) =>
-        text.startsWith(candidate.term_text, index)
-        && candidate.status === "linked"
-      );
-      if (!linkedOnly) {
-        result.push(text[index]);
-        index += 1;
-        continue;
-      }
+      result.push(text[index]);
+      index += 1;
+      continue;
     }
     if (!term) {
       result.push(text[index]);

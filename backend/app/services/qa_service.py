@@ -831,12 +831,14 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
             from app.services.personalization.teaching.teaching_history import (
                 get_latest_evaluable_teaching_trial,
             )
-            prev_trial = get_latest_evaluable_teaching_trial(
-                project_id=project_id,
-                session_id=prepared.session_id,
-                before_qa_record_id=0,
-                conn=None,
-            )
+            from app.services.storage import _connect as _hist_connect
+            with _hist_connect() as hist_conn:
+                prev_trial = get_latest_evaluable_teaching_trial(
+                    project_id=project_id,
+                    session_id=prepared.session_id,
+                    before_qa_record_id=2_147_483_647,
+                    conn=hist_conn,
+                )
             if prev_trial is not None and prev_trial.get("previous_outcome") == "unsuccessful":
                 previous_trial_failed = True
         except Exception:
@@ -860,6 +862,29 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
                 "elapsed_ms": int((time.time() - start) * 1000),
             },
         )
+
+        try:
+            from app.services.storage import _connect
+            import json as _json
+            trial_id = f"trial:{project_id}:{int(time.time())}"
+            now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+            with _connect() as trial_conn:
+                trial_conn.execute(
+                    """INSERT OR IGNORE INTO teaching_trials
+                       (id, project_id, session_id, qa_record_id, planner_run_id,
+                        snapshot_id, teaching_plan_id, effective_context_json,
+                        mode, was_applied, answer_model, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        trial_id, project_id, prepared.session_id, 0,
+                        context.planner_run_id, "",
+                        f"plan:{project_id}:{int(time.time())}",
+                        _json.dumps({"teaching_goal": context.teaching_goal, "strategies": context.strategies}),
+                        "assist", 1, settings.get("model", ""), now,
+                    ),
+                )
+        except Exception:
+            pass
 
         return context
 

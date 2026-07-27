@@ -179,7 +179,8 @@ function computeTermDisplay(props: {
     tiersById.set(d.candidateId, d.tier);
 
     if (d.visible) {
-      visibleCandidateIds.add(d.candidateId);
+      const termId = d.candidateId.split(":")[1] || d.candidateId;
+      visibleCandidateIds.add(termId);
       visibleOccurrences.push({
         candidateId: d.candidateId,
         conceptKey: d.conceptKey,

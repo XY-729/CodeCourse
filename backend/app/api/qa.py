@@ -142,6 +142,21 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
                     if prepared.existing_record is not None:
                         yield _sse("completed", _to_response(prepared.existing_record).model_dump(mode="json"))
                         return
+                    try:
+                        from app.services.qa_service import _maybe_plan_teaching, _render_teaching_for_prompt
+                        tc = await asyncio.to_thread(_maybe_plan_teaching, project_id, prepared)
+                        if tc is not None:
+                            rendered = _render_teaching_for_prompt(tc)
+                            if rendered:
+                                for i, msg in enumerate(prepared.messages):
+                                    if msg.get("role") == "system":
+                                        prepared.messages[i] = {
+                                            "role": "system",
+                                            "content": (msg.get("content") or "") + "\n\n<trusted_teaching_context>\n" + rendered + "\n</trusted_teaching_context>",
+                                        }
+                                        break
+                    except Exception:
+                        pass
                     yield _sse("stage", {"stage": "waiting_model", "label": "等待模型"})
                     chunks: list[str] = []
                     emitted_answer_stage = False
