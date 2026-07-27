@@ -3997,12 +3997,6 @@ html.platform-android[data-theme="dark"] .field-label > span {
   background: #337a70;
   transform-origin: left center;
   transform: scaleX(0);
-  transition: transform 200ms ease;
-}
-@media (prefers-reduced-motion: reduce) {
-  .reader-progress-fill {
-    transition: none;
-  }
 }
 .reader-learning-toolbar {
   min-height: 39px;
