@@ -3912,6 +3912,31 @@ html.platform-android[data-theme="dark"] .field-label > span {
   transform: translateY(1px);
 }
 
+/* Personalized term display */
+.personalized-term {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  vertical-align: baseline;
+}
+
+.personalized-term--subtle {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+}
+
+.personalized-term--prominent {
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16em;
+}
+
 .term-candidate-link {
   display: inline;
   padding: 0;

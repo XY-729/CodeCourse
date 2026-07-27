@@ -772,6 +772,63 @@ def get_observer_run_endpoint(run_id: str) -> dict:
     }
 
 
+# ---------- Phase 3: Term Display Profiles (Batch) ----------
+
+@router.post("/term-display-profiles")
+def term_display_profiles(
+    project_id: int,
+    body: dict,
+) -> dict:
+    concept_keys: list[str] = body.get("concept_keys", [])[:200]
+    if not concept_keys:
+        return {"profiles": []}
+
+    profiles: list[dict] = []
+    with _api_db_connect() as conn:
+        placeholders = ",".join("?" * len(concept_keys))
+
+        mastery_rows = conn.execute(
+            f"""SELECT concept_id, mastery, uncertainty, manual_status
+               FROM concept_mastery
+               WHERE scope_type = 'global' AND scope_id = 'local-user'
+               AND concept_id IN ({placeholders})""",
+            concept_keys,
+        ).fetchall()
+        mastery_by_id = {
+            r[0]: {"mastery": float(r[1]), "uncertainty": float(r[2]), "manual_status": r[3]}
+            for r in mastery_rows
+        }
+
+        cap_rows = conn.execute(
+            f"""SELECT concept_id, familiarity, confidence, evidence_count
+               FROM concept_capabilities
+               WHERE scope_type = 'project' AND scope_id = ?
+               AND concept_id IN ({placeholders})
+               AND evidence_count >= 2 AND confidence >= 0.08""",
+            (str(project_id), *concept_keys),
+        ).fetchall()
+        caps_by_id = {
+            r[0]: {"shadow_familiarity": float(r[1]), "shadow_confidence": float(r[2]), "shadow_evidence_count": int(r[3])}
+            for r in cap_rows
+        }
+
+    for key in concept_keys:
+        m = mastery_by_id.get(key)
+        c = caps_by_id.get(key)
+        profiles.append({
+            "concept_key": key,
+            "manual_status": m["manual_status"] if m else None,
+            "mastery": m["mastery"] if m else None,
+            "uncertainty": m["uncertainty"] if m else None,
+            "shadow_familiarity": c["shadow_familiarity"] if c else None,
+            "shadow_confidence": c["shadow_confidence"] if c else None,
+            "shadow_evidence_count": c["shadow_evidence_count"] if c else 0,
+            "domain_prior": None,
+        })
+
+    return {"profiles": profiles}
+
+
 # ---------- Phase 1: Shadow Debug APIs ----------
 
 @router.get("/shadow/observations")
