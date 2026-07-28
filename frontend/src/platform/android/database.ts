@@ -372,6 +372,256 @@ export class MobileDatabase {
         );
         CREATE INDEX IF NOT EXISTS idx_mobile_term_impressions_source
           ON term_impressions(project_id, source_type, source_path);
+        CREATE TABLE IF NOT EXISTS concept_relations (
+          id TEXT PRIMARY KEY,
+          source_concept_id TEXT NOT NULL,
+          target_concept_id TEXT NOT NULL,
+          relation_type TEXT NOT NULL,
+          domain TEXT NOT NULL DEFAULT 'general',
+          confidence REAL NOT NULL DEFAULT 0.5,
+          evidence_json TEXT NOT NULL DEFAULT '[]',
+          origin TEXT NOT NULL DEFAULT 'observer',
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(source_concept_id, target_concept_id, relation_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_concept_relations_source
+          ON concept_relations(source_concept_id, status);
+        CREATE TABLE IF NOT EXISTS learner_inferences (
+          id TEXT PRIMARY KEY,
+          subject_type TEXT NOT NULL,
+          subject_key TEXT NOT NULL,
+          scope_type TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          state TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          confidence REAL NOT NULL DEFAULT 0,
+          direct_evidence_count INTEGER NOT NULL DEFAULT 0,
+          inferred_evidence_count INTEGER NOT NULL DEFAULT 0,
+          evidence_json TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(subject_type, subject_key, scope_type, scope_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_learner_inferences_scope
+          ON learner_inferences(scope_type, scope_id, subject_type, status);
+        CREATE TABLE IF NOT EXISTS domain_profiles (
+          domain_key TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          confidence REAL NOT NULL DEFAULT 0,
+          confirmed_json TEXT NOT NULL DEFAULT '[]',
+          learning_json TEXT NOT NULL DEFAULT '[]',
+          likely_prerequisites_json TEXT NOT NULL DEFAULT '[]',
+          evidence_json TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(domain_key, scope_id)
+        );
+        CREATE TABLE IF NOT EXISTS concept_explanations (
+          id TEXT PRIMARY KEY,
+          concept_id TEXT NOT NULL,
+          project_id INTEGER NOT NULL,
+          qa_record_id INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(concept_id, qa_record_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_concept_explanations
+          ON concept_explanations(concept_id, status, updated_at DESC);
+        CREATE TABLE IF NOT EXISTS survey_candidates (
+          id TEXT PRIMARY KEY,
+          scope_id TEXT NOT NULL,
+          question TEXT NOT NULL,
+          dimension TEXT NOT NULL,
+          options_json TEXT NOT NULL,
+          rationale TEXT NOT NULL DEFAULT '',
+          confidence REAL NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          observer_run_id TEXT,
+          answer TEXT,
+          created_at TEXT NOT NULL,
+          answered_at TEXT,
+          dismissed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_survey_candidates
+          ON survey_candidates(scope_id, status, created_at DESC);
+        CREATE TABLE IF NOT EXISTS model_call_audit (
+          id TEXT PRIMARY KEY,
+          project_id INTEGER,
+          purpose TEXT NOT NULL,
+          provider TEXT,
+          model TEXT,
+          status TEXT NOT NULL,
+          input_tokens INTEGER,
+          output_tokens INTEGER,
+          estimated_cost REAL,
+          latency_ms INTEGER,
+          error_message TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_model_call_audit
+          ON model_call_audit(created_at DESC);
+        CREATE TABLE IF NOT EXISTS term_model_scans (
+          project_id INTEGER NOT NULL,
+          source_type TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          status TEXT NOT NULL,
+          terms_json TEXT NOT NULL DEFAULT '[]',
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(project_id, source_type, source_path, content_hash)
+        );
+        CREATE TABLE IF NOT EXISTS learning_evidence_v2 (
+          id TEXT PRIMARY KEY,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          schema_version INTEGER NOT NULL DEFAULT 2,
+          concept_id TEXT NOT NULL,
+          scope_type TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          dimension TEXT NOT NULL,
+          direction TEXT NOT NULL,
+          strength REAL NOT NULL,
+          reliability REAL NOT NULL,
+          source TEXT NOT NULL,
+          action TEXT NOT NULL,
+          object_json TEXT NOT NULL DEFAULT '{}',
+          result_json TEXT NOT NULL DEFAULT '{}',
+          context_json TEXT NOT NULL DEFAULT '{}',
+          event_time TEXT NOT NULL,
+          session_id TEXT,
+          qa_record_id INTEGER,
+          diagnostic_attempt_id TEXT,
+          objective_correct INTEGER,
+          target_evidence_id TEXT,
+          voided INTEGER NOT NULL DEFAULT 0,
+          model_version TEXT,
+          policy_version TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_learning_evidence_v2_replay
+          ON learning_evidence_v2(concept_id, scope_type, scope_id, event_time, id);
+        CREATE TABLE IF NOT EXISTS knowledge_states_v2 (
+          concept_id TEXT NOT NULL,
+          scope_type TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          state_json TEXT NOT NULL,
+          policy_version TEXT NOT NULL,
+          evidence_version INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(concept_id, scope_type, scope_id)
+        );
+        CREATE TABLE IF NOT EXISTS diagnostic_items (
+          id TEXT PRIMARY KEY,
+          project_id INTEGER NOT NULL,
+          session_id TEXT,
+          source_qa_record_id INTEGER,
+          concept_ids_json TEXT NOT NULL,
+          dimension TEXT NOT NULL,
+          item_type TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          options_json TEXT NOT NULL DEFAULT '[]',
+          answer_key_json TEXT NOT NULL,
+          source_refs_json TEXT NOT NULL,
+          rationale TEXT NOT NULL DEFAULT '',
+          difficulty REAL NOT NULL DEFAULT 0.5,
+          strategy_version TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at TEXT NOT NULL,
+          shown_at TEXT,
+          dismissed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_diagnostic_items_pending
+          ON diagnostic_items(project_id, status, created_at DESC);
+        CREATE TABLE IF NOT EXISTS diagnostic_attempts (
+          id TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL,
+          project_id INTEGER NOT NULL,
+          session_id TEXT,
+          answer_json TEXT NOT NULL,
+          is_correct INTEGER,
+          user_flagged INTEGER NOT NULL DEFAULT 0,
+          evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+          answered_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS observer_jobs (
+          id TEXT PRIMARY KEY,
+          project_id INTEGER NOT NULL,
+          qa_record_id INTEGER NOT NULL,
+          reason TEXT NOT NULL,
+          payload_json TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          available_at TEXT NOT NULL,
+          locked_at TEXT,
+          last_error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(project_id, qa_record_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_observer_jobs_ready
+          ON observer_jobs(status, available_at);
+        CREATE TABLE IF NOT EXISTS teaching_trials (
+          id TEXT PRIMARY KEY,
+          project_id INTEGER NOT NULL,
+          session_id INTEGER,
+          qa_record_id INTEGER NOT NULL,
+          planner_run_id TEXT,
+          snapshot_id TEXT,
+          teaching_plan_id TEXT,
+          effective_context_json TEXT,
+          mode TEXT NOT NULL DEFAULT 'default',
+          was_applied INTEGER NOT NULL DEFAULT 0,
+          fallback_reason TEXT,
+          answer_model TEXT,
+          previous_outcome TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_teaching_trials_qa
+          ON teaching_trials(project_id, qa_record_id);
+        CREATE TABLE IF NOT EXISTS teaching_outcomes (
+          id TEXT PRIMARY KEY,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          project_id INTEGER NOT NULL,
+          session_id INTEGER,
+          teaching_trial_id TEXT NOT NULL,
+          taught_qa_record_id INTEGER NOT NULL,
+          evaluation_qa_record_id INTEGER NOT NULL,
+          result TEXT NOT NULL,
+          confidence REAL NOT NULL,
+          reason TEXT NOT NULL,
+          evidence_quote TEXT NOT NULL,
+          source_observation_id TEXT,
+          observer_run_id TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_teaching_outcomes_trial
+          ON teaching_outcomes(teaching_trial_id);
+        CREATE INDEX IF NOT EXISTS idx_mobile_teaching_outcomes_session
+          ON teaching_outcomes(project_id, session_id, evaluation_qa_record_id);
+        INSERT OR IGNORE INTO learning_evidence_v2
+          (id, idempotency_key, schema_version, concept_id, scope_type, scope_id,
+           dimension, direction, strength, reliability, source, action,
+           object_json, result_json, context_json, event_time, voided,
+           policy_version)
+        SELECT
+          'migration:v2:manual:' || scope_type || ':' || scope_id || ':' ||
+            concept_id || ':' || manual_status,
+          'migration:v2:manual:' || scope_type || ':' || scope_id || ':' ||
+            concept_id || ':' || manual_status,
+          2, concept_id, scope_type, scope_id, 'familiarity',
+          CASE WHEN manual_status='known' THEN 'positive' ELSE 'negative' END,
+          1, 1, 'manual',
+          CASE WHEN manual_status='known' THEN 'manual_known' ELSE 'manual_unknown' END,
+          '{}', '{}', '{"migrated_from":"concept_mastery"}', updated_at, 0,
+          'knowledge-v2.1'
+        FROM concept_mastery
+        WHERE manual_status IN ('known', 'unknown');
       `,
       transaction: true,
       readonly: false,

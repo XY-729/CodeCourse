@@ -26,8 +26,9 @@ type Props = {
   tempSelectedText?: string | null;
   onSelectionChange?: (selection: ViewerSelection) => void;
   onOpenKnowledgeLink?: (term: string, links: KnowledgeLink[]) => void;
+  onOpenQAReference?: (projectId: number, qaRecordId: number) => void;
   onGenerateTerm?: (term: DocumentTerm, position?: { x: number; y: number }) => void;
-  onTermAction?: (term: DocumentTerm) => void;
+  onTermAction?: (term: DocumentTerm, position?: { x: number; y: number }) => void;
   onGenerateLesson?: (lessonNumber: number, title: string) => void;
   headerActions?: ReactNode;
   embedded?: boolean;
@@ -271,6 +272,7 @@ export default function MarkdownViewer({
   tempSelectedText,
   onSelectionChange,
   onOpenKnowledgeLink,
+  onOpenQAReference,
   onGenerateTerm,
   onTermAction,
   onGenerateLesson,
@@ -610,6 +612,18 @@ export default function MarkdownViewer({
           </button>
         );
       }
+      const qaReference = href?.match(/^https:\/\/codecourse\.local\/qa\/(\d+)\/(\d+)$/);
+      if (qaReference && onOpenQAReference) {
+        return (
+          <button
+            type="button"
+            className="knowledge-inline-link"
+            onClick={() => onOpenQAReference(Number(qaReference[1]), Number(qaReference[2]))}
+          >
+            {children}
+          </button>
+        );
+      }
       return <a href={href}>{children}</a>;
     },
     span: (spanProps: React.HTMLAttributes<HTMLSpanElement> & {
@@ -693,7 +707,7 @@ export default function MarkdownViewer({
             event.preventDefault();
             event.stopPropagation();
             if (term.status === "candidate") {
-              onTermAction?.(term);
+              onTermAction?.(term, { x: event.clientX, y: event.clientY });
             }
           }}
         >
@@ -742,6 +756,7 @@ export default function MarkdownViewer({
     visibleTermCandidateIds,
     termDisplayTiers,
     onGenerateLesson,
+    onOpenQAReference,
     termById,
     androidRuntime,
   ]);

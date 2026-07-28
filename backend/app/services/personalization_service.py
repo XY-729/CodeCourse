@@ -347,17 +347,58 @@ def _parent_concepts(project_id: int, qa_record: QARecord) -> list[Concept]:
 
 
 def record_question_learning(project_id: int, qa_record: QARecord) -> None:
-    """
-    Legacy compatibility hook.
+    """Record only structurally explicit learning signals.
 
-    A follow-up is not automatically evidence of unfamiliarity. This function
-    intentionally performs no automatic mastery or preference updates.
-
-    Explicit user feedback continues to use the existing personalization API.
-    Model-generated evidence is written to shadow observation tables and must
-    not mutate concept_mastery or learner_preferences in this phase.
+    A selection-based term explanation and a follow-up are observable actions;
+    wording heuristics are intentionally excluded. Follow-ups remain weak
+    evidence and can never confirm or independently disconfirm mastery.
     """
-    return None
+    if qa_record is None:
+        return
+    event_type = (
+        "asked_clarification"
+        if qa_record.parent_qa_id
+        else "asked_definition"
+        if qa_record.relation_type == "term_explanation"
+        else ""
+    )
+    if not event_type:
+        return
+    concepts = concepts_for_question(
+        project_id,
+        qa_record.question,
+        qa_record.selected_text,
+        qa_record.source_type,
+        qa_record.source_path,
+    )
+    if not concepts and qa_record.parent_qa_id:
+        concepts = _parent_concepts(project_id, qa_record)
+    from app.services.personalization.knowledge_state_service import append_evidence
+    for concept in concepts:
+        scope_type, scope_id = concept_scope(concept, project_id)
+        key = f"question-v2:{qa_record.id}:{concept.id}:{event_type}"
+        append_evidence(
+            {
+                "idempotencyKey": key,
+                "conceptId": concept.id,
+                "scopeType": scope_type,
+                "scopeId": scope_id,
+                "dimension": "familiarity",
+                "direction": "negative",
+                "strength": 0.75 if event_type == "asked_definition" else 0.55,
+                "reliability": 0.8,
+                "source": "question",
+                "action": event_type,
+                "object": {"type": "qa", "qaRecordId": qa_record.id},
+                "result": {"evidenceText": qa_record.question[:200]},
+                "sessionId": (
+                    str(qa_record.session_id)
+                    if qa_record.session_id is not None
+                    else None
+                ),
+                "qaRecordId": qa_record.id,
+            }
+        )
 
 
 def build_learner_context(
@@ -378,23 +419,60 @@ def build_learner_context(
     known: list[str] = []
     unfamiliar: list[str] = []
     uncertain: list[str] = []
+    from app.services.personalization.knowledge_state_service import get_states
+    state_rows = get_states(
+        [("global", GLOBAL_SCOPE_ID), ("project", str(project_id))],
+        [concept.id for concept in concepts],
+    )
+    states_by_id = {item["conceptId"]: item for item in state_rows}
     for concept in sorted(concepts, key=lambda item: item.canonical_name.casefold()):
-        scope_type, scope_id = concept_scope(concept, project_id)
-        mastery = get_concept_mastery(concept.id, scope_type, scope_id)
-        if mastery and mastery.manual_status == "known":
+        state = states_by_id.get(concept.id, {})
+        dimensions = state.get("dimensions", {})
+        familiarity = dimensions.get("familiarity", {})
+        conceptual = dimensions.get("conceptual", {})
+        if (
+            familiarity.get("status") == "confirmed"
+            or conceptual.get("status") == "confirmed"
+        ):
             known.append(concept.display_name)
-        elif mastery and mastery.manual_status == "unknown":
-            unfamiliar.append(concept.display_name)
-        elif mastery and mastery.mastery >= 0.75:
-            known.append(concept.display_name)
-        elif mastery and mastery.mastery <= 0.35:
+        elif (
+            familiarity.get("status") == "learning"
+            or conceptual.get("status") == "learning"
+        ):
             unfamiliar.append(concept.display_name)
         else:
             uncertain.append(concept.display_name)
 
+    from app.services.personalization.learner_inference_service import (
+        relevant_teaching_context,
+    )
+    inferred = relevant_teaching_context(project_id, [concept.id for concept in concepts])
+    likely_prerequisites: list[str] = [
+        item["displayName"] for item in inferred.get("prerequisites", [])[:8]
+    ]
+    for concept in concepts:
+        item = next(
+            (
+                value for value in inferred["inferences"]
+                if value["conceptId"] == concept.id
+            ),
+            None,
+        )
+        if item and item["state"] == "likely_prerequisite":
+            likely_prerequisites.append(concept.display_name)
+
     def lines(values: Iterable[str]) -> str:
         items = list(values)
         return "\n".join(f"- {value}" for value in items) if items else "- 无"
+
+    domain_lines = [
+        f"{item['domainKey']}：{item['summary']}"
+        for item in inferred["domains"][:4]
+    ]
+    explanation_lines = [
+        f"- {item['title']}：[{item['title']}]({item['url']})"
+        for item in inferred["explanations"][:8]
+    ]
 
     return f"""<learner_context>
 本轮相关已掌握概念：
@@ -406,10 +484,22 @@ def build_learner_context(
 本轮相关不确定概念：
 {lines(uncertain)}
 
+仅由先修关系推断、不得视为已掌握：
+{lines(likely_prerequisites)}
+
+相关领域知识边界：
+{lines(domain_lines)}
+
+此前已经生成的相关解释：
+{lines(explanation_lines)}
+
 使用要求：
 - 优先回答当前问题，当前问题中的明确要求高于历史偏好。
-- 已掌握概念不要重复做入门定义。
+- 已掌握且有直接证据的概念不要重复做入门定义。
 - 可能陌生概念第一次使用前先用一句大白话解释。
+- 如果存在此前解释，正文只保留当前问题所需的一句提醒，并使用提供的原链接指向此前回答。
+- 用户明确要求重新讲、详细讲或从头讲时，忽略此前解释去重并完整回答。
+- 仅由先修关系推断的概念只能调整讲解顺序，不能默认用户已经掌握。
 - 不要向用户展示掌握度数值，也不要给用户贴水平标签。
 - 教学方式由当前问题决定：调试优先解决，学习优先建立理解。
 </learner_context>"""

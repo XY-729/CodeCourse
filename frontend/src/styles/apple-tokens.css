@@ -48,6 +48,12 @@ html:not(.platform-android) {
   --apple-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --apple-radius-sm: 6px;
   --apple-radius: 8px;
+  --cc-text: var(--apple-text);
+  --cc-text-secondary: var(--apple-text-secondary);
+  --cc-border: var(--apple-separator);
+  --cc-hover: var(--apple-fill-hover);
+  --cc-surface: var(--apple-surface);
+  --cc-surface-secondary: var(--apple-surface-muted);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   font-optical-sizing: auto;
 }

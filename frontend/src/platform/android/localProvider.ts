@@ -25,7 +25,8 @@ import type {
   LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, Project, ProjectIndexStatus, ProjectSearchResult,
   QAAskPayload, QARecord, TreeNode,
   PersonalizationConcept, PersonalizationMastery, PersonalizationEvent,
-  LearnerPreferences, PersonalizationProfile,
+  LearnerPreferences, PersonalizationProfile, LearnerInference,
+  KnowledgeStateV2, DiagnosticItem,
 } from "../../api/client";
 import {
   buildLearnerContext,
@@ -33,6 +34,22 @@ import {
   shouldOfferStyleSurvey,
 } from "../../personalization/preferenceEngine";
 import { normalizeTerm } from "../../personalization/conceptResolver";
+import {
+  buildObserverPrompt,
+  conservativeDomainState,
+  isAcceptedDirectEvidence,
+  isAcceptedRelation,
+  mergeInference,
+  parseObserverResult,
+  type InferenceState,
+  type ObserverResult,
+} from "../../personalization/domainInference";
+import {
+  KNOWLEDGE_POLICY_VERSION,
+  resolveKnowledgeState,
+  type LearningEvidenceV2,
+  type KnowledgeDimension,
+} from "../../personalization/knowledgeState";
 
 type ScopeTypeStr = "global" | "project" | "session";
 import promptDefaults from "./default-prompts.json";
@@ -255,6 +272,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     });
     await provider.resumeTasks();
     await provider.resumeIndexes();
+    await provider.resumeObserverJobs().catch((error) => {
+      console.warn("Observer job resume failed", error);
+    });
     return provider;
   }
 
@@ -480,22 +500,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if (path === "/settings/llm" && method === "PUT") return this.saveLLMSettings(body) as Promise<T>;
     if (path === "/settings/llm/test" && method === "POST") return this.testLLMSettings() as Promise<T>;
     if (path === "/settings/personalization" && method === "GET") {
-      return Promise.resolve({
-        supported: false,
-        teacher_planner_enabled: false,
-        observer_enabled: false,
-        teacher_planner_mode: "assist",
-        observer_mode: "shadow",
-      }) as Promise<T>;
+      return this.getPersonalizationRuntimeSettings() as Promise<T>;
     }
     if (path === "/settings/personalization" && method === "PUT") {
-      return Promise.resolve({
-        supported: false,
-        teacher_planner_enabled: false,
-        observer_enabled: false,
-        teacher_planner_mode: "assist",
-        observer_mode: "shadow",
-      }) as Promise<T>;
+      return this.savePersonalizationRuntimeSettings(body) as Promise<T>;
     }
     if (path === "/settings/prompts" && method === "GET") return this.getPrompts() as Promise<T>;
     if (path === "/settings/prompts" && method === "PUT") return this.savePrompts(body) as Promise<T>;
@@ -588,8 +596,56 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if ((match = path.match(/^\/projects\/(\d+)\/personalization\/term-impressions\/batch$/)) && method === "POST") {
       return this.saveTermImpressions(Number(match[1]), Array.isArray(body.impressions) ? body.impressions : []) as Promise<T>;
     }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/term-display-profiles$/)) && method === "POST") {
+      return this.getTermDisplayProfiles(
+        Number(match[1]),
+        Array.isArray(body.concept_keys) ? body.concept_keys.map(String).slice(0, 200) : [],
+      ) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/knowledge-state$/)) && method === "GET") {
+      const ids = (url.searchParams.get("concept_ids") || "").split(",").filter(Boolean);
+      return this.getKnowledgeStatesV2(Number(match[1]), ids) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/evidence$/)) && method === "POST") {
+      return this.appendLearningEvidenceV2(Number(match[1]), body) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/evidence\/([^/]+)\/void$/)) && method === "POST") {
+      return this.voidLearningEvidenceV2(
+        Number(match[1]),
+        decodeURIComponent(match[2]),
+        String(body.idempotencyKey || `void-v2:${decodeURIComponent(match[2])}`),
+        String(body.reason || ""),
+      ) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/rebuild$/)) && method === "POST") {
+      return this.rebuildKnowledgeProfileV2(Number(match[1])) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/diagnostics\/pending$/)) && method === "GET") {
+      return this.getPendingDiagnosticV2(Number(match[1])) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/diagnostics\/([^/]+)\/answer$/)) && method === "POST") {
+      return this.answerDiagnosticV2(Number(match[1]), decodeURIComponent(match[2]), body.answer) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/diagnostics\/([^/]+)\/dismiss$/)) && method === "POST") {
+      return this.dismissDiagnosticV2(Number(match[1]), decodeURIComponent(match[2])) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/diagnostics\/([^/]+)\/flag$/)) && method === "POST") {
+      return this.flagDiagnosticV2(Number(match[1]), decodeURIComponent(match[2])) as Promise<T>;
+    }
     if ((match = path.match(/^\/projects\/(\d+)\/personalization\/profile$/)) && method === "GET") {
       return this.getPersonalizationProfile(Number(match[1])) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/inferences\/([^/]+)\/void$/)) && method === "POST") {
+      return this.voidLearnerInference(Number(match[1]), decodeURIComponent(match[2])) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/surveys\/([^/]+)\/answer$/)) && method === "POST") {
+      return this.answerDynamicSurvey(Number(match[1]), decodeURIComponent(match[2]), String(body.choice || "")) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/surveys\/([^/]+)\/dismiss$/)) && method === "POST") {
+      return this.dismissDynamicSurvey(decodeURIComponent(match[2])) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/concepts\/([^/]+)\/explanation$/)) && method === "GET") {
+      return this.getReusableConceptExplanation(decodeURIComponent(match[2])) as Promise<T>;
     }
     if ((match = path.match(/^\/projects\/(\d+)\/personalization\/mark-known$/)) && method === "POST") {
       if (body && typeof body === "object" && "conceptId" in body && "idempotencyKey" in body) {
@@ -613,7 +669,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       return this.voidPersonalizationEvent(Number(match[1]), decodeURIComponent(match[2]), body?.conceptId || "", body?.idempotencyKey || `void:${decodeURIComponent(match[2])}:${Date.now()}`, body?.reason) as Promise<T>;
     }
     if ((match = path.match(/^\/projects\/(\d+)\/personalization\/profile$/)) && method === "DELETE") {
-      return this.resetPersonalizationProfile(Number(match[1]), url.searchParams.get("scope") === "global" ? "global" : "project") as Promise<T>;
+      const scope = url.searchParams.get("scope");
+      return this.resetPersonalizationProfile(
+        Number(match[1]),
+        scope === "all" ? "all" : scope === "global" ? "global" : "project",
+      ) as Promise<T>;
     }
     throw new Error(`移动端尚未实现此操作：${method} ${path}`);
   }
@@ -667,6 +727,36 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
   private async deleteProject(projectId: number): Promise<{ id: number; status: string; message: string; course_files: string[] }> {
     await db.run("DELETE FROM code_chunks_fts WHERE project_id = ?", [projectId]).catch(() => undefined);
+    for (const table of ["learning_events", "concept_mastery", "preference_events", "learner_preferences"]) {
+      await db.run(
+        `DELETE FROM ${table} WHERE scope_type='project' AND scope_id=?`,
+        [String(projectId)],
+      );
+    }
+    await db.run("DELETE FROM term_impressions WHERE project_id=?", [projectId]);
+    const projectConcepts = await db.query<Row>(
+      "SELECT id FROM concepts WHERE concept_key LIKE ?",
+      [`project:${projectId}:%`],
+    );
+    for (const concept of projectConcepts) {
+      await db.run(
+        "DELETE FROM concept_relations WHERE source_concept_id=? OR target_concept_id=?",
+        [concept.id, concept.id],
+      );
+      await db.run("DELETE FROM learner_inferences WHERE subject_type='concept' AND subject_key=?", [concept.id]);
+      await db.run("DELETE FROM concepts WHERE id=?", [concept.id]);
+    }
+    await db.run("DELETE FROM learner_inferences WHERE scope_type='project' AND scope_id=?", [String(projectId)]);
+    await db.run("DELETE FROM concept_explanations WHERE project_id=?", [projectId]);
+    await db.run("DELETE FROM model_call_audit WHERE project_id=?", [projectId]);
+    await db.run("DELETE FROM term_model_scans WHERE project_id=?", [projectId]);
+    await db.run("DELETE FROM diagnostic_attempts WHERE project_id=?", [projectId]);
+    await db.run("DELETE FROM diagnostic_items WHERE project_id=?", [projectId]);
+    await db.run("DELETE FROM observer_jobs WHERE project_id=?", [projectId]);
+    await db.run("DELETE FROM teaching_outcomes WHERE project_id=?", [projectId]);
+    await db.run("DELETE FROM teaching_trials WHERE project_id=?", [projectId]);
+    await db.run("DELETE FROM learning_evidence_v2 WHERE scope_type='project' AND scope_id=?", [String(projectId)]);
+    await db.run("DELETE FROM knowledge_states_v2 WHERE scope_type='project' AND scope_id=?", [String(projectId)]);
     await db.run("DELETE FROM projects WHERE id = ?", [projectId]); await removeProjectFiles(projectId);
     return { id: projectId, status: "deleted", message: "项目已删除", course_files: [] };
   }
@@ -783,6 +873,30 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async testLLMSettings(): Promise<{ ok: boolean; provider: string; message: string }> {
     await this.callLLM([{ role: "user", content: "只回答 OK" }]);
     const settings = await this.getLLMSettings(); return { ok: true, provider: settings.provider, message: "模型连接成功" };
+  }
+  private async getPersonalizationRuntimeSettings() {
+    return {
+      supported: true,
+      teacher_planner_enabled: (await this.setting("personalization.teacher_planner.enabled")) === "true",
+      observer_enabled: (await this.setting("personalization.observer.enabled")) === "true",
+      teacher_planner_mode: "assist" as const,
+      observer_mode: "shadow" as const,
+    };
+  }
+  private async savePersonalizationRuntimeSettings(payload: Record<string, unknown>) {
+    if ("teacher_planner_enabled" in payload) {
+      await this.setSetting(
+        "personalization.teacher_planner.enabled",
+        bool(payload.teacher_planner_enabled) ? "true" : "false",
+      );
+    }
+    if ("observer_enabled" in payload) {
+      await this.setSetting(
+        "personalization.observer.enabled",
+        bool(payload.observer_enabled) ? "true" : "false",
+      );
+    }
+    return this.getPersonalizationRuntimeSettings();
   }
   private async getPrompts(): Promise<Record<string, string>> {
     const prompts = { ...(promptDefaults as Record<string, string>) };
@@ -1390,17 +1504,76 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       unfamiliar: [] as string[],
       uncertain: [] as string[],
     };
+    const conceptIds: string[] = [];
+    const knowledgeStates = (await this.getKnowledgeStatesV2(
+      projectId,
+      concepts.map((concept) => concept.id),
+    )).states;
+    const stateByConcept = new Map(
+      knowledgeStates.map((state) => [state.conceptId, state]),
+    );
     for (const concept of concepts) {
-      const mastery = (await this.getPersonalizationMasteryBatch(projectId, [concept.id]))[concept.id];
-      if (mastery?.manualStatus === "known" || (mastery && mastery.mastery >= 0.75)) {
+      conceptIds.push(concept.id);
+      const dimensions = stateByConcept.get(concept.id)?.dimensions;
+      if (
+        dimensions?.familiarity.status === "confirmed"
+        || dimensions?.conceptual.status === "confirmed"
+      ) {
         status.known.push(concept.displayName);
-      } else if (mastery?.manualStatus === "unknown" || (mastery && mastery.mastery <= 0.35)) {
+      } else if (
+        dimensions?.familiarity.status === "learning"
+        || dimensions?.conceptual.status === "learning"
+      ) {
         status.unfamiliar.push(concept.displayName);
       } else {
         status.uncertain.push(concept.displayName);
       }
     }
-    return buildLearnerContext(preferences, status);
+    const explicitReplay = /(重新讲|详细讲|从头讲|再解释|不要省略)/.test(payload.question);
+    const prerequisiteRows = conceptIds.length
+      ? await db.query<Row>(
+        `SELECT DISTINCT c.display_name
+         FROM concept_relations r
+         JOIN concepts c ON c.id=r.target_concept_id
+         WHERE r.source_concept_id IN (${conceptIds.map(() => "?").join(",")})
+           AND r.relation_type='prerequisite' AND r.status='active'
+         ORDER BY r.confidence DESC LIMIT 8`,
+        conceptIds,
+      )
+      : [];
+    const likelyNames = prerequisiteRows.map((row) => String(row.display_name));
+    const domains = [...new Set(concepts.map((concept) => concept.domain).filter(Boolean))];
+    const domainRows = domains.length
+      ? await db.query<Row>(
+        `SELECT * FROM domain_profiles
+         WHERE scope_id='local-user' AND domain_key IN (${domains.map(() => "?").join(",")})`,
+        domains,
+      )
+      : [];
+    const explanationRows = conceptIds.length && !explicitReplay
+      ? await db.query<Row>(
+        `SELECT e.concept_id,e.project_id,e.qa_record_id,e.title
+         FROM concept_explanations e
+         JOIN qa_records q ON q.id=e.qa_record_id AND q.project_id=e.project_id
+         JOIN projects p ON p.id=e.project_id
+         WHERE e.status='active' AND e.concept_id IN (${conceptIds.map(() => "?").join(",")})
+         ORDER BY e.updated_at DESC`,
+        conceptIds,
+      )
+      : [];
+    const additions = [
+      likelyNames.length
+        ? `可能具备的前置知识（仅调整讲解顺序，不视为已掌握）：\n${likelyNames.map((name) => `- ${name}`).join("\n")}`
+        : "",
+      domainRows.length
+        ? `相关领域边界：\n${domainRows.map((row) => `- ${row.domain_key}：${row.summary}`).join("\n")}`
+        : "",
+      explanationRows.length
+        ? `此前解释（不要重复完整定义，给出链接即可）：\n${explanationRows.map((row) => `- ${row.title}：https://codecourse.local/qa/${row.project_id}/${row.qa_record_id}`).join("\n")}`
+        : "",
+      `回答偏好：深度 ${preferences.answerDepth.toFixed(2)}，代码比例 ${preferences.codeRatio.toFixed(2)}，讲解顺序 ${preferences.explanationOrder}，前置细节 ${preferences.prerequisiteDetail.toFixed(2)}。`,
+    ].filter(Boolean).join("\n\n");
+    return `${buildLearnerContext(preferences, status)}\n\n${additions}`;
   }
 
   private async recordSuccessfulAnswerLearning(
@@ -1426,9 +1599,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         );
       }
     }
-    const isDefinition = /(是什么|什么意思|解释一下|不懂|what\s+is|define\b)/i.test(record.question)
-      || record.relation_type === "term_explanation";
-    const eventType = record.parent_qa_id ? "asked_clarification" : isDefinition ? "asked_definition" : "";
+    const isExplicitDefinition = record.relation_type === "term_explanation";
+    const eventType = record.parent_qa_id ? "asked_clarification" : isExplicitDefinition ? "asked_definition" : "";
     if (eventType) {
       for (const concept of concepts) {
         const idempotencyKey = `qa-learning:${record.id}:${concept.id}:${eventType}`;
@@ -1456,6 +1628,20 @@ export class AndroidLocalProvider implements CodeCourseProvider {
           ],
         );
         await this.updateProjection(concept.id, scope.type, scope.id, stamp);
+        await this.appendLearningEvidenceV2(projectId, {
+          idempotencyKey: `v2:${idempotencyKey}`,
+          conceptId: concept.id,
+          dimension: "familiarity",
+          direction: "negative",
+          strength: eventType === "asked_definition" ? 0.75 : 0.55,
+          reliability: 0.8,
+          source: "question",
+          action: eventType,
+          object: { type: "qa", qaRecordId: record.id },
+          result: { evidenceText: record.question.slice(0, 200) },
+          sessionId: record.session_id ? String(record.session_id) : null,
+          qaRecordId: record.id,
+        });
       }
     }
     for (const signal of inferPreferenceSignals(record.question)) {
@@ -1484,9 +1670,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       context_text: context,
     });
     const learnerContext = await this.learnerContextForQuestion(projectId, payload);
+    const teacherPlan = await this.teacherStrategyForQuestion(projectId, payload);
     const raw = await this.callLLM([
       { role: "system", content: prompts["prompt.system"] || "你是项目学习助手。" },
-      { role: "user", content: `${learnerContext}\n\n${questionPrompt}` },
+      { role: "user", content: `${learnerContext}\n\n${teacherPlan}\n\n${questionPrompt}` },
     ], { provider: payload.provider, base_url: payload.base_url, model: payload.model });
     const parsed = this.parseAnswer(raw, payload); const stamp = now();
     const id = await db.run(`INSERT INTO qa_records(project_id,session_id,parent_qa_id,relation_type,source_type,source_path,display_title,selected_text,question,answer_md,provider,model,output_path,retrieval_trace,favorite,created_at,updated_at)
@@ -1500,9 +1687,59 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await db.run("INSERT INTO knowledge_links(project_id,source_type,source_path,term_text,qa_record_id,node_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", [projectId, "course", payload.source_path, payload.selected_text.trim(), id, qaNode.id, stamp, stamp]);
     }
     await this.registerTerms(projectId, "qa", outputPath, parsed.answer, parsed.terms);
-    if (payload.term_candidate_id) await db.run("UPDATE document_terms SET status='linked',link_origin='automatic',qa_record_id=?,updated_at=? WHERE project_id=? AND id=?", [id, stamp, projectId, payload.term_candidate_id]);
+    if (payload.term_candidate_id) {
+      const termRow = (await db.query<Row>(
+        "SELECT concept_id FROM document_terms WHERE project_id=? AND id=?",
+        [projectId, payload.term_candidate_id],
+      ))[0];
+      await db.run("UPDATE document_terms SET status='linked',link_origin='automatic',qa_record_id=?,updated_at=? WHERE project_id=? AND id=?", [id, stamp, projectId, payload.term_candidate_id]);
+      if (termRow?.concept_id) {
+        await this.registerConceptExplanation(String(termRow.concept_id), projectId, id, parsed.title);
+      }
+    } else if (payload.relation_type === "term_explanation" && payload.selected_text.trim()) {
+      const resolved = await this.resolvePersonalizationTerms(projectId, [{
+        text: payload.selected_text.trim().slice(0, 80),
+        source: payload.source_type === "file" ? "index" : "selection",
+        confidence: 0.95,
+      }]);
+      const concept = resolved.terms[0]?.concept as PersonalizationConcept | undefined;
+      if (concept) {
+        await this.registerConceptExplanation(concept.id, projectId, id, parsed.title);
+      }
+    }
     record = await this.getQA(projectId, id);
+    if (teacherPlan) {
+      const strategyText = teacherPlan
+        .replace(/<\/?teacher_plan>/g, "")
+        .trim();
+      const strategies = strategyText
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
+        .filter(Boolean)
+        .slice(0, 5);
+      await db.run(
+        `INSERT OR IGNORE INTO teaching_trials
+         (id,project_id,session_id,qa_record_id,effective_context_json,mode,
+          was_applied,answer_model,created_at)
+         VALUES(?,?,?,?,?,'assist',1,?,?)`,
+        [
+          `android-trial:${id}`,
+          projectId,
+          sessionId,
+          id,
+          JSON.stringify({
+            schemaVersion: 1,
+            mode: "planned",
+            strategies,
+            rawStrategy: strategyText.slice(0, 1800),
+          }),
+          settings.model,
+          stamp,
+        ],
+      );
+    }
     await this.recordSuccessfulAnswerLearning(projectId, record);
+    void this.runAndroidObserver(projectId, record);
     return record;
   }
   private async getQA(projectId: number, qaId: number): Promise<QARecord> {
@@ -1536,9 +1773,48 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const qaNode = await this.createNode(projectId, { node_type: "qa", title: qa.display_title || qa.question, ref_type: "qa", ref_id: qa.id, ref_path: qa.output_path });
     const anchorNode = await this.createNode(projectId, { node_type: "anchor", title: payload.term_text || `理解 #${qaId}`, ref_type: "learning_anchor", ref_id: qaId, summary: payload.summary });
     await this.createEdge(projectId, { source_node_id: qaNode.id, target_node_id: anchorNode.id, relation_type: "related_to", label: null });
+    const concepts = await this.relevantConcepts(
+      projectId,
+      `${qa.question}\n${String(payload.term_text || "")}`,
+      qa.selected_text,
+      qa.source_type,
+      qa.source_path,
+    );
+    for (const concept of concepts) {
+      await this.appendLearningEvidenceV2(projectId, {
+        idempotencyKey: `summary-v2:${qaId}:${concept.id}`,
+        conceptId: concept.id,
+        dimension: "conceptual",
+        direction: "positive",
+        strength: 0.65,
+        reliability: 0.72,
+        source: "summary",
+        action: "saved_understanding",
+        object: { type: "qa", qaRecordId: qaId },
+        result: { summary: String(payload.summary || "").slice(0, 500) },
+        sessionId: qa.session_id ? String(qa.session_id) : null,
+        qaRecordId: qaId,
+      });
+    }
     return this.getAnchor(projectId, qaId);
   }
-  private async deleteAnchor(projectId: number, qaId: number): Promise<{ deleted: boolean; qa_id: number }> { await db.run("DELETE FROM learning_anchors WHERE project_id=? AND qa_record_id=?", [projectId, qaId]); await db.run("DELETE FROM knowledge_nodes WHERE project_id=? AND ref_type='learning_anchor' AND ref_id=?", [projectId, qaId]); return { deleted: true, qa_id: qaId }; }
+  private async deleteAnchor(projectId: number, qaId: number): Promise<{ deleted: boolean; qa_id: number }> {
+    await db.run("DELETE FROM learning_anchors WHERE project_id=? AND qa_record_id=?", [projectId, qaId]);
+    await db.run("DELETE FROM knowledge_nodes WHERE project_id=? AND ref_type='learning_anchor' AND ref_id=?", [projectId, qaId]);
+    const evidence = await db.query<Row>(
+      "SELECT id FROM learning_evidence_v2 WHERE qa_record_id=? AND source='summary' AND action='saved_understanding'",
+      [qaId],
+    );
+    for (const row of evidence) {
+      await this.voidLearningEvidenceV2(
+        projectId,
+        String(row.id),
+        `void-summary-v2:${qaId}:${row.id}`,
+        "understanding_removed",
+      );
+    }
+    return { deleted: true, qa_id: qaId };
+  }
 
   private async listHighlights(projectId: number, params: URLSearchParams): Promise<HighlightRecord[]> {
     let sql = "SELECT * FROM highlights WHERE project_id=?"; const values: unknown[] = [projectId];
@@ -1549,7 +1825,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async createHighlight(projectId: number, payload: Record<string, unknown>): Promise<HighlightRecord> {
     const stamp = now(); const id = await db.run("INSERT INTO highlights(project_id,source_type,source_path,selected_text,color,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", [projectId, payload.source_type, payload.source_path, payload.selected_text, payload.color || "yellow", payload.note || null, stamp, stamp]); return (await db.query<Row>("SELECT * FROM highlights WHERE id=?", [id]))[0] as HighlightRecord;
   }
-  private async registerTerms(projectId: number, sourceType: "course" | "qa", sourcePath: string, content: string, modelTerms: string[] = []): Promise<void> {
+  private async registerTerms(
+    projectId: number,
+    sourceType: "course" | "qa",
+    sourcePath: string,
+    content: string,
+    modelTerms: string[] = [],
+    allowModelScan = true,
+  ): Promise<void> {
     const weighted = [
       ...modelTerms.map((term) => ({ term: cleanTerm(term), source: "model", confidence: 0.94 })),
       ...localTermCandidates(content),
@@ -1585,6 +1868,76 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         [projectId, sourceType, sourcePath, item.term, item.source, item.confidence, "candidate", conceptByTerm.get(key) || null, contentHash, now(), now()],
       );
       if (seen.size >= 24) break;
+    }
+    const highConfidenceCount = weighted.filter((item) => item.confidence >= 0.8).length;
+    if (allowModelScan && (seen.size < 4 || highConfidenceCount < 3)) {
+      void this.runAndroidTermScan(projectId, sourceType, sourcePath, content, contentHash);
+    }
+  }
+
+  private async runAndroidTermScan(
+    projectId: number,
+    sourceType: "course" | "qa",
+    sourcePath: string,
+    content: string,
+    contentHash: string,
+  ): Promise<void> {
+    const runtime = await this.getPersonalizationRuntimeSettings();
+    if (!runtime.observer_enabled) return;
+    const existing = await db.query<Row>(
+      `SELECT status FROM term_model_scans
+       WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?`,
+      [projectId, sourceType, sourcePath, contentHash],
+    );
+    if (existing.length) return;
+    const stamp = now();
+    await db.run(
+      `INSERT INTO term_model_scans
+       (project_id,source_type,source_path,content_hash,status,terms_json,created_at,updated_at)
+       VALUES(?,?,?,?,?,'[]',?,?)`,
+      [projectId, sourceType, sourcePath, contentHash, "running", stamp, stamp],
+    );
+    const started = performance.now();
+    try {
+      const compact = compactText(content, 18_000);
+      const raw = await this.callLLM([
+        {
+          role: "system",
+          content: "你是技术教材术语分析器。只提取正文中实际出现、可能陌生且值得解释的技术术语。只输出 JSON。",
+        },
+        {
+          role: "user",
+          content: `返回 {"terms":[{"text":"术语","confidence":0.0}]}，最多 16 个。跳过普通词、完整句子、已有链接和代码块局部变量。\n\n${compact}`,
+        },
+      ]);
+      const parsed = extractJsonObject(raw) as Record<string, unknown>;
+      const terms = (Array.isArray(parsed.terms) ? parsed.terms : [])
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        .filter((item) => Number(item.confidence || 0) >= 0.62)
+        .map((item) => cleanTerm(String(item.text || "")))
+        .filter((term) => term && content.includes(term))
+        .slice(0, 16);
+      await this.registerTerms(projectId, sourceType, sourcePath, content, terms, false);
+      await db.run(
+        `UPDATE term_model_scans SET status='completed',terms_json=?,error_message=NULL,updated_at=?
+         WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?`,
+        [JSON.stringify(terms), now(), projectId, sourceType, sourcePath, contentHash],
+      );
+      await this.recordModelCall(projectId, "term_scan", "completed", started);
+    } catch (error) {
+      await db.run(
+        `UPDATE term_model_scans SET status='failed',error_message=?,updated_at=?
+         WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?`,
+        [
+          error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
+          now(),
+          projectId,
+          sourceType,
+          sourcePath,
+          contentHash,
+        ],
+      );
+      await this.recordModelCall(projectId, "term_scan", "failed", started, error).catch(() => undefined);
     }
   }
   private async listTerms(projectId: number, params: URLSearchParams): Promise<Row[]> {
@@ -1862,6 +2215,25 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await db.runInTx(
         "INSERT INTO concept_mastery (id,concept_id,scope_type,scope_id,known_evidence,unknown_evidence,mastery,uncertainty,manual_status,sequence,last_seen_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(concept_id,scope_type,scope_id) DO UPDATE SET known_evidence=excluded.known_evidence,unknown_evidence=excluded.unknown_evidence,mastery=excluded.mastery,uncertainty=excluded.uncertainty,manual_status=excluded.manual_status,sequence=excluded.sequence,last_seen_at=excluded.last_seen_at,updated_at=excluded.updated_at",
         [masteryId, conceptId, st, si, known, unknown, mst, unc, manual, seq, stamp, stamp],
+      );
+      await this.appendLearningEvidenceV2(
+        projectId,
+        {
+          idempotencyKey: `v2:${idempotencyKey}`,
+          conceptId,
+          scopeType: st,
+          scopeId: si,
+          dimension: "familiarity",
+          direction: direction === "known" ? "positive" : direction === "unknown" ? "negative" : "neutral",
+          strength: 1,
+          reliability: 1,
+          source: "manual",
+          action: direction === "known" ? "manual_known" : direction === "unknown" ? "manual_unknown" : "manual_clear",
+          object: { type: "concept", id: conceptId },
+          result: { status: direction === "neutral" ? null : direction, evidenceText: evidenceText || "" },
+          eventTime: stamp,
+        },
+        true,
       );
 
       const mastery: PersonalizationMastery = { id: masteryId, conceptId, scope: { type: st as unknown as ScopeTypeStr, id: si }, knownEvidence: known, unknownEvidence: unknown, mastery: mst, uncertainty: unc, manualStatus: manual as "known" | "unknown" | null, sequence: seq, lastSeenAt: stamp, updatedAt: stamp };
@@ -2152,23 +2524,1055 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return { status: "ok", saved };
   }
 
+  private async getTermDisplayProfiles(
+    projectId: number,
+    conceptIds: string[],
+  ): Promise<{ profiles: Array<Record<string, unknown>> }> {
+    await this.getProject(projectId);
+    if (!conceptIds.length) return { profiles: [] };
+    const placeholders = conceptIds.map(() => "?").join(",");
+    const masteryRows = await db.query<Row>(
+      `SELECT c.concept_key,m.mastery,m.uncertainty,m.manual_status,m.scope_type
+       FROM concept_mastery m
+       JOIN concepts c ON c.id=m.concept_id
+       WHERE ((m.scope_type='global' AND m.scope_id='local-user')
+          OR (m.scope_type='project' AND m.scope_id=?))
+         AND c.concept_key IN (${placeholders})
+       ORDER BY CASE WHEN m.scope_type='project' THEN 1 ELSE 0 END`,
+      [String(projectId), ...conceptIds],
+    );
+    const stateRows = await db.query<Row>(
+      `SELECT c.concept_key,s.state_json,s.scope_type
+       FROM knowledge_states_v2 s
+       JOIN concepts c ON c.id=s.concept_id
+       WHERE ((s.scope_type='global' AND s.scope_id='local-user')
+          OR (s.scope_type='project' AND s.scope_id=?))
+         AND c.concept_key IN (${placeholders})
+       ORDER BY CASE WHEN s.scope_type='project' THEN 1 ELSE 0 END`,
+      [String(projectId), ...conceptIds],
+    );
+    const masteryById = new Map(masteryRows.map((row) => [String(row.concept_key), row]));
+    const stateById = new Map(stateRows.map((row) => [String(row.concept_key), JSON.parse(String(row.state_json)) as KnowledgeStateV2]));
+    return {
+      profiles: conceptIds.map((conceptId) => {
+        const mastery = masteryById.get(conceptId);
+        const familiarity = stateById.get(conceptId)?.dimensions.familiarity;
+        return {
+          concept_key: conceptId,
+          manual_status: mastery?.manual_status ?? null,
+          mastery: mastery == null ? null : Number(mastery.mastery),
+          uncertainty: mastery == null ? null : Number(mastery.uncertainty),
+          shadow_familiarity: familiarity?.probability ?? null,
+          shadow_confidence: familiarity == null ? null : 1 - familiarity.uncertainty,
+          shadow_evidence_count: familiarity?.evidenceCount ?? 0,
+          domain_prior: null,
+        };
+      }),
+    };
+  }
+
+  private evidenceV2FromRow(row: Row): LearningEvidenceV2 {
+    const parseObject = (value: unknown): Record<string, unknown> => {
+      try {
+        const parsed = JSON.parse(String(value || "{}"));
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+      } catch {
+        return {};
+      }
+    };
+    return {
+      id: String(row.id),
+      idempotencyKey: String(row.idempotency_key),
+      schemaVersion: 2,
+      conceptId: String(row.concept_id),
+      scopeType: String(row.scope_type) as "global" | "project",
+      scopeId: String(row.scope_id),
+      dimension: String(row.dimension) as KnowledgeDimension,
+      direction: String(row.direction) as LearningEvidenceV2["direction"],
+      strength: Number(row.strength),
+      reliability: Number(row.reliability),
+      source: String(row.source) as LearningEvidenceV2["source"],
+      action: String(row.action),
+      object: parseObject(row.object_json),
+      result: parseObject(row.result_json),
+      context: parseObject(row.context_json),
+      eventTime: String(row.event_time),
+      sessionId: row.session_id == null ? null : String(row.session_id),
+      qaRecordId: row.qa_record_id == null ? null : Number(row.qa_record_id),
+      diagnosticAttemptId: row.diagnostic_attempt_id == null ? null : String(row.diagnostic_attempt_id),
+      objectiveCorrect: row.objective_correct == null ? null : bool(row.objective_correct),
+      targetEvidenceId: row.target_evidence_id == null ? null : String(row.target_evidence_id),
+      voided: bool(row.voided),
+      modelVersion: row.model_version == null ? null : String(row.model_version),
+      policyVersion: String(row.policy_version || KNOWLEDGE_POLICY_VERSION),
+    };
+  }
+
+  private async appendLearningEvidenceV2(
+    projectId: number,
+    payload: Record<string, unknown>,
+    inTransaction = false,
+  ): Promise<{ evidence: LearningEvidenceV2; state: KnowledgeStateV2 }> {
+    const query = <T extends Row>(statement: string, values: unknown[] = []) => (
+      inTransaction ? db.queryInTx<T>(statement, values) : db.query<T>(statement, values)
+    );
+    const run = (statement: string, values: unknown[] = []) => (
+      inTransaction ? db.runInTx(statement, values) : db.run(statement, values)
+    );
+    const conceptId = String(payload.conceptId || "");
+    const concept = (await query<Row>("SELECT * FROM concepts WHERE id=?", [conceptId]))[0];
+    if (!concept) throw new Error("Concept not found");
+    const derivedScope = this.scopeForConceptRow(projectId, concept);
+    const scopeType = derivedScope.type as "global" | "project";
+    const scopeId = derivedScope.id;
+    const dimension = String(payload.dimension || "") as KnowledgeDimension;
+    if (!["familiarity", "conceptual", "code_reading", "implementation", "debugging", "transfer"].includes(dimension)) {
+      throw new Error(`Unsupported knowledge dimension: ${dimension}`);
+    }
+    const direction = String(payload.direction || "");
+    if (!["positive", "negative", "neutral"].includes(direction)) throw new Error("Unsupported evidence direction");
+    const source = String(payload.source || "");
+    if (!["manual", "diagnostic", "question", "summary", "observer", "course_completion", "migration"].includes(source)) {
+      throw new Error("Unsupported evidence source");
+    }
+    const id = String(payload.id || crypto.randomUUID());
+    const idempotencyKey = String(payload.idempotencyKey || id);
+    const eventTime = String(payload.eventTime || now());
+    await run(
+      `INSERT OR IGNORE INTO learning_evidence_v2
+       (id,idempotency_key,schema_version,concept_id,scope_type,scope_id,
+        dimension,direction,strength,reliability,source,action,object_json,
+        result_json,context_json,event_time,session_id,qa_record_id,
+        diagnostic_attempt_id,objective_correct,target_evidence_id,voided,
+        model_version,policy_version)
+       VALUES(?,?,2,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        id, idempotencyKey, conceptId, scopeType, scopeId, dimension, direction,
+        Math.max(0, Math.min(1, Number(payload.strength ?? 1))),
+        Math.max(0, Math.min(1, Number(payload.reliability ?? 0.5))),
+        source, String(payload.action || "observed"),
+        JSON.stringify(payload.object || {}), JSON.stringify(payload.result || {}),
+        JSON.stringify(payload.context || {}), eventTime,
+        payload.sessionId ?? null, payload.qaRecordId ?? null,
+        payload.diagnosticAttemptId ?? null,
+        payload.objectiveCorrect == null ? null : (bool(payload.objectiveCorrect) ? 1 : 0),
+        payload.targetEvidenceId ?? null, bool(payload.voided) ? 1 : 0,
+        payload.modelVersion ?? null, String(payload.policyVersion || KNOWLEDGE_POLICY_VERSION),
+      ],
+    );
+    const row = (await query<Row>(
+      "SELECT * FROM learning_evidence_v2 WHERE idempotency_key=?",
+      [idempotencyKey],
+    ))[0];
+    if (!row) throw new Error("Evidence was not persisted");
+    const evidence = this.evidenceV2FromRow(row);
+    const rows = await query<Row>(
+      `SELECT * FROM learning_evidence_v2
+       WHERE concept_id=? AND scope_type=? AND scope_id=?
+       ORDER BY event_time,id`,
+      [conceptId, scopeType, scopeId],
+    );
+    const state = resolveKnowledgeState(
+      conceptId,
+      scopeType,
+      scopeId,
+      rows.map((item) => this.evidenceV2FromRow(item)),
+      now(),
+    );
+    await run(
+      `INSERT INTO knowledge_states_v2
+       (concept_id,scope_type,scope_id,state_json,policy_version,evidence_version,updated_at)
+       VALUES(?,?,?,?,?,?,?)
+       ON CONFLICT(concept_id,scope_type,scope_id) DO UPDATE SET
+         state_json=excluded.state_json,policy_version=excluded.policy_version,
+         evidence_version=excluded.evidence_version,updated_at=excluded.updated_at`,
+      [conceptId, scopeType, scopeId, JSON.stringify(state), state.policyVersion, state.evidenceVersion, state.updatedAt],
+    );
+    return { evidence, state };
+  }
+
+  private async getKnowledgeStatesV2(
+    projectId: number,
+    conceptIds: string[] = [],
+  ): Promise<{ policyVersion: string; states: KnowledgeStateV2[] }> {
+    await this.getProject(projectId);
+    const missing = Number((await db.query<Row>(
+      `SELECT COUNT(*) AS count
+       FROM (
+         SELECT DISTINCT e.concept_id,e.scope_type,e.scope_id
+         FROM learning_evidence_v2 e
+         LEFT JOIN knowledge_states_v2 s
+           ON s.concept_id=e.concept_id AND s.scope_type=e.scope_type AND s.scope_id=e.scope_id
+         WHERE ((e.scope_type='global' AND e.scope_id='local-user')
+            OR (e.scope_type='project' AND e.scope_id=?))
+           AND (s.concept_id IS NULL OR s.policy_version<>?)
+       )`,
+      [String(projectId), KNOWLEDGE_POLICY_VERSION],
+    ))[0]?.count || 0);
+    if (missing > 0) await this.rebuildKnowledgeProfileV2(projectId);
+    const filters = conceptIds.length
+      ? ` AND concept_id IN (${conceptIds.map(() => "?").join(",")})`
+      : "";
+    const rows = await db.query<Row>(
+      `SELECT state_json FROM knowledge_states_v2
+       WHERE ((scope_type='global' AND scope_id='local-user')
+          OR (scope_type='project' AND scope_id=?))${filters}`,
+      [String(projectId), ...conceptIds],
+    );
+    return {
+      policyVersion: KNOWLEDGE_POLICY_VERSION,
+      states: rows.map((row) => JSON.parse(String(row.state_json)) as KnowledgeStateV2),
+    };
+  }
+
+  private async voidLearningEvidenceV2(
+    projectId: number,
+    evidenceId: string,
+    idempotencyKey: string,
+    reason: string,
+  ): Promise<{ evidence: LearningEvidenceV2; state: KnowledgeStateV2 }> {
+    return db.transaction(async () => {
+      const target = (await db.queryInTx<Row>(
+        "SELECT * FROM learning_evidence_v2 WHERE id=?",
+        [evidenceId],
+      ))[0];
+      if (!target) throw new Error("Evidence not found");
+      return this.appendLearningEvidenceV2(projectId, {
+        idempotencyKey,
+        conceptId: target.concept_id,
+        dimension: target.dimension,
+        direction: "neutral",
+        strength: 0,
+        reliability: 1,
+        source: "manual",
+        action: "void_evidence",
+        targetEvidenceId: evidenceId,
+        result: { reason },
+      }, true);
+    });
+  }
+
+  private async rebuildKnowledgeProfileV2(
+    projectId: number,
+  ): Promise<{ status: string; rebuilt: number; policyVersion: string }> {
+    await this.getProject(projectId);
+    const pairs = await db.query<Row>(
+      `SELECT DISTINCT concept_id FROM learning_evidence_v2
+       WHERE (scope_type='global' AND scope_id='local-user')
+          OR (scope_type='project' AND scope_id=?)`,
+      [String(projectId)],
+    );
+    let rebuilt = 0;
+    for (const pair of pairs) {
+      const concept = (await db.query<Row>("SELECT * FROM concepts WHERE id=?", [pair.concept_id]))[0];
+      if (!concept) continue;
+      const scope = this.scopeForConceptRow(projectId, concept);
+      const events = await db.query<Row>(
+        "SELECT * FROM learning_evidence_v2 WHERE concept_id=? AND scope_type=? AND scope_id=? ORDER BY event_time,id",
+        [pair.concept_id, scope.type, scope.id],
+      );
+      const state = resolveKnowledgeState(
+        String(pair.concept_id),
+        scope.type as "global" | "project",
+        scope.id,
+        events.map((row) => this.evidenceV2FromRow(row)),
+      );
+      await db.run(
+        `INSERT INTO knowledge_states_v2(concept_id,scope_type,scope_id,state_json,policy_version,evidence_version,updated_at)
+         VALUES(?,?,?,?,?,?,?) ON CONFLICT(concept_id,scope_type,scope_id) DO UPDATE SET
+         state_json=excluded.state_json,policy_version=excluded.policy_version,
+         evidence_version=excluded.evidence_version,updated_at=excluded.updated_at`,
+        [pair.concept_id, scope.type, scope.id, JSON.stringify(state), state.policyVersion, state.evidenceVersion, state.updatedAt],
+      );
+      rebuilt += 1;
+    }
+    return { status: "ok", rebuilt, policyVersion: KNOWLEDGE_POLICY_VERSION };
+  }
+
+  private diagnosticFromRow(row: Row): DiagnosticItem {
+    return {
+      id: String(row.id),
+      projectId: Number(row.project_id),
+      sessionId: row.session_id == null ? null : String(row.session_id),
+      sourceQaRecordId: row.source_qa_record_id == null ? null : Number(row.source_qa_record_id),
+      conceptIds: JSON.parse(String(row.concept_ids_json || "[]")),
+      dimension: String(row.dimension) as KnowledgeDimension,
+      itemType: String(row.item_type) as DiagnosticItem["itemType"],
+      prompt: String(row.prompt),
+      options: JSON.parse(String(row.options_json || "[]")),
+      sourceRefs: JSON.parse(String(row.source_refs_json || "[]")),
+      rationale: String(row.rationale || ""),
+      difficulty: Number(row.difficulty),
+      createdAt: String(row.created_at),
+    };
+  }
+
+  private async getPendingDiagnosticV2(projectId: number): Promise<{ item: DiagnosticItem | null }> {
+    await this.getProject(projectId);
+    const row = (await db.query<Row>(
+      "SELECT * FROM diagnostic_items WHERE project_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1",
+      [projectId],
+    ))[0];
+    return { item: row ? this.diagnosticFromRow(row) : null };
+  }
+
+  private canonicalAnswer(value: unknown): string {
+    const normalized = value && typeof value === "object" && !Array.isArray(value)
+      && Object.keys(value as object).length === 1 && "value" in (value as Record<string, unknown>)
+      ? (value as Record<string, unknown>).value
+      : value;
+    return JSON.stringify(normalized);
+  }
+
+  private async answerDiagnosticV2(
+    projectId: number,
+    itemId: string,
+    answer: unknown,
+  ): Promise<{ status: string; correct: boolean; attemptId: string }> {
+    return db.transaction(async () => {
+      const item = (await db.queryInTx<Row>(
+        "SELECT * FROM diagnostic_items WHERE id=? AND project_id=? AND status='pending'",
+        [itemId, projectId],
+      ))[0];
+      if (!item) throw new Error("Diagnostic item is not available");
+      const expected = JSON.parse(String(item.answer_key_json));
+      const correct = this.canonicalAnswer(answer) === this.canonicalAnswer(expected);
+      const attemptId = `diagnostic-attempt:${crypto.randomUUID()}`;
+      const evidenceIds: string[] = [];
+      for (const conceptId of JSON.parse(String(item.concept_ids_json || "[]")) as string[]) {
+        const evidenceId = `${attemptId}:${conceptId}`;
+        await this.appendLearningEvidenceV2(projectId, {
+          id: evidenceId,
+          idempotencyKey: evidenceId,
+          conceptId,
+          dimension: item.dimension,
+          direction: correct ? "positive" : "negative",
+          strength: 1,
+          reliability: 0.9,
+          source: "diagnostic",
+          action: "answered",
+          object: { diagnosticItemId: itemId },
+          result: { answer },
+          sessionId: item.session_id,
+          qaRecordId: item.source_qa_record_id,
+          diagnosticAttemptId: attemptId,
+          objectiveCorrect: correct,
+        }, true);
+        evidenceIds.push(evidenceId);
+      }
+      await db.runInTx(
+        `INSERT INTO diagnostic_attempts
+         (id,item_id,project_id,session_id,answer_json,is_correct,evidence_ids_json,answered_at)
+         VALUES(?,?,?,?,?,?,?,?)`,
+        [attemptId, itemId, projectId, item.session_id, JSON.stringify(answer), correct ? 1 : 0, JSON.stringify(evidenceIds), now()],
+      );
+      await db.runInTx(
+        "UPDATE diagnostic_items SET status='answered',shown_at=COALESCE(shown_at,?) WHERE id=?",
+        [now(), itemId],
+      );
+      return { status: "answered", correct, attemptId };
+    });
+  }
+
+  private async dismissDiagnosticV2(projectId: number, itemId: string): Promise<{ status: string }> {
+    await db.run(
+      "UPDATE diagnostic_items SET status='dismissed',dismissed_at=? WHERE id=? AND project_id=? AND status='pending'",
+      [now(), itemId, projectId],
+    );
+    return { status: "dismissed" };
+  }
+
+  private async flagDiagnosticV2(projectId: number, itemId: string): Promise<{ status: string }> {
+    const attempt = (await db.query<Row>(
+      "SELECT * FROM diagnostic_attempts WHERE item_id=? AND project_id=? ORDER BY answered_at DESC LIMIT 1",
+      [itemId, projectId],
+    ))[0];
+    if (attempt) {
+      for (const evidenceId of JSON.parse(String(attempt.evidence_ids_json || "[]")) as string[]) {
+        await this.voidLearningEvidenceV2(
+          projectId,
+          evidenceId,
+          `diagnostic-flag:${itemId}:${evidenceId}`,
+          "user_flagged_item",
+        );
+      }
+      await db.run("UPDATE diagnostic_attempts SET user_flagged=1 WHERE id=?", [attempt.id]);
+    }
+    await db.run("UPDATE diagnostic_items SET status='flagged' WHERE id=? AND project_id=?", [itemId, projectId]);
+    return { status: "flagged" };
+  }
+
+  private jsonArray(value: unknown): Array<Record<string, unknown>> {
+    try {
+      const parsed = JSON.parse(String(value || "[]"));
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private stringArray(value: unknown): string[] {
+    try {
+      const parsed = JSON.parse(String(value || "[]"));
+      return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private async recordModelCall(
+    projectId: number | null,
+    purpose: string,
+    status: "completed" | "failed",
+    startedAt: number,
+    error?: unknown,
+  ): Promise<void> {
+    const settings = await this.getLLMSettings().catch(() => null);
+    await db.run(
+      `INSERT INTO model_call_audit
+       (id,project_id,purpose,provider,model,status,input_tokens,output_tokens,estimated_cost,latency_ms,error_message,created_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        crypto.randomUUID(),
+        projectId,
+        purpose,
+        settings?.provider ?? null,
+        settings?.model ?? null,
+        status,
+        null,
+        null,
+        null,
+        Math.max(0, Math.round(performance.now() - startedAt)),
+        error instanceof Error ? error.message.slice(0, 500) : error ? String(error).slice(0, 500) : null,
+        now(),
+      ],
+    );
+  }
+
+  private async resolveObserverConcept(
+    projectId: number,
+    text: string,
+    domain: string,
+  ): Promise<PersonalizationConcept | null> {
+    const resolved = await this.resolvePersonalizationTerms(projectId, [{
+      text,
+      source: "observer",
+      confidence: 0.78,
+    }]);
+    const concept = resolved.terms[0]?.concept as PersonalizationConcept | undefined;
+    if (!concept) return null;
+    if (domain && domain !== "general" && concept.domain === "general") {
+      await db.run("UPDATE concepts SET domain=? WHERE id=?", [domain.slice(0, 80), concept.id]);
+      return this.conceptFromRow((await db.query<Row>("SELECT * FROM concepts WHERE id=?", [concept.id]))[0]);
+    }
+    return concept;
+  }
+
+  private async upsertLearnerInference(
+    subjectType: "concept" | "domain",
+    subjectKey: string,
+    scopeType: "global" | "project",
+    scopeId: string,
+    state: InferenceState,
+    summary: string,
+    confidence: number,
+    direct: boolean,
+    evidence: Record<string, unknown>,
+  ): Promise<void> {
+    const current = (await db.query<Row>(
+      `SELECT * FROM learner_inferences
+       WHERE subject_type=? AND subject_key=? AND scope_type=? AND scope_id=?`,
+      [subjectType, subjectKey, scopeType, scopeId],
+    ))[0];
+    const aggregate = mergeInference(
+      current ? {
+        state: String(current.state) as InferenceState,
+        confidence: Number(current.confidence),
+        directEvidenceCount: Number(current.direct_evidence_count),
+        inferredEvidenceCount: Number(current.inferred_evidence_count),
+      } : null,
+      state,
+      confidence,
+      direct,
+    );
+    const stamp = now();
+    const existingEvidence = current ? this.jsonArray(current.evidence_json) : [];
+    const evidenceId = String(evidence.id || "");
+    const mergedEvidence = [
+      evidence,
+      ...existingEvidence.filter((item) => !evidenceId || String(item.id || "") !== evidenceId),
+    ].slice(0, 20);
+    await db.run(
+      `INSERT INTO learner_inferences
+       (id,subject_type,subject_key,scope_type,scope_id,state,summary,confidence,
+        direct_evidence_count,inferred_evidence_count,evidence_json,status,created_at,updated_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',?,?)
+       ON CONFLICT(subject_type,subject_key,scope_type,scope_id) DO UPDATE SET
+         state=excluded.state,summary=excluded.summary,confidence=excluded.confidence,
+         direct_evidence_count=excluded.direct_evidence_count,
+         inferred_evidence_count=excluded.inferred_evidence_count,
+         evidence_json=excluded.evidence_json,status='active',updated_at=excluded.updated_at`,
+      [
+        current?.id || crypto.randomUUID(),
+        subjectType,
+        subjectKey,
+        scopeType,
+        scopeId,
+        aggregate.state,
+        summary.slice(0, 500),
+        aggregate.confidence,
+        aggregate.directEvidenceCount,
+        aggregate.inferredEvidenceCount,
+        JSON.stringify(mergedEvidence),
+        current?.created_at || stamp,
+        stamp,
+      ],
+    );
+  }
+
+  private async applyAndroidObserverResult(
+    projectId: number,
+    record: QARecord,
+    result: ObserverResult,
+    observerRunId: string,
+  ): Promise<void> {
+    const userCorpus = `${record.question}\n${record.selected_text}`.toLocaleLowerCase();
+    const acceptedEvidence = result.knowledgeEvidence.filter((item) => {
+      if (!isAcceptedDirectEvidence(item)) return false;
+      const quote = item.evidenceQuote.trim().toLocaleLowerCase();
+      return Boolean(quote) && userCorpus.includes(quote);
+    });
+
+    for (const [index, evidence] of acceptedEvidence.entries()) {
+      const concept = await this.resolveObserverConcept(projectId, evidence.concept, evidence.domain);
+      if (!concept) continue;
+      const scope = await this.scopeForConcept(projectId, concept.id);
+      await this.upsertLearnerInference(
+        "concept",
+        concept.id,
+        scope.type,
+        scope.id,
+        evidence.direction === "positive" ? "insufficient" : "learning",
+        evidence.explanation,
+        evidence.confidence,
+        evidence.direction === "negative",
+        {
+          id: `${observerRunId}:knowledge:${index}`,
+          qaRecordId: record.id,
+          quote: evidence.evidenceQuote,
+          direction: evidence.direction,
+        },
+      );
+      await this.appendLearningEvidenceV2(projectId, {
+        id: `${observerRunId}:knowledge-v2:${index}`,
+        idempotencyKey: `${observerRunId}:knowledge-v2:${index}`,
+        conceptId: concept.id,
+        dimension: evidence.dimension || "familiarity",
+        direction: evidence.direction === "uncertain" ? "neutral" : evidence.direction,
+        strength: 0.65,
+        reliability: Math.min(0.65, evidence.confidence),
+        source: "observer",
+        action: "candidate_accepted",
+        object: { type: "concept", conceptText: evidence.concept },
+        result: { evidenceQuote: evidence.evidenceQuote, explanation: evidence.explanation },
+        qaRecordId: record.id,
+        sessionId: record.session_id == null ? null : String(record.session_id),
+        modelVersion: "android-observer-v2",
+      });
+    }
+
+    for (const [index, relation] of result.conceptRelations.filter(isAcceptedRelation).entries()) {
+      const source = await this.resolveObserverConcept(projectId, relation.source, relation.domain);
+      const target = await this.resolveObserverConcept(projectId, relation.target, relation.domain);
+      if (!source || !target || source.id === target.id) continue;
+      const stamp = now();
+      const current = (await db.query<Row>(
+        `SELECT * FROM concept_relations
+         WHERE source_concept_id=? AND target_concept_id=? AND relation_type=?`,
+        [source.id, target.id, relation.relationType],
+      ))[0];
+      const evidence: Record<string, unknown> = {
+        id: `${observerRunId}:relation:${index}`,
+        rationale: relation.rationale,
+        confidence: relation.confidence,
+      };
+      const merged = [
+        evidence,
+        ...(current ? this.jsonArray(current.evidence_json) : []).filter(
+          (item) => String(item.id || "") !== evidence.id,
+        ),
+      ].slice(0, 200);
+      const activeEvidence = merged.filter((item) => !bool(item.voided));
+      const mergedConfidence = activeEvidence.length
+        ? activeEvidence.reduce((sum, item) => sum + Math.max(0, Math.min(1, Number(item.confidence || 0))), 0)
+          / activeEvidence.length
+        : 0;
+      const mergedStatus = activeEvidence.length ? "active" : "voided";
+      await db.run(
+        `INSERT INTO concept_relations
+         (id,source_concept_id,target_concept_id,relation_type,domain,confidence,
+          evidence_json,origin,status,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,'observer',?,?,?)
+         ON CONFLICT(source_concept_id,target_concept_id,relation_type) DO UPDATE SET
+           domain=excluded.domain,
+           confidence=excluded.confidence,
+           evidence_json=excluded.evidence_json,status=excluded.status,updated_at=excluded.updated_at`,
+        [
+          current?.id || crypto.randomUUID(),
+          source.id,
+          target.id,
+          relation.relationType,
+          relation.domain || "general",
+          mergedConfidence,
+          JSON.stringify(merged),
+          mergedStatus,
+          current?.created_at || stamp,
+          stamp,
+        ],
+      );
+    }
+
+    for (const [index, assessment] of result.domainAssessments.entries()) {
+      const conservative = conservativeDomainState(assessment, acceptedEvidence);
+      await this.upsertLearnerInference(
+        "domain",
+        assessment.domainKey,
+        "global",
+        "local-user",
+        conservative.state,
+        assessment.summary,
+        assessment.confidence,
+        conservative.direct,
+        {
+          id: `${observerRunId}:domain:${index}`,
+          qaRecordId: record.id,
+          quotes: assessment.evidenceQuotes,
+          concepts: assessment.concepts,
+        },
+      );
+    }
+
+    await this.rebuildAndroidDomainProfiles();
+    await this.storeAndroidSurveyCandidate(result, observerRunId);
+    await this.storeAndroidDiagnosticCandidate(projectId, record, result);
+  }
+
+  private async rebuildAndroidDomainProfiles(): Promise<void> {
+    const rows = await db.query<Row>(
+      `SELECT c.domain,c.display_name,i.state,i.confidence,i.evidence_json
+       FROM concepts c
+       JOIN learner_inferences i ON i.subject_type='concept' AND i.subject_key=c.id
+       WHERE i.status='active' AND i.scope_type='global' AND i.scope_id='local-user'`,
+    );
+    const domainInferenceRows = await db.query<Row>(
+      `SELECT * FROM learner_inferences
+       WHERE subject_type='domain' AND scope_type='global'
+         AND scope_id='local-user' AND status='active'`,
+    );
+    const domains = new Set([
+      ...rows.map((row) => String(row.domain || "general")),
+      ...domainInferenceRows.map((row) => String(row.subject_key)),
+    ]);
+    for (const domain of domains) {
+      const conceptRows = rows.filter((row) => String(row.domain || "general") === domain);
+      const domainInference = domainInferenceRows.find((row) => String(row.subject_key) === domain);
+      const confirmed = conceptRows.filter((row) => row.state === "confirmed").map((row) => String(row.display_name));
+      const learning = conceptRows.filter((row) => row.state === "learning").map((row) => String(row.display_name));
+      const likely = conceptRows.filter((row) => row.state === "likely_prerequisite").map((row) => String(row.display_name));
+      const summary = domainInference
+        ? String(domainInference.summary)
+        : [
+          confirmed.length ? `已有直接证据：${confirmed.slice(0, 4).join("、")}` : "",
+          learning.length ? `正在学习：${learning.slice(0, 4).join("、")}` : "",
+        ].filter(Boolean).join("；") || "目前证据不足";
+      const confidence = domainInference
+        ? Number(domainInference.confidence)
+        : Math.max(0, ...conceptRows.map((row) => Number(row.confidence)));
+      const stamp = now();
+      await db.run(
+        `INSERT INTO domain_profiles
+         (domain_key,scope_id,summary,confidence,confirmed_json,learning_json,
+          likely_prerequisites_json,evidence_json,created_at,updated_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(domain_key,scope_id) DO UPDATE SET
+           summary=excluded.summary,confidence=excluded.confidence,
+           confirmed_json=excluded.confirmed_json,learning_json=excluded.learning_json,
+           likely_prerequisites_json=excluded.likely_prerequisites_json,
+           evidence_json=excluded.evidence_json,updated_at=excluded.updated_at`,
+        [
+          domain,
+          "local-user",
+          summary,
+          confidence,
+          JSON.stringify(confirmed.slice(0, 20)),
+          JSON.stringify(learning.slice(0, 20)),
+          JSON.stringify(likely.slice(0, 20)),
+          domainInference?.evidence_json || "[]",
+          stamp,
+          stamp,
+        ],
+      );
+    }
+  }
+
+  private async storeAndroidSurveyCandidate(
+    result: ObserverResult,
+    observerRunId: string,
+  ): Promise<void> {
+    const survey = result.surveyCandidate;
+    if (!survey || survey.confidence < 0.65) return;
+    const preferences = await this.getLearnerPreferences(0);
+    const completedAnswerCount = Number((await db.query<Row>(
+      "SELECT COUNT(*) AS count FROM qa_records WHERE answer_md <> ''",
+    ))[0]?.count || 0);
+    if (!preferences.surveyEnabled || completedAnswerCount < 5) return;
+    const pending = await db.query<Row>(
+      "SELECT id FROM survey_candidates WHERE scope_id='local-user' AND status='pending' LIMIT 1",
+    );
+    if (pending.length) return;
+    const latest = (await db.query<Row>(
+      "SELECT created_at FROM survey_candidates WHERE scope_id='local-user' ORDER BY created_at DESC LIMIT 1",
+    ))[0];
+    if (latest && Date.now() - Date.parse(String(latest.created_at)) < 24 * 60 * 60 * 1000) return;
+    await db.run(
+      `INSERT INTO survey_candidates
+       (id,scope_id,question,dimension,options_json,rationale,confidence,status,observer_run_id,created_at)
+       VALUES(?,'local-user',?,?,?,?,?,'pending',?,?)`,
+      [
+        crypto.randomUUID(),
+        survey.question,
+        survey.dimension,
+        JSON.stringify(survey.options),
+        survey.rationale,
+        survey.confidence,
+        observerRunId,
+        now(),
+      ],
+    );
+  }
+
+  private async storeAndroidDiagnosticCandidate(
+    projectId: number,
+    record: QARecord,
+    result: ObserverResult,
+  ): Promise<void> {
+    const candidate = result.diagnosticCandidate;
+    if (!candidate || !candidate.sourceRefs.length) return;
+    if (!record.source_path) return;
+    let trustedSource = "";
+    try {
+      trustedSource = record.source_type === "file"
+        ? await readRepoFile(projectId, record.source_path)
+        : await readGeneratedFile(projectId, record.source_path);
+    } catch {
+      return;
+    }
+    const sourceVerified = candidate.sourceRefs.every((ref) => {
+      const path = String(ref.source_path ?? ref.sourcePath ?? "").trim();
+      const excerpt = String(ref.excerpt ?? "").trim();
+      return path === record.source_path && Boolean(excerpt) && trustedSource.includes(excerpt);
+    });
+    if (!sourceVerified) return;
+    const pending = await db.query<Row>(
+      "SELECT id FROM diagnostic_items WHERE project_id=? AND status='pending' LIMIT 1",
+      [projectId],
+    );
+    if (pending.length) return;
+    const last = (await db.query<Row>(
+      "SELECT COALESCE(MAX(source_qa_record_id),0) AS last_qa FROM diagnostic_items WHERE project_id=?",
+      [projectId],
+    ))[0];
+    const completed = Number((await db.query<Row>(
+      "SELECT COUNT(*) AS count FROM qa_records WHERE project_id=? AND id>? AND answer_md<>''",
+      [projectId, Number(last?.last_qa || 0)],
+    ))[0]?.count || 0);
+    if (completed < 5) return;
+    const conceptIds: string[] = [];
+    for (const conceptName of candidate.concepts) {
+      const concept = await this.resolveObserverConcept(projectId, conceptName, "general");
+      if (concept) conceptIds.push(concept.id);
+    }
+    if (!conceptIds.length) return;
+    await db.run(
+      `INSERT INTO diagnostic_items
+       (id,project_id,session_id,source_qa_record_id,concept_ids_json,dimension,
+        item_type,prompt,options_json,answer_key_json,source_refs_json,rationale,
+        difficulty,strategy_version,status,created_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)`,
+      [
+        `diagnostic:${crypto.randomUUID()}`,
+        projectId,
+        record.session_id == null ? null : String(record.session_id),
+        record.id,
+        JSON.stringify(conceptIds),
+        candidate.dimension,
+        candidate.itemType,
+        candidate.prompt,
+        JSON.stringify(candidate.options),
+        JSON.stringify(candidate.answerKey),
+        JSON.stringify(candidate.sourceRefs),
+        candidate.rationale,
+        candidate.difficulty,
+        "android-observer-v2",
+        now(),
+      ],
+    );
+  }
+
+  private async shouldRunAndroidObserver(projectId: number, record: QARecord): Promise<boolean> {
+    if (
+      record.parent_qa_id != null
+      || record.relation_type === "term_explanation"
+      || record.relation_type === "alternate"
+      || Boolean(record.selected_text)
+    ) {
+      return true;
+    }
+    const existingJobs = Number((await db.query<Row>(
+      "SELECT COUNT(*) AS count FROM observer_jobs WHERE project_id=?",
+      [projectId],
+    ))[0]?.count || 0);
+    if (existingJobs === 0) return true;
+    const completed = Number((await db.query<Row>(
+      "SELECT COUNT(*) AS count FROM qa_records WHERE project_id=? AND answer_md<>''",
+      [projectId],
+    ))[0]?.count || 0);
+    if (completed % 5 === 0) return true;
+    const concepts = await db.query<Row>(
+      "SELECT id,canonical_name,display_name FROM concepts WHERE length(canonical_name)>=2",
+    );
+    const question = record.question.toLocaleLowerCase();
+    for (const concept of concepts) {
+      const names = [concept.canonical_name, concept.display_name]
+        .map((value) => String(value || "").toLocaleLowerCase())
+        .filter(Boolean);
+      if (!names.some((name) => question.includes(name))) continue;
+      const state = await db.query<Row>(
+        "SELECT 1 FROM knowledge_states_v2 WHERE concept_id=? LIMIT 1",
+        [concept.id],
+      );
+      if (!state.length) return true;
+    }
+    return false;
+  }
+
+  private async resumeObserverJobs(): Promise<void> {
+    await db.run(
+      "UPDATE observer_jobs SET status='pending',locked_at=NULL,updated_at=? WHERE status='running'",
+      [now()],
+    );
+    const rows = await db.query<Row>(
+      "SELECT project_id,qa_record_id FROM observer_jobs WHERE status='pending' ORDER BY created_at LIMIT 16",
+    );
+    for (const row of rows) {
+      const record = await this.getQA(Number(row.project_id), Number(row.qa_record_id)).catch(() => null);
+      if (record) void this.executeAndroidObserverJob(Number(row.project_id), record);
+    }
+  }
+
+  private async executeAndroidObserverJob(projectId: number, record: QARecord): Promise<void> {
+    const jobId = `android-observer:${projectId}:${record.id}`;
+    const stamp = now();
+    await db.run(
+      `INSERT OR IGNORE INTO observer_jobs
+       (id,project_id,qa_record_id,reason,payload_json,status,attempt_count,
+        available_at,created_at,updated_at)
+       VALUES(?,?,?,'high_information','{}','pending',0,?,?,?)`,
+      [jobId, projectId, record.id, stamp, stamp, stamp],
+    );
+    await db.run(
+      "UPDATE observer_jobs SET status='running',attempt_count=attempt_count+1,locked_at=?,updated_at=? WHERE id=?",
+      [stamp, stamp, jobId],
+    );
+    const start = performance.now();
+    try {
+      const concepts = await this.listPersonalizationConcepts(projectId);
+      const mastery = await this.getPersonalizationMasteryBatch(projectId, concepts.map((item) => item.id));
+      const parent = record.parent_qa_id
+        ? await this.getQA(projectId, record.parent_qa_id!).catch(() => null)
+        : null;
+      const completedAnswerCount = Number((await db.query<Row>(
+        "SELECT COUNT(*) AS count FROM qa_records WHERE answer_md <> ''",
+      ))[0]?.count || 0);
+      let sourceExcerpt = "";
+      if (record.source_path) {
+        try {
+          sourceExcerpt = record.source_type === "file"
+            ? await readRepoFile(projectId, record.source_path)
+            : await readGeneratedFile(projectId, record.source_path);
+        } catch {
+          sourceExcerpt = "";
+        }
+      }
+      const prompt = buildObserverPrompt({
+        question: record.question,
+        selectedText: record.selected_text,
+        parentQuestion: parent?.question,
+        parentAnswer: parent?.answer_md,
+        knownConcepts: concepts.filter((item) => mastery[item.id]?.manualStatus === "known").map((item) => item.displayName),
+        unfamiliarConcepts: concepts.filter((item) => mastery[item.id]?.manualStatus === "unknown").map((item) => item.displayName),
+        completedAnswerCount,
+        sourceType: record.source_type,
+        sourcePath: record.source_path || undefined,
+        sourceExcerpt: compactText(sourceExcerpt, 2200),
+      });
+      const raw = await this.callLLM([
+        { role: "system", content: "You are a conservative, auditable learning-evidence observer. Output valid JSON only." },
+        { role: "user", content: prompt },
+      ]);
+      const result = parseObserverResult(raw);
+      await this.applyAndroidObserverResult(projectId, record, result, jobId);
+      await this.recordModelCall(projectId, "observer", "completed", start);
+      await db.run("UPDATE observer_jobs SET status='completed',updated_at=? WHERE id=?", [now(), jobId]);
+    } catch (error) {
+      await this.recordModelCall(projectId, "observer", "failed", start, error).catch(() => undefined);
+      await db.run(
+        "UPDATE observer_jobs SET status='failed',last_error=?,updated_at=? WHERE id=?",
+        [safeErrorMessage(error), now(), jobId],
+      );
+    }
+  }
+
+  private async runAndroidObserver(projectId: number, record: QARecord): Promise<void> {
+    const runtime = await this.getPersonalizationRuntimeSettings();
+    if (!runtime.observer_enabled) return;
+    if (!await this.shouldRunAndroidObserver(projectId, record)) return;
+    await this.executeAndroidObserverJob(projectId, record);
+  }
+
+  private async shouldUseTeacherPlanner(
+    projectId: number,
+    payload: QAAskPayload,
+  ): Promise<boolean> {
+    if (payload.parent_qa_id != null || Boolean(payload.selected_text)) return true;
+    const rows = await db.query<Row>(
+      "SELECT id,canonical_name,display_name FROM concepts",
+    );
+    const question = payload.question.toLocaleLowerCase();
+    const conceptIds = rows
+      .filter((row) => [row.canonical_name, row.display_name]
+        .map((value) => String(value || "").toLocaleLowerCase())
+        .some((name) => name.length >= 2 && question.includes(name)))
+      .map((row) => String(row.id));
+    if (conceptIds.length > 1) return true;
+    if (!conceptIds.length) return false;
+    const unresolved = await db.query<Row>(
+      `SELECT 1 FROM concept_relations r
+       LEFT JOIN knowledge_states_v2 s ON s.concept_id=r.target_concept_id
+       WHERE r.source_concept_id IN (${conceptIds.map(() => "?").join(",")})
+         AND r.relation_type='prerequisite'
+         AND (s.state_json IS NULL OR s.state_json NOT LIKE '%"status":"confirmed"%')
+       LIMIT 1`,
+      conceptIds,
+    );
+    return unresolved.length > 0;
+  }
+
+  private async teacherStrategyForQuestion(
+    projectId: number,
+    payload: QAAskPayload,
+  ): Promise<string> {
+    const runtime = await this.getPersonalizationRuntimeSettings();
+    const complex = await this.shouldUseTeacherPlanner(projectId, payload);
+    if (!runtime.teacher_planner_enabled || !complex) return "";
+    const start = performance.now();
+    try {
+      const learnerContext = await this.learnerContextForQuestion(projectId, payload);
+      const strategy = await this.callLLM([
+        {
+          role: "system",
+          content: "你是教学策略规划器。当前课程、题目要求、用户代码和选区是第一上下文。先判断完成当前目标真正需要哪些先修概念；证据不足时安排简短铺垫，不把相邻概念当作已掌握。已有直接证据的基础概念可简述并链接旧解释，正在学习的必要概念首次出现时讲清。给出最多 5 条简短策略，不回答问题本身，不给用户贴等级标签。",
+        },
+        {
+          role: "user",
+          content: `${learnerContext}\n\n当前问题：${payload.question}\n当前选区：${payload.selected_text || "无"}`,
+        },
+      ]);
+      await this.recordModelCall(projectId, "teacher_planner", "completed", start);
+      return `<teacher_plan>\n${strategy.slice(0, 1800)}\n</teacher_plan>`;
+    } catch (error) {
+      await this.recordModelCall(projectId, "teacher_planner", "failed", start, error).catch(() => undefined);
+      return "";
+    }
+  }
+
   private async getPersonalizationProfile(projectId: number): Promise<PersonalizationProfile> {
     const concepts = await this.listPersonalizationConcepts(projectId);
+    const knowledgeStates = (await this.getKnowledgeStatesV2(projectId)).states;
+    const stateByConceptId = new Map(
+      knowledgeStates.map((state) => [state.conceptId, state]),
+    );
     const entries: PersonalizationProfile["concepts"] = [];
     for (const concept of concepts) {
-      const mastery = (await this.getPersonalizationMasteryBatch(projectId, [concept.id]))[concept.id];
-      if (!mastery) continue;
-      const manualJudgement = mastery.manualStatus === "known"
+      const legacyMastery = (await this.getPersonalizationMasteryBatch(projectId, [concept.id]))[concept.id];
+      const state = stateByConceptId.get(concept.id);
+      if (!legacyMastery && !state) continue;
+      const familiarity = state?.dimensions.familiarity;
+      const mastery = legacyMastery ?? {
+        id: `v2:${concept.id}`,
+        conceptId: concept.id,
+        scope: {
+          type: state!.scopeType,
+          id: state!.scopeId,
+        },
+        knownEvidence: familiarity?.directEvidenceCount ?? 0,
+        unknownEvidence: Math.max(0, (familiarity?.evidenceCount ?? 0) - (familiarity?.directEvidenceCount ?? 0)),
+        mastery: familiarity?.probability ?? 0.5,
+        uncertainty: familiarity?.uncertainty ?? 1,
+        manualStatus: familiarity?.manualStatus ?? null,
+        sequence: state!.evidenceVersion,
+        lastSeenAt: familiarity?.lastEvidenceAt ?? state!.updatedAt,
+        updatedAt: state!.updatedAt,
+      } satisfies PersonalizationMastery;
+      const manualJudgement = (familiarity?.manualStatus ?? mastery.manualStatus) === "known"
         ? "known"
-        : mastery.manualStatus === "unknown"
+        : (familiarity?.manualStatus ?? mastery.manualStatus) === "unknown"
           ? "unfamiliar"
           : null;
       const judgement = manualJudgement
-        || (mastery.mastery >= 0.75 ? "known" : mastery.mastery <= 0.35 ? "unfamiliar" : "uncertain");
+        || (familiarity?.status === "confirmed"
+          ? "known"
+          : familiarity?.status === "learning"
+            ? "unfamiliar"
+            : mastery.mastery >= 0.75
+              ? "known"
+              : mastery.mastery <= 0.35
+                ? "unfamiliar"
+                : "uncertain");
       entries.push({ concept, mastery, judgement });
     }
     const preferenceRows = await db.query<Row>(
       "SELECT * FROM preference_events WHERE (scope_type='global' AND scope_id='local-user') OR (scope_type='project' AND scope_id=?) ORDER BY created_at DESC LIMIT 50",
+      [String(projectId)],
+    );
+    const domainRows = await db.query<Row>(
+      "SELECT * FROM domain_profiles WHERE scope_id='local-user' ORDER BY updated_at DESC",
+    );
+    const inferenceRows = await db.query<Row>(
+      `SELECT i.*,c.display_name
+       FROM learner_inferences i
+       LEFT JOIN concepts c ON i.subject_type='concept' AND c.id=i.subject_key
+       WHERE i.status='active' AND ((i.scope_type='global' AND i.scope_id='local-user')
+         OR (i.scope_type='project' AND i.scope_id=?))
+       ORDER BY i.updated_at DESC LIMIT 200`,
+      [String(projectId)],
+    );
+    const relationRows = await db.query<Row>(
+      "SELECT * FROM concept_relations WHERE status='active' ORDER BY updated_at DESC LIMIT 200",
+    );
+    const surveyRow = (await db.query<Row>(
+      "SELECT * FROM survey_candidates WHERE scope_id='local-user' AND status='pending' ORDER BY created_at DESC LIMIT 1",
+    ))[0];
+    const callRows = await db.query<Row>(
+      "SELECT * FROM model_call_audit ORDER BY created_at DESC LIMIT 50",
+    );
+    const evidenceRows = await db.query<Row>(
+      `SELECT * FROM learning_evidence_v2
+       WHERE (scope_type='global' AND scope_id='local-user')
+          OR (scope_type='project' AND scope_id=?)
+       ORDER BY event_time DESC LIMIT 100`,
       [String(projectId)],
     );
     return {
@@ -2181,8 +3585,199 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         source: String(row.source),
         evidenceText: row.evidence_text ? String(row.evidence_text) : null,
         qaRecordId: row.qa_record_id == null ? null : Number(row.qa_record_id),
+          createdAt: String(row.created_at),
+      })),
+      domainProfiles: domainRows.map((row) => ({
+        domainKey: String(row.domain_key),
+        summary: String(row.summary),
+        confidence: Number(row.confidence),
+        confirmed: this.stringArray(row.confirmed_json),
+        learning: this.stringArray(row.learning_json),
+        likelyPrerequisites: this.stringArray(row.likely_prerequisites_json),
+        evidence: this.jsonArray(row.evidence_json),
+        updatedAt: String(row.updated_at),
+      })),
+      inferences: inferenceRows.map((row) => ({
+        id: String(row.id),
+        subjectType: String(row.subject_type) as LearnerInference["subjectType"],
+        subjectKey: String(row.subject_key),
+        displayName: row.display_name == null ? null : String(row.display_name),
+        scopeType: String(row.scope_type) as LearnerInference["scopeType"],
+        scopeId: String(row.scope_id),
+        state: String(row.state) as LearnerInference["state"],
+        summary: String(row.summary),
+        confidence: Number(row.confidence),
+        directEvidenceCount: Number(row.direct_evidence_count),
+        inferredEvidenceCount: Number(row.inferred_evidence_count),
+        evidence: this.jsonArray(row.evidence_json),
+        updatedAt: String(row.updated_at),
+      })),
+      relations: relationRows.map((row) => ({
+        id: String(row.id),
+        sourceConceptId: String(row.source_concept_id),
+        targetConceptId: String(row.target_concept_id),
+        relationType: String(row.relation_type) as PersonalizationProfile["relations"][number]["relationType"],
+        domain: String(row.domain),
+        confidence: Number(row.confidence),
+        evidence: this.jsonArray(row.evidence_json),
+      })),
+      surveyCandidate: surveyRow ? {
+        id: String(surveyRow.id),
+        question: String(surveyRow.question),
+        dimension: String(surveyRow.dimension),
+        options: this.jsonArray(surveyRow.options_json).map((item) => ({
+          value: String(item.value || ""),
+          label: String(item.label || ""),
+        })).filter((item) => item.value && item.label),
+        rationale: String(surveyRow.rationale || ""),
+        confidence: Number(surveyRow.confidence),
+        createdAt: String(surveyRow.created_at),
+      } : null,
+      modelCalls: callRows.map((row) => ({
+        id: String(row.id),
+        projectId: row.project_id == null ? null : Number(row.project_id),
+        purpose: String(row.purpose),
+        provider: row.provider == null ? null : String(row.provider),
+        model: row.model == null ? null : String(row.model),
+        status: String(row.status),
+        inputTokens: row.input_tokens == null ? null : Number(row.input_tokens),
+        outputTokens: row.output_tokens == null ? null : Number(row.output_tokens),
+        estimatedCost: row.estimated_cost == null ? null : Number(row.estimated_cost),
+        latencyMs: row.latency_ms == null ? null : Number(row.latency_ms),
+        errorMessage: row.error_message == null ? null : String(row.error_message),
         createdAt: String(row.created_at),
       })),
+      knowledgeStates,
+      learningEvidence: evidenceRows.map((row) => {
+        const evidence = this.evidenceV2FromRow(row);
+        return {
+          ...evidence,
+          scopeType: evidence.scopeType,
+          scopeId: evidence.scopeId,
+        };
+      }),
+    };
+  }
+
+  private async voidLearnerInference(
+    projectId: number,
+    inferenceId: string,
+  ): Promise<{ status: string; id: string }> {
+    await this.getProject(projectId);
+    const row = (await db.query<Row>("SELECT id,evidence_json FROM learner_inferences WHERE id=?", [inferenceId]))[0];
+    if (!row) throw new Error("学习判断不存在。");
+    await db.run(
+      "UPDATE learner_inferences SET status='voided',updated_at=? WHERE id=?",
+      [now(), inferenceId],
+    );
+    const observerRuns = new Set(
+      this.jsonArray(row.evidence_json)
+        .map((item) => String(item.id || ""))
+        .filter((id) => id.includes(":knowledge:"))
+        .map((id) => id.split(":knowledge:", 1)[0]),
+    );
+    if (observerRuns.size) {
+      const relations = await db.query<Row>("SELECT id,evidence_json FROM concept_relations");
+      for (const relation of relations) {
+        const evidence = this.jsonArray(relation.evidence_json);
+        let changed = false;
+        for (const item of evidence) {
+          const id = String(item.id || "");
+          const matchesRun = [...observerRuns].some((runId) => id.startsWith(`${runId}:relation:`));
+          if (matchesRun && !bool(item.voided)) {
+            item.voided = true;
+            changed = true;
+          }
+        }
+        if (!changed) continue;
+        const active = evidence.filter((item) => !bool(item.voided));
+        const confidence = active.length
+          ? active.reduce((sum, item) => sum + Math.max(0, Math.min(1, Number(item.confidence || 0))), 0) / active.length
+          : 0;
+        await db.run(
+          "UPDATE concept_relations SET confidence=?,evidence_json=?,status=?,updated_at=? WHERE id=?",
+          [confidence, JSON.stringify(evidence), active.length ? "active" : "voided", now(), relation.id],
+        );
+      }
+    }
+    await this.rebuildAndroidDomainProfiles();
+    return { status: "voided", id: inferenceId };
+  }
+
+  private async answerDynamicSurvey(
+    projectId: number,
+    surveyId: string,
+    choice: string,
+  ): Promise<{ status: string }> {
+    const row = (await db.query<Row>(
+      "SELECT * FROM survey_candidates WHERE id=? AND scope_id='local-user'",
+      [surveyId],
+    ))[0];
+    if (!row) throw new Error("风格问题不存在。");
+    if (String(row.status) !== "pending") return { status: String(row.status) };
+    const options = this.jsonArray(row.options_json);
+    if (!options.some((option) => String(option.value) === choice)) {
+      throw new Error("无效的风格选择。");
+    }
+    await db.run(
+      "UPDATE survey_candidates SET status='answered',answer=?,answered_at=? WHERE id=?",
+      [choice, now(), surveyId],
+    );
+    await this.applyAnswerPreferenceFeedback(projectId, {
+      dimension: String(row.dimension),
+      choice,
+      source: "survey",
+      idempotency_key: `dynamic-survey:${surveyId}`,
+      scope: "global",
+    });
+    return { status: "answered" };
+  }
+
+  private async dismissDynamicSurvey(surveyId: string): Promise<{ status: string }> {
+    await db.run(
+      `UPDATE survey_candidates SET status='dismissed',dismissed_at=?
+       WHERE id=? AND scope_id='local-user' AND status='pending'`,
+      [now(), surveyId],
+    );
+    return { status: "dismissed" };
+  }
+
+  private async registerConceptExplanation(
+    conceptId: string,
+    projectId: number,
+    qaRecordId: number,
+    title: string,
+  ): Promise<void> {
+    const stamp = now();
+    await db.run(
+      `INSERT INTO concept_explanations
+       (id,concept_id,project_id,qa_record_id,title,status,created_at,updated_at)
+       VALUES(?,?,?,?,?,'active',?,?)
+       ON CONFLICT(concept_id,qa_record_id) DO UPDATE SET
+         title=excluded.title,status='active',updated_at=excluded.updated_at`,
+      [crypto.randomUUID(), conceptId, projectId, qaRecordId, title.slice(0, 200), stamp, stamp],
+    );
+  }
+
+  private async getReusableConceptExplanation(
+    conceptId: string,
+  ): Promise<{ explanation: { projectId: number; qa: QARecord } | null }> {
+    const row = (await db.query<Row>(
+      `SELECT e.project_id,e.qa_record_id
+       FROM concept_explanations e
+       JOIN qa_records q ON q.id=e.qa_record_id AND q.project_id=e.project_id
+       JOIN projects p ON p.id=e.project_id
+       WHERE e.concept_id=? AND e.status='active'
+       ORDER BY e.updated_at DESC LIMIT 1`,
+      [conceptId],
+    ))[0];
+    if (!row) return { explanation: null };
+    const sourceProjectId = Number(row.project_id);
+    return {
+      explanation: {
+        projectId: sourceProjectId,
+        qa: await this.getQA(sourceProjectId, Number(row.qa_record_id)),
+      },
     };
   }
 
@@ -2198,6 +3793,19 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         await db.runInTx("DELETE FROM preference_events");
         await db.runInTx("DELETE FROM learner_preferences");
         await db.runInTx("DELETE FROM term_impressions");
+        await db.runInTx("DELETE FROM concept_relations");
+        await db.runInTx("DELETE FROM learner_inferences");
+        await db.runInTx("DELETE FROM domain_profiles");
+        await db.runInTx("DELETE FROM survey_candidates");
+        await db.runInTx("DELETE FROM model_call_audit");
+        await db.runInTx("DELETE FROM term_model_scans");
+        await db.runInTx("DELETE FROM learning_evidence_v2");
+        await db.runInTx("DELETE FROM knowledge_states_v2");
+        await db.runInTx("DELETE FROM diagnostic_attempts");
+        await db.runInTx("DELETE FROM diagnostic_items");
+        await db.runInTx("DELETE FROM observer_jobs");
+        await db.runInTx("DELETE FROM teaching_outcomes");
+        await db.runInTx("DELETE FROM teaching_trials");
         return {
           status: "ok",
           deletedMasteryCount: Number(mastery[0]?.c ?? 0),
@@ -2218,8 +3826,22 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await db.runInTx("DELETE FROM concept_mastery WHERE scope_type=? AND scope_id=?", [st, si]);
       await db.runInTx("DELETE FROM preference_events WHERE scope_type=? AND scope_id=?", [st, si]);
       await db.runInTx("DELETE FROM learner_preferences WHERE scope_type=? AND scope_id=?", [st, si]);
+      await db.runInTx("DELETE FROM learning_evidence_v2 WHERE scope_type=? AND scope_id=?", [st, si]);
+      await db.runInTx("DELETE FROM knowledge_states_v2 WHERE scope_type=? AND scope_id=?", [st, si]);
       if (scope === "project") {
         await db.runInTx("DELETE FROM term_impressions WHERE project_id=?", [projectId]);
+        await db.runInTx("DELETE FROM learner_inferences WHERE scope_type='project' AND scope_id=?", [String(projectId)]);
+        await db.runInTx("DELETE FROM model_call_audit WHERE project_id=?", [projectId]);
+        await db.runInTx("DELETE FROM term_model_scans WHERE project_id=?", [projectId]);
+        await db.runInTx("DELETE FROM diagnostic_attempts WHERE project_id=?", [projectId]);
+        await db.runInTx("DELETE FROM diagnostic_items WHERE project_id=?", [projectId]);
+        await db.runInTx("DELETE FROM observer_jobs WHERE project_id=?", [projectId]);
+        await db.runInTx("DELETE FROM teaching_outcomes WHERE project_id=?", [projectId]);
+        await db.runInTx("DELETE FROM teaching_trials WHERE project_id=?", [projectId]);
+      } else {
+        await db.runInTx("DELETE FROM learner_inferences WHERE scope_type='global' AND scope_id='local-user'");
+        await db.runInTx("DELETE FROM domain_profiles WHERE scope_id='local-user'");
+        await db.runInTx("DELETE FROM survey_candidates WHERE scope_id='local-user'");
       }
       return { status: "ok", deletedMasteryCount: masteryCount, deletedEventCount: eventCount };
     });

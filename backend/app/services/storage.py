@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import os
 from contextlib import closing, contextmanager
@@ -430,6 +431,9 @@ def init_storage() -> None:
     REPOS_ROOT.mkdir(parents=True, exist_ok=True)
     GENERATED_ROOT.mkdir(parents=True, exist_ok=True)
     with closing(sqlite3.connect(DB_PATH, timeout=15)) as conn:
+        # Migrations use both positional and named column access. Match the
+        # row behavior used by normal application connections.
+        conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=15000")
         conn.execute("PRAGMA synchronous=NORMAL")
@@ -1314,6 +1318,299 @@ def init_storage() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_teaching_outcomes_session ON teaching_outcomes(project_id, session_id, evaluation_qa_record_id)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS concept_relations (
+                id TEXT PRIMARY KEY,
+                source_concept_id TEXT NOT NULL,
+                target_concept_id TEXT NOT NULL,
+                relation_type TEXT NOT NULL,
+                domain TEXT NOT NULL DEFAULT 'general',
+                confidence REAL NOT NULL DEFAULT 0.5,
+                evidence_json TEXT NOT NULL DEFAULT '[]',
+                origin TEXT NOT NULL DEFAULT 'observer',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(source_concept_id, target_concept_id, relation_type)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_concept_relations_source ON concept_relations(source_concept_id, status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_concept_relations_target ON concept_relations(target_concept_id, status)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS learner_inferences (
+                id TEXT PRIMARY KEY,
+                subject_type TEXT NOT NULL,
+                subject_key TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                state TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0,
+                direct_evidence_count INTEGER NOT NULL DEFAULT 0,
+                inferred_evidence_count INTEGER NOT NULL DEFAULT 0,
+                evidence_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(subject_type, subject_key, scope_type, scope_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_learner_inferences_scope ON learner_inferences(scope_type, scope_id, subject_type, status)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS domain_profiles (
+                domain_key TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0,
+                confirmed_json TEXT NOT NULL DEFAULT '[]',
+                learning_json TEXT NOT NULL DEFAULT '[]',
+                likely_prerequisites_json TEXT NOT NULL DEFAULT '[]',
+                evidence_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(domain_key, scope_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS concept_explanations (
+                id TEXT PRIMARY KEY,
+                concept_id TEXT NOT NULL,
+                project_id INTEGER NOT NULL,
+                qa_record_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(concept_id, qa_record_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_concept_explanations_concept ON concept_explanations(concept_id, status, updated_at DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS survey_candidates (
+                id TEXT PRIMARY KEY,
+                scope_id TEXT NOT NULL,
+                question TEXT NOT NULL,
+                dimension TEXT NOT NULL,
+                options_json TEXT NOT NULL,
+                rationale TEXT NOT NULL DEFAULT '',
+                confidence REAL NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                observer_run_id TEXT,
+                answer TEXT,
+                created_at TEXT NOT NULL,
+                answered_at TEXT,
+                dismissed_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_survey_candidates_pending ON survey_candidates(scope_id, status, created_at DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS model_call_audit (
+                id TEXT PRIMARY KEY,
+                project_id INTEGER,
+                purpose TEXT NOT NULL,
+                provider TEXT,
+                model TEXT,
+                status TEXT NOT NULL,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                estimated_cost REAL,
+                latency_ms INTEGER,
+                error_message TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_model_call_audit_created ON model_call_audit(created_at DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS term_model_scans (
+                project_id INTEGER NOT NULL,
+                source_type TEXT NOT NULL,
+                source_path TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                terms_json TEXT NOT NULL DEFAULT '[]',
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(project_id, source_type, source_path, content_hash)
+            )
+            """
+        )
+        # ---------- Verifiable teacher V2 ----------
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS learning_evidence_v2 (
+                id TEXT PRIMARY KEY,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                schema_version INTEGER NOT NULL DEFAULT 2,
+                concept_id TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                dimension TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                strength REAL NOT NULL,
+                reliability REAL NOT NULL,
+                source TEXT NOT NULL,
+                action TEXT NOT NULL,
+                object_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                context_json TEXT NOT NULL DEFAULT '{}',
+                event_time TEXT NOT NULL,
+                session_id TEXT,
+                qa_record_id INTEGER,
+                diagnostic_attempt_id TEXT,
+                objective_correct INTEGER,
+                target_evidence_id TEXT,
+                voided INTEGER NOT NULL DEFAULT 0,
+                model_version TEXT,
+                policy_version TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_learning_evidence_v2_replay
+               ON learning_evidence_v2(concept_id, scope_type, scope_id, event_time, id)"""
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_learning_evidence_v2_qa
+               ON learning_evidence_v2(qa_record_id, source)"""
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS knowledge_states_v2 (
+                concept_id TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                policy_version TEXT NOT NULL,
+                evidence_version INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(concept_id, scope_type, scope_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS diagnostic_items (
+                id TEXT PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                session_id TEXT,
+                source_qa_record_id INTEGER,
+                concept_ids_json TEXT NOT NULL,
+                dimension TEXT NOT NULL,
+                item_type TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                options_json TEXT NOT NULL DEFAULT '[]',
+                answer_key_json TEXT NOT NULL,
+                source_refs_json TEXT NOT NULL,
+                rationale TEXT NOT NULL DEFAULT '',
+                difficulty REAL NOT NULL DEFAULT 0.5,
+                strategy_version TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                shown_at TEXT,
+                dismissed_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_diagnostic_items_pending
+               ON diagnostic_items(project_id, status, created_at DESC)"""
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS diagnostic_attempts (
+                id TEXT PRIMARY KEY,
+                item_id TEXT NOT NULL,
+                project_id INTEGER NOT NULL,
+                session_id TEXT,
+                answer_json TEXT NOT NULL,
+                is_correct INTEGER,
+                user_flagged INTEGER NOT NULL DEFAULT 0,
+                evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+                answered_at TEXT NOT NULL,
+                FOREIGN KEY(item_id) REFERENCES diagnostic_items(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS observer_jobs (
+                id TEXT PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                qa_record_id INTEGER NOT NULL,
+                reason TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                available_at TEXT NOT NULL,
+                locked_at TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(project_id, qa_record_id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observer_jobs_ready ON observer_jobs(status, available_at)"
+        )
+        # Preserve explicit feedback from older installations. Inferred values
+        # remain in the legacy tables and are imported separately as weak data.
+        now_v2 = datetime.now(timezone.utc).isoformat()
+        manual_rows = conn.execute(
+            """SELECT concept_id, scope_type, scope_id, manual_status, updated_at
+               FROM concept_mastery WHERE manual_status IN ('known', 'unknown')"""
+        ).fetchall()
+        for row in manual_rows:
+            event_id = (
+                f"migration:v2:manual:{row['scope_type']}:{row['scope_id']}:"
+                f"{row['concept_id']}:{row['manual_status']}"
+            )
+            conn.execute(
+                """INSERT OR IGNORE INTO learning_evidence_v2
+                   (id, idempotency_key, schema_version, concept_id, scope_type,
+                    scope_id, dimension, direction, strength, reliability, source,
+                    action, object_json, result_json, context_json, event_time,
+                    voided, policy_version)
+                   VALUES (?, ?, 2, ?, ?, ?, 'familiarity', ?, 1, 1, 'manual',
+                           ?, '{}', '{}', ?, ?, 0, 'knowledge-v2.1')""",
+                (
+                    event_id,
+                    event_id,
+                    row["concept_id"],
+                    row["scope_type"],
+                    row["scope_id"],
+                    "positive" if row["manual_status"] == "known" else "negative",
+                    "manual_known" if row["manual_status"] == "known" else "manual_unknown",
+                    json.dumps({"migrated_from": "concept_mastery"}, ensure_ascii=False),
+                    row["updated_at"] or now_v2,
+                ),
+            )
         conn.commit()
 
 
@@ -1628,6 +1925,25 @@ def update_project_status(project_id: int, status: str) -> Optional[ProjectRecor
 
 def delete_project(project_id: int) -> bool:
     with _connect() as conn:
+        project_concept_ids = [
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM concepts WHERE concept_key LIKE ?",
+                (f"project:{project_id}:%",),
+            ).fetchall()
+        ]
+        if project_concept_ids:
+            placeholders = ",".join("?" * len(project_concept_ids))
+            conn.execute(
+                f"""DELETE FROM concept_relations
+                    WHERE source_concept_id IN ({placeholders})
+                       OR target_concept_id IN ({placeholders})""",
+                (*project_concept_ids, *project_concept_ids),
+            )
+            conn.execute(
+                f"DELETE FROM learner_inferences WHERE subject_type = 'concept' AND subject_key IN ({placeholders})",
+                project_concept_ids,
+            )
         conn.execute("DELETE FROM learning_states WHERE project_id = ?", (project_id,))
         anchor_ids = [row["id"] for row in conn.execute("SELECT id FROM learning_anchors WHERE project_id = ?", (project_id,)).fetchall()]
         for anchor_id in anchor_ids:
@@ -1638,6 +1954,15 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM preference_events WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM learner_preferences WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM term_impressions WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM learner_inferences WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM concept_explanations WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM model_call_audit WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM term_model_scans WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM diagnostic_attempts WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM diagnostic_items WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM observer_jobs WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM learning_evidence_v2 WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
+        conn.execute("DELETE FROM knowledge_states_v2 WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM document_terms WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM interaction_observations WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM observer_runs WHERE project_id = ?", (project_id,))
@@ -1660,6 +1985,12 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM code_chunks WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM indexed_files WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM project_indexes WHERE project_id = ?", (project_id,))
+        if project_concept_ids:
+            placeholders = ",".join("?" * len(project_concept_ids))
+            conn.execute(
+                f"DELETE FROM concepts WHERE id IN ({placeholders})",
+                project_concept_ids,
+            )
         cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         conn.commit()
         return cursor.rowcount > 0

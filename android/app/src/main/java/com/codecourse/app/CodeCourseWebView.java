@@ -15,6 +15,7 @@ public class CodeCourseWebView extends CapacitorWebView {
 
     private static final int ASK_SELECTION_MENU_ID = 0xCC01;
     private static final int EXPLAIN_TERM_MENU_ID = 0xCC02;
+    private static final int MARK_KNOWN_MENU_ID = 0xCC03;
     private static final String TAG = "CCSelection";
 
     public CodeCourseWebView(Context context, AttributeSet attrs) {
@@ -77,6 +78,9 @@ public class CodeCourseWebView extends CapacitorWebView {
             if (item.getItemId() == EXPLAIN_TERM_MENU_ID) {
                 return handleSelectionAction(mode, "codecourse-native-selection-explain");
             }
+            if (item.getItemId() == MARK_KNOWN_MENU_ID) {
+                return handleSelectionAction(mode, "codecourse-native-selection-known");
+            }
             return delegate.onActionItemClicked(mode, item);
         }
 
@@ -116,6 +120,15 @@ public class CodeCourseWebView extends CapacitorWebView {
         explainItem.setVisible(true);
         explainItem.setEnabled(true);
         explainItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+
+        MenuItem knownItem = menu.findItem(MARK_KNOWN_MENU_ID);
+        if (knownItem == null) {
+            knownItem = menu.add(Menu.NONE, MARK_KNOWN_MENU_ID, 2, "我认识");
+            added = true;
+        }
+        knownItem.setVisible(true);
+        knownItem.setEnabled(true);
+        knownItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         return added;
     }
 

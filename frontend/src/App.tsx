@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { BookOpen, Bot, ChevronDown, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
+import { BookOpen, Bot, BrainCircuit, ChevronDown, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
 import {
   askQuestionStream,
   buildProjectIndex,
@@ -45,9 +45,18 @@ import {
   markConceptKnown,
   markConceptUnknown,
   getLearnerPreferences,
+  updateLearnerPreferences,
+  getPersonalizationProfile,
+  getReusableConceptExplanation,
   resolvePersonalizationTerms,
   recordTermImpressions,
   submitAnswerFeedback,
+  answerDynamicSurvey,
+  dismissDynamicSurvey,
+  getPendingDiagnostic,
+  answerDiagnostic,
+  dismissDiagnostic,
+  flagDiagnostic,
   saveLearningAnchor,
   setQAFavorite,
   updateQARecord,
@@ -71,6 +80,8 @@ import type {
   ProjectIndexStatus,
   QARecord,
   QAAskPayload,
+  DynamicSurveyCandidate,
+  DiagnosticItem,
   RetrievalSource,
   TreeNode,
 } from "./api/client";
@@ -80,6 +91,7 @@ import CodeViewer, { type CodeJumpRequest, ViewerRange, ViewerSelection } from "
 import CommandPalette, { type CommandPaletteItem } from "./components/CommandPalette";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
+import LearnerProfileDialog from "./components/LearnerProfileDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
 import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
@@ -106,7 +118,7 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
-type MobileSurface = "navigation" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts";
+type MobileSurface = "navigation" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts" | "profile";
 type OpenItemType = "file" | "course" | "qa" | "knowledge_graph";
 type SplitDirection = "row" | "column";
 type DropZone = "center" | "left" | "right" | "top" | "bottom";
@@ -700,6 +712,7 @@ export default function App() {
   const [busyProjectId, setBusyProjectId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [learnerProfileOpen, setLearnerProfileOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(() => !isAndroidRuntime());
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
@@ -747,6 +760,9 @@ export default function App() {
   const [activeDocumentTerms, setActiveDocumentTerms] = useState<DocumentTerm[]>([]);
   const [terminologyDensity, setTerminologyDensity] = useState(0.5);
   const [personalizationRevision, setPersonalizationRevision] = useState(0);
+  const [dynamicSurvey, setDynamicSurvey] = useState<DynamicSurveyCandidate | null>(null);
+  const [diagnosticItem, setDiagnosticItem] = useState<DiagnosticItem | null>(null);
+  const [diagnosticResult, setDiagnosticResult] = useState<boolean | null>(null);
   const [termAction, setTermAction] = useState<{ term: DocumentTerm; position?: { x: number; y: number } } | null>(null);
   const [learningAnchor, setLearningAnchor] = useState<LearningAnchor | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
@@ -809,11 +825,19 @@ export default function App() {
   const learningUpdateSequences = useRef<Map<string, number>>(new Map());
   const learningInFlightSequences = useRef<Map<string, number>>(new Map());
   const recordedTermImpressionsRef = useRef<Set<string>>(new Set());
+  const termRefreshAttemptsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => () => learningSaveScheduler.current.cancelAll(), []);
 
   useEffect(() => {
     recordedTermImpressionsRef.current.clear();
+    termRefreshAttemptsRef.current.clear();
+    setDynamicSurvey(null);
+    setDiagnosticItem(null);
+    setDiagnosticResult(null);
+    if (project?.id) {
+      void refreshDynamicSurvey(project.id);
+    }
   }, [project?.id]);
   const streamingContentRef = useRef<Map<string, string>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -1060,13 +1084,31 @@ export default function App() {
       handleSelection(anchor);
       void handleExplainSelectedTerm(anchor);
     }
+    function handleNativeSelectionKnown(event: Event) {
+      const text = String((event as CustomEvent<{ text?: string }>).detail?.text ?? "").trim().slice(0, 200);
+      const item = activeOpenItemRef.current;
+      if (!text || !item || !["file", "course", "qa"].includes(item.type)) return;
+      const sourceType: ViewerSelection["sourceType"] = item.type === "file"
+        ? "file"
+        : item.type === "qa" || item.qaRecordId
+          ? "qa"
+          : "course";
+      void handleMarkSelectedTermKnown({
+        sourceType,
+        sourcePath: item.path,
+        selectedText: text,
+        language: item.language,
+      });
+    }
     window.addEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
     window.addEventListener("codecourse-native-selection-explain", handleNativeSelectionExplain);
+    window.addEventListener("codecourse-native-selection-known", handleNativeSelectionKnown);
     return () => {
       window.removeEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
       window.removeEventListener("codecourse-native-selection-explain", handleNativeSelectionExplain);
+      window.removeEventListener("codecourse-native-selection-known", handleNativeSelectionKnown);
     };
-  }, [mobileRuntime, project, llmSettings, qaSessionId, selectedQA, activeQAKey]);
+  }, [mobileRuntime, project, llmSettings, qaSessionId, selectedQA, activeQAKey, activeTermRawTerms]);
 
   useEffect(() => {
     learningStatesRef.current = learningStates;
@@ -1193,13 +1235,17 @@ export default function App() {
         closeAppDialog(null);
         return;
       }
+      if (learnerProfileOpen) {
+        setLearnerProfileOpen(false);
+        return;
+      }
       setMoreMenuOpen(false);
       setGenerationOpen(false);
       setAssistantOpen(false);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [appDialog, commandPaletteOpen, mobileRuntime]);
+  }, [appDialog, commandPaletteOpen, learnerProfileOpen, mobileRuntime]);
 
   useEffect(() => {
     if (mobileRuntime || !window.codecourseDesktop?.onShortcut) return;
@@ -1272,6 +1318,7 @@ export default function App() {
     function dismissTransientSurfaces() {
       if (appDialog) closeAppDialog(null);
       setSettingsOpen(false);
+      setLearnerProfileOpen(false);
       setPromptEditorOpen(false);
       setGenerationOpen(false);
       setMoreMenuOpen(false);
@@ -2025,8 +2072,112 @@ export default function App() {
     try {
       const terms = await listDocumentTerms(projectId, sourceType, sourcePath);
       setRawDocumentTermsBySource((current) => ({ ...current, [key]: terms }));
+      const refreshKey = `${projectId}:${key}`;
+      if (terms.length < 4) {
+        const attempt = termRefreshAttemptsRef.current.get(refreshKey) ?? 0;
+        if (attempt < 3) {
+          termRefreshAttemptsRef.current.set(refreshKey, attempt + 1);
+          window.setTimeout(() => {
+            void refreshDocumentTerms(sourceType, sourcePath, projectId);
+          }, 2200 + attempt * 1200);
+        }
+      } else {
+        termRefreshAttemptsRef.current.delete(refreshKey);
+      }
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "加载陌生术语失败");
+    }
+  }
+
+  async function refreshDynamicSurvey(projectId = project?.id) {
+    if (!projectId) {
+      setDynamicSurvey(null);
+      return;
+    }
+    try {
+      const [profile, diagnostic] = await Promise.all([
+        getPersonalizationProfile(projectId),
+        getPendingDiagnostic(projectId),
+      ]);
+      setDynamicSurvey(profile.surveyCandidate ?? null);
+      setDiagnosticItem(diagnostic.item);
+      setDiagnosticResult(null);
+    } catch {
+      setDynamicSurvey(null);
+      setDiagnosticItem(null);
+    }
+  }
+
+  function scheduleDynamicSurveyRefresh(projectId: number) {
+    for (const delay of [1800, 5000, 10_000]) {
+      window.setTimeout(() => {
+        void refreshDynamicSurvey(projectId);
+      }, delay);
+    }
+  }
+
+  async function handleDynamicSurveyAnswer(choice: string) {
+    if (!project || !dynamicSurvey) return;
+    try {
+      await answerDynamicSurvey(project.id, dynamicSurvey.id, choice);
+      setDynamicSurvey(null);
+      setPersonalizationRevision((value) => value + 1);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "保存风格选择失败");
+    }
+  }
+
+  async function handleDynamicSurveyDismiss() {
+    if (!project || !dynamicSurvey) return;
+    await dismissDynamicSurvey(project.id, dynamicSurvey.id).catch(() => undefined);
+    setDynamicSurvey(null);
+  }
+
+  async function handleDisableDynamicSurveys() {
+    if (!project) return;
+    if (dynamicSurvey) {
+      await dismissDynamicSurvey(project.id, dynamicSurvey.id).catch(() => undefined);
+    }
+    try {
+      await updateLearnerPreferences(project.id, {
+        survey_enabled: false,
+        scope: "global",
+      });
+      setDynamicSurvey(null);
+      setToast("已关闭风格选择题，可在设置中重新开启");
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "关闭风格选择题失败");
+    }
+  }
+
+  async function handleDiagnosticAnswer(answer: unknown) {
+    if (!project || !diagnosticItem) return;
+    try {
+      const result = await answerDiagnostic(project.id, diagnosticItem.id, answer);
+      setDiagnosticResult(result.correct);
+      setPersonalizationRevision((value) => value + 1);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "提交理解检查失败");
+    }
+  }
+
+  async function handleDiagnosticDismiss() {
+    if (!project || !diagnosticItem) return;
+    await dismissDiagnostic(project.id, diagnosticItem.id).catch(() => undefined);
+    setDiagnosticItem(null);
+    setDiagnosticResult(null);
+  }
+
+  async function handleDiagnosticFlag() {
+    if (!project || !diagnosticItem) return;
+    try {
+      await flagDiagnostic(project.id, diagnosticItem.id);
+      setDiagnosticItem(null);
+      setDiagnosticResult(null);
+      setPersonalizationRevision((value) => value + 1);
+      setToast("已撤销这道题产生的学习证据");
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "撤销理解检查失败");
     }
   }
 
@@ -3282,6 +3433,7 @@ export default function App() {
       ]);
       setKnowledgeRefreshKey((value) => value + 1);
       notifyTaskCompleted("CodeCourse 回答完成", record.display_title || "AI 助手已经完成回答。");
+      scheduleDynamicSurveyRefresh(project.id);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
     }
@@ -3308,6 +3460,24 @@ export default function App() {
       openAssistant("history");
       return;
     }
+    if (term.concept_id) {
+      try {
+        const reusable = await getReusableConceptExplanation(project.id, term.concept_id);
+        if (reusable.explanation) {
+          const { projectId: sourceProjectId, qa: record } = reusable.explanation;
+          setSelectedQA(record);
+          setQASessionId(record.session_id ?? null);
+          setQAUpperTab("history");
+          openAssistant("history");
+          if (sourceProjectId !== project.id) {
+            setToast("已复用其他项目中的此前解释；当前为只读");
+          }
+          return;
+        }
+      } catch {
+        // A stale explanation link must not block generating a fresh answer.
+      }
+    }
     if (!llmSettings?.enabled || !llmSettings.has_api_key) {
       setQAPanelError("请先配置模型 API。 ");
       openSettings();
@@ -3330,7 +3500,7 @@ export default function App() {
         source_type: term.source_type,
         source_path: term.source_path,
         selected_text: term.term_text,
-        question: `请结合当前项目，用适合初学者的方式解释"${term.term_text}"：它是什么、为什么会出现在这里，以及接下来应该看哪里。`,
+        question: `请结合当前项目解释"${term.term_text}"：它是什么、为什么会出现在这里，以及接下来应该看哪里。讲解深度由本轮 learner_context 和我的当前要求决定。`,
         provider: llmSettings.provider,
         base_url: llmSettings.base_url,
         model: llmSettings.model,
@@ -3349,6 +3519,7 @@ export default function App() {
         refreshDocumentTerms(term.source_type, term.source_path, project.id).catch(() => {}),
       ]);
       setKnowledgeRefreshKey((value) => value + 1);
+      scheduleDynamicSurveyRefresh(project.id);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成术语解释失败");
     }
@@ -3370,41 +3541,11 @@ export default function App() {
         display_style: "subtle",
       }]).catch(() => undefined);
     }
-    setTermAction({ term, position });
+    void generateTermExplanation(term);
   }
 
-  async function handleTermAction(term: DocumentTerm) {
-    if (!project) return;
-    const action = await requestChoice("处理陌生术语", `"${term.term_text}"不需要继续提示时，可以标记为已认识或仅忽略这次识别。`, [
-      { value: "known", label: "我认识", description: "记为已掌握，后续不再作为陌生术语强调" },
-      { value: "dismiss", label: "忽略", description: "隐藏当前候选，不生成解释" },
-    ]);
-    if (!action) return;
-
-    const conceptKey = term.concept_id || `term:${(term.term_text || "").trim().toLowerCase()}`;
-    const previousProfile = termDisplay.profilesByConceptKey.get(conceptKey);
-
-    try {
-      termDisplay.patchProfile(conceptKey, {
-        manualStatus: action === "known" ? "known" : null,
-      });
-      const updated = action === "known"
-        ? await markDocumentTermKnown(project.id, term.id)
-        : await dismissDocumentTerm(project.id, term.id);
-      const key = `${term.source_type}:${term.source_path}`;
-      setRawDocumentTermsBySource((current) => ({
-        ...current,
-        [key]: (current[key] ?? []).map((item) => item.id === updated.id ? updated : item),
-      }));
-      setActiveDocumentTerms((items) => items.map((item) => item.id === updated.id ? updated : item));
-    } catch (caught) {
-      if (previousProfile) {
-        termDisplay.patchProfile(conceptKey, previousProfile);
-      } else {
-        termDisplay.patchProfile(conceptKey, { manualStatus: null });
-      }
-      setQAPanelError(caught instanceof Error ? caught.message : "更新术语状态失败");
-    }
+  function handleTermAction(term: DocumentTerm, position?: { x: number; y: number }) {
+    setTermAction({ term, position });
   }
 
   async function handleSaveUnderstanding(record: QARecord, summary: string) {
@@ -3428,6 +3569,21 @@ export default function App() {
       setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "删除理解失败");
+    }
+  }
+
+  async function handleOpenQAReference(referenceProjectId: number, qaRecordId: number) {
+    try {
+      const record = await getQARecord(referenceProjectId, qaRecordId);
+      setSelectedQA(record);
+      setQASessionId(record.session_id ?? null);
+      setQAUpperTab("history");
+      openAssistant("history");
+      if (referenceProjectId !== project?.id) {
+        setToast("已在当前侧栏只读打开其他项目中的此前解释");
+      }
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "此前解释已不存在");
     }
   }
 
@@ -3586,6 +3742,28 @@ export default function App() {
   async function handleExplainSelectedTerm(anchor = selectionAnchor) {
     if (!project || !anchor?.selectedText.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) return;
     const term = anchor.selectedText.trim();
+    try {
+      const resolved = await resolvePersonalizationTerms(project.id, [{
+        text: term.slice(0, 80),
+        source: anchor.sourceType === "file" ? "index" : "selection",
+        confidence: 0.95,
+        context_relevance: 1,
+      }]);
+      const conceptId = resolved.terms[0]?.concept.id;
+      if (conceptId) {
+        const reusable = await getReusableConceptExplanation(project.id, conceptId);
+        if (reusable.explanation) {
+          await handleOpenQAReference(
+            reusable.explanation.projectId,
+            reusable.explanation.qa.id,
+          );
+          handleDismissSelection();
+          return;
+        }
+      }
+    } catch {
+      // Reuse is opportunistic; a stale or unavailable profile must not block explanation.
+    }
     const ok = await confirmAction(
       "解释术语",
       `将调用 ${llmSettings.model}，结合当前项目和文档解释“${term}”。是否继续？`,
@@ -3626,6 +3804,39 @@ export default function App() {
       openAssistant("history");
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "术语解释生成失败");
+    }
+  }
+
+  async function handleMarkSelectedTermKnown(anchor = selectionAnchor) {
+    if (!project || !anchor?.selectedText.trim()) return;
+    const text = anchor.selectedText.trim().slice(0, 80);
+    try {
+      const matchingTerm = activeTermRawTerms.find(
+        (term) => term.term_text.trim().toLocaleLowerCase() === text.toLocaleLowerCase(),
+      );
+      if (matchingTerm) {
+        await handleTermMastery(matchingTerm, "known");
+      } else {
+        const resolved = await resolvePersonalizationTerms(project.id, [{
+          text,
+          source: anchor.sourceType === "file" ? "index" : "selection",
+          confidence: 1,
+          context_relevance: 1,
+        }]);
+        const conceptId = resolved.terms[0]?.concept.id;
+        if (!conceptId) throw new Error("无法识别这个术语");
+        await markConceptKnown(
+          project.id,
+          conceptId,
+          `selection-known:${project.id}:${conceptId}:${Date.now()}`,
+          text,
+        );
+        setPersonalizationRevision((value) => value + 1);
+        setToast(`已记住你认识“${text}”`);
+      }
+      handleDismissSelection();
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "更新术语状态失败");
     }
   }
 
@@ -4020,6 +4231,7 @@ export default function App() {
                 }
                 onSelectionChange={handleSelection}
                 onOpenKnowledgeLink={handleOpenKnowledgeLink}
+                onOpenQAReference={handleOpenQAReference}
                 onGenerateTerm={handleGenerateTerm}
                 onTermAction={handleTermAction}
                 onGenerateLesson={activeItem.path === "outline.md" ? handleGenerateOutlineLesson : undefined}
@@ -4277,6 +4489,7 @@ export default function App() {
     if (except !== "command") setCommandPaletteOpen(false);
     if (except !== "settings") setSettingsOpen(false);
     if (except !== "prompts") setPromptEditorOpen(false);
+    if (except !== "profile") setLearnerProfileOpen(false);
   }
 
   async function handleTabDragEnd(event: DragEvent<HTMLElement>, groupId: string, item: OpenItem) {
@@ -4365,6 +4578,12 @@ export default function App() {
     setPromptEditorOpen(true);
   }
 
+  function openLearnerProfile() {
+    if (!project) return;
+    closeMobileWorkspaceSurfaces("profile");
+    setLearnerProfileOpen(true);
+  }
+
   function toggleMobileCommandPalette() {
     const next = !commandPaletteOpen;
     closeMobileWorkspaceSurfaces(next ? "command" : undefined);
@@ -4425,6 +4644,7 @@ export default function App() {
           onToggleAssistant={() => { setQAUpperTab("history"); setAssistantOpen((open) => !open); }}
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenPreferences={openLearnerProfile}
           onOpenPrompts={() => setPromptEditorOpen(true)}
           onOpenGestureGuide={() => setGestureGuideOpen(true)}
           onBuildIndex={() => void handleBuildIndex()}
@@ -4461,6 +4681,10 @@ export default function App() {
             <button type="button" role="menuitem" onClick={openSettings}>
               <Bot size={15} />
               设置
+            </button>
+            <button type="button" role="menuitem" disabled={!project} onClick={() => { setMoreMenuOpen(false); openLearnerProfile(); }}>
+              <BrainCircuit size={15} />
+              我的学习档案
             </button>
             <button type="button" role="menuitem" onClick={openPrompts}>
               <Sparkles size={15} />
@@ -4631,6 +4855,10 @@ export default function App() {
           historyQuery={qaHistoryQuery}
           favoriteOnly={qaFavoriteOnly}
           selectedRecord={selectedQA}
+          selectedRecordReadOnly={Boolean(selectedQA && project && selectedQA.project_id !== project.id)}
+          surveyCandidate={dynamicSurvey}
+          diagnosticItem={diagnosticItem}
+          diagnosticResult={diagnosticResult}
           settings={llmSettings}
           panelError={qaPanelError}
           upperTab={qaUpperTab}
@@ -4686,6 +4914,12 @@ export default function App() {
           onRenameRecord={handleRenameQA}
           onToggleFavorite={handleToggleFavorite}
           onOpenSettings={openSettings}
+          onAnswerSurvey={(choice) => void handleDynamicSurveyAnswer(choice)}
+          onDismissSurvey={() => void handleDynamicSurveyDismiss()}
+          onDisableSurveys={() => void handleDisableDynamicSurveys()}
+          onAnswerDiagnostic={(answer) => void handleDiagnosticAnswer(answer)}
+          onDismissDiagnostic={() => void handleDiagnosticDismiss()}
+          onFlagDiagnostic={() => void handleDiagnosticFlag()}
           onClose={() => setAssistantOpen(false)}
         />
         </div>
@@ -4810,6 +5044,13 @@ export default function App() {
           setSettingsOpen(false);
           loadLLMSettings();
         }}
+      />
+      <LearnerProfileDialog
+        open={learnerProfileOpen}
+        projectId={project?.id ?? null}
+        onClose={() => setLearnerProfileOpen(false)}
+        onChanged={() => setPersonalizationRevision((value) => value + 1)}
+        onConfirm={confirmAction}
       />
       {promptEditorOpen ? (
         <PromptEditor onClose={() => setPromptEditorOpen(false)} />

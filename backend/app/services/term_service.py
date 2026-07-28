@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import hashlib
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterable, Optional
 from app.core.config import GENERATED_ROOT
@@ -84,6 +87,9 @@ STOP_TERMS = {
     "内容",
 }
 STOP_TERMS_NORMALIZED = {item.casefold() for item in STOP_TERMS}
+_SCAN_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="codecourse-term-scan")
+_SCAN_LOCK = threading.Lock()
+_QUEUED_SCANS: set[str] = set()
 
 
 def _clean_term(term: str) -> str:
@@ -171,6 +177,8 @@ def register_document_terms(
     source_path: str,
     content: str,
     model_terms: Optional[Iterable[str]] = None,
+    *,
+    allow_model_scan: bool = True,
 ) -> list[DocumentTerm]:
     content_hash = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
     delete_stale_document_term_candidates(
@@ -204,7 +212,185 @@ def register_document_terms(
         )
         if len(seen) >= 20:
             break
-    return list_document_terms(project_id, source_type, source_path)
+    terms = list_document_terms(project_id, source_type, source_path)
+    if allow_model_scan:
+        high_confidence = sum(1 for item in terms if item.confidence >= 0.8)
+        if len(terms) < 4 or high_confidence < 3:
+            schedule_term_model_scan(
+                project_id,
+                source_type,
+                source_path,
+                content,
+                content_hash,
+            )
+    return terms
+
+
+def _term_scan_enabled() -> bool:
+    try:
+        from app.services.storage import get_setting
+        return get_setting("personalization.observer.enabled") == "true"
+    except Exception:
+        return False
+
+
+def _term_scan_messages(content: str) -> list[dict[str, str]]:
+    compact = content if len(content) <= 18_000 else f"{content[:9_000]}\n\n...\n\n{content[-9_000:]}"
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是技术教材术语分析器。只提取正文中实际出现、对当前学习者可能陌生且值得解释的技术术语。"
+                "不要提取普通词、完整句子、标题泛词或代码块中的局部变量。只输出 JSON。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "返回格式：{\"terms\":[{\"text\":\"术语\",\"confidence\":0.0,\"reason\":\"简短原因\"}]}。"
+                "最多 16 个，confidence 范围 0-1。\n\n正文：\n" + compact
+            ),
+        },
+    ]
+
+
+def _parse_term_scan(raw: str, content: str) -> list[str]:
+    fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw, re.IGNORECASE)
+    candidate = fenced.group(1).strip() if fenced else raw[raw.find("{"):raw.rfind("}") + 1]
+    data = json.loads(candidate)
+    rows = data.get("terms", []) if isinstance(data, dict) else []
+    terms: list[str] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict) or float(row.get("confidence", 0)) < 0.62:
+            continue
+        term = _clean_term(str(row.get("text", "")))
+        if term and term in content and term.casefold() not in {item.casefold() for item in terms}:
+            terms.append(term)
+    return terms[:16]
+
+
+def schedule_term_model_scan(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    content: str,
+    content_hash: str,
+) -> None:
+    if not _term_scan_enabled():
+        return
+    key = f"{project_id}:{source_type}:{source_path}:{content_hash}"
+    from app.services.storage import _connect
+    with _connect() as conn:
+        existing = conn.execute(
+            """SELECT status FROM term_model_scans
+               WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?""",
+            (project_id, source_type, source_path, content_hash),
+        ).fetchone()
+        if existing is not None:
+            return
+        stamp = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+        conn.execute(
+            """INSERT INTO term_model_scans
+               (project_id,source_type,source_path,content_hash,status,terms_json,created_at,updated_at)
+               VALUES(?,?,?,?,?,'[]',?,?)""",
+            (project_id, source_type, source_path, content_hash, "queued", stamp, stamp),
+        )
+        conn.commit()
+    with _SCAN_LOCK:
+        if key in _QUEUED_SCANS:
+            return
+        _QUEUED_SCANS.add(key)
+
+    def run() -> None:
+        started = time.time()
+        settings: dict[str, str] = {}
+        try:
+            from app.services.storage import _connect, get_llm_settings
+            from app.services.llm_client import call_openai_compatible_chat_result
+            settings = get_llm_settings()
+            if not settings.get("api_key") or not settings.get("base_url"):
+                raise RuntimeError("No model API configured for term scan")
+            with _connect() as conn:
+                conn.execute(
+                    """UPDATE term_model_scans SET status='running',updated_at=?
+                       WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?""",
+                    (
+                        __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+                        project_id, source_type, source_path, content_hash,
+                    ),
+                )
+                conn.commit()
+            call_result = call_openai_compatible_chat_result(
+                base_url=settings["base_url"],
+                api_key=settings["api_key"],
+                model=settings["model"],
+                messages=_term_scan_messages(content),
+                timeout=30,
+            )
+            raw = call_result.content
+            model_terms = _parse_term_scan(raw, content)
+            register_document_terms(
+                project_id,
+                source_type,
+                source_path,
+                content,
+                model_terms,
+                allow_model_scan=False,
+            )
+            stamp = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+            with _connect() as conn:
+                conn.execute(
+                    """UPDATE term_model_scans
+                       SET status='completed',terms_json=?,error_message=NULL,updated_at=?
+                       WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?""",
+                    (
+                        json.dumps(model_terms, ensure_ascii=False), stamp,
+                        project_id, source_type, source_path, content_hash,
+                    ),
+                )
+                from app.services.personalization.learner_inference_service import record_model_call
+                record_model_call(
+                    project_id=project_id,
+                    purpose="term_scan",
+                    provider=settings.get("provider"),
+                    model=call_result.model,
+                    status="completed",
+                    latency_ms=call_result.latency_ms,
+                    input_tokens=call_result.usage.get("input_tokens"),
+                    output_tokens=call_result.usage.get("output_tokens"),
+                    conn=conn,
+                )
+                conn.commit()
+        except Exception as exc:
+            from app.services.storage import _connect
+            stamp = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+            with _connect() as conn:
+                conn.execute(
+                    """UPDATE term_model_scans
+                       SET status='failed',error_message=?,updated_at=?
+                       WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?""",
+                    (
+                        str(exc)[:500], stamp,
+                        project_id, source_type, source_path, content_hash,
+                    ),
+                )
+                from app.services.personalization.learner_inference_service import record_model_call
+                record_model_call(
+                    project_id=project_id,
+                    purpose="term_scan",
+                    provider=settings.get("provider"),
+                    model=settings.get("model"),
+                    status="failed",
+                    latency_ms=int((time.time() - started) * 1000),
+                    error_message=str(exc),
+                    conn=conn,
+                )
+                conn.commit()
+        finally:
+            with _SCAN_LOCK:
+                _QUEUED_SCANS.discard(key)
+
+    _SCAN_EXECUTOR.submit(run)
 
 
 def ensure_document_terms(project_id: int, source_type: str, source_path: str) -> list[DocumentTerm]:

@@ -12,7 +12,13 @@ from app.services.storage import init_storage
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_storage()
+    from app.services.personalization.interaction_observer import (
+        recover_pending_observer_jobs,
+        shutdown_observer,
+    )
+    recover_pending_observer_jobs()
     yield
+    shutdown_observer(wait=False)
 
 
 app = FastAPI(title="GitHub Project Learner", version="0.1.0", lifespan=lifespan)

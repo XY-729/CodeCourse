@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   Bot,
+  BrainCircuit,
   ChevronDown,
   Code2,
   Download,
@@ -219,6 +220,9 @@ export default function DesktopToolbar(props: Props) {
           {menu === "more" ? (
             <div className="apple-popover more-popover" role="menu">
               <button onClick={() => { setMenu(null); onOpenSettings(); }}><Settings2 size={15} />设置</button>
+              {onOpenPreferences ? (
+                <button onClick={() => { setMenu(null); onOpenPreferences(); }}><BrainCircuit size={15} />我的学习档案</button>
+              ) : null}
               <button onClick={() => { setMenu(null); onOpenPrompts(); }}><Sparkles size={15} />提示词编辑</button>
               <button onClick={() => { setMenu(null); onBuildIndex(); }} disabled={indexDisabled}><RefreshCw size={15} />{indexLabel}</button>
               <button onClick={() => { setMenu(null); onOpenGestureGuide(); }}><MousePointer2 size={15} />鼠标手势指南</button>

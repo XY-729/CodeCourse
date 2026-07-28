@@ -98,7 +98,32 @@ class TeachingHistoryPolicyTests(unittest.TestCase):
         self.assertEqual([item["teaching_trial_id"] for item in history], ["assessed"])
         self.assertEqual(history[-1]["outcome"], "unsuccessful")
 
-    def test_unsuccessful_forces_different_primary_strategy(self):
+    def test_repeated_unsuccessful_outcomes_force_a_different_primary_strategy(self):
+        current = _context(["brief_definition", "worked_example"])
+        updated = apply_teaching_history_policy(
+            context=current,
+            blocker_type="mechanism",
+            recent_history=[
+                {
+                    "strategies": ["brief_definition", "worked_example"],
+                    "outcome": "unsuccessful",
+                    "outcome_confidence": 0.9,
+                },
+                {
+                    "strategies": ["brief_definition", "worked_example"],
+                    "outcome": "unsuccessful",
+                    "outcome_confidence": 0.85,
+                },
+            ],
+        )
+        self.assertTrue(
+            has_changed_primary_strategy(
+                ["brief_definition", "worked_example"],
+                updated.strategies,
+            )
+        )
+
+    def test_single_failure_is_recorded_without_changing_strategy(self):
         current = _context(["brief_definition", "worked_example"])
         updated = apply_teaching_history_policy(
             context=current,
@@ -111,12 +136,7 @@ class TeachingHistoryPolicyTests(unittest.TestCase):
                 }
             ],
         )
-        self.assertTrue(
-            has_changed_primary_strategy(
-                ["brief_definition", "worked_example"],
-                updated.strategies,
-            )
-        )
+        self.assertEqual(updated.strategies, current.strategies)
 
     def test_low_confidence_failure_does_not_force_change(self):
         current = _context(["brief_definition", "worked_example"])

@@ -228,13 +228,21 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     }
   }, [content, rawTerms, sourceKey]);
 
+  const neutralProfiles = useMemo(() => {
+    const map = new Map<string, TermPersonalizationProfile>();
+    for (const occurrence of markdownAnalysis.analysis.occurrences) {
+      if (!map.has(occurrence.conceptKey)) {
+        map.set(occurrence.conceptKey, createNeutralTermProfile(occurrence.conceptKey));
+      }
+    }
+    return map;
+  }, [markdownAnalysis]);
+
   const computed = useMemo(() => {
     if (
       terminologyDensity <= 0
       || markdownAnalysis.failed
       || status === "idle"
-      || status === "loading"
-      || status === "fallback"
     ) {
       return {
         decisions: new Map() as ReadonlyMap<string, TermDisplayDecision>,
@@ -243,14 +251,16 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
         tiersById: EMPTY_TIERS,
       };
     }
+    const effectiveProfiles =
+      status === "ready" ? profiles : neutralProfiles;
     return computeTermDisplay({
       occurrences: markdownAnalysis.analysis.occurrences,
       paragraphCount: markdownAnalysis.analysis.paragraphCount,
-      termProfiles: profiles,
+      termProfiles: effectiveProfiles,
       terminologyDensity,
-      profileAvailable: (status as string) !== "fallback" && profileAvailable,
+      profileAvailable: status === "ready" && profileAvailable,
     });
-  }, [markdownAnalysis, profiles, terminologyDensity, profileAvailable, status]);
+  }, [markdownAnalysis, neutralProfiles, profiles, terminologyDensity, profileAvailable, status]);
 
   return {
     visibleCandidateIds: computed.visibleCandidateIds,

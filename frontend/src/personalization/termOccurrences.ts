@@ -336,7 +336,7 @@ export function analyzeMarkdownTermOccurrences(
         isInCodeBlock: entry.context.isInCodeBlock,
         isInlineCode: entry.context.isInlineCode,
         isInTable: entry.context.isInTable,
-        manualLink: linkOrigin === "manual",
+        manualLink: linkOrigin === "manual" || match.term.status === "linked",
       });
     }
   }

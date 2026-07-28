@@ -27,6 +27,12 @@ html.platform-android {
   --mobile-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --mobile-ease-standard: cubic-bezier(0.2, 0, 0, 1);
   --mobile-ease-spring: cubic-bezier(0.22, 1.18, 0.36, 1);
+  --cc-text: var(--mobile-text);
+  --cc-text-secondary: var(--mobile-text-secondary);
+  --cc-border: var(--mobile-line);
+  --cc-hover: var(--mobile-accent-soft);
+  --cc-surface: var(--mobile-surface);
+  --cc-surface-secondary: var(--mobile-surface-soft);
 }
 
 html.platform-android[data-theme="dark"] {

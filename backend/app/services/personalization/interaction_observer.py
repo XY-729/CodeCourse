@@ -174,37 +174,101 @@ def _should_observer_run(
 ) -> bool:
     if not _is_observer_enabled():
         return False
+    try:
+        from app.services.storage import _connect, get_qa_record
+        record = get_qa_record(project_id, qa_record_id)
+        if record is None:
+            return False
+        if (
+            parent_qa_id is not None
+            or relation_type in {"term_explanation", "alternate"}
+            or bool(record.selected_text)
+        ):
+            return True
+        with _connect() as conn:
+            prior_runs = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM observer_runs WHERE project_id = ?",
+                    (project_id,),
+                ).fetchone()[0]
+            )
+            if prior_runs == 0:
+                return True
+            completed = int(
+                conn.execute(
+                    """SELECT COUNT(*) FROM qa_records
+                       WHERE project_id = ? AND answer_md <> ''""",
+                    (project_id,),
+                ).fetchone()[0]
+            )
+            if completed % 5 == 0:
+                return True
+            # A concept mentioned for the first time is a high-information event.
+            concept_rows = conn.execute(
+                """SELECT id, canonical_name, display_name FROM concepts
+                   WHERE length(canonical_name) >= 2"""
+            ).fetchall()
+            folded = question.casefold()
+            for concept in concept_rows:
+                names = {
+                    str(concept["canonical_name"]).casefold(),
+                    str(concept["display_name"]).casefold(),
+                }
+                if not any(name and name in folded for name in names):
+                    continue
+                has_state = conn.execute(
+                    """SELECT 1 FROM knowledge_states_v2
+                       WHERE concept_id = ? LIMIT 1""",
+                    (concept["id"],),
+                ).fetchone()
+                if has_state is None:
+                    return True
+        return False
+    except Exception:
+        logger.exception("Failed to classify observer event")
+        return False
 
-    if parent_qa_id is not None:
-        return True
 
-    if relation_type == "term_explanation":
-        return True
+def _enqueue_observer_job(project_id: int, qa_record_id: int, reason: str) -> None:
+    from app.services.storage import _connect
+    stamp = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """INSERT OR IGNORE INTO observer_jobs
+               (id, project_id, qa_record_id, reason, payload_json, status,
+                attempt_count, available_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, '{}', 'pending', 0, ?, ?, ?)""",
+            (
+                _idempotency_key(project_id, qa_record_id),
+                project_id,
+                qa_record_id,
+                reason,
+                stamp,
+                stamp,
+                stamp,
+            ),
+        )
+        conn.commit()
 
-    question_lower = question.casefold()
-    knowledge_triggers = [
-        "我懂", "我学过", "我了解", "我熟悉", "我会",
-        "我明白", "我理解", "我精通", "我掌握",
-    ]
-    if any(trigger in question_lower for trigger in knowledge_triggers):
-        return True
 
-    preference_triggers = [
-        "以后", "今后", "尽量", "总是", "每次",
-        "不要", "别", "希望", "更喜欢",
-    ]
-    if any(trigger in question_lower for trigger in preference_triggers):
-        return True
-
-    outcome_triggers = [
-        "没懂", "还是不懂", "明白了", "懂了",
-        "换种方式", "换个说法", "再说一遍",
-    ]
-    if any(trigger in question_lower for trigger in outcome_triggers):
-        return True
-
-    sample_rate = _get_observer_sample_rate()
-    return deterministic_sample(project_id, qa_record_id, sample_rate)
+def _set_observer_job_status(
+    project_id: int,
+    qa_record_id: int,
+    status: str,
+    error: str | None = None,
+) -> None:
+    from app.services.storage import _connect
+    stamp = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """UPDATE observer_jobs
+               SET status = ?, last_error = ?, updated_at = ?,
+                   locked_at = CASE WHEN ? = 'running' THEN ? ELSE locked_at END,
+                   attempt_count = attempt_count + CASE WHEN ? = 'running' THEN 1 ELSE 0 END
+               WHERE project_id = ? AND qa_record_id = ?""",
+            (status, error, stamp, status, stamp, status, project_id, qa_record_id),
+        )
+        conn.commit()
 
 
 def _get_observer_settings() -> dict[str, Any]:
@@ -268,6 +332,7 @@ def _build_observer_messages(
     manual_unfamiliar: str,
     preferences_summary: str,
     previous_trial_json_for_msg: str = "",
+    source_excerpt: str = "",
 ) -> list[dict[str, str]]:
     user_prompt = OBSERVER_USER_PROMPT_TEMPLATE.replace(
         "{previous_applied_teaching}", ""
@@ -289,7 +354,28 @@ def _build_observer_messages(
             "(no previous teaching to evaluate)",
             previous_trial_json_for_msg,
         )
+    schema_json = json.dumps(
+        InteractionObservation.model_json_schema(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    user_prompt += (
+        "\n\n<required_json_schema>\n"
+        + schema_json
+        + "\n</required_json_schema>\n"
+        + "严格按该 Schema 输出；新输出使用 schema_version=2。"
+    )
 
+    user_prompt += (
+        "\nDiagnostic candidate rules: return null unless a short check is useful; "
+        "ground it in supplied course, code, selection, or prior answer; use a "
+        "locally gradeable type with exactly one answer and no fixed question bank."
+    )
+    user_prompt += (
+        "\n\n<trusted_source_excerpt>\n"
+        + (source_excerpt[:2200] if source_excerpt else "(none; diagnostic_candidate must be null)")
+        + "\n</trusted_source_excerpt>"
+    )
     return [
         {"role": "system", "content": OBSERVER_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
@@ -352,13 +438,13 @@ def _validate_all_evidence(
 def _call_observer_model(
     messages: list[dict[str, str]],
     settings: dict[str, Any],
-) -> str:
+) -> Any:
     try:
-        from app.services.llm_client import call_openai_compatible_chat  # type: ignore[import-untyped]
+        from app.services.llm_client import call_openai_compatible_chat_result
     except ImportError:
         raise RuntimeError("LLM client not available for observer")
 
-    return call_openai_compatible_chat(
+    return call_openai_compatible_chat_result(
         base_url=settings["base_url"],
         api_key=settings["api_key"],
         model=settings["model"],
@@ -456,16 +542,41 @@ def _execute_observer_run(
                 manual_unfamiliar.append(c.display_name)
 
         prefs = get_learner_preferences("global", "local-user")
+        from app.services.storage import _connect
+        with _connect() as count_conn:
+            completed_answer_count = int(
+                count_conn.execute(
+                    "SELECT COUNT(*) FROM qa_records WHERE answer_md <> ''"
+                ).fetchone()[0]
+            )
         preferences_summary = json.dumps({
             "answer_depth": prefs.answer_depth if prefs else 0.5,
             "code_ratio": prefs.code_ratio if prefs else 0.5,
             "explanation_order": prefs.explanation_order if prefs else "balanced",
             "feedback_count": prefs.feedback_count if prefs else 0,
+            "completed_answer_count": completed_answer_count,
         }, ensure_ascii=False)
 
         user_message_set = {qa_record.question}
         if qa_record.selected_text:
             user_message_set.add(qa_record.selected_text)
+
+        source_excerpt = ""
+        if qa_record.source_path:
+            try:
+                from pathlib import Path
+                from app.services.generation_service import project_course_dir
+                from app.services.scanner import read_text_file
+                from app.services.storage import get_project
+                project = get_project(project_id)
+                root = (
+                    Path(project.local_path)
+                    if qa_record.source_type == "file" and project is not None
+                    else project_course_dir(project_id)
+                )
+                source_excerpt = read_text_file(root, qa_record.source_path)[0][:2200]
+            except Exception:
+                source_excerpt = ""
 
         messages = _build_observer_messages(
             question=qa_record.question,
@@ -478,25 +589,17 @@ def _execute_observer_run(
             manual_known=", ".join(manual_known) if manual_known else "(none)",
             manual_unfamiliar=", ".join(manual_unfamiliar) if manual_unfamiliar else "(none)",
             preferences_summary=preferences_summary,
+            source_excerpt=source_excerpt,
         )
 
         previous_trial_json = ""
         previous_trial_record = None
-        try:
-            from app.services.personalization.teaching.teaching_history import (
-                get_latest_evaluable_teaching_trial,
-            )
-            trial = get_latest_evaluable_teaching_trial(
-                project_id=project_id,
-                session_id=qa_record.session_id,
-                before_qa_record_id=qa_record_id,
-                conn=run_in_transaction.__globals__.get("_connect", lambda: None)(),
-            ) if False else None
-        except Exception:
-            trial = None
-
-        if trial is None and qa_record.session_id:
+        trial = None
+        if qa_record.session_id:
             try:
+                from app.services.personalization.teaching.teaching_history import (
+                    get_latest_evaluable_teaching_trial,
+                )
                 from app.services.storage import _connect as _db_connect
                 with _db_connect() as trial_conn:
                     trial = get_latest_evaluable_teaching_trial(
@@ -532,12 +635,22 @@ def _execute_observer_run(
             )
 
         raw_output: Optional[str] = None
+        model_usage: dict[str, int] = {}
+        model_latency_ms: Optional[int] = None
+        resolved_model = settings.get("model")
         last_error: Optional[str] = None
 
         start_time = __import__("time").time()
         for attempt in range(MAX_RETRIES + 1):
             try:
-                raw_output = _call_observer_model(messages, settings)
+                call_result = _call_observer_model(messages, settings)
+                if isinstance(call_result, str):
+                    raw_output = call_result
+                else:
+                    raw_output = call_result.content
+                    model_usage = call_result.usage
+                    model_latency_ms = call_result.latency_ms
+                    resolved_model = call_result.model
                 observation = parse_observer_output(raw_output)
                 break
             except ValueError as exc:
@@ -586,13 +699,17 @@ def _execute_observer_run(
             if cs_data is None:
                 return None
             return InteractionObservation(
-                schema_version=1,
+                schema_version=observation.schema_version,
                 current_state=CurrentLearningState(**cs_data),
                 previous_teaching_outcome=PreviousTeachingOutcome(**pto_data) if pto_data else None,
                 knowledge_evidence=[KnowledgeEvidence(**e) for e in k_evs],
                 behavior_evidence=[BehaviorEvidence(**e) for e in b_evs],
                 possible_misconceptions=[MisObs(**e) for e in m_evs],
                 explicit_user_facts=[ExplicitUserFact(**e) for e in f_evs],
+                concept_relations=observation.concept_relations,
+                domain_assessments=observation.domain_assessments,
+                survey_candidate=observation.survey_candidate,
+                diagnostic_candidate=observation.diagnostic_candidate,
                 notes=observation.notes,
             )
 
@@ -648,6 +765,69 @@ def _execute_observer_run(
                     observation=filtered_obs,
                     conn=conn,
                 )
+                from app.services.personalization.learner_inference_service import (
+                    apply_inference_updates,
+                )
+                apply_inference_updates(
+                    project_id=project_id,
+                    qa_record_id=qa_record_id,
+                    observer_run_id=run_key,
+                    observation=filtered_obs,
+                    conn=conn,
+                )
+                if filtered_obs.diagnostic_candidate is not None:
+                    from app.services.personalization.learner_inference_service import (
+                        _concept_row,
+                    )
+                    from app.services.personalization.knowledge_state_service import (
+                        create_diagnostic_item,
+                    )
+                    candidate = filtered_obs.diagnostic_candidate.model_dump()
+                    source_refs = candidate.get("source_refs") or []
+                    source_is_verified = bool(
+                        qa_record.source_path
+                        and source_excerpt
+                        and all(
+                            ref.get("source_path") == qa_record.source_path
+                            and str(ref.get("excerpt") or "") in source_excerpt
+                            for ref in source_refs
+                        )
+                    )
+                    if not source_is_verified:
+                        candidate = {}
+                    concept_ids: list[str] = []
+                    for concept_key in candidate.pop("concept_keys", []):
+                        concept = _concept_row(conn, concept_key, concept_key)
+                        if concept is not None:
+                            concept_ids.append(str(concept["id"]))
+                    candidate["concept_ids"] = concept_ids
+                    create_diagnostic_item(
+                        project_id=project_id,
+                        candidate=candidate,
+                        source_qa_record_id=qa_record_id,
+                        session_id=(
+                            str(qa_record.session_id)
+                            if qa_record.session_id is not None
+                            else None
+                        ),
+                        strategy_version=OBSERVER_PROMPT_VERSION,
+                        conn=conn,
+                    )
+
+            from app.services.personalization.learner_inference_service import (
+                record_model_call,
+            )
+            record_model_call(
+                project_id=project_id,
+                purpose="observer",
+                provider=settings.get("provider"),
+                model=resolved_model,
+                status="completed",
+                latency_ms=model_latency_ms or elapsed_ms,
+                input_tokens=model_usage.get("input_tokens"),
+                output_tokens=model_usage.get("output_tokens"),
+                conn=conn,
+            )
 
             if previous_trial_record is not None and filtered_obs is not None and filtered_obs.previous_teaching_outcome is not None:
                 pto = filtered_obs.previous_teaching_outcome
@@ -691,6 +871,17 @@ def _execute_observer_run(
             update_observer_run_status(run_key, "failed", error_message=str(
                 last_error if last_error else "Unknown observer error"
             )[:500])
+            from app.services.personalization.learner_inference_service import (
+                record_model_call,
+            )
+            record_model_call(
+                project_id=project_id,
+                purpose="observer",
+                provider=(locals().get("settings") or {}).get("provider"),
+                model=(locals().get("settings") or {}).get("model"),
+                status="failed",
+                error_message=str(last_error if last_error else "Unknown observer error"),
+            )
         except Exception:
             pass
 
@@ -712,6 +903,12 @@ def schedule_interaction_observation(
         return
 
     run_key = _idempotency_key(project_id, qa_record_id)
+    reason = (
+        "followup" if parent_qa_id is not None
+        else "linked_interaction" if relation_type in {"term_explanation", "alternate"}
+        else "high_information"
+    )
+    _enqueue_observer_job(project_id, qa_record_id, reason)
 
     global _QUEUED_KEYS
     with _OBSERVER_LOCK:
@@ -724,7 +921,20 @@ def schedule_interaction_observation(
 
     def _run_and_cleanup():
         try:
+            _set_observer_job_status(project_id, qa_record_id, "running")
             _execute_observer_run(project_id, qa_record_id)
+            try:
+                from app.services.storage import get_observer_run
+                run = get_observer_run(run_key)
+                status = run.status if run is not None else "failed"
+                _set_observer_job_status(
+                    project_id,
+                    qa_record_id,
+                    "completed" if status in ("completed", "skipped") else "failed",
+                    None if status in ("completed", "skipped") else getattr(run, "error_message", "observer_failed"),
+                )
+            except Exception:
+                _set_observer_job_status(project_id, qa_record_id, "failed", "status_sync_failed")
         finally:
             with _OBSERVER_LOCK:
                 _QUEUED_KEYS.discard(run_key)
@@ -743,3 +953,56 @@ def schedule_interaction_observation(
                 "qa_record_id": qa_record_id,
             },
         )
+
+
+def recover_pending_observer_jobs() -> int:
+    """Resume jobs left pending/running after an app restart."""
+    try:
+        from app.services.storage import _connect
+        stamp = datetime.now(timezone.utc).isoformat()
+        with _connect() as conn:
+            conn.execute(
+                """UPDATE observer_jobs SET status='pending', locked_at=NULL,
+                   updated_at=? WHERE status='running'""",
+                (stamp,),
+            )
+            rows = conn.execute(
+                """SELECT project_id, qa_record_id FROM observer_jobs
+                   WHERE status='pending' AND available_at <= ?
+                   ORDER BY created_at LIMIT ?""",
+                (stamp, MAX_QUEUE_DEPTH),
+            ).fetchall()
+            conn.commit()
+        resumed = 0
+        for row in rows:
+            project_id = int(row["project_id"])
+            qa_record_id = int(row["qa_record_id"])
+            run_key = _idempotency_key(project_id, qa_record_id)
+            with _OBSERVER_LOCK:
+                if run_key in _QUEUED_KEYS:
+                    continue
+                _QUEUED_KEYS.add(run_key)
+
+            def _resume(pid=project_id, qid=qa_record_id, key=run_key):
+                try:
+                    _set_observer_job_status(pid, qid, "running")
+                    _execute_observer_run(pid, qid)
+                    from app.services.storage import get_observer_run
+                    run = get_observer_run(key)
+                    status = run.status if run is not None else "failed"
+                    _set_observer_job_status(
+                        pid,
+                        qid,
+                        "completed" if status in ("completed", "skipped") else "failed",
+                        None if status in ("completed", "skipped") else "observer_failed",
+                    )
+                finally:
+                    with _OBSERVER_LOCK:
+                        _QUEUED_KEYS.discard(key)
+
+            _get_executor().submit(_resume)
+            resumed += 1
+        return resumed
+    except Exception:
+        logger.exception("Failed to recover observer jobs")
+        return 0

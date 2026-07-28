@@ -364,6 +364,37 @@ def _atomic_feedback(
             sequence=seq,
             conn=conn,
         )
+        from app.services.personalization.knowledge_state_service import (
+            append_evidence,
+        )
+        status = (
+            "known"
+            if event_type == "manual_override_known"
+            else "unknown"
+            if event_type == "manual_override_unknown"
+            else None
+        )
+        append_evidence(
+            {
+                "idempotencyKey": f"v2:{idempotency_key}",
+                "conceptId": concept_id,
+                "scopeType": scope_type,
+                "scopeId": scope_id,
+                "dimension": "familiarity",
+                "direction": (
+                    "positive" if status == "known"
+                    else "negative" if status == "unknown"
+                    else "neutral"
+                ),
+                "strength": 1,
+                "reliability": 1,
+                "source": "manual",
+                "action": f"manual_{status}" if status else "manual_clear",
+                "object": {"type": "concept", "id": concept_id},
+                "result": {"status": status, "evidenceText": evidence_text or ""},
+            },
+            conn=conn,
+        )
         return {"event": _event_response(event), "mastery": _mastery_response(mastery), "idempotent": False}
 
     result = run_in_transaction(do_tx)
@@ -524,6 +555,8 @@ def reset_profile(
             "observer_runs",
             "shadow_learner_snapshots",
             "term_impressions",
+            "model_call_audit",
+            "term_model_scans",
         ):
             deleted += delete_where(conn, table, where, params)
         return deleted
@@ -536,9 +569,20 @@ def reset_profile(
             deleted_preference_events = delete_where(conn, "preference_events")
             deleted_shadow = 0
             for table in (
+                "diagnostic_attempts",
+                "diagnostic_items",
+                "observer_jobs",
+                "learning_evidence_v2",
+                "knowledge_states_v2",
                 "concept_capabilities",
                 "learner_hypotheses",
                 "misconception_hypotheses",
+                "concept_relations",
+                "learner_inferences",
+                "domain_profiles",
+                "survey_candidates",
+                "model_call_audit",
+                "term_model_scans",
             ):
                 deleted_shadow += delete_where(conn, table)
             deleted_shadow += delete_project_shadow_data(conn, None)
@@ -568,16 +612,56 @@ def reset_profile(
             conn, "preference_events", "scope_type = ? AND scope_id = ?", params
         )
         deleted_shadow = 0
+        deleted_shadow += delete_where(
+            conn,
+            "learning_evidence_v2",
+            "scope_type = ? AND scope_id = ?",
+            params,
+        )
+        deleted_shadow += delete_where(
+            conn,
+            "knowledge_states_v2",
+            "scope_type = ? AND scope_id = ?",
+            params,
+        )
         for table in (
             "concept_capabilities",
             "learner_hypotheses",
             "misconception_hypotheses",
+            "learner_inferences",
         ):
             deleted_shadow += delete_where(
                 conn, table, "scope_type = ? AND scope_id = ?", params
             )
         if scope_type == "project":
+            deleted_shadow += delete_where(
+                conn, "diagnostic_attempts", "project_id = ?", (project_id,)
+            )
+            deleted_shadow += delete_where(
+                conn, "diagnostic_items", "project_id = ?", (project_id,)
+            )
+            deleted_shadow += delete_where(
+                conn, "observer_jobs", "project_id = ?", (project_id,)
+            )
             deleted_shadow += delete_project_shadow_data(conn, project_id)
+        else:
+            deleted_shadow += delete_where(
+                conn, "domain_profiles", "scope_id = ?", (GLOBAL_SCOPE_ID,)
+            )
+            deleted_shadow += delete_where(
+                conn, "survey_candidates", "scope_id = ?", (GLOBAL_SCOPE_ID,)
+            )
+            deleted_shadow += int(
+                conn.execute(
+                    """DELETE FROM concept_relations
+                       WHERE source_concept_id IN (
+                         SELECT id FROM concepts WHERE concept_key NOT LIKE 'project:%'
+                       )
+                       AND target_concept_id IN (
+                         SELECT id FROM concepts WHERE concept_key NOT LIKE 'project:%'
+                       )"""
+                ).rowcount
+            )
         return {
             "status": "ok",
             "scope": scope,
@@ -682,27 +766,53 @@ def record_term_impressions(
 @router.get("/{project_id}/personalization/profile")
 def get_profile(project_id: int) -> dict:
     _require_project(project_id)
+    from app.services.personalization.knowledge_state_service import get_states
+    knowledge_states = get_states(
+        [("global", GLOBAL_SCOPE_ID), ("project", str(project_id))]
+    )
+    knowledge_by_concept = {
+        item["conceptId"]: item for item in knowledge_states
+    }
     entries = []
     for concept in list_all_concepts():
         scope_type, scope_id = concept_scope(concept, project_id)
         mastery = get_concept_mastery(concept.id, scope_type, scope_id)
-        if mastery is None:
+        state = knowledge_by_concept.get(concept.id)
+        familiarity = (state or {}).get("dimensions", {}).get("familiarity", {})
+        if mastery is None and state is None:
             continue
-        judgement = mastery.manual_status
+        judgement = mastery.manual_status if mastery else familiarity.get("manualStatus")
         if judgement == "unknown":
             judgement = "unfamiliar"
         if not judgement:
             judgement = (
                 "known"
-                if mastery.mastery >= 0.75
+                if familiarity.get("status") == "confirmed"
+                or (mastery is not None and mastery.mastery >= 0.75)
                 else "unfamiliar"
-                if mastery.mastery <= 0.35
+                if familiarity.get("status") == "learning"
+                or (mastery is not None and mastery.mastery <= 0.35)
                 else "uncertain"
             )
         entries.append(
             {
                 "concept": _concept_response(concept),
-                "mastery": _mastery_response(mastery),
+                "mastery": _mastery_response(mastery) if mastery else {
+                    "id": f"v2:{concept.id}",
+                    "conceptId": concept.id,
+                    "scope": {
+                        "type": state["scopeType"],
+                        "id": state["scopeId"],
+                    },
+                    "knownEvidence": 1,
+                    "unknownEvidence": 1,
+                    "mastery": float(familiarity.get("probability", 0.5)),
+                    "uncertainty": float(familiarity.get("uncertainty", 1)),
+                    "manualStatus": familiarity.get("manualStatus"),
+                    "sequence": int(state.get("evidenceVersion", 0)),
+                    "lastSeenAt": familiarity.get("lastEvidenceAt") or state["updatedAt"],
+                    "updatedAt": state["updatedAt"],
+                },
                 "judgement": judgement,
             }
         )
@@ -717,6 +827,17 @@ def get_profile(project_id: int) -> dict:
     )
     global_events = list_preference_events("global", GLOBAL_SCOPE_ID, 50)
     project_events = list_preference_events("project", str(project_id), 50)
+    from app.services.personalization.learner_inference_service import profile_payload
+    intelligence = profile_payload(project_id)
+    from app.services.storage import _connect as profile_connect
+    with profile_connect() as conn:
+        evidence_rows = conn.execute(
+            """SELECT * FROM learning_evidence_v2
+               WHERE (scope_type = 'global' AND scope_id = ?)
+                  OR (scope_type = 'project' AND scope_id = ?)
+               ORDER BY event_time DESC LIMIT 100""",
+            (GLOBAL_SCOPE_ID, str(project_id)),
+        ).fetchall()
     return {
         "preferences": _preferences_response(effective_preferences(project_id)),
         "concepts": entries,
@@ -736,7 +857,158 @@ def get_profile(project_id: int) -> dict:
                 reverse=True,
             )[:50]
         ],
+        "knowledgeStates": knowledge_states,
+        "learningEvidence": [
+            {
+                "id": row["id"],
+                "conceptId": row["concept_id"],
+                "scopeType": row["scope_type"],
+                "scopeId": row["scope_id"],
+                "dimension": row["dimension"],
+                "direction": row["direction"],
+                "strength": float(row["strength"]),
+                "reliability": float(row["reliability"]),
+                "source": row["source"],
+                "action": row["action"],
+                "object": json.loads(row["object_json"] or "{}"),
+                "result": json.loads(row["result_json"] or "{}"),
+                "context": json.loads(row["context_json"] or "{}"),
+                "eventTime": row["event_time"],
+                "sessionId": row["session_id"],
+                "qaRecordId": row["qa_record_id"],
+                "targetEvidenceId": row["target_evidence_id"],
+                "voided": bool(row["voided"]),
+            }
+            for row in evidence_rows
+        ],
+        **intelligence,
     }
+
+
+# ---- Verifiable teacher V2 contract ----
+
+@router.get("/{project_id}/personalization/knowledge-state")
+def get_knowledge_state_v2(
+    project_id: int,
+    concept_ids: str = Query(default=""),
+) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.knowledge_state_service import get_states
+    ids = [item.strip() for item in concept_ids.split(",") if item.strip()]
+    return {
+        "policyVersion": "knowledge-v2.1",
+        "states": get_states(
+            [("global", GLOBAL_SCOPE_ID), ("project", str(project_id))],
+            ids or None,
+        ),
+    }
+
+
+@router.post("/{project_id}/personalization/evidence")
+def submit_learning_evidence_v2(project_id: int, body: dict) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.knowledge_state_service import append_evidence
+    concept_id = str(body.get("conceptId", ""))
+    if get_concept(concept_id) is None:
+        raise HTTPException(status_code=404, detail="Concept not found")
+    scope_type, scope_id = _scope_for_concept(project_id, concept_id)
+    payload = {**body, "conceptId": concept_id, "scopeType": scope_type, "scopeId": scope_id}
+    try:
+        return append_evidence(payload)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/personalization/evidence/{evidence_id}/void")
+def void_learning_evidence_v2(project_id: int, evidence_id: str, body: dict = {}) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.knowledge_state_service import void_evidence
+    try:
+        return void_evidence(
+            evidence_id,
+            str(body.get("idempotencyKey") or f"void-v2:{evidence_id}"),
+            str(body.get("reason") or "User requested undo"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/personalization/rebuild")
+def rebuild_knowledge_profile_v2(project_id: int) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.knowledge_state_service import rebuild_profile
+    return rebuild_profile(project_id)
+
+
+@router.get("/{project_id}/personalization/diagnostics/pending")
+def pending_diagnostic(project_id: int) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.knowledge_state_service import get_pending_diagnostic
+    return {"item": get_pending_diagnostic(project_id)}
+
+
+@router.post("/{project_id}/personalization/diagnostics/{item_id}/answer")
+def answer_diagnostic(project_id: int, item_id: str, body: dict) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.knowledge_state_service import submit_diagnostic_answer
+    try:
+        return submit_diagnostic_answer(project_id, item_id, body.get("answer"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/personalization/diagnostics/{item_id}/dismiss")
+def dismiss_diagnostic_item(project_id: int, item_id: str) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.knowledge_state_service import dismiss_diagnostic
+    return dismiss_diagnostic(project_id, item_id)
+
+
+@router.post("/{project_id}/personalization/diagnostics/{item_id}/flag")
+def flag_diagnostic_item(project_id: int, item_id: str) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.knowledge_state_service import flag_diagnostic
+    return flag_diagnostic(project_id, item_id)
+
+
+@router.post("/{project_id}/personalization/inferences/{inference_id}/void")
+def void_profile_inference(project_id: int, inference_id: str) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.learner_inference_service import void_inference
+    try:
+        return void_inference(inference_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/personalization/surveys/{survey_id}/answer")
+def answer_profile_survey(project_id: int, survey_id: str, body: dict) -> dict:
+    _require_project(project_id)
+    choice = str(body.get("choice", "")).strip()
+    if not choice:
+        raise HTTPException(status_code=400, detail="Survey choice is required")
+    from app.services.personalization.learner_inference_service import answer_survey
+    try:
+        return answer_survey(project_id, survey_id, choice)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/{project_id}/personalization/surveys/{survey_id}/dismiss")
+def dismiss_profile_survey(project_id: int, survey_id: str) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.learner_inference_service import dismiss_survey
+    return dismiss_survey(survey_id)
+
+
+@router.get("/{project_id}/personalization/concepts/{concept_id}/explanation")
+def get_reusable_concept_explanation(project_id: int, concept_id: str) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.learner_inference_service import (
+        find_concept_explanation,
+    )
+    explanation = find_concept_explanation(concept_id)
+    return {"explanation": explanation}
 
 
 # ---------- Phase 1: Observer Settings & Shadow Debug APIs ----------
@@ -835,11 +1107,12 @@ def get_observer_run_endpoint(run_id: str) -> dict:
 
 # ---------- Phase 3: Term Display Profiles (Batch) ----------
 
-@router.post("/term-display-profiles")
+@router.post("/{project_id}/personalization/term-display-profiles")
 def term_display_profiles(
     project_id: int,
     body: dict,
 ) -> dict:
+    _require_project(project_id)
     concept_keys: list[str] = body.get("concept_keys", [])[:200]
     if not concept_keys:
         return {"profiles": []}
@@ -849,41 +1122,45 @@ def term_display_profiles(
         placeholders = ",".join("?" * len(concept_keys))
 
         mastery_rows = conn.execute(
-            f"""SELECT concept_id, mastery, uncertainty, manual_status
-               FROM concept_mastery
-               WHERE scope_type = 'global' AND scope_id = 'local-user'
-               AND concept_id IN ({placeholders})""",
-            concept_keys,
+            f"""SELECT c.concept_key, m.mastery, m.uncertainty, m.manual_status
+               FROM concept_mastery m
+               JOIN concepts c ON c.id = m.concept_id
+               WHERE ((scope_type = 'global' AND scope_id = 'local-user')
+                  OR (scope_type = 'project' AND scope_id = ?))
+               AND c.concept_key IN ({placeholders})""",
+            (str(project_id), *concept_keys),
         ).fetchall()
         mastery_by_id = {
             r[0]: {"mastery": float(r[1]), "uncertainty": float(r[2]), "manual_status": r[3]}
             for r in mastery_rows
         }
 
-        cap_rows = conn.execute(
-            f"""SELECT concept_id, familiarity, confidence, evidence_count
-               FROM concept_capabilities
-               WHERE scope_type = 'project' AND scope_id = ?
-               AND concept_id IN ({placeholders})
-               AND evidence_count >= 2 AND confidence >= 0.08""",
+        state_rows = conn.execute(
+            f"""SELECT c.concept_key, s.state_json
+               FROM knowledge_states_v2 s
+               JOIN concepts c ON c.id = s.concept_id
+               WHERE ((s.scope_type = 'global' AND s.scope_id = 'local-user')
+                  OR (s.scope_type = 'project' AND s.scope_id = ?))
+               AND c.concept_key IN ({placeholders})""",
             (str(project_id), *concept_keys),
         ).fetchall()
-        caps_by_id = {
-            r[0]: {"shadow_familiarity": float(r[1]), "shadow_confidence": float(r[2]), "shadow_evidence_count": int(r[3])}
-            for r in cap_rows
-        }
+        states_by_key = {row[0]: json.loads(row[1]) for row in state_rows}
 
     for key in concept_keys:
         m = mastery_by_id.get(key)
-        c = caps_by_id.get(key)
+        state = states_by_key.get(key)
+        familiarity = (state or {}).get("dimensions", {}).get("familiarity", {})
         profiles.append({
             "concept_key": key,
             "manual_status": m["manual_status"] if m else None,
             "mastery": m["mastery"] if m else None,
             "uncertainty": m["uncertainty"] if m else None,
-            "shadow_familiarity": c["shadow_familiarity"] if c else None,
-            "shadow_confidence": c["shadow_confidence"] if c else None,
-            "shadow_evidence_count": c["shadow_evidence_count"] if c else 0,
+            "shadow_familiarity": familiarity.get("probability"),
+            "shadow_confidence": (
+                1 - float(familiarity.get("uncertainty", 1))
+                if familiarity else None
+            ),
+            "shadow_evidence_count": familiarity.get("evidenceCount", 0),
             "domain_prior": None,
         })
 

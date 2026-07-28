@@ -9,6 +9,7 @@ from app.services.personalization.teaching.effective_context import (
 
 PRIMARY_STRATEGY_COUNT = 2
 MIN_OUTCOME_CONFIDENCE_FOR_POLICY = 0.55
+MIN_CUMULATIVE_OUTCOMES_FOR_POLICY = 2
 
 DEFAULT_STRATEGY_ALTERNATIVES: dict[str, list[str]] = {
     "terminology": ["brief_definition", "worked_example"],
@@ -116,8 +117,28 @@ def apply_teaching_history_policy(
         return context
 
     next_strategies = list(context.strategies)
+    previous_primary = set(primary_strategies(previous_strategies))
+    comparable_history = [
+        item for item in recent_history
+        if set(primary_strategies([str(value) for value in item.get("strategies", [])]))
+        == previous_primary
+        and float(item.get("outcome_confidence") or 0.0)
+        >= MIN_OUTCOME_CONFIDENCE_FOR_POLICY
+    ]
+    unsuccessful_count = sum(
+        item.get("outcome") == "unsuccessful" for item in comparable_history
+    )
+    partial_count = sum(
+        item.get("outcome") == "partially_successful" for item in comparable_history
+    )
+    advanced_count = sum(
+        item.get("outcome") == "advanced_followup" for item in comparable_history
+    )
 
-    if strategy_change_required(outcome, confidence):
+    if (
+        strategy_change_required(outcome, confidence)
+        and unsuccessful_count >= MIN_CUMULATIVE_OUTCOMES_FOR_POLICY
+    ):
         if has_changed_primary_strategy(previous_strategies, next_strategies):
             return context
         replacement = deterministic_alternative_strategies(
@@ -126,14 +147,22 @@ def apply_teaching_history_policy(
         )
         return context.model_copy(update={"strategies": replacement})
 
-    if outcome == "partially_successful" and confidence >= MIN_OUTCOME_CONFIDENCE_FOR_POLICY:
+    if (
+        outcome == "partially_successful"
+        and confidence >= MIN_OUTCOME_CONFIDENCE_FOR_POLICY
+        and partial_count + unsuccessful_count >= MIN_CUMULATIVE_OUTCOMES_FOR_POLICY
+    ):
         enriched = enrich_partial_success_strategy(
             previous_strategies=previous_strategies,
             blocker_type=blocker_type,
         )
         return context.model_copy(update={"strategies": enriched})
 
-    if outcome == "advanced_followup" and confidence >= MIN_OUTCOME_CONFIDENCE_FOR_POLICY:
+    if (
+        outcome == "advanced_followup"
+        and confidence >= MIN_OUTCOME_CONFIDENCE_FOR_POLICY
+        and advanced_count >= MIN_CUMULATIVE_OUTCOMES_FOR_POLICY
+    ):
         avoid_basics = list(context.avoid)
         for item in ("重复基础术语定义", "从零重新介绍已建立的基础"):
             if item not in avoid_basics:

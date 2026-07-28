@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 import httpx
@@ -12,6 +14,14 @@ _SYNC_CLIENT = httpx.Client(
     follow_redirects=True,
 )
 _ASYNC_CLIENT: httpx.AsyncClient | None = None
+
+
+@dataclass(frozen=True)
+class LLMCallResult:
+    content: str
+    usage: dict[str, int]
+    model: str
+    latency_ms: int
 
 
 def _async_client() -> httpx.AsyncClient:
@@ -43,9 +53,16 @@ def _message_content(data: dict[str, Any]) -> str:
     return str(content)
 
 
-def call_openai_compatible_chat(base_url: str, api_key: str, model: str, messages: list[dict[str, str]], timeout: int = 30) -> str:
+def call_openai_compatible_chat_result(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    timeout: int = 30,
+) -> LLMCallResult:
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
+    started = perf_counter()
     try:
         response = _SYNC_CLIENT.post(
             endpoint,
@@ -54,7 +71,18 @@ def call_openai_compatible_chat(base_url: str, api_key: str, model: str, message
             timeout=timeout,
         )
         response.raise_for_status()
-        return _message_content(response.json())
+        data = response.json()
+        usage = data.get("usage") or {}
+        return LLMCallResult(
+            content=_message_content(data),
+            usage={
+                "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+                "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+                "total_tokens": int(usage.get("total_tokens") or 0),
+            },
+            model=str(data.get("model") or model),
+            latency_ms=int((perf_counter() - started) * 1000),
+        )
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text
         raise RuntimeError(f"LLM HTTP {exc.response.status_code}: {detail[:500]}") from exc
@@ -62,6 +90,23 @@ def call_openai_compatible_chat(base_url: str, api_key: str, model: str, message
         raise RuntimeError(f"LLM network error: {exc}") from exc
     except (ValueError, TypeError) as exc:
         raise RuntimeError("LLM response is not valid JSON") from exc
+
+
+def call_openai_compatible_chat(
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    timeout: int = 30,
+) -> str:
+    """Compatibility text API for existing generation and QA callers."""
+    return call_openai_compatible_chat_result(
+        base_url,
+        api_key,
+        model,
+        messages,
+        timeout,
+    ).content
 
 
 async def stream_openai_compatible_chat(

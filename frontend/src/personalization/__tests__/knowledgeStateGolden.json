@@ -1,0 +1,255 @@
+{
+  "policyVersion": "knowledge-v2.1",
+  "conceptId": "golden-concept",
+  "scopeType": "global",
+  "scopeId": "local-user",
+  "now": "2026-07-01T00:00:00Z",
+  "vectors": [
+    {
+      "id": "empty",
+      "events": [],
+      "expected": {
+        "probability": 0.35,
+        "uncertainty": 0.92,
+        "status": "uncertain",
+        "evidenceCount": 0,
+        "directEvidenceCount": 0,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": null
+      }
+    },
+    {
+      "id": "definition_question_is_learning",
+      "events": [
+        {
+          "id": "question-1",
+          "direction": "negative",
+          "source": "question",
+          "action": "asked_definition",
+          "strength": 1,
+          "reliability": 0.9,
+          "eventTime": "2026-06-30T00:00:00Z"
+        }
+      ],
+      "expected": {
+        "probability": 0.2807,
+        "uncertainty": 0.63,
+        "status": "learning",
+        "evidenceCount": 1,
+        "directEvidenceCount": 1,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": "2026-06-30T00:00:00Z"
+      }
+    },
+    {
+      "id": "two_correct_sessions_confirm",
+      "events": [
+        {
+          "id": "diagnostic-1",
+          "direction": "positive",
+          "source": "diagnostic",
+          "action": "answered",
+          "strength": 1,
+          "reliability": 0.9,
+          "objectiveCorrect": true,
+          "sessionId": "session-a",
+          "eventTime": "2026-06-30T00:00:00Z"
+        },
+        {
+          "id": "diagnostic-2",
+          "direction": "positive",
+          "source": "diagnostic",
+          "action": "answered",
+          "strength": 1,
+          "reliability": 0.9,
+          "objectiveCorrect": true,
+          "sessionId": "session-b",
+          "eventTime": "2026-07-01T00:00:00Z"
+        }
+      ],
+      "expected": {
+        "probability": 0.937162,
+        "uncertainty": 0.54,
+        "status": "confirmed",
+        "evidenceCount": 2,
+        "directEvidenceCount": 2,
+        "objectiveAttemptCount": 2,
+        "reliableCorrectSessions": 2,
+        "manualStatus": null,
+        "lastEvidenceAt": "2026-07-01T00:00:00Z"
+      }
+    },
+    {
+      "id": "same_session_does_not_confirm",
+      "events": [
+        {
+          "id": "diagnostic-1",
+          "direction": "positive",
+          "source": "diagnostic",
+          "action": "answered",
+          "strength": 1,
+          "reliability": 0.9,
+          "objectiveCorrect": true,
+          "sessionId": "session-a",
+          "eventTime": "2026-06-30T00:00:00Z"
+        },
+        {
+          "id": "diagnostic-2",
+          "direction": "positive",
+          "source": "diagnostic",
+          "action": "answered",
+          "strength": 1,
+          "reliability": 0.9,
+          "objectiveCorrect": true,
+          "sessionId": "session-a",
+          "eventTime": "2026-07-01T00:00:00Z"
+        }
+      ],
+      "expected": {
+        "probability": 0.937162,
+        "uncertainty": 0.54,
+        "status": "uncertain",
+        "evidenceCount": 2,
+        "directEvidenceCount": 2,
+        "objectiveAttemptCount": 2,
+        "reliableCorrectSessions": 1,
+        "manualStatus": null,
+        "lastEvidenceAt": "2026-07-01T00:00:00Z"
+      }
+    },
+    {
+      "id": "manual_unknown_overrides_objective_result",
+      "events": [
+        {
+          "id": "diagnostic-1",
+          "direction": "positive",
+          "source": "diagnostic",
+          "action": "answered",
+          "strength": 1,
+          "reliability": 0.9,
+          "objectiveCorrect": true,
+          "sessionId": "session-a",
+          "eventTime": "2026-06-30T00:00:00Z"
+        },
+        {
+          "id": "manual-1",
+          "direction": "negative",
+          "source": "manual",
+          "action": "manual_unknown",
+          "strength": 1,
+          "reliability": 1,
+          "eventTime": "2026-07-01T00:00:00Z"
+        }
+      ],
+      "expected": {
+        "probability": 0.01,
+        "uncertainty": 0.02,
+        "status": "learning",
+        "evidenceCount": 2,
+        "directEvidenceCount": 1,
+        "objectiveAttemptCount": 1,
+        "reliableCorrectSessions": 1,
+        "manualStatus": "unknown",
+        "lastEvidenceAt": "2026-07-01T00:00:00Z"
+      }
+    },
+    {
+      "id": "manual_clear_returns_to_no_evidence",
+      "events": [
+        {
+          "id": "manual-1",
+          "direction": "positive",
+          "source": "manual",
+          "action": "manual_known",
+          "strength": 1,
+          "reliability": 1,
+          "eventTime": "2026-06-30T00:00:00Z"
+        },
+        {
+          "id": "manual-2",
+          "direction": "neutral",
+          "source": "manual",
+          "action": "manual_clear",
+          "strength": 1,
+          "reliability": 1,
+          "eventTime": "2026-07-01T00:00:00Z"
+        }
+      ],
+      "expected": {
+        "probability": 0.35,
+        "uncertainty": 0.92,
+        "status": "uncertain",
+        "evidenceCount": 0,
+        "directEvidenceCount": 0,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": null
+      }
+    },
+    {
+      "id": "void_replays_remaining_events",
+      "events": [
+        {
+          "id": "question-1",
+          "direction": "negative",
+          "source": "question",
+          "action": "asked_definition",
+          "strength": 1,
+          "reliability": 0.9,
+          "eventTime": "2026-06-30T00:00:00Z"
+        },
+        {
+          "id": "void-1",
+          "direction": "neutral",
+          "source": "manual",
+          "action": "void_evidence",
+          "strength": 0,
+          "reliability": 1,
+          "targetEvidenceId": "question-1",
+          "eventTime": "2026-07-01T00:00:00Z"
+        }
+      ],
+      "expected": {
+        "probability": 0.35,
+        "uncertainty": 0.92,
+        "status": "uncertain",
+        "evidenceCount": 0,
+        "directEvidenceCount": 0,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": null
+      }
+    },
+    {
+      "id": "age_only_increases_uncertainty",
+      "events": [
+        {
+          "id": "summary-1",
+          "direction": "positive",
+          "source": "summary",
+          "action": "self_summary",
+          "strength": 1,
+          "reliability": 0.9,
+          "eventTime": "2025-01-01T00:00:00Z"
+        }
+      ],
+      "expected": {
+        "probability": 0.4436,
+        "uncertainty": 0.85,
+        "status": "uncertain",
+        "evidenceCount": 1,
+        "directEvidenceCount": 1,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": "2025-01-01T00:00:00Z"
+      }
+    }
+  ]
+}

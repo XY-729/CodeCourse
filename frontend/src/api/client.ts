@@ -965,6 +965,142 @@ export type PersonalizationProfile = {
     qaRecordId?: number | null;
     createdAt: string;
   }>;
+  domainProfiles: DomainProfile[];
+  inferences: LearnerInference[];
+  relations: ConceptRelation[];
+  surveyCandidate?: DynamicSurveyCandidate | null;
+  modelCalls: ModelCallAudit[];
+  knowledgeStates?: KnowledgeStateV2[];
+  learningEvidence?: LearningEvidenceV2[];
+};
+
+export type LearningEvidenceV2 = {
+  id: string;
+  conceptId: string;
+  scopeType: "global" | "project";
+  scopeId: string;
+  dimension: KnowledgeDimension;
+  direction: "positive" | "negative" | "neutral";
+  strength: number;
+  reliability: number;
+  source: string;
+  action: string;
+  object: Record<string, unknown>;
+  result: Record<string, unknown>;
+  context: Record<string, unknown>;
+  eventTime: string;
+  sessionId?: string | null;
+  qaRecordId?: number | null;
+  targetEvidenceId?: string | null;
+  voided: boolean;
+};
+
+export type KnowledgeDimension =
+  | "familiarity"
+  | "conceptual"
+  | "code_reading"
+  | "implementation"
+  | "debugging"
+  | "transfer";
+
+export type KnowledgeDimensionState = {
+  probability: number;
+  uncertainty: number;
+  status: "confirmed" | "learning" | "uncertain";
+  evidenceCount: number;
+  directEvidenceCount: number;
+  objectiveAttemptCount: number;
+  reliableCorrectSessions: number;
+  manualStatus: "known" | "unknown" | null;
+  lastEvidenceAt?: string | null;
+};
+
+export type KnowledgeStateV2 = {
+  conceptId: string;
+  scopeType: "global" | "project";
+  scopeId: string;
+  dimensions: Record<KnowledgeDimension, KnowledgeDimensionState>;
+  policyVersion: string;
+  evidenceVersion: number;
+  updatedAt: string;
+};
+
+export type DiagnosticItem = {
+  id: string;
+  projectId: number;
+  sessionId?: string | null;
+  sourceQaRecordId?: number | null;
+  conceptIds: string[];
+  dimension: KnowledgeDimension;
+  itemType: "single_choice" | "true_false" | "code_output" | "error_location" | "step_order";
+  prompt: string;
+  options: Array<{ value: unknown; label: string }>;
+  sourceRefs: Array<Record<string, unknown>>;
+  rationale: string;
+  difficulty: number;
+  createdAt: string;
+};
+
+export type DomainProfile = {
+  domainKey: string;
+  summary: string;
+  confidence: number;
+  confirmed: string[];
+  learning: string[];
+  likelyPrerequisites: string[];
+  evidence: Array<Record<string, unknown>>;
+  updatedAt: string;
+};
+
+export type LearnerInference = {
+  id: string;
+  subjectType: "concept" | "domain";
+  subjectKey: string;
+  displayName?: string | null;
+  scopeType: "global" | "project";
+  scopeId: string;
+  state: "confirmed" | "learning" | "likely_prerequisite" | "insufficient";
+  summary: string;
+  confidence: number;
+  directEvidenceCount: number;
+  inferredEvidenceCount: number;
+  evidence: Array<Record<string, unknown>>;
+  updatedAt: string;
+};
+
+export type ConceptRelation = {
+  id: string;
+  sourceConceptId: string;
+  targetConceptId: string;
+  relationType: "prerequisite" | "component" | "application" | "sibling" | "alias";
+  domain: string;
+  confidence: number;
+  evidence: Array<Record<string, unknown>>;
+};
+
+export type DynamicSurveyCandidate = {
+  id: string;
+  question: string;
+  dimension: string;
+  options: Array<{ value: string; label: string }>;
+  rationale: string;
+  confidence: number;
+  createdAt: string;
+};
+
+export type ModelCallAudit = {
+  id: string;
+  projectId?: number | null;
+  purpose: string;
+  provider?: string | null;
+  model?: string | null;
+  status: string;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  estimatedCost?: number | null;
+  latencyMs?: number | null;
+  errorMessage?: string | null;
+  createdAt: string;
 };
 
 // ---- Personalization API ----
@@ -1020,7 +1156,22 @@ export async function getTermDisplayProfiles(
 
   for (let i = 0; i < uniqueKeys.length; i += batchSize) {
     const batch = uniqueKeys.slice(i, i + batchSize);
-    const response = await request<{ profiles: TermPersonalizationProfile[] }>(
+    const response = await request<{ profiles: Array<{
+      conceptKey?: string;
+      concept_key?: string;
+      manualStatus?: TermPersonalizationProfile["manualStatus"];
+      manual_status?: TermPersonalizationProfile["manualStatus"];
+      mastery?: number | null;
+      uncertainty?: number | null;
+      shadowFamiliarity?: number | null;
+      shadow_familiarity?: number | null;
+      shadowConfidence?: number | null;
+      shadow_confidence?: number | null;
+      shadowEvidenceCount?: number;
+      shadow_evidence_count?: number;
+      domainPrior?: number | null;
+      domain_prior?: number | null;
+    }> }>(
       `/projects/${projectId}/personalization/term-display-profiles`,
       {
         method: "POST",
@@ -1028,10 +1179,40 @@ export async function getTermDisplayProfiles(
         body: JSON.stringify({ concept_keys: batch }),
       },
     );
-    profiles.push(...response.profiles);
+    profiles.push(...response.profiles
+      .map(normalizeTermDisplayProfile)
+      .filter((profile) => Boolean(profile.conceptKey)));
   }
 
   return profiles;
+}
+
+export function normalizeTermDisplayProfile(profile: {
+  conceptKey?: string;
+  concept_key?: string;
+  manualStatus?: TermPersonalizationProfile["manualStatus"];
+  manual_status?: TermPersonalizationProfile["manualStatus"];
+  mastery?: number | null;
+  uncertainty?: number | null;
+  shadowFamiliarity?: number | null;
+  shadow_familiarity?: number | null;
+  shadowConfidence?: number | null;
+  shadow_confidence?: number | null;
+  shadowEvidenceCount?: number;
+  shadow_evidence_count?: number;
+  domainPrior?: number | null;
+  domain_prior?: number | null;
+}): TermPersonalizationProfile {
+  return {
+    conceptKey: profile.conceptKey ?? profile.concept_key ?? "",
+    manualStatus: profile.manualStatus ?? profile.manual_status ?? null,
+    mastery: profile.mastery ?? null,
+    uncertainty: profile.uncertainty ?? null,
+    shadowFamiliarity: profile.shadowFamiliarity ?? profile.shadow_familiarity ?? null,
+    shadowConfidence: profile.shadowConfidence ?? profile.shadow_confidence ?? null,
+    shadowEvidenceCount: profile.shadowEvidenceCount ?? profile.shadow_evidence_count ?? 0,
+    domainPrior: profile.domainPrior ?? profile.domain_prior ?? null,
+  };
 }
 
 export function getPersonalizationEvents(projectId: number, conceptId: string): Promise<PersonalizationEvent[]> {
@@ -1108,6 +1289,32 @@ export function getPersonalizationProfile(projectId: number): Promise<Personaliz
   return request<PersonalizationProfile>(`/projects/${projectId}/personalization/profile`);
 }
 
+export function voidLearnerInference(projectId: number, inferenceId: string): Promise<{ status: string; id: string }> {
+  return request(`/projects/${projectId}/personalization/inferences/${encodeURIComponent(inferenceId)}/void`, {
+    method: "POST",
+  });
+}
+
+export function answerDynamicSurvey(projectId: number, surveyId: string, choice: string): Promise<{ status: string }> {
+  return request(`/projects/${projectId}/personalization/surveys/${encodeURIComponent(surveyId)}/answer`, {
+    method: "POST",
+    body: JSON.stringify({ choice }),
+  });
+}
+
+export function dismissDynamicSurvey(projectId: number, surveyId: string): Promise<{ status: string }> {
+  return request(`/projects/${projectId}/personalization/surveys/${encodeURIComponent(surveyId)}/dismiss`, {
+    method: "POST",
+  });
+}
+
+export function getReusableConceptExplanation(
+  projectId: number,
+  conceptId: string,
+): Promise<{ explanation: { projectId: number; qa: QARecord } | null }> {
+  return request(`/projects/${projectId}/personalization/concepts/${encodeURIComponent(conceptId)}/explanation`);
+}
+
 export function resetPersonalizationProfile(
   projectId: number,
   scope: "project" | "global" | "all" = "project",
@@ -1128,5 +1335,72 @@ export function resetPersonalizationProfile(
     deletedShadowCount?: number;
   }>(`/projects/${projectId}/personalization/profile?scope=${scope}`, {
     method: "DELETE",
+  });
+}
+
+export function getKnowledgeStates(
+  projectId: number,
+  conceptIds: string[] = [],
+): Promise<{ policyVersion: string; states: KnowledgeStateV2[] }> {
+  const query = conceptIds.length
+    ? `?concept_ids=${conceptIds.map(encodeURIComponent).join(",")}`
+    : "";
+  return request(`/projects/${projectId}/personalization/knowledge-state${query}`);
+}
+
+export function submitLearningEvidence(
+  projectId: number,
+  payload: Record<string, unknown>,
+): Promise<{ evidence: Record<string, unknown>; state: KnowledgeStateV2 }> {
+  return request(`/projects/${projectId}/personalization/evidence`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function voidLearningEvidence(
+  projectId: number,
+  evidenceId: string,
+  idempotencyKey: string,
+  reason?: string,
+): Promise<{ evidence: Record<string, unknown>; state: KnowledgeStateV2 }> {
+  return request(`/projects/${projectId}/personalization/evidence/${encodeURIComponent(evidenceId)}/void`, {
+    method: "POST",
+    body: JSON.stringify({ idempotencyKey, reason }),
+  });
+}
+
+export function rebuildKnowledgeProfile(projectId: number): Promise<{
+  status: string;
+  rebuilt: number;
+  policyVersion: string;
+}> {
+  return request(`/projects/${projectId}/personalization/rebuild`, { method: "POST" });
+}
+
+export function getPendingDiagnostic(projectId: number): Promise<{ item: DiagnosticItem | null }> {
+  return request(`/projects/${projectId}/personalization/diagnostics/pending`);
+}
+
+export function answerDiagnostic(
+  projectId: number,
+  itemId: string,
+  answer: unknown,
+): Promise<{ status: string; correct: boolean; attemptId: string }> {
+  return request(`/projects/${projectId}/personalization/diagnostics/${encodeURIComponent(itemId)}/answer`, {
+    method: "POST",
+    body: JSON.stringify({ answer }),
+  });
+}
+
+export function dismissDiagnostic(projectId: number, itemId: string): Promise<{ status: string }> {
+  return request(`/projects/${projectId}/personalization/diagnostics/${encodeURIComponent(itemId)}/dismiss`, {
+    method: "POST",
+  });
+}
+
+export function flagDiagnostic(projectId: number, itemId: string): Promise<{ status: string }> {
+  return request(`/projects/${projectId}/personalization/diagnostics/${encodeURIComponent(itemId)}/flag`, {
+    method: "POST",
   });
 }

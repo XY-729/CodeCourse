@@ -13,7 +13,10 @@ from app.services.generation_service import extract_file_signals, project_course
 from app.services.knowledge_service import attach_learning_anchor, attach_qa_record, remove_learning_anchor_node
 from app.services.prompt_store import load_prompt
 from app.services.llm_client import call_openai_compatible_chat
-from app.services.personalization_service import build_learner_context
+from app.services.personalization_service import (
+    build_learner_context,
+    record_question_learning,
+)
 from app.services.personalization.interaction_observer import (
     schedule_interaction_observation,
 )
@@ -624,11 +627,52 @@ def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
         update_document_term_status(project_id, prepared.term.id, "linked", written.id)
         from app.services.storage import update_link_origin_automatic
         update_link_origin_automatic(prepared.term.id)
+        if prepared.term.concept_id:
+            from app.services.personalization.learner_inference_service import (
+                register_concept_explanation,
+            )
+            register_concept_explanation(
+                prepared.term.concept_id,
+                project_id,
+                written.id,
+                written.display_title,
+            )
+    elif payload.relation_type == "term_explanation" and selected_text:
+        try:
+            from app.services.personalization_service import resolve_concept
+            from app.services.personalization.learner_inference_service import (
+                register_concept_explanation,
+            )
+            concept = resolve_concept(
+                project_id,
+                selected_text[:80],
+                "index" if payload.source_type == "file" else "selection",
+                0.95,
+            )
+            register_concept_explanation(
+                concept.id,
+                project_id,
+                written.id,
+                written.display_title,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to register selected-term explanation",
+                extra={"project_id": project_id, "qa_record_id": written.id},
+            )
     _refresh_session_memory(
         project_id,
         prepared.session_id,
         payload.source_path,
     )
+
+    try:
+        record_question_learning(project_id, written)
+    except Exception:
+        logger.exception(
+            "Failed to record direct learning evidence",
+            extra={"project_id": project_id, "qa_record_id": written.id},
+        )
 
     try:
         schedule_interaction_observation(
@@ -738,9 +782,55 @@ def _should_use_planner_assist(prepared) -> bool:
     return len(question) >= 120 or (len(question) >= 60 and separators >= 2)
 
 
+def _should_use_planner_assist_v2(project_id: int, prepared) -> bool:
+    """Use current context and knowledge gaps instead of wording heuristics."""
+    payload = prepared.payload
+    if payload.relation_type == "term_explanation":
+        return False
+    if (
+        prepared.parent_id is not None
+        or payload.relation_type == "alternate"
+        or bool(prepared.selected_text)
+    ):
+        return True
+    try:
+        from app.services.personalization_service import concepts_for_question
+        from app.services.storage import _connect
+        concepts = concepts_for_question(
+            project_id,
+            prepared.question,
+            prepared.selected_text or "",
+        )
+        if len(concepts) > 1:
+            return True
+        if not concepts:
+            return False
+        concept_ids = [concept.id for concept in concepts]
+        placeholders = ",".join("?" * len(concept_ids))
+        with _connect() as conn:
+            unresolved = conn.execute(
+                f"""SELECT 1 FROM concept_relations r
+                    LEFT JOIN knowledge_states_v2 s
+                      ON s.concept_id = r.target_concept_id
+                    WHERE r.source_concept_id IN ({placeholders})
+                      AND r.relation_type = 'prerequisite'
+                      AND r.status = 'active'
+                      AND (
+                        s.state_json IS NULL
+                        OR s.state_json NOT LIKE '%"status":"confirmed"%'
+                      )
+                    LIMIT 1""",
+                concept_ids,
+            ).fetchone()
+            return unresolved is not None
+    except Exception:
+        logger.exception("Failed to resolve Planner eligibility")
+        return False
+
+
 def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
     try:
-        if not _is_planner_assist_enabled() or not _should_use_planner_assist(prepared):
+        if not _is_planner_assist_enabled() or not _should_use_planner_assist_v2(project_id, prepared):
             return None
 
         from app.services.personalization.teaching.effective_context import (
@@ -751,7 +841,7 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
         )
         from app.services.personalization.teaching.teacher_planner import (
             TEACHER_PLANNER_VERSION,
-            _call_planner_model,
+            _call_planner_model_result,
             _build_planner_messages,
             parse_teaching_plan,
         )
@@ -870,9 +960,9 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
 
         start = time.time()
         try:
-            raw = _call_planner_model(messages, settings)
-            plan = parse_teaching_plan(raw)
-        except Exception:
+            call_result = _call_planner_model_result(messages, settings)
+            plan = parse_teaching_plan(call_result.content)
+        except Exception as planner_error:
             # Planner is an optional enhancement. Do not retry synchronously:
             # a malformed plan or network timeout must fall through to the
             # original answer path with a bounded first-token delay.
@@ -881,7 +971,33 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
                 extra={"project_id": project_id, "elapsed": time.time() - start},
                 exc_info=True,
             )
+            from app.services.personalization.learner_inference_service import (
+                record_model_call,
+            )
+            record_model_call(
+                project_id=project_id,
+                purpose="teacher_planner_assist",
+                provider=None,
+                model=settings.get("model"),
+                status="failed",
+                latency_ms=int((time.time() - start) * 1000),
+                error_message=str(planner_error),
+            )
             return None
+
+        from app.services.personalization.learner_inference_service import (
+            record_model_call,
+        )
+        record_model_call(
+            project_id=project_id,
+            purpose="teacher_planner_assist",
+            provider=None,
+            model=call_result.model,
+            status="completed",
+            latency_ms=call_result.latency_ms,
+            input_tokens=call_result.usage.get("input_tokens"),
+            output_tokens=call_result.usage.get("output_tokens"),
+        )
 
         context = build_effective_teaching_context(
             teaching_plan=plan,
@@ -1009,6 +1125,41 @@ def save_understanding(project_id: int, record_id: int, summary: str, term_text:
         raise RuntimeError("问答记录不存在。")
     anchor = upsert_learning_anchor(project_id, record_id, summary.strip(), term_text.strip() if term_text else None)
     attach_learning_anchor(record, anchor)
+    try:
+        from app.services.personalization_service import concepts_for_question, concept_scope
+        from app.services.personalization.knowledge_state_service import append_evidence
+        concepts = concepts_for_question(
+            project_id,
+            f"{record.question}\n{term_text or ''}",
+            record.selected_text,
+            record.source_type,
+            record.source_path,
+        )
+        for concept in concepts:
+            scope_type, scope_id = concept_scope(concept, project_id)
+            append_evidence(
+                {
+                    "idempotencyKey": f"summary-v2:{record_id}:{concept.id}",
+                    "conceptId": concept.id,
+                    "scopeType": scope_type,
+                    "scopeId": scope_id,
+                    "dimension": "conceptual",
+                    "direction": "positive",
+                    "strength": 0.65,
+                    "reliability": 0.72,
+                    "source": "summary",
+                    "action": "saved_understanding",
+                    "object": {"type": "qa", "qaRecordId": record_id},
+                    "result": {"summary": summary[:500]},
+                    "sessionId": str(record.session_id) if record.session_id else None,
+                    "qaRecordId": record_id,
+                }
+            )
+    except Exception:
+        logger.exception(
+            "Failed to record understanding evidence",
+            extra={"project_id": project_id, "qa_record_id": record_id},
+        )
     return anchor
 
 
@@ -1020,6 +1171,27 @@ def remove_understanding(project_id: int, record_id: int) -> bool:
     removed = delete_learning_anchor(project_id, record_id)
     if removed:
         remove_learning_anchor_node(project_id, record_id)
+        try:
+            from app.services.personalization.knowledge_state_service import void_evidence
+            from app.services.storage import _connect
+            with _connect() as conn:
+                rows = conn.execute(
+                    """SELECT id FROM learning_evidence_v2
+                       WHERE qa_record_id = ? AND source = 'summary'
+                         AND action = 'saved_understanding'""",
+                    (record_id,),
+                ).fetchall()
+            for row in rows:
+                void_evidence(
+                    row["id"],
+                    f"void-summary-v2:{record_id}:{row['id']}",
+                    "understanding_removed",
+                )
+        except Exception:
+            logger.exception(
+                "Failed to void removed understanding evidence",
+                extra={"project_id": project_id, "qa_record_id": record_id},
+            )
     return removed
 
 

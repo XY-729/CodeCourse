@@ -296,6 +296,19 @@ def apply_shadow_updates(
         concept_id = _resolve_concept_id(ev.concept_text, ev.concept_key, conn)
         if concept_id is None:
             continue
+        concept_row = conn.execute(
+            "SELECT concept_key, concept_type FROM concepts WHERE id = ?",
+            (concept_id,),
+        ).fetchone()
+        is_project_symbol = bool(
+            concept_row
+            and (
+                str(concept_row[0] or "").startswith("project:")
+                or str(concept_row[1] or "") == "project_symbol"
+            )
+        )
+        capability_scope_type = "project" if is_project_symbol else "global"
+        capability_scope_id = str(project_id) if is_project_symbol else "local-user"
         delta = capability_delta(
             direction=ev.direction,
             strength=ev.strength,
@@ -303,8 +316,8 @@ def apply_shadow_updates(
         )
         _upsert_concept_capability(
             concept_id=concept_id,
-            scope_type=scope_type,
-            scope_id=scope_id,
+            scope_type=capability_scope_type,
+            scope_id=capability_scope_id,
             dimension=ev.dimension,
             delta=delta,
             observation_confidence=ev.confidence,
@@ -321,8 +334,12 @@ def apply_shadow_updates(
             category=ev.category,
             statement=ev.statement,
             scope_type=ev.recommended_scope,
-            scope_id=scope_id if ev.recommended_scope == "project" else (
-                str(session_id) if session_id and ev.recommended_scope == "session" else scope_id
+            scope_id=(
+                str(project_id)
+                if ev.recommended_scope == "project"
+                else str(session_id)
+                if session_id and ev.recommended_scope == "session"
+                else "local-user"
             ),
             direction=ev.direction,
             confidence=ev.confidence,
@@ -357,7 +374,13 @@ def apply_shadow_updates(
             category=f"explicit_user_{ev.fact_type}",
             statement=ev.statement,
             scope_type=ev.recommended_scope,
-            scope_id=scope_id if ev.recommended_scope in ("project", "session") else scope_id,
+            scope_id=(
+                str(project_id)
+                if ev.recommended_scope == "project"
+                else str(session_id)
+                if session_id and ev.recommended_scope == "session"
+                else "local-user"
+            ),
             direction="support",
             confidence=ev.confidence,
             observation_id=obs_id,

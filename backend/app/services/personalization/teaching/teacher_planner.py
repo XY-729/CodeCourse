@@ -102,8 +102,12 @@ def parse_teaching_plan(raw: str) -> TeachingPlan:
 
 
 def _call_planner_model(messages: list[dict[str, str]], settings: dict[str, Any]) -> str:
-    from app.services.llm_client import call_openai_compatible_chat
-    return call_openai_compatible_chat(
+    return _call_planner_model_result(messages, settings).content
+
+
+def _call_planner_model_result(messages: list[dict[str, str]], settings: dict[str, Any]):
+    from app.services.llm_client import call_openai_compatible_chat_result
+    return call_openai_compatible_chat_result(
         base_url=settings["base_url"],
         api_key=settings["api_key"],
         model=settings["model"],
@@ -208,6 +212,7 @@ def execute_teacher_planner(
     source_type: str | None,
     source_path: str | None,
 ) -> None:
+    import time
     from app.services.storage import (
         get_qa_record,
         get_qa_session,
@@ -219,6 +224,7 @@ def execute_teacher_planner(
     )
 
     run_id = f"planner-run:{project_id}:{qa_record_id}:{TEACHER_PLANNER_VERSION}"
+    started_at = time.time()
 
     try:
         settings = _get_planner_settings()
@@ -303,10 +309,17 @@ def execute_teacher_planner(
             now = datetime.now(timezone.utc).isoformat()
             plan = None
             last_error = None
+            input_tokens = 0
+            output_tokens = 0
+            model_name = settings.get("model")
 
             for attempt in range(MAX_RETRIES + 1):
                 try:
-                    raw = _call_planner_model(messages, settings)
+                    call_result = _call_planner_model_result(messages, settings)
+                    input_tokens += int(call_result.usage.get("input_tokens", 0))
+                    output_tokens += int(call_result.usage.get("output_tokens", 0))
+                    model_name = call_result.model
+                    raw = call_result.content
                     plan = parse_teaching_plan(raw)
                     break
                 except (ValueError, ValidationError) as exc:
@@ -346,6 +359,20 @@ def execute_teacher_planner(
                 plan=plan,
                 conn=conn,
             )
+            from app.services.personalization.learner_inference_service import (
+                record_model_call,
+            )
+            record_model_call(
+                project_id=project_id,
+                purpose="teacher_planner",
+                provider=settings.get("provider"),
+                model=model_name,
+                status="completed",
+                latency_ms=int((time.time() - started_at) * 1000),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                conn=conn,
+            )
 
         run_in_transaction(_tx)
 
@@ -373,6 +400,19 @@ def execute_teacher_planner(
                         "failed", str(locals().get("last_error", "Unknown"))[:500],
                         now, now,
                     ),
+                )
+                from app.services.personalization.learner_inference_service import (
+                    record_model_call,
+                )
+                record_model_call(
+                    project_id=project_id,
+                    purpose="teacher_planner",
+                    provider=(locals().get("settings") or {}).get("provider"),
+                    model=(locals().get("settings") or {}).get("model"),
+                    status="failed",
+                    latency_ms=int((time.time() - started_at) * 1000),
+                    error_message=str(locals().get("last_error", "Unknown")),
+                    conn=conn,
                 )
         except Exception:
             pass

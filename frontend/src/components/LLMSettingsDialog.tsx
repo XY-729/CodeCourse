@@ -353,7 +353,7 @@ export default function LLMSettingsDialog({
                 </div>
               ) : (
                 <div className="settings-platform-note">
-                  Android 当前保留普通问答、术语反馈和术语密度设置；高级 Planner 与 Observer 暂不显示为可用，避免静默假开启。
+                  当前运行环境未提供 Planner 与 Observer；普通问答和术语反馈仍可使用。
                 </div>
               )
             ) : (

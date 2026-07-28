@@ -68,12 +68,20 @@ class OldRuleShutdownTests(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_followup_does_not_auto_add_unknown(self):
-        # record_question_learning used to add unknown evidence for follow-ups
-        result = self.record_learning(1, type('Q', (), {
-            'id': 4, 'parent_qa_id': 1, 'question': 'bind是什么？',
-            'selected_text': '', 'source_type': 'course', 'source_path': 'test',
-            'relation_type': 'follow_up',
-        })())
+        # A follow-up can create weak V2 evidence only after a real concept is
+        # resolved; wording alone must not create an unknown judgement.
+        with patch(
+            "app.services.personalization_service.concepts_for_question",
+            return_value=[],
+        ), patch(
+            "app.services.personalization_service._parent_concepts",
+            return_value=[],
+        ):
+            result = self.record_learning(1, type('Q', (), {
+                'id': 4, 'parent_qa_id': 1, 'question': 'bind是什么？',
+                'selected_text': '', 'source_type': 'course', 'source_path': 'test',
+                'relation_type': 'follow_up',
+            })())
         self.assertIsNone(result)
 
 

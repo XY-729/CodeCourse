@@ -141,35 +141,43 @@ def _collect_capabilities(
 
     placeholders = ",".join("?" * len(relevant_keys))
     rows = conn.execute(
-        f"""SELECT concept_id, scope_type, scope_id, familiarity,
-           conceptual_understanding, code_reading, implementation,
-           debugging, transfer, confidence, evidence_count
-           FROM concept_capabilities
-           WHERE scope_type = 'project' AND scope_id = ?
-           AND concept_id IN ({placeholders})
-           AND evidence_count >= ?
-           AND confidence >= ?""",
-        (str(project_id), *relevant_keys, EVIDENCE_COUNT_MIN_CAPABILITY, CONFIDENCE_THRESHOLD_CAPABILITY),
+        f"""SELECT c.concept_key, c.display_name, s.state_json
+            FROM knowledge_states_v2 s
+            JOIN concepts c ON c.id = s.concept_id
+            WHERE ((s.scope_type = 'global' AND s.scope_id = 'local-user')
+                OR (s.scope_type = 'project' AND s.scope_id = ?))
+              AND c.concept_key IN ({placeholders})""",
+        (str(project_id), *relevant_keys),
     ).fetchall()
 
     dims = ["familiarity", "conceptual_understanding", "code_reading",
             "implementation", "debugging", "transfer"]
 
     for row in rows:
-        concept_id = row[0]
-        confidence = float(row[9])
-        for i, dim in enumerate(dims):
-            value = float(row[3 + i])
+        concept_key = row[0]
+        concept_name = row[1]
+        payload = json.loads(row[2])
+        for dim in dims:
+            state_dim = "conceptual" if dim == "conceptual_understanding" else dim
+            state = payload.get("dimensions", {}).get(state_dim, {})
+            evidence_count = int(state.get("evidenceCount", 0))
+            confidence = 1.0 - float(state.get("uncertainty", 1.0))
+            if (
+                evidence_count < EVIDENCE_COUNT_MIN_CAPABILITY
+                or confidence < CONFIDENCE_THRESHOLD_CAPABILITY
+            ):
+                continue
+            value = float(state.get("probability", 0.5))
             caps.append(RelevantCapability(
-                concept_key=concept_id,
-                concept_name=concept_id,
+                concept_key=concept_key,
+                concept_name=concept_name,
                 dimension=dim,
                 value=value,
                 confidence=confidence,
                 interpretation=capability_interpretation(value, confidence),
                 sources=[SnapshotSource(
-                    source_type="capability",
-                    source_id=f"{concept_id}:{dim}",
+                    source_type="knowledge_state_v2",
+                    source_id=f"{concept_key}:{dim}",
                     evidence_qa_record_ids=[],
                     confidence=confidence,
                 )],

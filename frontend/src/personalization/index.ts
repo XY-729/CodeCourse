@@ -9,6 +9,8 @@ export * from "./masteryEngine";
 export * from "./termLinkScorer";
 export * from "./conceptResolver";
 export * from "./preferenceEngine";
+export * from "./domainInference";
+export * from "./knowledgeState";
 export { usePersonalization } from "./usePersonalization";
 export { useTermDisplay, createNeutralTermProfile } from "./useTermDisplay";
 export type { UseTermDisplayParams, UseTermDisplayResult } from "./useTermDisplay";

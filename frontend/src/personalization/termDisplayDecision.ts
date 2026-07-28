@@ -177,22 +177,36 @@ export function buildPreliminaryTermDecision(
   );
 
   const threshold = getScoreThreshold(preferences, context);
+  const hasKnowledgeEvidence = Boolean(
+    profile?.manualStatus
+    || profile?.mastery != null
+    || (
+      profile?.shadowFamiliarity != null
+      && profile.shadowConfidence != null
+      && profile.shadowEvidenceCount >= 2
+    ),
+  );
+  const coldStartFloor =
+    !hasKnowledgeEvidence && candidate.sourceConfidence >= 0.76
+      ? threshold + Math.min(0.08, (candidate.sourceConfidence - 0.76) * 0.45)
+      : score;
+  const effectiveScore = Math.max(score, coldStartFloor);
 
-  if (score < threshold) {
+  if (effectiveScore < threshold) {
     return {
       candidateId: candidate.candidateId,
       conceptKey: candidate.conceptKey,
       paragraphId: candidate.paragraphId,
       occurrenceIndex: candidate.occurrenceIndex,
       eligible: false,
-      score,
+      score: effectiveScore,
       tier: "none",
       reason: context.profileAvailable ? "below_threshold" : "profile_unavailable",
       manualUnknown: false,
     };
   }
 
-  const tier = score >= Math.max(0.82, threshold + 0.12) ? "prominent" : "subtle";
+  const tier = effectiveScore >= Math.max(0.82, threshold + 0.12) ? "prominent" : "subtle";
 
   return {
     candidateId: candidate.candidateId,
@@ -200,7 +214,7 @@ export function buildPreliminaryTermDecision(
     paragraphId: candidate.paragraphId,
     occurrenceIndex: candidate.occurrenceIndex,
     eligible: true,
-    score,
+    score: effectiveScore,
     tier,
     reason: unfamiliarity.usedShadow
       ? "trusted_shadow_signal"
