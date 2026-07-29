@@ -8,6 +8,8 @@ export type CommandPaletteItem = {
   section: string;
   keywords?: string;
   shortcut?: string;
+  disabled?: boolean;
+  disabledReason?: string;
   run: () => void;
 };
 
@@ -63,8 +65,18 @@ export default function CommandPalette({ open, items, onClose }: Props) {
   if (!present) return null;
 
   function run(item: CommandPaletteItem) {
+    if (item.disabled) return;
     onClose();
     item.run();
+  }
+
+  function nextEnabled(from: number, direction: 1 | -1) {
+    let i = from;
+    for (let steps = 0; steps < filtered.length; steps++) {
+      i = (i + direction + filtered.length) % filtered.length;
+      if (!filtered[i].item.disabled) return i;
+    }
+    return from;
   }
 
   return (
@@ -82,11 +94,11 @@ export default function CommandPalette({ open, items, onClose }: Props) {
               if (event.key === "Escape") onClose();
               if (event.key === "ArrowDown") {
                 event.preventDefault();
-                setActiveIndex((index) => Math.min(filtered.length - 1, index + 1));
+                setActiveIndex((index) => nextEnabled(index, 1));
               }
               if (event.key === "ArrowUp") {
                 event.preventDefault();
-                setActiveIndex((index) => Math.max(0, index - 1));
+                setActiveIndex((index) => nextEnabled(index, -1));
               }
               if (event.key === "Enter" && filtered[activeIndex]) {
                 event.preventDefault();
@@ -102,14 +114,19 @@ export default function CommandPalette({ open, items, onClose }: Props) {
           {filtered.map(({ item }, index) => (
             <button
               key={item.id}
-              className={index === activeIndex ? "active" : ""}
+              className={`${index === activeIndex ? "active" : ""} ${item.disabled ? "is-disabled" : ""}`}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => run(item)}
               role="option"
               aria-selected={index === activeIndex}
+              aria-disabled={item.disabled}
+              style={item.disabled ? { opacity: 0.42, pointerEvents: "none" } : undefined}
             >
               <span className="command-section">{item.section}</span>
-              <span className="command-copy"><strong>{item.label}</strong>{item.description ? <small>{item.description}</small> : null}</span>
+              <span className="command-copy">
+                <strong>{item.label}</strong>
+                {item.disabled && item.disabledReason ? <small>{item.disabledReason}</small> : item.description ? <small>{item.description}</small> : null}
+              </span>
               {item.shortcut ? <kbd>{item.shortcut}</kbd> : null}
             </button>
           ))}

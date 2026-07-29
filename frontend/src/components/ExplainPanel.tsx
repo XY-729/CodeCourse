@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Edit3, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, Edit3, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
 
@@ -178,7 +178,18 @@ export default function ExplainPanel(props: Props) {
                     <Edit3 size={14} className="history-rename" role="button" tabIndex={0} aria-label="重命名记录" onClick={(event) => { event.stopPropagation(); onRenameRecord(record); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onRenameRecord(record); } }} />
                     <Star size={14} className={record.favorite ? "history-star starred" : "history-star"} role="button" tabIndex={0} aria-label={record.favorite ? "取消收藏" : "收藏"} onClick={(event) => { event.stopPropagation(); onToggleFavorite(record); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onToggleFavorite(record); } }} />
                   </button>
-                )) : <div className="empty small">暂无问答历史</div>}
+                )) : (
+              <div className="assistant-empty-card">
+                <Bot size={28} />
+                <strong>开始提问</strong>
+                <span>选中课程或代码中的术语，然后在此提问，AI 助手会根据项目上下文回答。</span>
+                <div className="assistant-example-questions">
+                  <button type="button" className="secondary-button compact" onClick={() => onQuestionChange("这个项目的主要架构是什么？")}>这个项目的主要架构是什么？</button>
+                  <button type="button" className="secondary-button compact" onClick={() => onQuestionChange("帮我解释当前课程的核心概念")}>帮我解释当前课程的核心概念</button>
+                  <button type="button" className="secondary-button compact" onClick={() => onQuestionChange("如何运行这个项目？")}>如何运行这个项目？</button>
+                </div>
+              </div>
+              )}
               </div>
             </>
           )}
@@ -307,10 +318,15 @@ export default function ExplainPanel(props: Props) {
 
         <div className="qa-ask-bottom">
           {panelError ? <div className="qa-local-error" role="alert">{panelError}</div> : null}
-          <div className="model-row">
-            <select value={modelReady ? "configured" : "missing"} disabled aria-label="当前模型"><option>{configuredModelLabel(settings)}</option></select>
-            {!modelReady ? <button type="button" className="secondary-button compact" onClick={onOpenSettings}>配置</button> : null}
-          </div>
+          {modelReady ? (
+            <div className="model-row">
+              <select value="configured" disabled aria-label="当前模型"><option>{configuredModelLabel(settings)}</option></select>
+            </div>
+          ) : (
+            <div className="model-row">
+              <button type="button" className="secondary-button compact" onClick={onOpenSettings}>配置模型</button>
+            </div>
+          )}
           <button className="primary-button" onClick={onAsk} disabled={loading || selectedRecordReadOnly || !modelReady || !question.trim()}>
             {loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}{loading ? (loadingLabel || "生成中...") : selectedRecord ? "继续追问" : "询问"}
           </button>

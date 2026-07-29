@@ -1586,8 +1586,24 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
               ) : null}
             </div>
           ) : null}
+          {graph.nodes.length === 0 ? (
+            <div className="knowledge-empty-overlay">
+              {message ? (
+                <>
+                  <strong>加载失败</strong>
+                  <span>{message}</span>
+                  <button className="secondary-button compact" onClick={() => { setMessage(""); reload(); }}>重试</button>
+                </>
+              ) : (
+                <>
+                  <strong>还没有知识节点</strong>
+                  <span>AI 助手会根据你的提问自动提取和连接知识点。在助手面板中提问后，知识点会出现在这里。</span>
+                </>
+              )}
+            </div>
+          ) : null}
         </div>
-        {selectedNode || selectedEdge || message ? <aside className="knowledge-inspector open">
+        {selectedNode || selectedEdge || (message && graph.nodes.length > 0) ? <aside className="knowledge-inspector open">
           {selectedNode ? (
             <>
               <strong>{selectedNode.title}</strong>

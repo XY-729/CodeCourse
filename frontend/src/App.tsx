@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { BookOpen, Bot, BrainCircuit, ChevronDown, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, Plus, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bot, BrainCircuit, ChevronDown, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, Plus, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
 import {
   buildProjectIndex,
   createEmptyCourseFile,
@@ -2246,7 +2246,12 @@ export default function App() {
         );
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "打开项目失败");
+      const msg = caught instanceof Error ? caught.message : "打开项目失败";
+      if (/directory|路径|ENOENT/i.test(msg)) {
+        setError("项目目录不存在或已被移动，请选择以下操作：");
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -3755,16 +3760,16 @@ export default function App() {
   function commandPaletteItems(): CommandPaletteItem[] {
     const items: CommandPaletteItem[] = [
       { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => openAssistant("history") },
-      { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", run: () => openGeneration("outline") },
+      { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", disabled: !project, disabledReason: !project ? "需要先打开项目" : undefined, run: () => openGeneration("outline") },
       { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => openMobileNavigation("courses") },
       { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => openMobileNavigation("files") },
       { id: "command:settings", label: "设置", section: "命令", keywords: "deepseek key 模型 个性化 术语 隐私", run: openSettings },
       { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: openPrompts },
-      { id: "command:index", label: "构建项目索引", section: "命令", keywords: "rag 搜索 索引", run: () => void handleBuildIndex() },
-      { id: "command:reset-progress", label: "重置学习进度", section: "命令", keywords: "清除 完成 阅读位置", run: () => void handleResetLearningProgress() },
+      { id: "command:index", label: "构建项目索引", section: "命令", keywords: "rag 搜索 索引", disabled: !project || isLearningPlanProject, disabledReason: !project ? "需要先打开项目" : isLearningPlanProject ? "学习计划项目无需构建索引" : undefined, run: () => void handleBuildIndex() },
+      { id: "command:reset-progress", label: "重置学习进度", section: "命令", keywords: "清除 完成 阅读位置", disabled: !project || learningStates.length === 0, disabledReason: !project ? "需要先打开项目" : "没有学习进度可重置", run: () => void handleResetLearningProgress() },
     ];
     for (const course of courses) {
-      items.push({ id: `course:${course.filename}`, label: course.title, description: course.filename, section: "课程", keywords: course.filename, run: () => project && void openCourseInActiveGroup(project.id, course.filename) });
+      items.push({ id: `course:${course.filename}`, label: course.title, description: course.filename, section: "课程", keywords: course.filename, disabled: !project, disabledReason: !project ? "需要先打开项目" : undefined, run: () => project && void openCourseInActiveGroup(project.id, course.filename) });
     }
     for (const node of flattenTree(tree).filter((entry) => entry.type === "file")) {
       items.push({ id: `file:${node.path}`, label: node.name, description: node.path, section: "源码", keywords: node.path, run: () => project && void openFileInActiveGroup(project.id, node.path) });
@@ -3805,7 +3810,7 @@ export default function App() {
   const activeDocumentTitle = activeOpenItem?.title ?? (project ? "学习工作台" : "CodeCourse");
   const commandItems = useMemo(
     () => commandPaletteOpen ? commandPaletteItems() : EMPTY_COMMAND_PALETTE_ITEMS,
-    [commandPaletteOpen, courses, tree, qaHistory, projects, project],
+    [commandPaletteOpen, courses, tree, qaHistory, projects, project, learningStates, isLearningPlanProject],
   );
 
   function closeMobileWorkspaceSurfaces(except?: MobileSurface) {
@@ -4269,7 +4274,17 @@ export default function App() {
         <section className="center-pane">
           {project && !(mobileRuntime && mobileWorkspaceTab) ? (
             <div className="reader-workspace">{renderLayoutNode(layout)}</div>
-          ) : project ? null : (
+          ) : project ? null : error ? (
+            <section className="learning-empty-state">
+              <div className="learning-empty-mark"><AlertCircle size={24} /></div>
+              <h1>项目无法打开</h1>
+              <p>{error}</p>
+              <div>
+                <button className="primary-button" onClick={() => { setError(""); handleImportRequest(); }}>重新定位目录</button>
+                <button className="secondary-button" onClick={() => { setError(""); setProject(null); window.localStorage.removeItem("codecourse-last-project"); }}>返回项目列表</button>
+              </div>
+            </section>
+          ) : (
             <section className="learning-empty-state">
               <div className="learning-empty-mark"><BookOpen size={24} /></div>
               <h1>从一个项目开始学习</h1>
