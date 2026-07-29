@@ -517,6 +517,8 @@ html.platform-android .tool-drawer-backdrop {
   background: rgba(0, 0, 0, var(--sheet-scrim-alpha));
   backdrop-filter: blur(var(--sheet-backdrop-blur)) saturate(112%);
   -webkit-backdrop-filter: blur(var(--sheet-backdrop-blur)) saturate(112%);
+  transform: translateZ(0);
+  will-change: backdrop-filter;
 }
 
 html.platform-android .generation-drawer-body {
@@ -1031,6 +1033,8 @@ html.platform-android .mobile-workspace-sheet-layer {
   background: rgba(0, 0, 0, var(--sheet-scrim-alpha));
   backdrop-filter: blur(var(--sheet-backdrop-blur)) saturate(112%);
   -webkit-backdrop-filter: blur(var(--sheet-backdrop-blur)) saturate(112%);
+  transform: translateZ(0);
+  will-change: backdrop-filter;
 }
 
 html.platform-android .mobile-workspace-sheet {
@@ -1048,7 +1052,7 @@ html.platform-android .mobile-workspace-sheet {
   border-radius: 28px 28px 0 0;
   background: var(--mobile-material-thick);
   box-shadow: 0 -18px 54px rgba(0, 0, 0, 0.26);
-  contain: layout paint;
+  contain: layout;
   touch-action: pan-x;
 }
 

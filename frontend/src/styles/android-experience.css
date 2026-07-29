@@ -1694,7 +1694,7 @@ html.platform-android .fluid-bottom-sheet.generation-drawer {
   box-shadow: 0 -12px 44px rgba(0, 0, 0, 0.2);
   animation: none;
   touch-action: pan-x;
-  contain: layout paint;
+  contain: layout;
 }
 
 html.platform-android .fluid-sheet-grabber {
