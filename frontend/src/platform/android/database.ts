@@ -521,6 +521,7 @@ export class MobileDatabase {
           project_id INTEGER NOT NULL,
           session_id TEXT,
           source_qa_record_id INTEGER,
+          teaching_trial_id TEXT,
           concept_ids_json TEXT NOT NULL,
           dimension TEXT NOT NULL,
           item_type TEXT NOT NULL,
@@ -543,6 +544,7 @@ export class MobileDatabase {
           item_id TEXT NOT NULL,
           project_id INTEGER NOT NULL,
           session_id TEXT,
+          teaching_trial_id TEXT,
           answer_json TEXT NOT NULL,
           is_correct INTEGER,
           user_flagged INTEGER NOT NULL DEFAULT 0,
@@ -580,6 +582,11 @@ export class MobileDatabase {
           fallback_reason TEXT,
           answer_model TEXT,
           previous_outcome TEXT,
+          pre_state_json TEXT NOT NULL DEFAULT '{}',
+          target_concepts_json TEXT NOT NULL DEFAULT '[]',
+          target_dimensions_json TEXT NOT NULL DEFAULT '[]',
+          strategy_rationale TEXT NOT NULL DEFAULT '',
+          policy_version TEXT NOT NULL DEFAULT 'teaching-trial-v2.1',
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_mobile_teaching_trials_qa
@@ -598,6 +605,11 @@ export class MobileDatabase {
           evidence_quote TEXT NOT NULL,
           source_observation_id TEXT,
           observer_run_id TEXT,
+          evidence_type TEXT NOT NULL DEFAULT 'observer_inference',
+          evidence_ref_id TEXT,
+          authority INTEGER NOT NULL DEFAULT 20,
+          policy_eligible INTEGER NOT NULL DEFAULT 0,
+          diagnostic_attempt_id TEXT,
           created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_mobile_teaching_outcomes_trial
@@ -626,6 +638,31 @@ export class MobileDatabase {
       transaction: true,
       readonly: false,
     });
+    for (const statement of [
+      "ALTER TABLE diagnostic_items ADD COLUMN teaching_trial_id TEXT",
+      "ALTER TABLE diagnostic_attempts ADD COLUMN teaching_trial_id TEXT",
+      "ALTER TABLE teaching_trials ADD COLUMN pre_state_json TEXT NOT NULL DEFAULT '{}'",
+      "ALTER TABLE teaching_trials ADD COLUMN target_concepts_json TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE teaching_trials ADD COLUMN target_dimensions_json TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE teaching_trials ADD COLUMN strategy_rationale TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE teaching_trials ADD COLUMN policy_version TEXT NOT NULL DEFAULT 'teaching-trial-v2.1'",
+      "ALTER TABLE teaching_outcomes ADD COLUMN evidence_type TEXT NOT NULL DEFAULT 'observer_inference'",
+      "ALTER TABLE teaching_outcomes ADD COLUMN evidence_ref_id TEXT",
+      "ALTER TABLE teaching_outcomes ADD COLUMN authority INTEGER NOT NULL DEFAULT 20",
+      "ALTER TABLE teaching_outcomes ADD COLUMN policy_eligible INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE teaching_outcomes ADD COLUMN diagnostic_attempt_id TEXT",
+    ]) {
+      try {
+        await CapacitorSQLite.execute({
+          database: DATABASE,
+          statements: statement,
+          transaction: false,
+          readonly: false,
+        });
+      } catch {
+        // Existing installations already have the column.
+      }
+    }
   }
 
   async query<T extends Record<string, unknown>>(statement: string, values: unknown[] = []): Promise<T[]> {

@@ -141,4 +141,27 @@ describe("domain inference safety", () => {
     }));
     expect(parsed.diagnosticCandidate).toBeNull();
   });
+
+  it("parses follow-up evidence about the previous teaching trial", () => {
+    const parsed = parseObserverResult(JSON.stringify({
+      knowledge_evidence: [],
+      concept_relations: [],
+      domain_assessments: [],
+      survey_candidate: null,
+      diagnostic_candidate: null,
+      previous_teaching_outcome: {
+        result: "partially_successful",
+        confidence: 0.72,
+        reason: "The learner understood the API role but still asks about order.",
+        evidence_quote: "我明白 bind 的作用了，但调用顺序还是不清楚",
+      },
+    }));
+
+    expect(parsed.previousTeachingOutcome).toEqual({
+      result: "partially_successful",
+      confidence: 0.72,
+      reason: "The learner understood the API role but still asks about order.",
+      evidenceQuote: "我明白 bind 的作用了，但调用顺序还是不清楚",
+    });
+  });
 });

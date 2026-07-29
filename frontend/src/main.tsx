@@ -13,6 +13,7 @@ import "./styles/apple-depth.css";
 import "./styles/android-experience.css";
 import "./styles/learner-profile.css";
 import "./styles/gesture-drawer.css";
+import "./styles/apple-android-final.css";
 import { applyPlatformClass } from "./platform/runtime";
 
 applyPlatformClass();

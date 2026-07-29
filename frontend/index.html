@@ -19,6 +19,9 @@
             ? "dark"
             : "light";
         var bg = theme === "dark" ? "#08111f" : "#edf4f1";
+        var androidWebView = /\bAndroid\b/i.test(navigator.userAgent)
+          && (/\bwv\b/i.test(navigator.userAgent) || location.hostname === "localhost");
+        if (androidWebView) document.documentElement.classList.add("platform-android");
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.backgroundColor = bg;
         document.body.style.backgroundColor = bg;

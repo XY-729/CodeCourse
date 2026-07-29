@@ -8,11 +8,12 @@ type Props = {
   progressTotal?: number;
   toast?: string;
   onDismissError?: () => void;
+  inline?: boolean;
 };
 
-export default function TaskFeedback({ error, busy, label, progressCurrent = 0, progressTotal = 0, toast, onDismissError }: Props) {
+export default function TaskFeedback({ error, busy, label, progressCurrent = 0, progressTotal = 0, toast, onDismissError, inline = false }: Props) {
   return (
-    <div className="apple-feedback-stack" aria-live="polite">
+    <div className={`apple-feedback-stack ${inline ? "is-inline" : ""}`} aria-live="polite">
       {error ? (
         <div className="apple-feedback error" role="alert">
           <AlertCircle size={15} />

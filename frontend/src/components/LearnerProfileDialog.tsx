@@ -73,6 +73,20 @@ const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
   migration: "旧档案迁移",
 };
 
+const STRATEGY_LABELS: Record<string, string> = {
+  direct_answer: "直接回答",
+  worked_example: "结合例子",
+  execution_sequence: "按执行顺序",
+  role_comparison: "角色对比",
+  contrast_table: "对照表",
+  project_code: "结合项目代码",
+  counterexample: "反例说明",
+  error_diagnosis: "错误诊断",
+  prerequisite_bridge: "补充前置知识",
+  brief_definition: "简短定义",
+  detailed_derivation: "详细推导",
+};
+
 function dimensionStatusLabel(
   status: KnowledgeStateV2["dimensions"][KnowledgeDimension]["status"],
 ): string {
@@ -331,6 +345,53 @@ export default function LearnerProfileDialog({
                     <button type="button" className="text-button" onClick={() => void dismissSurvey()}>暂时不回答</button>
                     <button type="button" className="text-button" onClick={() => void disableSurveys()}>以后不再询问</button>
                   </div>
+                </section>
+              ) : null}
+
+              {profile.evidenceSummary ? (
+                <section className="learner-evidence-overview" aria-label="学习证据摘要">
+                  <article>
+                    <CheckCircle2 size={16} />
+                    <span>已验证会什么</span>
+                    <strong>
+                      {profile.evidenceSummary.verified
+                        .map((item) => item.displayName)
+                        .join("、") || "还没有经过验证的概念"}
+                    </strong>
+                  </article>
+                  <article>
+                    <CircleHelp size={16} />
+                    <span>正在学习什么</span>
+                    <strong>
+                      {profile.evidenceSummary.learning
+                        .map((item) => item.displayName)
+                        .join("、") || "暂未发现明确的学习中概念"}
+                    </strong>
+                  </article>
+                  <article>
+                    <RotateCcw size={16} />
+                    <span>还缺什么证据</span>
+                    <strong>
+                      {profile.evidenceSummary.insufficient
+                        .map((item) => item.displayName)
+                        .join("、") || "当前概念都有可用证据"}
+                    </strong>
+                  </article>
+                  <article>
+                    <Sparkles size={16} />
+                    <span>最近哪些讲法有效</span>
+                    <strong>
+                      {profile.evidenceSummary.teaching.effectiveStrategies
+                        .filter((item) => item.successful + item.partiallySuccessful > 0)
+                        .slice(0, 4)
+                        .map((item) => STRATEGY_LABELS[item.strategy] || item.strategy)
+                        .join("、") || "等待理解检查或你的反馈"}
+                    </strong>
+                    <small>
+                      已验证 {profile.evidenceSummary.teaching.verifiedTrialCount} 次，
+                      另有 {profile.evidenceSummary.teaching.awaitingEvidenceCount} 次讲解等待证据
+                    </small>
+                  </article>
                 </section>
               ) : null}
 

@@ -123,28 +123,20 @@ export default function TermFeedbackPopover({
 
   const popoverStyle: CSSProperties = {
     position: "fixed",
-    left: Math.min(position.x, window.innerWidth - 280),
-    top: Math.min(position.y, window.innerHeight - 200),
-    width: 260,
+    left: Math.max(12, Math.min(position.x, window.innerWidth - 272)),
+    top: Math.max(12, Math.min(position.y, window.innerHeight - 220)),
     zIndex: 1000,
-    background: "var(--apple-bg-elevated, #fff)",
-    border: "1px solid var(--apple-border, #ddd)",
-    borderRadius: 10,
-    boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
-    padding: 14,
-    fontSize: 13,
-    fontFamily: "system-ui, sans-serif",
     pointerEvents: "auto",
   };
 
   return (
     <div ref={popoverRef} style={popoverStyle} className="term-feedback-popover">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <strong style={{ fontSize: 14 }}>{conceptName}</strong>
+      <div className="term-feedback-header">
+        <strong>{conceptName}</strong>
         <button
           type="button"
           onClick={onClose}
-          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "2px 6px", color: "#999" }}
+          className="icon-button"
           aria-label="关闭"
         >
           ×
@@ -152,23 +144,23 @@ export default function TermFeedbackPopover({
       </div>
 
       {definition && (
-        <p style={{ margin: "0 0 8px 0", color: "#666", fontSize: 12, lineHeight: 1.5 }}>{definition}</p>
+        <p className="term-feedback-definition">{definition}</p>
       )}
 
       {status === "done" && (
-        <p style={{ margin: "0 0 8px 0", color: "#4caf50", fontSize: 12 }}>已记录</p>
+        <p className="term-feedback-status success">已记录</p>
       )}
       {status === "error" && (
-        <p style={{ margin: "0 0 8px 0", color: "#f44336", fontSize: 12 }}>{errorMsg}</p>
+        <p className="term-feedback-status error">{errorMsg}</p>
       )}
 
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <div className="term-feedback-actions">
         {manualStatus !== "known" && (
           <button
             type="button"
             disabled={status === "loading"}
             onClick={handleMarkKnown}
-            style={actionButtonStyle}
+            className="term-feedback-action"
           >
             ✓ 我认识
           </button>
@@ -178,7 +170,7 @@ export default function TermFeedbackPopover({
             type="button"
             disabled={status === "loading"}
             onClick={handleMarkUnknown}
-            style={actionButtonStyle}
+            className="term-feedback-action"
           >
             ? 我不认识
           </button>
@@ -188,7 +180,7 @@ export default function TermFeedbackPopover({
             type="button"
             disabled={status === "loading"}
             onClick={handleClearOverride}
-            style={{ ...actionButtonStyle, color: "#ff9800", borderColor: "#ff9800" }}
+            className="term-feedback-action warning"
           >
             ↺ 清除判断
           </button>
@@ -196,23 +188,11 @@ export default function TermFeedbackPopover({
       </div>
 
       {manualStatus === "known" && (
-        <p style={{ margin: "6px 0 0 0", fontSize: 11, color: "#4caf50" }}>当前：已标记为认识</p>
+        <p className="term-feedback-current success">当前：已标记为认识</p>
       )}
       {manualStatus === "unknown" && (
-        <p style={{ margin: "6px 0 0 0", fontSize: 11, color: "#f44336" }}>当前：已标记为不认识</p>
+        <p className="term-feedback-current error">当前：已标记为不认识</p>
       )}
     </div>
   );
 }
-
-const actionButtonStyle: CSSProperties = {
-  flex: 1,
-  minWidth: 70,
-  padding: "4px 8px",
-  fontSize: 12,
-  cursor: "pointer",
-  background: "var(--apple-bg, #fff)",
-  border: "1px solid var(--apple-border, #ccc)",
-  borderRadius: 6,
-  color: "var(--apple-text, #333)",
-};

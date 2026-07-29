@@ -72,13 +72,26 @@ export const CodeCourseNative = registerPlugin<{
 }>("CodeCourseNative");
 
 export function isNativeAndroidRuntime(): boolean {
-  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+  // `isNativePlatform()` can briefly report false while the Android bridge is
+  // being attached. `getPlatform()` is backed by the injected Capacitor
+  // platform marker and is the more reliable signal during the first render.
+  return Capacitor.getPlatform() === "android";
 }
 
 export function isAndroidRuntime(): boolean {
   if (isNativeAndroidRuntime()) return true;
-  return import.meta.env.DEV && typeof window !== "undefined"
+  if (typeof window === "undefined") return false;
+
+  // Keep the Android layout active in the packaged WebView even if the native
+  // bridge is momentarily unavailable. This also prevents the mobile app from
+  // falling back to desktop drawers during a cold start.
+  const androidWebView = /\bAndroid\b/i.test(window.navigator.userAgent)
+    && (/\bwv\b/i.test(window.navigator.userAgent) || window.location.hostname === "localhost");
+  if (androidWebView) return true;
+
+  const localAndroidPreview = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname)
     && new URLSearchParams(window.location.search).get("preview") === "android";
+  return localAndroidPreview;
 }
 
 export function applyPlatformClass(): void {

@@ -42,6 +42,11 @@ class TeachingHistoryPolicyTests(unittest.TestCase):
                 was_applied INTEGER NOT NULL,
                 fallback_reason TEXT,
                 answer_model TEXT,
+                pre_state_json TEXT NOT NULL DEFAULT '{}',
+                target_concepts_json TEXT NOT NULL DEFAULT '[]',
+                target_dimensions_json TEXT NOT NULL DEFAULT '[]',
+                strategy_rationale TEXT NOT NULL DEFAULT '',
+                policy_version TEXT NOT NULL DEFAULT 'teaching-trial-v2.1',
                 created_at TEXT NOT NULL
             )"""
         )
@@ -53,7 +58,11 @@ class TeachingHistoryPolicyTests(unittest.TestCase):
                 confidence REAL NOT NULL,
                 reason TEXT NOT NULL,
                 evidence_quote TEXT NOT NULL,
-                evaluation_qa_record_id INTEGER NOT NULL
+                evaluation_qa_record_id INTEGER NOT NULL,
+                evidence_type TEXT NOT NULL DEFAULT 'observer_inference',
+                authority INTEGER NOT NULL DEFAULT 20,
+                policy_eligible INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT '2026-01-01'
             )"""
         )
 
@@ -75,9 +84,11 @@ class TeachingHistoryPolicyTests(unittest.TestCase):
         self.conn.execute(
             """INSERT INTO teaching_outcomes (
                 id, teaching_trial_id, result, confidence, reason,
-                evidence_quote, evaluation_qa_record_id
+                evidence_quote, evaluation_qa_record_id,
+                evidence_type, authority, policy_eligible
             ) VALUES ('o1', 'assessed', 'unsuccessful', 0.9,
-                      'still confused', '还是没懂', 21)"""
+                      'still confused', '还是没懂', 21,
+                      'manual_feedback', 90, 1)"""
         )
         self.conn.commit()
 

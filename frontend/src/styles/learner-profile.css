@@ -600,7 +600,7 @@
 .diagnostic-options button,
 .diagnostic-order-list > div {
   min-height: 36px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--lp-line);
   border-radius: 7px;
   background: var(--surface-base);
   color: var(--text-primary);
@@ -891,5 +891,159 @@ html.platform-android .assistant-survey-card button {
   .learner-survey-card,
   .assistant-survey-card {
     border-color: var(--lp-text);
+  }
+}
+.learner-evidence-overview {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.learner-evidence-overview article {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 5px 8px;
+  align-items: start;
+  min-height: 88px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--lp-surface-raised);
+  box-shadow: var(--lp-inner-highlight), var(--lp-shadow-sm);
+}
+
+.learner-evidence-overview article > svg {
+  grid-row: 1 / span 3;
+  margin-top: 1px;
+  color: var(--lp-accent);
+}
+
+.learner-evidence-overview article > span,
+.learner-evidence-overview article > small {
+  color: var(--lp-text-secondary);
+  font-size: 12px;
+}
+
+.learner-evidence-overview article > strong {
+  min-width: 0;
+  color: var(--lp-text);
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 600;
+}
+
+@media (max-width: 720px) {
+  .learner-evidence-overview {
+    grid-template-columns: 1fr;
+  }
+}
+
+.teaching-rationale {
+  position: relative;
+}
+
+.teaching-rationale-trigger[aria-expanded="true"] {
+  color: var(--apple-blue, #16856f);
+  background: var(--apple-blue-soft, rgba(22, 133, 111, 0.14));
+}
+
+.teaching-rationale-trigger svg:last-child {
+  transition: transform 180ms var(--apple-ease-out, ease-out);
+}
+
+.teaching-rationale.open .teaching-rationale-trigger svg:last-child {
+  transform: rotate(180deg);
+}
+
+.teaching-rationale-popover {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  gap: 10px;
+  width: min(360px, calc(100vw - 32px));
+  padding: 13px;
+  color: var(--apple-text, #17231f);
+  border: 1px solid var(--apple-separator, rgba(34, 74, 61, 0.14));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--apple-surface-raised, #fff) 94%, transparent);
+  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-lg, 0 18px 46px rgba(18, 43, 35, 0.18));
+  backdrop-filter: blur(22px) saturate(1.1);
+  -webkit-backdrop-filter: blur(22px) saturate(1.1);
+  animation: teaching-rationale-enter 170ms var(--apple-ease-out, ease-out);
+}
+
+.teaching-rationale-popover header {
+  display: grid;
+  gap: 3px;
+}
+
+.teaching-rationale-popover header strong {
+  font-size: 13px;
+}
+
+.teaching-rationale-popover header small,
+.teaching-rationale-message {
+  color: var(--apple-text-secondary, #5e6d67);
+  font-size: 11px;
+}
+
+.teaching-rationale-popover p {
+  margin: 0;
+  color: var(--apple-text-secondary, #5e6d67);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.teaching-rationale-strategies,
+.teaching-rationale-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.teaching-rationale-strategies span {
+  padding: 4px 7px;
+  color: var(--apple-blue, #16856f);
+  border-radius: 6px;
+  background: var(--apple-blue-soft, rgba(22, 133, 111, 0.14));
+  font-size: 11px;
+}
+
+.teaching-rationale-feedback {
+  padding-top: 9px;
+  border-top: 1px solid var(--apple-separator, rgba(34, 74, 61, 0.14));
+}
+
+.teaching-rationale-feedback button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 0 8px;
+  color: var(--apple-text, #17231f);
+  border: 1px solid var(--apple-separator, rgba(34, 74, 61, 0.14));
+  border-radius: 6px;
+  background: var(--apple-fill, rgba(47, 92, 76, 0.09));
+  font-size: 11px;
+}
+
+.teaching-rationale-feedback button:hover {
+  background: var(--apple-fill-hover, rgba(35, 112, 88, 0.15));
+}
+
+@keyframes teaching-rationale-enter {
+  from { opacity: 0; transform: translateY(-4px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teaching-rationale-popover {
+    animation: none;
+  }
+  .teaching-rationale-trigger svg:last-child {
+    transition: none;
   }
 }

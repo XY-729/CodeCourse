@@ -77,16 +77,18 @@ export default function PromptEditor({ onClose }: Props) {
           </div>
         ) : (
           <>
-            <div className="prompt-tabs">
-              {keys.map((key) => (
-                <button
-                  key={key}
-                  className={`prompt-tab ${activeTab === key ? "active" : ""}`}
-                  onClick={() => setActiveTab(key)}
-                >
-                  {PROMPT_LABELS[key]}
-                </button>
-              ))}
+            <div className="prompt-tabs-shell">
+              <div className="prompt-tabs">
+                {keys.map((key) => (
+                  <button
+                    key={key}
+                    className={`prompt-tab ${activeTab === key ? "active" : ""}`}
+                    onClick={() => setActiveTab(key)}
+                  >
+                    {PROMPT_LABELS[key]}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="prompt-editor-body">

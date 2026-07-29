@@ -256,13 +256,12 @@ html:not(.platform-android) .knowledge-canvas {
 html:not(.platform-android) .knowledge-node-label {
   border: 1px solid var(--apple-glass-border);
   box-shadow: var(--apple-inner-highlight), var(--apple-shadow-xs);
-  transition: transform 150ms var(--apple-ease-out), box-shadow 170ms ease, background-color 170ms ease;
+  transition: box-shadow 170ms ease, background-color 170ms ease;
 }
 
 html:not(.platform-android) .knowledge-node-label:hover,
 html:not(.platform-android) .knowledge-node-label.important,
 html:not(.platform-android) .knowledge-node-label.matched {
-  transform: translateY(-1px);
   box-shadow: var(--apple-inner-highlight), var(--apple-shadow-sm);
 }
 

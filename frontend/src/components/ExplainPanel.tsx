@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Edit3, Loader2, Plus, Search, Send, Star, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Edit3, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
 
@@ -38,6 +38,7 @@ type Props = {
   panelError: string;
   upperTab: AssistantTab;
   mobileMode?: boolean;
+  embeddedMobileSheet?: boolean;
   onUpperTabChange: (value: AssistantTab) => void;
   knowledgeContent?: ReactNode;
   knowledgeDisabled?: boolean;
@@ -82,7 +83,7 @@ function recordTitle(record: QARecord) {
 export default function ExplainPanel(props: Props) {
   const {
     selection, contextSummary, question, questionInput, loading, loadingLabel, streamContent, history, historyQuery, favoriteOnly,
-    selectedRecord, selectedRecordReadOnly = false, surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError, upperTab, mobileMode = false, onUpperTabChange, knowledgeContent,
+    selectedRecord, selectedRecordReadOnly = false, surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError, upperTab, mobileMode = false, embeddedMobileSheet = false, onUpperTabChange, knowledgeContent,
     knowledgeDisabled, onQuestionChange, onSelectionTextChange, onClearSelection,
     onAsk, onNewConversation, onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord,
     onOpenRecord, onDeleteRecord, onRenameRecord, onToggleFavorite, onOpenSettings,
@@ -104,12 +105,13 @@ export default function ExplainPanel(props: Props) {
 
   const mobileKnowledge = mobileMode && upperTab === "knowledge";
   const mobileAssistant = mobileMode && upperTab === "history";
+  const knowledgeOnly = upperTab === "knowledge";
 
   return (
     <aside
-      className={`explain-panel qa-panel ${mobileKnowledge ? "mobile-knowledge-only" : ""} ${mobileAssistant ? "mobile-assistant-only" : ""}`}
+      className={`explain-panel qa-panel ${knowledgeOnly ? "knowledge-only" : ""} ${mobileKnowledge ? "mobile-knowledge-only" : ""} ${mobileAssistant ? "mobile-assistant-only" : ""}`}
       style={{
-        gridTemplateRows: mobileKnowledge
+        gridTemplateRows: knowledgeOnly
           ? "minmax(0, 1fr) 0"
           : mobileAssistant
             ? "auto minmax(0, 1fr)"
@@ -117,7 +119,7 @@ export default function ExplainPanel(props: Props) {
       }}
     >
       <section className="qa-history-section">
-        <div className="qa-panel-tabs">
+        {!embeddedMobileSheet ? <div className="qa-panel-tabs">
           {mobileMode ? <strong className="mobile-panel-title">{mobileKnowledge ? "知识网络" : "AI 助手"}</strong> : (
             <div className="qa-panel-mode-tabs">
               <button className={upperTab === "history" ? "active" : ""} onClick={() => onUpperTabChange("history")}>历史</button>
@@ -134,7 +136,7 @@ export default function ExplainPanel(props: Props) {
             </div>
           )}
           {onClose ? <button className="icon-button panel-close" onClick={onClose} title="关闭 AI 助手" aria-label="关闭 AI 助手"><X size={16} /></button> : null}
-        </div>
+        </div> : null}
 
         <div className={`qa-upper-view ${upperTab}`} key={upperTab}>
           {upperTab === "knowledge" ? (
@@ -300,7 +302,11 @@ export default function ExplainPanel(props: Props) {
         <div className="qa-section ask-box">
           <div className="ask-box-toolbar">
             <span>{selectedRecord ? `继续：${recordTitle(selectedRecord)}` : "新问题"}</span>
-            <button className="icon-button" type="button" onClick={onNewConversation} title="新对话" aria-label="新对话"><Plus size={15} /></button>
+            {selectedRecord ? (
+              <button className="assistant-new-question-button" type="button" onClick={onNewConversation}>
+                开始新问题
+              </button>
+            ) : null}
           </div>
           {selectedRecordReadOnly ? <div className="qa-readonly-note">这是其他项目中的此前解释。当前以只读方式打开。</div> : null}
           <textarea value={questionInput ?? question} onChange={(event) => onQuestionChange(event.target.value)} placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"} disabled={loading || selectedRecordReadOnly} aria-label="输入问题" />

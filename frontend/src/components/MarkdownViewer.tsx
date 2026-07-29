@@ -32,6 +32,7 @@ type Props = {
   onGenerateLesson?: (lessonNumber: number, title: string) => void;
   headerActions?: ReactNode;
   embedded?: boolean;
+  immersiveReading?: boolean;
   onScrollRatioChange?: (ratio: number) => void;
   initialScrollRatio?: number;
 };
@@ -44,6 +45,51 @@ export function calculateReadingProgress(
   if (scrollHeight <= 0 || clientHeight <= 0 || scrollHeight <= clientHeight) return 1;
   const safeTop = Math.max(0, Math.min(scrollTop, scrollHeight - clientHeight));
   return safeTop / (scrollHeight - clientHeight);
+}
+
+export type ReadingChromeState = {
+  lastScrollTop: number;
+  downwardTravel: number;
+  upwardTravel: number;
+  hidden: boolean;
+};
+
+export function advanceReadingChrome(
+  state: ReadingChromeState,
+  scrollTop: number,
+): ReadingChromeState {
+  const nextTop = Math.max(0, scrollTop);
+  if (nextTop <= 12) {
+    return {
+      lastScrollTop: nextTop,
+      downwardTravel: 0,
+      upwardTravel: 0,
+      hidden: false,
+    };
+  }
+
+  const delta = nextTop - state.lastScrollTop;
+  if (Math.abs(delta) < 0.5) {
+    return { ...state, lastScrollTop: nextTop };
+  }
+
+  if (delta > 0) {
+    const downwardTravel = Math.min(48, state.downwardTravel + delta);
+    return {
+      lastScrollTop: nextTop,
+      downwardTravel,
+      upwardTravel: 0,
+      hidden: state.hidden || (nextTop > 32 && downwardTravel >= 18),
+    };
+  }
+
+  const upwardTravel = Math.min(32, state.upwardTravel - delta);
+  return {
+    lastScrollTop: nextTop,
+    downwardTravel: 0,
+    upwardTravel,
+    hidden: state.hidden && upwardTravel < 8,
+  };
 }
 
 /* ---- Backend highlights ---- */
@@ -278,6 +324,7 @@ export default function MarkdownViewer({
   onGenerateLesson,
   headerActions,
   embedded = false,
+  immersiveReading = false,
   initialScrollRatio,
   onScrollRatioChange,
 }: Props) {
@@ -287,6 +334,12 @@ export default function MarkdownViewer({
   const restoredSourceRef = useRef<string | null>(null);
   const scrollRangeRef = useRef(0);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const readingChromeRef = useRef<ReadingChromeState>({
+    lastScrollTop: 0,
+    downwardTravel: 0,
+    upwardTravel: 0,
+    hidden: false,
+  });
   const androidRuntime = isAndroidRuntime();
   // Never inject <mark> temp-selection elements on Android — they would
   // destroy the native Range and collapse the drag handles.
@@ -428,6 +481,36 @@ export default function MarkdownViewer({
     return sel !== null && !sel.isCollapsed;
   }
 
+  function updateReadingChrome(scrollTop: number) {
+    if (!androidRuntime || !immersiveReading) return;
+    if (hasActiveAndroidSelection()) {
+      readingChromeRef.current = {
+        ...readingChromeRef.current,
+        lastScrollTop: scrollTop,
+        hidden: false,
+      };
+      document.documentElement.classList.remove("android-reading-immersive");
+      return;
+    }
+    const next = advanceReadingChrome(readingChromeRef.current, scrollTop);
+    readingChromeRef.current = next;
+    document.documentElement.classList.toggle("android-reading-immersive", next.hidden);
+  }
+
+  useEffect(() => {
+    if (!androidRuntime || !immersiveReading) return;
+    readingChromeRef.current = {
+      lastScrollTop: articleRef.current?.scrollTop ?? 0,
+      downwardTravel: 0,
+      upwardTravel: 0,
+      hidden: false,
+    };
+    document.documentElement.classList.remove("android-reading-immersive");
+    return () => {
+      document.documentElement.classList.remove("android-reading-immersive");
+    };
+  }, [androidRuntime, immersiveReading, sourcePath, sourceType, title]);
+
   function commitReadingPosition(
     allowDuringUnmount = false,
     callback = onScrollRatioChangeRef.current,
@@ -484,7 +567,7 @@ export default function MarkdownViewer({
   // keeps the compositor happy while still looking real-time.
   useEffect(() => {
     const article = articleRef.current;
-    if (!article || !onScrollRatioChange) return;
+    if (!article || (!onScrollRatioChange && !immersiveReading)) return;
 
     const settleScroll = () => {
       captureCurrentScrollPosition();
@@ -492,6 +575,7 @@ export default function MarkdownViewer({
     };
 
     const onScroll = () => {
+      updateReadingChrome(article.scrollTop);
       if (!progressRafRef.current) {
         progressRafRef.current = window.requestAnimationFrame(() => {
           progressRafRef.current = 0;
@@ -521,7 +605,7 @@ export default function MarkdownViewer({
       window.clearTimeout(positionSaveTimerRef.current);
       window.cancelAnimationFrame(progressRafRef.current);
     };
-  }, [androidRuntime, onScrollRatioChange, sourcePath, sourceType, title]);
+  }, [androidRuntime, immersiveReading, onScrollRatioChange, sourcePath, sourceType, title]);
 
   const captureSelection = useCallback(() => {
     // Android relies entirely on native WebView ActionMode. React state
@@ -666,6 +750,7 @@ export default function MarkdownViewer({
             className={`personalized-term document-term document-term-${term.status} ${tierClass}`}
             data-term-candidate-id={candidateId}
             data-term-id={term.id}
+            data-codecourse-unfamiliar-term={term.status === "candidate" ? "true" : undefined}
             role="button"
             tabIndex={0}
             aria-label={`查看术语 "${term.term_text}"`}

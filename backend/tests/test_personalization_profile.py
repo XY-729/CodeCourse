@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -54,6 +55,49 @@ class PersonalizationProfileTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         return response.json()["terms"][0]
+
+    def _create_teaching_trial(self, project_id: int, *, mode: str = "assist"):
+        import app.services.storage as storage
+
+        record = storage.create_qa_record(
+            project_id=project_id,
+            source_type="course",
+            source_path="outline.md",
+            selected_text="",
+            question="Explain this concept",
+            answer_md="A teaching answer",
+            provider="test",
+            model="test-model",
+            session_id=None,
+        )
+        context = {
+            "schema_version": 1,
+            "mode": "planned" if mode == "assist" else "default",
+            "user_goal": "understand_mechanism" if mode == "assist" else "unknown",
+            "teaching_goal": "Build a verifiable mental model",
+            "strategies": ["worked_example", "execution_sequence"],
+            "assumed_known": [],
+            "explain_briefly": [],
+            "explain_in_detail": [],
+            "skip_topics": [],
+            "avoid": [],
+            "assessment_needed": True,
+            "assessment_format": "true_false",
+            "diagnostic_question_needed": True,
+            "planner_run_id": None,
+        }
+        trial_id = storage.persist_applied_teaching_trial(
+            project_id=project_id,
+            session_id=None,
+            qa_record_id=record.id,
+            planner_run_id=None,
+            teaching_plan_id=None,
+            effective_context_json=json.dumps(context),
+            mode=mode,
+            answer_model="test-model",
+            strategy_rationale="A mechanism question benefits from a worked example.",
+        )
+        return record, trial_id
 
     def test_restart_migrates_legacy_manual_mastery(self):
         import app.services.storage as storage
@@ -650,6 +694,102 @@ class PersonalizationProfileTests(unittest.TestCase):
         )
         self.assertEqual(networking["state"], "likely_prerequisite")
         self.assertEqual(concurrency["state"], "likely_prerequisite")
+
+    def test_objective_diagnostic_is_linked_to_the_teaching_trial(self):
+        import app.services.storage as storage
+        from app.services.personalization.knowledge_state_service import (
+            create_diagnostic_item,
+            submit_diagnostic_answer,
+        )
+
+        resolved = self._resolve(self.project_a["id"], "event loop")
+        record, trial_id = self._create_teaching_trial(self.project_a["id"])
+        for index in range(4):
+            storage.create_qa_record(
+                project_id=self.project_a["id"],
+                source_type="course",
+                source_path="outline.md",
+                selected_text="",
+                question=f"Follow-up {index}",
+                answer_md="Saved answer",
+                provider="test",
+                model="test-model",
+            )
+
+        item = create_diagnostic_item(
+            project_id=self.project_a["id"],
+            candidate={
+                "concept_ids": [resolved["concept"]["id"]],
+                "dimension": "conceptual",
+                "item_type": "true_false",
+                "prompt": "The event loop schedules ready callbacks.",
+                "options": [
+                    {"label": "True", "value": True},
+                    {"label": "False", "value": False},
+                ],
+                "answer_key": True,
+                "source_refs": [{
+                    "source_type": "course",
+                    "source_path": "outline.md",
+                    "excerpt": "The event loop schedules ready callbacks.",
+                }],
+                "rationale": "Checks the mechanism taught in the answer.",
+                "difficulty": 0.5,
+            },
+            source_qa_record_id=record.id,
+            session_id=None,
+            strategy_version="test",
+            teaching_trial_id=trial_id,
+        )
+        self.assertIsNotNone(item)
+        self.assertEqual(item["teachingTrialId"], trial_id)
+
+        result = submit_diagnostic_answer(
+            self.project_a["id"],
+            item["id"],
+            True,
+        )
+        self.assertTrue(result["correct"])
+        self.assertEqual(
+            result["teachingOutcome"]["evidenceType"],
+            "objective_diagnostic",
+        )
+        self.assertTrue(result["teachingOutcome"]["policyEligible"])
+
+        with storage._connect() as conn:
+            outcome = conn.execute(
+                "SELECT * FROM teaching_outcomes WHERE teaching_trial_id = ?",
+                (trial_id,),
+            ).fetchone()
+        self.assertEqual(outcome["diagnostic_attempt_id"], result["attemptId"])
+        self.assertEqual(outcome["authority"], 100)
+
+    def test_manual_teaching_feedback_is_visible_in_profile_summary(self):
+        record, trial_id = self._create_teaching_trial(self.project_a["id"])
+        response = self.client.post(
+            (
+                f"/api/projects/{self.project_a['id']}/personalization/"
+                f"teaching/{record.id}/feedback"
+            ),
+            json={
+                "result": "successful",
+                "idempotency_key": f"manual-teaching:{trial_id}",
+                "reason": "The worked example made the sequence clear.",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["evidenceType"], "manual_feedback")
+        self.assertTrue(response.json()["policyEligible"])
+
+        profile = self.client.get(
+            f"/api/projects/{self.project_a['id']}/personalization/profile"
+        ).json()
+        teaching = profile["evidenceSummary"]["teaching"]
+        self.assertEqual(teaching["verifiedTrialCount"], 1)
+        self.assertEqual(
+            teaching["recentTrials"][0]["result"],
+            "successful",
+        )
 
 
 if __name__ == "__main__":

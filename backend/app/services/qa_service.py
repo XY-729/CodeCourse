@@ -583,7 +583,11 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
     )
 
 
-def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
+def finalize_question(
+    prepared: PreparedQuestion,
+    raw_answer: str,
+    trial_draft=None,
+) -> QARecord:
     if prepared.existing_record is not None:
         return prepared.existing_record
     payload = prepared.payload
@@ -666,6 +670,30 @@ def finalize_question(prepared: PreparedQuestion, raw_answer: str) -> QARecord:
         payload.source_path,
     )
 
+    if trial_draft is not None and trial_draft.should_persist:
+        try:
+            from app.services.storage import persist_applied_teaching_trial
+            persist_applied_teaching_trial(
+                project_id=project_id,
+                session_id=written.session_id,
+                qa_record_id=written.id,
+                planner_run_id=trial_draft.planner_run_id,
+                teaching_plan_id=trial_draft.teaching_plan_id,
+                effective_context_json=trial_draft.effective_context_json,
+                mode=trial_draft.mode,
+                answer_model=trial_draft.answer_model,
+                pre_state_json=trial_draft.pre_state_json,
+                target_concepts_json=trial_draft.target_concepts_json,
+                target_dimensions_json=trial_draft.target_dimensions_json,
+                strategy_rationale=trial_draft.strategy_rationale,
+                policy_version=trial_draft.policy_version,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist applied teaching trial",
+                extra={"project_id": project_id, "qa_record_id": written.id},
+            )
+
     try:
         record_question_learning(project_id, written)
     except Exception:
@@ -724,6 +752,85 @@ def _is_planner_assist_enabled() -> bool:
         return enabled == "true" and mode == "assist"
     except Exception:
         return False
+
+
+def _target_dimensions_for_goal(user_goal: str) -> list[str]:
+    dimensions = ["familiarity", "conceptual"]
+    if user_goal in ("implement", "build_mental_model"):
+        dimensions.append("implementation")
+    if user_goal in ("debug", "quick_fix"):
+        dimensions.append("debugging")
+    if user_goal in ("compare_options", "explore_boundary", "review"):
+        dimensions.append("transfer")
+    return dimensions
+
+
+def _knowledge_snapshot_for_concepts(
+    project_id: int,
+    concept_ids: list[str],
+) -> list[dict[str, object]]:
+    if not concept_ids:
+        return []
+    from app.services.personalization.knowledge_state_service import get_states
+    from app.services.personalization_service import GLOBAL_SCOPE_ID
+    return get_states(
+        [("global", GLOBAL_SCOPE_ID), ("project", str(project_id))],
+        concept_ids,
+    )
+
+
+def _build_default_teaching_trial_draft(project_id: int, prepared: PreparedQuestion):
+    from app.services.personalization.teaching.effective_context import (
+        EffectiveTeachingContext,
+    )
+    from app.services.personalization.teaching.trial_types import (
+        AppliedTeachingTrialDraft,
+    )
+    from app.services.personalization_service import concepts_for_question
+
+    concepts = concepts_for_question(
+        project_id,
+        prepared.question,
+        prepared.selected_text or "",
+        prepared.payload.source_type,
+        prepared.payload.source_path,
+    )
+    concept_ids = [concept.id for concept in concepts[:8]]
+    context = EffectiveTeachingContext(
+        schema_version=1,
+        mode="default",
+        user_goal="unknown",
+        teaching_goal="Answer the current question using the relevant learner context.",
+        strategies=["direct_answer"],
+    )
+    try:
+        pre_state = _knowledge_snapshot_for_concepts(project_id, concept_ids)
+    except Exception:
+        logger.exception(
+            "Failed to snapshot knowledge state for default teaching trial",
+            extra={"project_id": project_id},
+        )
+        pre_state = []
+    return AppliedTeachingTrialDraft(
+        project_id=project_id,
+        session_id=prepared.session_id,
+        planner_run_id=None,
+        teaching_plan_id=None,
+        snapshot_id=None,
+        effective_context_json=context.model_dump_json(exclude_none=True),
+        mode="default",
+        answer_model=prepared.settings.get("model"),
+        pre_state_json=json.dumps(pre_state, ensure_ascii=False),
+        target_concepts_json=json.dumps(concept_ids, ensure_ascii=False),
+        target_dimensions_json=json.dumps(
+            _target_dimensions_for_goal(context.user_goal),
+            ensure_ascii=False,
+        ),
+        strategy_rationale=(
+            "The question did not require a separate Planner call; "
+            "the answer used the current learner context directly."
+        ),
+    )
 
 
 def _render_teaching_for_prompt(context) -> str:
@@ -864,6 +971,7 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
         with _connect() as conn:
             concepts = concepts_for_question(project_id, question, selected_text)
             concept_keys = [c.concept_key for c in concepts[:12]]
+            concept_ids = [c.id for c in concepts[:8]]
 
             history_cutoff = conn.execute(
                 "SELECT COALESCE(MAX(id), 0) FROM qa_records WHERE project_id = ? AND (? IS NULL OR session_id = ?)",
@@ -930,6 +1038,14 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
 
             snapshot_json = snapshot.model_dump_json(exclude_none=True)[:5000]
             manual_prefs_json = json.dumps(manual_prefs, ensure_ascii=False)
+            try:
+                pre_state = _knowledge_snapshot_for_concepts(project_id, concept_ids)
+            except Exception:
+                logger.exception(
+                    "Failed to snapshot knowledge state for planned teaching trial",
+                    extra={"project_id": project_id},
+                )
+                pre_state = []
 
         messages = _build_planner_messages(
             question=question,
@@ -1041,6 +1157,16 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
                 effective_context_json=context.model_dump_json(exclude_none=True),
                 mode="assist",
                 answer_model=settings.get("model", ""),
+                pre_state_json=json.dumps(pre_state, ensure_ascii=False),
+                target_concepts_json=json.dumps(concept_ids, ensure_ascii=False),
+                target_dimensions_json=json.dumps(
+                    _target_dimensions_for_goal(context.user_goal),
+                    ensure_ascii=False,
+                ),
+                strategy_rationale=(
+                    f"{plan.teaching_goal} "
+                    f"Blocker: {plan.blocker_type}; {plan.blocker_summary}"
+                )[:1200],
             )
             return TeachingPreparation(
                 rendered_context=_render_teaching_for_prompt(context),
@@ -1063,7 +1189,7 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
     if prepared.existing_record is not None:
         return prepared.existing_record
 
-    trial_draft = None
+    trial_draft = _build_default_teaching_trial_draft(project_id, prepared)
     teaching_prep = _maybe_plan_teaching(project_id, prepared)
 
     if teaching_prep is not None and teaching_prep.rendered_context:
@@ -1084,27 +1210,7 @@ def ask_question(project_id: int, payload: QAAskRequest) -> QARecord:
         prepared.messages,
         timeout=90,
     )
-    written = finalize_question(prepared, raw_answer)
-
-    if trial_draft is not None and trial_draft.should_persist:
-        try:
-            from app.services.storage import persist_applied_teaching_trial
-            persist_applied_teaching_trial(
-                project_id=project_id,
-                session_id=written.session_id,
-                qa_record_id=written.id,
-                planner_run_id=trial_draft.planner_run_id,
-                teaching_plan_id=trial_draft.teaching_plan_id,
-                effective_context_json=trial_draft.effective_context_json,
-                mode=trial_draft.mode,
-                answer_model=trial_draft.answer_model,
-            )
-        except Exception:
-            logger.exception("Failed to persist applied teaching trial", extra={
-                "project_id": project_id, "qa_record_id": written.id,
-            })
-
-    return written
+    return finalize_question(prepared, raw_answer, trial_draft=trial_draft)
 
 
 def search_records(project_id: int, query: str = "", favorite: Optional[bool] = None) -> list[QARecord]:

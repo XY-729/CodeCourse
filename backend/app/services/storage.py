@@ -1279,6 +1279,11 @@ def init_storage() -> None:
                 fallback_reason TEXT,
                 answer_model TEXT,
                 previous_outcome TEXT,
+                pre_state_json TEXT NOT NULL DEFAULT '{}',
+                target_concepts_json TEXT NOT NULL DEFAULT '[]',
+                target_dimensions_json TEXT NOT NULL DEFAULT '[]',
+                strategy_rationale TEXT NOT NULL DEFAULT '',
+                policy_version TEXT NOT NULL DEFAULT 'teaching-trial-v2.1',
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id),
                 FOREIGN KEY(qa_record_id) REFERENCES qa_records(id)
@@ -1288,6 +1293,21 @@ def init_storage() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_teaching_trials_qa ON teaching_trials(project_id, qa_record_id)"
         )
+        teaching_trial_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(teaching_trials)").fetchall()
+        }
+        teaching_trial_migrations = {
+            "pre_state_json": "TEXT NOT NULL DEFAULT '{}'",
+            "target_concepts_json": "TEXT NOT NULL DEFAULT '[]'",
+            "target_dimensions_json": "TEXT NOT NULL DEFAULT '[]'",
+            "strategy_rationale": "TEXT NOT NULL DEFAULT ''",
+            "policy_version": "TEXT NOT NULL DEFAULT 'teaching-trial-v2.1'",
+        }
+        for column, definition in teaching_trial_migrations.items():
+            if column not in teaching_trial_cols:
+                conn.execute(
+                    f"ALTER TABLE teaching_trials ADD COLUMN {column} {definition}"
+                )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS teaching_outcomes (
@@ -1304,6 +1324,11 @@ def init_storage() -> None:
                 evidence_quote TEXT NOT NULL,
                 source_observation_id TEXT,
                 observer_run_id TEXT,
+                evidence_type TEXT NOT NULL DEFAULT 'observer_inference',
+                evidence_ref_id TEXT,
+                authority INTEGER NOT NULL DEFAULT 20,
+                policy_eligible INTEGER NOT NULL DEFAULT 0,
+                diagnostic_attempt_id TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id),
                 FOREIGN KEY(teaching_trial_id) REFERENCES teaching_trials(id),
@@ -1318,6 +1343,21 @@ def init_storage() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_teaching_outcomes_session ON teaching_outcomes(project_id, session_id, evaluation_qa_record_id)"
         )
+        teaching_outcome_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(teaching_outcomes)").fetchall()
+        }
+        teaching_outcome_migrations = {
+            "evidence_type": "TEXT NOT NULL DEFAULT 'observer_inference'",
+            "evidence_ref_id": "TEXT",
+            "authority": "INTEGER NOT NULL DEFAULT 20",
+            "policy_eligible": "INTEGER NOT NULL DEFAULT 0",
+            "diagnostic_attempt_id": "TEXT",
+        }
+        for column, definition in teaching_outcome_migrations.items():
+            if column not in teaching_outcome_cols:
+                conn.execute(
+                    f"ALTER TABLE teaching_outcomes ADD COLUMN {column} {definition}"
+                )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS concept_relations (
@@ -1520,6 +1560,7 @@ def init_storage() -> None:
                 project_id INTEGER NOT NULL,
                 session_id TEXT,
                 source_qa_record_id INTEGER,
+                teaching_trial_id TEXT,
                 concept_ids_json TEXT NOT NULL,
                 dimension TEXT NOT NULL,
                 item_type TEXT NOT NULL,
@@ -1541,6 +1582,13 @@ def init_storage() -> None:
             """CREATE INDEX IF NOT EXISTS idx_diagnostic_items_pending
                ON diagnostic_items(project_id, status, created_at DESC)"""
         )
+        diagnostic_item_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(diagnostic_items)").fetchall()
+        }
+        if "teaching_trial_id" not in diagnostic_item_cols:
+            conn.execute(
+                "ALTER TABLE diagnostic_items ADD COLUMN teaching_trial_id TEXT"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS diagnostic_attempts (
@@ -1548,6 +1596,7 @@ def init_storage() -> None:
                 item_id TEXT NOT NULL,
                 project_id INTEGER NOT NULL,
                 session_id TEXT,
+                teaching_trial_id TEXT,
                 answer_json TEXT NOT NULL,
                 is_correct INTEGER,
                 user_flagged INTEGER NOT NULL DEFAULT 0,
@@ -1557,6 +1606,13 @@ def init_storage() -> None:
             )
             """
         )
+        diagnostic_attempt_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(diagnostic_attempts)").fetchall()
+        }
+        if "teaching_trial_id" not in diagnostic_attempt_cols:
+            conn.execute(
+                "ALTER TABLE diagnostic_attempts ADD COLUMN teaching_trial_id TEXT"
+            )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS observer_jobs (
@@ -4728,6 +4784,11 @@ def persist_applied_teaching_trial(
     effective_context_json: str,
     mode: str,
     answer_model: str | None = None,
+    pre_state_json: str = "{}",
+    target_concepts_json: str = "[]",
+    target_dimensions_json: str = "[]",
+    strategy_rationale: str = "",
+    policy_version: str = "teaching-trial-v2.1",
 ) -> str:
     import uuid
     trial_id = str(uuid.uuid4())
@@ -4741,11 +4802,15 @@ def persist_applied_teaching_trial(
                 id, project_id, session_id, qa_record_id,
                 planner_run_id, teaching_plan_id, snapshot_id,
                 effective_context_json, mode, was_applied,
-                fallback_reason, answer_model, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)""",
+                fallback_reason, answer_model, pre_state_json,
+                target_concepts_json, target_dimensions_json,
+                strategy_rationale, policy_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?, ?, ?, ?, ?)""",
             (trial_id, project_id, session_id, qa_record_id,
              planner_run_id, teaching_plan_id, "",
-             effective_context_json, mode, answer_model, now),
+             effective_context_json, mode, answer_model, pre_state_json,
+             target_concepts_json, target_dimensions_json,
+             strategy_rationale, policy_version, now),
         )
         conn.commit()
         return trial_id

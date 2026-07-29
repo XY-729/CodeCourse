@@ -6,6 +6,7 @@ import FileTree from "./FileTree";
 export type NavigationView = "projects" | "courses" | "files";
 
 type Props = {
+  embedded?: boolean;
   view: NavigationView;
   projects: Project[];
   currentProjectId: number | null;
@@ -33,6 +34,7 @@ type Props = {
 };
 
 export default function Sidebar({
+  embedded = false,
   view,
   projects,
   currentProjectId,
@@ -60,7 +62,7 @@ export default function Sidebar({
 }: Props) {
   if (view === "projects") {
     return (
-      <aside className="sidebar navigation-panel">
+      <aside className={`sidebar navigation-panel ${embedded ? "is-embedded" : ""}`}>
         <header className="navigation-panel-header">
           <span>项目</span>
           <button className="icon-button" onClick={onCreateLearningPlan} title="新建学习计划" aria-label="新建学习计划">
@@ -75,14 +77,16 @@ export default function Sidebar({
                   <span>{item.name}</span>
                   <small>{item.project_type === "learning_plan" ? "学习计划" : item.status}</small>
                 </button>
-                {item.project_type === "learning_plan" ? <span /> : (
-                  <button className="icon-button" onClick={() => onRegenerateProject(item)} disabled={busyProjectId === item.id} title="重新生成规则课程" aria-label="重新生成规则课程">
-                    <RefreshCw size={14} />
+                <div className="project-row-actions">
+                  {item.project_type === "repository" ? (
+                    <button className="icon-button" onClick={() => onRegenerateProject(item)} disabled={busyProjectId === item.id} title="重新生成规则课程" aria-label="重新生成规则课程">
+                      <RefreshCw size={14} />
+                    </button>
+                  ) : null}
+                  <button className="icon-button danger" onClick={() => onDeleteProject(item)} disabled={busyProjectId === item.id} title="删除项目" aria-label="删除项目">
+                    <Trash2 size={14} />
                   </button>
-                )}
-                <button className="icon-button danger" onClick={() => onDeleteProject(item)} disabled={busyProjectId === item.id} title="删除项目" aria-label="删除项目">
-                  <Trash2 size={14} />
-                </button>
+                </div>
               </div>
             ))
           ) : <div className="empty">还没有项目<div style={{ marginTop: 10 }}><button className="secondary-button compact" onClick={onCreateLearningPlan}><Plus size={14} />新建学习计划</button></div></div>}
@@ -93,8 +97,8 @@ export default function Sidebar({
 
   if (view === "files") {
     return (
-      <aside className="sidebar navigation-panel">
-        <header className="navigation-panel-header">
+      <aside className={`sidebar navigation-panel ${embedded ? "is-embedded" : ""}`}>
+        {!embedded ? <header className="navigation-panel-header">
           {onViewChange ? (
             <div className="navigation-segmented" aria-label="导航内容">
               <button onClick={() => onViewChange("courses")}><BookOpen size={14} />课程</button>
@@ -102,7 +106,7 @@ export default function Sidebar({
             </div>
           ) : <span>源码</span>}
           {fileSelectionMode ? <small>选择生成范围</small> : null}
-        </header>
+        </header> : null}
         <div className="sidebar-scroll">
           {projectType === "learning_plan" ? <div className="empty">学习计划不包含源码文件</div> : tree ? (
             <FileTree
@@ -121,20 +125,20 @@ export default function Sidebar({
   }
 
   return (
-    <aside className="sidebar navigation-panel">
-      <header className="navigation-panel-header">
+    <aside className={`sidebar navigation-panel ${embedded ? "is-embedded" : ""}`}>
+      {!embedded ? <header className="navigation-panel-header">
         {onViewChange ? (
           <div className="navigation-segmented" aria-label="导航内容">
             <button className="active" onClick={() => onViewChange("courses")}><BookOpen size={14} />课程</button>
             <button onClick={() => onViewChange("files")}><Code2 size={14} />源码</button>
           </div>
         ) : <span>课程</span>}
-        {onCreateCourse ? (
+        {onCreateCourse && courses.length ? (
           <button className="icon-button" onClick={onCreateCourse} disabled={!currentProjectId} title="新建文档" aria-label="新建文档">
             <Plus size={16} />
           </button>
         ) : null}
-      </header>
+      </header> : null}
       <div className="sidebar-scroll compact">
         {(() => {
           const lessons = courses.filter((file) => /^lessons\/lesson_\d+\.md$/i.test(file.filename));

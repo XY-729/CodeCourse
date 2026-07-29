@@ -382,6 +382,7 @@ def create_diagnostic_item(
     source_qa_record_id: int,
     session_id: str | None,
     strategy_version: str,
+    teaching_trial_id: str | None = None,
     conn=None,
 ) -> dict[str, Any] | None:
     concept_ids = [str(value) for value in candidate.get("concept_ids", []) if value][:4]
@@ -399,6 +400,7 @@ def create_diagnostic_item(
                 source_qa_record_id,
                 session_id,
                 strategy_version,
+                teaching_trial_id,
                 conn=database,
             )
         )
@@ -425,18 +427,27 @@ def create_diagnostic_item(
             return None
         item_id = f"diagnostic:{uuid4()}"
         created = _now()
+        if teaching_trial_id is None:
+            trial = database.execute(
+                """SELECT id FROM teaching_trials
+                   WHERE project_id = ? AND qa_record_id = ?
+                   ORDER BY created_at DESC LIMIT 1""",
+                (project_id, source_qa_record_id),
+            ).fetchone()
+            teaching_trial_id = str(trial["id"]) if trial else None
         database.execute(
             """INSERT INTO diagnostic_items
-               (id, project_id, session_id, source_qa_record_id,
+               (id, project_id, session_id, source_qa_record_id, teaching_trial_id,
                 concept_ids_json, dimension, item_type, prompt, options_json,
                 answer_key_json, source_refs_json, rationale, difficulty,
                 strategy_version, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
             (
                 item_id,
                 project_id,
                 session_id,
                 source_qa_record_id,
+                teaching_trial_id,
                 _json(concept_ids),
                 candidate["dimension"],
                 candidate["item_type"],
@@ -464,6 +475,7 @@ def _diagnostic_response(row) -> dict[str, Any]:
         "projectId": row["project_id"],
         "sessionId": row["session_id"],
         "sourceQaRecordId": row["source_qa_record_id"],
+        "teachingTrialId": row["teaching_trial_id"],
         "conceptIds": json.loads(row["concept_ids_json"]),
         "dimension": row["dimension"],
         "itemType": row["item_type"],
@@ -549,25 +561,55 @@ def submit_diagnostic_answer(
             evidence_ids.append(evidence_id)
         conn.execute(
             """INSERT INTO diagnostic_attempts
-               (id, item_id, project_id, session_id, answer_json, is_correct,
+               (id, item_id, project_id, session_id, teaching_trial_id,
+                answer_json, is_correct,
                 evidence_ids_json, answered_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 attempt_id,
                 item_id,
                 project_id,
                 item["session_id"],
+                item["teaching_trial_id"],
                 _json(answer),
                 int(correct),
                 _json(evidence_ids),
                 _now(),
             ),
         )
+        teaching_outcome = None
+        if item["teaching_trial_id"]:
+            from app.services.personalization.teaching.outcome_service import (
+                record_teaching_outcome,
+            )
+            teaching_outcome = record_teaching_outcome(
+                conn=conn,
+                idempotency_key=f"diagnostic-outcome:{attempt_id}",
+                project_id=project_id,
+                teaching_trial_id=str(item["teaching_trial_id"]),
+                result="successful" if correct else "unsuccessful",
+                confidence=0.95,
+                reason=(
+                    "The learner answered an objective understanding check correctly."
+                    if correct
+                    else "The learner answered an objective understanding check incorrectly."
+                ),
+                evidence_quote=_json(answer),
+                evidence_type="objective_diagnostic",
+                evidence_ref_id=item_id,
+                evaluation_qa_record_id=item["source_qa_record_id"],
+                diagnostic_attempt_id=attempt_id,
+            )
         conn.execute(
             "UPDATE diagnostic_items SET status = 'answered', shown_at = COALESCE(shown_at, ?) WHERE id = ?",
             (_now(), item_id),
         )
-        return {"status": "answered", "correct": correct, "attemptId": attempt_id}
+        return {
+            "status": "answered",
+            "correct": correct,
+            "attemptId": attempt_id,
+            "teachingOutcome": teaching_outcome,
+        }
 
     return run_in_transaction(transaction)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-TeachingMode = Literal["off", "shadow", "assist", "fallback"]
+TeachingMode = Literal["off", "shadow", "assist", "fallback", "default"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,10 +17,15 @@ class AppliedTeachingTrialDraft:
     mode: TeachingMode
     fallback_reason: str | None = None
     answer_model: str | None = None
+    pre_state_json: str = "{}"
+    target_concepts_json: str = "[]"
+    target_dimensions_json: str = "[]"
+    strategy_rationale: str = ""
+    policy_version: str = "teaching-trial-v2.1"
 
     @property
     def should_persist(self) -> bool:
-        return self.mode == "assist" and self.fallback_reason is None
+        return self.mode in ("assist", "default") and self.fallback_reason is None
 
 
 @dataclass(frozen=True, slots=True)

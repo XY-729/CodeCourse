@@ -1,0 +1,1440 @@
+/*
+ * Final Android consistency layer.
+ * Imported after every component stylesheet so legacy desktop declarations
+ * cannot leak old colors, radii or typography back into the mobile runtime.
+ */
+
+html.platform-android {
+  --accent: var(--mobile-accent);
+  --accent-hover: var(--mobile-accent-strong);
+  --accent-soft: var(--mobile-accent-soft);
+  --surface-base: var(--mobile-surface);
+  --surface-raised: var(--mobile-surface-raised);
+  --surface-muted: var(--mobile-surface-soft);
+  --surface-sunken: var(--mobile-canvas);
+  --border-subtle: var(--mobile-line);
+  --border-strong: var(--mobile-line-strong);
+  --text-primary: var(--mobile-text);
+  --text-secondary: var(--mobile-text-secondary);
+  --text-muted: var(--mobile-text-tertiary);
+  --success-text: var(--mobile-progress);
+  --warning-text: var(--mobile-warning);
+  --danger-text: var(--mobile-danger);
+  --cc-line: var(--mobile-line);
+}
+
+html.platform-android .empty,
+html.platform-android .empty-state,
+html.platform-android .command-empty,
+html.platform-android .settings-loading,
+html.platform-android .learner-profile-empty,
+html.platform-android .learner-profile-loading {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .app-shell:has(.workbench.mobile-panel-open) .apple-feedback-stack {
+  top: calc(120px + env(safe-area-inset-top));
+}
+
+html.platform-android
+  .app-shell:has(.workbench.mobile-panel-open):has(.apple-feedback-stack .apple-feedback)
+  .navigation-panel
+  .sidebar-scroll {
+  padding-top: 84px;
+}
+
+html.platform-android button:disabled,
+html.platform-android [aria-disabled="true"] {
+  opacity: 0.38;
+  box-shadow: none;
+}
+
+html.platform-android .apple-feedback {
+  min-height: 50px;
+  transition: opacity 180ms ease, transform 240ms var(--mobile-ease-out);
+}
+
+html.platform-android .apple-feedback > button,
+html.platform-android .qa-panel-tabs .panel-close {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+}
+
+html.platform-android
+  .app-shell:has(.more-menu-layer, .command-palette-layer, .settings-overlay, .modal-backdrop, .tool-drawer-backdrop)
+  .apple-feedback-stack {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px);
+}
+
+/* Settings and prompt editor */
+html.platform-android .settings-modal,
+html.platform-android .prompt-editor-modal {
+  color: var(--mobile-text);
+  background: var(--mobile-material-thick);
+}
+
+html.platform-android .modal-title,
+html.platform-android .settings-actions,
+html.platform-android .prompt-tabs {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  background: var(--mobile-material-regular);
+  backdrop-filter: blur(24px) saturate(175%);
+  -webkit-backdrop-filter: blur(24px) saturate(175%);
+}
+
+html.platform-android .modal-title {
+  min-height: 58px;
+  height: auto;
+  padding: 8px 14px;
+}
+
+html.platform-android .modal-title span {
+  font-size: 1.125rem;
+  font-weight: 720;
+  letter-spacing: -0.015em;
+}
+
+html.platform-android .settings-scroll,
+html.platform-android .prompt-editor-body {
+  color: var(--mobile-text);
+  background: var(--mobile-canvas);
+}
+
+html.platform-android .settings-section {
+  padding: 18px 14px 8px;
+  border-color: var(--mobile-line);
+}
+
+html.platform-android .settings-section h3,
+html.platform-android .settings-toggle-card strong,
+html.platform-android .settings-grid label,
+html.platform-android .prompt-editor-label {
+  color: var(--mobile-text);
+}
+
+html.platform-android .settings-section h3 {
+  margin-bottom: 8px;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  letter-spacing: -0.006em;
+}
+
+html.platform-android .settings-toggle-card {
+  padding: 13px 14px;
+  color: var(--mobile-text);
+  border: 0;
+  border-radius: 16px;
+  background: var(--mobile-surface);
+  box-shadow: var(--mobile-shadow-sm);
+}
+
+html.platform-android .settings-toggle-card small,
+html.platform-android .settings-grid label small,
+html.platform-android .settings-note,
+html.platform-android .settings-message,
+html.platform-android .settings-platform-note {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .settings-message,
+html.platform-android .settings-platform-note {
+  border: 0;
+  border-radius: 14px;
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .settings-danger-actions .danger,
+html.platform-android .primary-button.danger {
+  color: #fff;
+  background: var(--mobile-danger);
+}
+
+html.platform-android .prompt-tabs {
+  min-height: 50px;
+  padding: 7px 10px;
+  gap: 5px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+}
+
+html.platform-android .prompt-tab {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 7px 13px;
+  color: var(--mobile-text-secondary);
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  scroll-snap-align: start;
+}
+
+html.platform-android .prompt-tab.active {
+  color: var(--mobile-accent);
+  border: 0;
+  background: var(--mobile-accent-soft);
+  box-shadow: none;
+}
+
+html.platform-android .prompt-editor-textarea,
+html.platform-android .qa-workspace-editor {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  border-radius: 14px;
+  background: var(--mobile-surface);
+  font-family: "SFMono-Regular", ui-monospace, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+/* Dialogs */
+html.platform-android .app-dialog {
+  width: min(25rem, calc(100vw - 24px));
+  overflow: hidden;
+}
+
+html.platform-android .app-dialog-title {
+  min-height: 58px;
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+}
+
+html.platform-android .app-dialog-field,
+html.platform-android .app-dialog-skip {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .app-dialog-choice {
+  min-height: 52px;
+  padding: 12px;
+  color: var(--mobile-text);
+  border: 0;
+  border-radius: 14px;
+  background: var(--mobile-surface);
+  box-shadow: inset 0 0 0 1px var(--mobile-line);
+}
+
+html.platform-android .app-dialog-choice:has(input:checked) {
+  color: var(--mobile-accent);
+  background: var(--mobile-accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--mobile-accent);
+}
+
+html.platform-android .app-dialog-choice small {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .app-dialog-actions {
+  min-height: 68px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  border-color: var(--mobile-line);
+  background: var(--mobile-material-regular);
+}
+
+/* Command palette */
+html.platform-android .command-palette-layer {
+  padding: calc(66px + env(safe-area-inset-top)) 8px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(0, 0, 0, 0.26);
+}
+
+html.platform-android .command-palette {
+  width: 100%;
+  max-height: calc(100dvh - 82px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  border-radius: 22px;
+}
+
+html.platform-android .command-palette-search {
+  min-height: 58px;
+  height: 58px;
+  border-color: var(--mobile-line);
+}
+
+html.platform-android .command-palette-search svg,
+html.platform-android .command-section,
+html.platform-android .command-copy small,
+html.platform-android .command-palette kbd {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .command-palette-search input,
+html.platform-android .command-copy strong {
+  color: var(--mobile-text);
+  background: transparent;
+}
+
+html.platform-android .command-palette kbd {
+  border-color: var(--mobile-line);
+  border-radius: 7px;
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .command-palette-results > button {
+  min-height: 52px;
+  color: var(--mobile-text);
+  border-radius: 12px;
+}
+
+html.platform-android .command-palette-results > button.active {
+  color: var(--mobile-accent);
+  background: var(--mobile-accent-soft);
+}
+
+/* Navigation, progress and reader */
+html.platform-android .navigation-segmented,
+html.platform-android .segmented-control,
+html.platform-android .qa-panel-mode-tabs {
+  padding: 3px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .navigation-panel-header,
+html.platform-android .qa-panel-tabs {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+}
+
+html.platform-android .navigation-segmented button,
+html.platform-android .segmented-control button,
+html.platform-android .qa-panel-mode-tabs button {
+  min-height: 36px;
+  color: var(--mobile-text-secondary);
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+html.platform-android .navigation-segmented button.active,
+html.platform-android .segmented-control button.active,
+html.platform-android .qa-panel-mode-tabs button.active {
+  color: var(--mobile-text);
+  background: var(--mobile-surface);
+  box-shadow: var(--mobile-shadow-sm);
+}
+
+html.platform-android .course-group-header,
+html.platform-android .project-main,
+html.platform-android .tree-row,
+html.platform-android .course-row {
+  color: var(--mobile-text);
+}
+
+html.platform-android .course-group-header small,
+html.platform-android .project-main small,
+html.platform-android .course-row small {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .course-row.selected,
+html.platform-android .project-row.selected,
+html.platform-android .tree-row.selected,
+html.platform-android .qa-history-row.selected {
+  color: var(--mobile-accent);
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .course-state {
+  color: var(--mobile-text-tertiary);
+}
+
+html.platform-android .course-state.in-progress,
+html.platform-android .course-state.completed,
+html.platform-android .complete-button.completed {
+  color: var(--mobile-progress);
+}
+
+html.platform-android .complete-button.completed {
+  border-color: color-mix(in srgb, var(--mobile-progress) 42%, var(--mobile-line));
+  background: color-mix(in srgb, var(--mobile-progress) 14%, transparent);
+}
+
+html.platform-android .reader-progress-bar,
+html.platform-android .learning-progress-track {
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .reader-progress-fill,
+html.platform-android .learning-progress-track span {
+  background: var(--mobile-progress);
+}
+
+html.platform-android .reader-breadcrumb,
+html.platform-android .lesson-position {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .reader-breadcrumb strong {
+  color: var(--mobile-text);
+}
+
+html.platform-android .pane-tab {
+  color: var(--mobile-text-secondary);
+  border-radius: 10px;
+}
+
+html.platform-android .pane-tab.active {
+  color: var(--mobile-text);
+  background: var(--mobile-surface);
+}
+
+/* Assistant and diagnostics */
+html.platform-android .qa-section,
+html.platform-android .assistant-answer-card,
+html.platform-android .assistant-stream-card,
+html.platform-android .assistant-diagnostic-card,
+html.platform-android .assistant-survey-card,
+html.platform-android .qa-readonly-note {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  border-radius: 16px;
+  background: var(--mobile-surface);
+}
+
+html.platform-android .qa-knowledge-slot > .empty {
+  width: calc(100% - 16px);
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+
+html.platform-android .assistant-diagnostic-card,
+html.platform-android .assistant-survey-card {
+  box-shadow: var(--mobile-shadow-sm);
+}
+
+html.platform-android .diagnostic-card-heading span,
+html.platform-android .selection-meta,
+html.platform-android .favorite-filter,
+html.platform-android .assistant-answer-card small {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .diagnostic-options button,
+html.platform-android .diagnostic-order-list > div,
+html.platform-android .diagnostic-text-answer {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  border-radius: 12px;
+  background: var(--mobile-surface-raised);
+}
+
+html.platform-android .diagnostic-options button.selected {
+  color: var(--mobile-accent);
+  border-color: var(--mobile-accent);
+  background: var(--mobile-accent-soft);
+  box-shadow: none;
+  transform: none;
+}
+
+html.platform-android .qa-local-error,
+html.platform-android .diagnostic-result.incorrect {
+  color: var(--mobile-danger);
+}
+
+html.platform-android .diagnostic-result.correct {
+  color: var(--mobile-progress);
+}
+
+html.platform-android .assistant-card-shadow {
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .qa-reference-sources,
+html.platform-android .understanding-block {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  background: var(--mobile-surface);
+}
+
+html.platform-android .qa-reference-list > button {
+  color: var(--mobile-text);
+  border-color: transparent;
+  border-radius: 12px;
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .qa-reference-meta,
+html.platform-android .qa-reference-sources summary span,
+html.platform-android .understanding-saved > span {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .qa-reference-meta small,
+html.platform-android .understanding-action,
+html.platform-android .selection-path {
+  color: var(--mobile-accent);
+}
+
+/* Knowledge graph */
+html.platform-android .knowledge-body,
+html.platform-android .knowledge-canvas-shell,
+html.platform-android .knowledge-canvas,
+html.platform-android .knowledge-inspector {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  background: var(--mobile-canvas);
+}
+
+html.platform-android .knowledge-search {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  border-radius: 14px;
+  background: var(--mobile-material-regular);
+  box-shadow: var(--mobile-shadow-sm);
+  backdrop-filter: blur(20px) saturate(170%);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+}
+
+html.platform-android .knowledge-search input {
+  color: var(--mobile-text);
+  background: transparent;
+}
+
+html.platform-android .knowledge-search-results {
+  border-color: var(--mobile-line);
+  border-radius: 14px;
+  background: var(--mobile-material-thick);
+  box-shadow: var(--mobile-shadow-md);
+}
+
+html.platform-android .knowledge-search-results button {
+  color: var(--mobile-text);
+  border-radius: 10px;
+}
+
+/* Generation is a modal task: it must sit above feedback and bottom chrome. */
+html.platform-android .tool-drawer-backdrop {
+  z-index: 2800;
+  --sheet-scrim-alpha: 0;
+  --sheet-backdrop-blur: 0px;
+  background: rgba(0, 0, 0, var(--sheet-scrim-alpha));
+  backdrop-filter: blur(var(--sheet-backdrop-blur)) saturate(112%);
+  -webkit-backdrop-filter: blur(var(--sheet-backdrop-blur)) saturate(112%);
+}
+
+html.platform-android .generation-drawer-body {
+  padding: 8px 18px calc(20px + env(safe-area-inset-bottom));
+  gap: 16px;
+  color: var(--mobile-text);
+}
+
+html.platform-android .field-label {
+  color: var(--mobile-text);
+  font-size: 0.8125rem;
+  font-weight: 680;
+  letter-spacing: 0.006em;
+}
+
+html.platform-android .field-label select,
+html.platform-android .field-label textarea {
+  color: var(--mobile-text);
+  border-color: var(--mobile-line);
+  border-radius: 14px;
+  background: var(--mobile-surface);
+}
+
+html.platform-android .scope-helper,
+html.platform-android .drawer-task-status {
+  color: var(--mobile-text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+html.platform-android .drawer-task-status.failed {
+  color: var(--mobile-danger);
+}
+
+html.platform-android .more-menu-divider {
+  background: var(--mobile-line);
+}
+
+/* Term and contextual surfaces */
+html.platform-android .term-action-popover,
+html.platform-android .term-feedback-popover {
+  width: min(260px, calc(100vw - 24px));
+  padding: 14px;
+  color: var(--mobile-text);
+  border: 0;
+  border-radius: 18px;
+  background: var(--mobile-material-thick);
+  box-shadow: var(--mobile-shadow-md);
+  backdrop-filter: blur(26px) saturate(175%);
+  -webkit-backdrop-filter: blur(26px) saturate(175%);
+}
+
+html.platform-android .term-feedback-header {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+html.platform-android .term-feedback-header strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.platform-android .term-feedback-header .icon-button {
+  min-width: 36px;
+  min-height: 36px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 1.125rem;
+}
+
+html.platform-android .term-feedback-definition,
+html.platform-android .term-feedback-status,
+html.platform-android .term-feedback-current {
+  margin: 0 0 8px;
+  color: var(--mobile-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+html.platform-android .term-feedback-status.success,
+html.platform-android .term-feedback-current.success {
+  color: var(--mobile-progress);
+}
+
+html.platform-android .term-feedback-status.error,
+html.platform-android .term-feedback-current.error {
+  color: var(--mobile-danger);
+}
+
+html.platform-android .term-feedback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+html.platform-android .term-feedback-action {
+  min-width: 76px;
+  min-height: 44px;
+  flex: 1 1 auto;
+  padding: 7px 9px;
+  color: var(--mobile-text);
+  border: 0;
+  border-radius: 11px;
+  background: var(--mobile-surface-pressed);
+  font-size: 0.75rem;
+}
+
+html.platform-android .term-feedback-action.warning {
+  color: var(--mobile-warning);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mobile-warning) 46%, transparent);
+}
+
+html.platform-android .term-action-list button,
+html.platform-android .term-feedback-popover button {
+  min-height: 44px;
+  color: var(--mobile-text);
+  border-radius: 11px;
+}
+
+html.platform-android .term-candidate-link,
+html.platform-android .knowledge-inline-link {
+  color: inherit;
+  border-color: var(--mobile-accent);
+  text-decoration-color: color-mix(in srgb, var(--mobile-accent) 68%, transparent);
+}
+
+html.platform-android .selection-quick-bar button {
+  color: var(--mobile-text);
+  border-radius: 11px;
+  background: transparent;
+}
+
+html.platform-android .selection-quick-bar button:active {
+  color: var(--mobile-accent);
+  background: var(--mobile-accent-soft);
+}
+
+/* Learner profile loads after the core Android sheet, so retokenize it here. */
+html.platform-android .learner-profile-backdrop,
+html.platform-android .assistant-survey-card,
+html.platform-android .qa-readonly-note {
+  --lp-success: var(--mobile-progress);
+  --lp-warning: var(--mobile-warning);
+  --lp-danger: var(--mobile-danger);
+  --lp-accent: var(--mobile-accent);
+  --lp-accent-soft: var(--mobile-accent-soft);
+}
+
+html.platform-android .learner-profile-header {
+  min-height: calc(58px + env(safe-area-inset-top));
+  padding-top: calc(10px + env(safe-area-inset-top));
+  border: 0;
+  background: var(--mobile-material-regular);
+  box-shadow: 0 1px 0 var(--mobile-line);
+  backdrop-filter: blur(24px) saturate(175%);
+  -webkit-backdrop-filter: blur(24px) saturate(175%);
+}
+
+html.platform-android .learner-profile-tabs {
+  padding: 3px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--mobile-surface-pressed);
+  box-shadow: none;
+}
+
+html.platform-android .learner-profile-tabs button {
+  min-height: 38px;
+  color: var(--mobile-text-secondary);
+  border-radius: 9px;
+}
+
+html.platform-android .learner-profile-tabs button.active {
+  color: var(--mobile-text);
+  background: var(--mobile-surface);
+  box-shadow: var(--mobile-shadow-sm);
+}
+
+html.platform-android .domain-profile-row,
+html.platform-android .learner-evidence-row,
+html.platform-android .model-call-row,
+html.platform-android .learner-concept-row,
+html.platform-android .learner-survey-card {
+  border: 0;
+  border-radius: 16px;
+  background: var(--mobile-surface);
+  box-shadow: var(--mobile-shadow-sm);
+}
+
+html.platform-android .permission-notice-banner {
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  padding: 12px 14px;
+  color: var(--mobile-text-secondary);
+  border: 0;
+  border-radius: 18px 18px 0 0;
+  background: var(--mobile-material-thick);
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(26px) saturate(175%);
+  -webkit-backdrop-filter: blur(26px) saturate(175%);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html.platform-android .modal-title,
+  html.platform-android .settings-actions,
+  html.platform-android .prompt-tabs,
+  html.platform-android .knowledge-search,
+  html.platform-android .term-action-popover,
+  html.platform-android .term-feedback-popover,
+  html.platform-android .learner-profile-header,
+  html.platform-android .permission-notice-banner {
+    background: var(--mobile-surface);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  html.platform-android .settings-toggle-card,
+  html.platform-android .app-dialog-choice,
+  html.platform-android .qa-section,
+  html.platform-android .assistant-answer-card,
+  html.platform-android .assistant-diagnostic-card,
+  html.platform-android .knowledge-search,
+  html.platform-android .term-action-popover,
+  html.platform-android .term-feedback-popover,
+  html.platform-android .domain-profile-row,
+  html.platform-android .learner-evidence-row,
+  html.platform-android .model-call-row,
+  html.platform-android .learner-concept-row {
+    border: 2px solid currentColor;
+  }
+}
+
+/* Keep every visible Android control inside Apple's 44pt interaction target. */
+html.platform-android .continue-learning-action,
+html.platform-android .course-group-header,
+html.platform-android .prompt-tab,
+html.platform-android .navigation-segmented button,
+html.platform-android .segmented-control button,
+html.platform-android .qa-panel-mode-tabs button,
+html.platform-android .selection-quick-bar button,
+html.platform-android .permission-notice-actions .secondary-button,
+html.platform-android .learner-profile-tabs button {
+  min-height: 44px;
+}
+
+html.platform-android .pane-tab-close,
+html.platform-android .term-feedback-header .icon-button,
+html.platform-android .permission-notice-actions .icon-button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+}
+
+html.platform-android .fluid-sheet-grabber {
+  height: 44px;
+  min-height: 44px;
+  padding: 16px 0 12px;
+}
+
+@media (max-width: 370px) {
+  html.platform-android .mobile-topbar-action {
+    width: 44px;
+    min-width: 44px;
+  }
+}
+
+/* Motion layer: spatial cues only; color stays entirely token-driven. */
+@keyframes codecourse-mobile-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes codecourse-mobile-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -6px, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes codecourse-mobile-action-in {
+  from {
+    opacity: 0;
+    transform: translate3d(7px, 0, 0) scale(0.88);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+html.platform-android .project-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+  padding: 4px;
+  overflow: hidden;
+}
+
+html.platform-android .project-row-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+html.platform-android .project-row-actions .icon-button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  flex: 0 0 44px;
+}
+
+html.platform-android .project-main {
+  min-width: 0;
+  overflow: hidden;
+}
+
+html.platform-android .project-switch svg {
+  transition: transform 260ms var(--mobile-ease-out);
+}
+
+html.platform-android .project-switch[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+html.platform-android .navigation-panel .project-row,
+html.platform-android .navigation-panel .course-row,
+html.platform-android .navigation-panel .tree-row,
+html.platform-android .qa-section,
+html.platform-android .assistant-answer-card,
+html.platform-android .assistant-diagnostic-card,
+html.platform-android .settings-section,
+html.platform-android .learner-survey-card,
+html.platform-android .learning-empty-state,
+html.platform-android .knowledge-canvas-shell {
+  animation: codecourse-mobile-rise 360ms var(--mobile-ease-out) both;
+}
+
+html.platform-android .navigation-panel .project-row:nth-child(2),
+html.platform-android .navigation-panel .course-row:nth-child(2),
+html.platform-android .navigation-panel .tree-row:nth-child(2),
+html.platform-android .settings-section:nth-child(2) {
+  animation-delay: 28ms;
+}
+
+html.platform-android .navigation-panel .project-row:nth-child(3),
+html.platform-android .navigation-panel .course-row:nth-child(3),
+html.platform-android .navigation-panel .tree-row:nth-child(3),
+html.platform-android .settings-section:nth-child(3) {
+  animation-delay: 56ms;
+}
+
+html.platform-android .navigation-panel .project-row:nth-child(n + 4),
+html.platform-android .navigation-panel .course-row:nth-child(n + 4),
+html.platform-android .navigation-panel .tree-row:nth-child(n + 4),
+html.platform-android .settings-section:nth-child(n + 4) {
+  animation-delay: 84ms;
+}
+
+html.platform-android .project-row-actions .icon-button {
+  animation: codecourse-mobile-action-in 300ms var(--mobile-ease-out) both;
+}
+
+html.platform-android .project-row-actions .icon-button:nth-child(2) {
+  animation-delay: 36ms;
+}
+
+html.platform-android .topbar-more-menu,
+html.platform-android .command-palette,
+html.platform-android .term-action-popover,
+html.platform-android .term-feedback-popover {
+  animation: codecourse-mobile-pop 280ms var(--mobile-ease-out) both;
+}
+
+html.platform-android .more-menu button {
+  animation: codecourse-mobile-rise 260ms var(--mobile-ease-out) both;
+}
+
+html.platform-android .more-menu button:nth-of-type(2) { animation-delay: 20ms; }
+html.platform-android .more-menu button:nth-of-type(3) { animation-delay: 40ms; }
+html.platform-android .more-menu button:nth-of-type(4) { animation-delay: 60ms; }
+html.platform-android .more-menu button:nth-of-type(5) { animation-delay: 80ms; }
+html.platform-android .more-menu button:nth-of-type(n + 6) { animation-delay: 100ms; }
+
+html.platform-android .activity-rail button svg,
+html.platform-android .mobile-topbar-action svg,
+html.platform-android .project-row-actions svg,
+html.platform-android .pane-tab svg {
+  transition: transform 240ms var(--mobile-ease-out);
+}
+
+html.platform-android .activity-rail button.active svg {
+  transform: translateY(-2px) scale(1.1);
+}
+
+html.platform-android .mobile-topbar-action:not(:disabled):active svg,
+html.platform-android .project-row-actions button:not(:disabled):active svg {
+  transform: scale(0.84);
+}
+
+html.platform-android .reader-progress-fill,
+html.platform-android .learning-progress-track span {
+  transition: width 520ms var(--mobile-ease-out);
+}
+
+html.platform-android .settings-modal,
+html.platform-android .prompt-editor-modal,
+html.platform-android .app-dialog {
+  animation: codecourse-mobile-rise 320ms var(--mobile-ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.platform-android .navigation-panel .project-row,
+  html.platform-android .navigation-panel .course-row,
+  html.platform-android .navigation-panel .tree-row,
+  html.platform-android .qa-section,
+  html.platform-android .assistant-answer-card,
+  html.platform-android .assistant-diagnostic-card,
+  html.platform-android .settings-section,
+  html.platform-android .learner-survey-card,
+  html.platform-android .learning-empty-state,
+  html.platform-android .knowledge-canvas-shell,
+  html.platform-android .project-row-actions .icon-button,
+  html.platform-android .topbar-more-menu,
+  html.platform-android .command-palette,
+  html.platform-android .term-action-popover,
+  html.platform-android .term-feedback-popover,
+  html.platform-android .more-menu button,
+  html.platform-android .settings-modal,
+  html.platform-android .prompt-editor-modal,
+  html.platform-android .app-dialog {
+    animation: none !important;
+  }
+
+  html.platform-android .project-switch svg,
+  html.platform-android .activity-rail button svg,
+  html.platform-android .mobile-topbar-action svg,
+  html.platform-android .project-row-actions svg,
+  html.platform-android .pane-tab svg,
+  html.platform-android .reader-progress-fill,
+  html.platform-android .learning-progress-track span {
+    transition: none !important;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Responsive workspace sheets and latency fixes                               */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android button,
+html.platform-android [role="button"] {
+  transition:
+    transform 90ms var(--mobile-ease-out),
+    color 110ms ease,
+    background-color 110ms ease,
+    border-color 110ms ease;
+}
+
+html.platform-android .topbar,
+html.platform-android .activity-rail {
+  backdrop-filter: blur(14px) saturate(145%);
+  -webkit-backdrop-filter: blur(14px) saturate(145%);
+}
+
+html.platform-android .navigation-panel-header,
+html.platform-android .qa-panel-tabs,
+html.platform-android .assistant-thread-toolbar,
+html.platform-android .viewer-header,
+html.platform-android .pane-tabs,
+html.platform-android .reader-learning-toolbar,
+html.platform-android .modal-title,
+html.platform-android .settings-actions,
+html.platform-android .prompt-tabs {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html.platform-android .settings-modal,
+html.platform-android .prompt-editor-modal,
+html.platform-android .app-dialog,
+html.platform-android .command-palette,
+html.platform-android .more-menu {
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+}
+
+html.platform-android .apple-feedback,
+html.platform-android .selection-quick-bar {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html.platform-android .mobile-workspace-sheet-layer {
+  --sheet-scrim-alpha: 0;
+  --sheet-backdrop-blur: 0px;
+  position: fixed;
+  z-index: 180;
+  inset: 0 0 calc(72px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: calc(56px + env(safe-area-inset-top)) 8px 0;
+  overflow: hidden;
+  background: rgba(0, 0, 0, var(--sheet-scrim-alpha));
+  backdrop-filter: blur(var(--sheet-backdrop-blur)) saturate(112%);
+  -webkit-backdrop-filter: blur(var(--sheet-backdrop-blur)) saturate(112%);
+}
+
+html.platform-android .mobile-workspace-sheet {
+  position: relative;
+  width: min(100%, 720px);
+  height: min(82dvh, 100%);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--mobile-text);
+  border: 0;
+  border: 1px solid color-mix(in srgb, var(--mobile-line) 72%, transparent);
+  border-bottom: 0;
+  border-radius: 28px 28px 0 0;
+  background: var(--mobile-material-thick);
+  box-shadow: 0 -18px 54px rgba(0, 0, 0, 0.26);
+  contain: layout paint;
+  touch-action: pan-x;
+}
+
+html.platform-android .mobile-workspace-sheet > .fluid-sheet-grabber {
+  flex: 0 0 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 18px 0 17px;
+}
+
+html.platform-android .mobile-workspace-sheet-header {
+  min-height: 56px;
+  padding: 4px 12px 8px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--mobile-line);
+  background: var(--mobile-material-regular);
+}
+
+html.platform-android .mobile-workspace-sheet-header > strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 1.125rem;
+  font-weight: 720;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.platform-android .mobile-workspace-sheet-header > div {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+html.platform-android .mobile-workspace-sheet-header .icon-button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+}
+
+html.platform-android .mobile-workspace-sheet-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  animation: mobile-workspace-content-in 140ms var(--mobile-ease-out) both;
+}
+
+html.platform-android .navigation-panel.is-embedded,
+html.platform-android .mobile-workspace-sheet-content > .explain-panel {
+  position: relative;
+  inset: auto;
+  width: 100% !important;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  opacity: 1;
+  overflow: hidden;
+  border: 0;
+  background: var(--mobile-canvas);
+  box-shadow: none;
+  transform: none;
+  pointer-events: auto;
+  animation: none;
+}
+
+html.platform-android .mobile-workspace-sheet-content > .explain-panel {
+  display: grid;
+}
+
+html.platform-android .navigation-panel.is-embedded .sidebar-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding-top: 10px;
+}
+
+html.platform-android .apple-feedback-stack.is-inline {
+  position: relative;
+  z-index: 1;
+  inset: auto;
+  padding: 8px 12px;
+  transform: none;
+  pointer-events: auto;
+}
+
+html.platform-android
+  .app-shell:has(.workbench.mobile-panel-open)
+  .apple-feedback-stack.is-inline {
+  top: auto;
+  left: auto;
+  right: auto;
+}
+
+html.platform-android .apple-feedback-stack.is-inline:empty {
+  display: none;
+}
+
+html.platform-android .apple-feedback-stack.is-inline .apple-feedback {
+  min-height: 48px;
+  box-shadow: none;
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .assistant-new-question-button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--mobile-accent);
+  border: 0;
+  border-radius: 11px;
+  background: var(--mobile-accent-soft);
+  font-size: 0.8125rem;
+  font-weight: 650;
+}
+
+/* Search input and close control form one aligned 44pt row. */
+html.platform-android .command-palette-search {
+  position: relative;
+  height: 58px;
+  min-height: 58px;
+  padding: 7px 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+}
+
+html.platform-android .command-palette-search > svg {
+  position: absolute;
+  z-index: 1;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+html.platform-android .command-palette-search input {
+  width: 100%;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 12px 0 38px;
+  color: var(--mobile-text);
+  border: 1px solid var(--mobile-line) !important;
+  border-radius: 12px;
+  outline: 0;
+  background: var(--mobile-surface) !important;
+  box-shadow: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+html.platform-android .command-palette-close {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--mobile-text-secondary);
+  border: 0;
+  border-radius: 12px;
+  outline: 0;
+  background: var(--mobile-surface-pressed);
+  box-shadow: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* Prompt editing uses the available height and advertises horizontal tabs. */
+html.platform-android .prompt-editor-modal {
+  width: calc(100% - 16px) !important;
+  height: min(76dvh, 680px);
+  min-height: min(480px, calc(100dvh - 16px));
+}
+
+html.platform-android .prompt-tabs-shell {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+
+html.platform-android .prompt-tabs-shell::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 34px;
+  background: linear-gradient(90deg, transparent, var(--mobile-material-regular));
+  pointer-events: none;
+}
+
+html.platform-android .prompt-tabs {
+  padding-right: 36px;
+}
+
+html.platform-android .prompt-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+html.platform-android .prompt-editor-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+html.platform-android .prompt-editor-textarea {
+  min-height: 220px;
+  height: auto;
+  flex: 1 1 auto;
+  resize: none;
+}
+
+html.platform-android .prompt-editor-modal .settings-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+html.platform-android .prompt-editor-modal .settings-actions > button {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+}
+
+html.platform-android .settings-scroll,
+html.platform-android .prompt-editor-textarea {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--mobile-text-tertiary) 54%, transparent) transparent;
+}
+
+html.platform-android .settings-scroll::-webkit-scrollbar,
+html.platform-android .prompt-editor-textarea::-webkit-scrollbar {
+  width: 4px;
+}
+
+html.platform-android .settings-scroll::-webkit-scrollbar-button,
+html.platform-android .prompt-editor-textarea::-webkit-scrollbar-button {
+  display: none;
+}
+
+html.platform-android .settings-scroll::-webkit-scrollbar-track,
+html.platform-android .prompt-editor-textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html.platform-android .settings-scroll::-webkit-scrollbar-thumb,
+html.platform-android .prompt-editor-textarea::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mobile-text-tertiary) 54%, transparent);
+}
+
+html.platform-android .project-row,
+html.platform-android .project-row-actions {
+  gap: 8px;
+}
+
+/* The sheet is the motion. Avoid replaying slow child and stagger animations. */
+html.platform-android .navigation-panel .project-row,
+html.platform-android .navigation-panel .course-row,
+html.platform-android .navigation-panel .tree-row,
+html.platform-android .qa-section,
+html.platform-android .assistant-answer-card,
+html.platform-android .assistant-diagnostic-card,
+html.platform-android .settings-section,
+html.platform-android .learner-survey-card,
+html.platform-android .learning-empty-state,
+html.platform-android .knowledge-canvas-shell,
+html.platform-android .project-row-actions .icon-button {
+  animation: none;
+}
+
+html.platform-android .more-menu button {
+  animation-duration: 150ms;
+  animation-delay: 0ms !important;
+}
+
+html.platform-android .topbar-more-menu,
+html.platform-android .command-palette,
+html.platform-android .term-action-popover,
+html.platform-android .term-feedback-popover,
+html.platform-android .settings-modal,
+html.platform-android .prompt-editor-modal,
+html.platform-android .app-dialog {
+  animation-duration: 170ms;
+}
+
+@keyframes mobile-workspace-content-in {
+  from { opacity: 0.72; transform: translate3d(0, 4px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.platform-android .mobile-workspace-sheet-content {
+    animation: none;
+  }
+}
+
+/* Android reading immersion: chrome follows the reader's scroll direction. */
+html.platform-android .mobile-topbar,
+html.platform-android .reader-pane > .pane-tabs,
+html.platform-android .reader-pane > .pane-body > .reader-learning-toolbar,
+html.platform-android .reader-pane > .pane-body > .markdown-viewer > .viewer-header {
+  overflow: hidden;
+  transition:
+    height 180ms var(--mobile-ease-out),
+    min-height 180ms var(--mobile-ease-out),
+    padding 180ms var(--mobile-ease-out),
+    opacity 120ms ease,
+    transform 180ms var(--mobile-ease-out);
+}
+
+html.platform-android .activity-rail {
+  transition:
+    opacity 120ms ease,
+    transform 180ms var(--mobile-ease-out);
+}
+
+html.platform-android .workbench {
+  transition: padding-bottom 180ms var(--mobile-ease-out);
+}
+
+html.platform-android.android-reading-immersive .mobile-topbar,
+html.platform-android.android-reading-immersive .reader-pane > .pane-tabs,
+html.platform-android.android-reading-immersive .reader-pane > .pane-body > .reader-learning-toolbar,
+html.platform-android.android-reading-immersive .reader-pane > .pane-body > .markdown-viewer > .viewer-header {
+  height: 0 !important;
+  min-height: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  border-width: 0 !important;
+  box-shadow: none !important;
+  opacity: 0;
+  transform: translate3d(0, -12px, 0);
+  pointer-events: none;
+}
+
+html.platform-android.android-reading-immersive .mobile-topbar {
+  padding-left: 0;
+  padding-right: 0;
+  transform: translate3d(0, -100%, 0);
+}
+
+html.platform-android.android-reading-immersive .activity-rail {
+  opacity: 0;
+  transform: translate3d(0, 100%, 0);
+  pointer-events: none;
+}
+
+html.platform-android.android-reading-immersive .workbench,
+html.platform-android.android-reading-immersive .workbench.navigation-open {
+  padding-bottom: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.platform-android .mobile-topbar,
+  html.platform-android .reader-pane > .pane-tabs,
+  html.platform-android .reader-pane > .pane-body > .reader-learning-toolbar,
+  html.platform-android .reader-pane > .pane-body > .markdown-viewer > .viewer-header,
+  html.platform-android .activity-rail,
+  html.platform-android .workbench {
+    transition: none;
+  }
+}

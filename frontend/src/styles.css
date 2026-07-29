@@ -342,8 +342,15 @@ button:disabled,
   min-height: 34px;
   border-radius: 6px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px 28px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  gap: 2px;
+}
+
+.project-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 2px;
 }
 
@@ -991,6 +998,10 @@ button:disabled,
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.qa-panel.knowledge-only .qa-ask-section {
+  display: none;
 }
 
 .qa-panel-tabs {
@@ -1981,9 +1992,10 @@ button:disabled,
 
 .knowledge-node-label {
   position: absolute;
+  left: 0;
+  top: 0;
   width: max-content;
   max-width: 176px;
-  transform: translate(-50%, 0);
   border-radius: 4px;
   padding: 1px 4px;
   color: #2f3947;
@@ -1998,6 +2010,8 @@ button:disabled,
   -webkit-line-clamp: 2;
   overflow-wrap: anywhere;
   text-shadow: 0 1px 0 #fff;
+  contain: layout paint style;
+  will-change: transform;
 }
 
 .knowledge-node-label[hidden] {
@@ -3301,10 +3315,6 @@ html.platform-android #root {
 .platform-android .modal-backdrop {
   z-index: 3000;
   padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom));
-}
-
-.platform-android .mobile-panel-open .center-pane {
-  visibility: hidden;
 }
 
 .platform-android .settings-modal,

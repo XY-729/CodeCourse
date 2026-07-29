@@ -972,6 +972,71 @@ export type PersonalizationProfile = {
   modelCalls: ModelCallAudit[];
   knowledgeStates?: KnowledgeStateV2[];
   learningEvidence?: LearningEvidenceV2[];
+  evidenceSummary?: {
+    verified: EvidenceSummaryConcept[];
+    learning: EvidenceSummaryConcept[];
+    insufficient: EvidenceSummaryConcept[];
+    teaching: TeachingEvidenceSummary;
+  };
+};
+
+export type EvidenceSummaryConcept = {
+  conceptId: string;
+  displayName: string;
+  domain: string;
+};
+
+export type TeachingStrategyEvidence = {
+  strategy: string;
+  successful: number;
+  partiallySuccessful: number;
+  unsuccessful: number;
+  evidenceCount: number;
+};
+
+export type TeachingEvidenceSummary = {
+  verifiedTrialCount: number;
+  awaitingEvidenceCount: number;
+  effectiveStrategies: TeachingStrategyEvidence[];
+  recentTrials: Array<{
+    id: string;
+    qaRecordId: number;
+    teachingGoal: string;
+    strategies: string[];
+    result?: string | null;
+    evidenceType?: string | null;
+    policyEligible: boolean;
+    createdAt: string;
+  }>;
+  policyVersion: string;
+};
+
+export type TeachingTrial = {
+  id: string;
+  qaRecordId: number;
+  mode: string;
+  teachingGoal: string;
+  strategies: string[];
+  assumedKnown: string[];
+  explainBriefly: string[];
+  explainInDetail: string[];
+  targetConceptIds: string[];
+  targetDimensions: KnowledgeDimension[];
+  strategyRationale: string;
+  policyVersion: string;
+  preState: KnowledgeStateV2[] | Record<string, unknown>;
+  outcomes: Array<{
+    id: string;
+    result: string;
+    confidence: number;
+    reason: string;
+    evidenceQuote: string;
+    evidenceType: string;
+    authority: number;
+    policyEligible: boolean;
+    createdAt: string;
+  }>;
+  createdAt: string;
 };
 
 export type LearningEvidenceV2 = {
@@ -1030,6 +1095,7 @@ export type DiagnosticItem = {
   projectId: number;
   sessionId?: string | null;
   sourceQaRecordId?: number | null;
+  teachingTrialId?: string | null;
   conceptIds: string[];
   dimension: KnowledgeDimension;
   itemType: "single_choice" | "true_false" | "code_output" | "error_location" | "step_order";
@@ -1287,6 +1353,43 @@ export function recordTermImpressions(
 
 export function getPersonalizationProfile(projectId: number): Promise<PersonalizationProfile> {
   return request<PersonalizationProfile>(`/projects/${projectId}/personalization/profile`);
+}
+
+export function getTeachingTrial(
+  projectId: number,
+  qaRecordId: number,
+): Promise<TeachingTrial> {
+  return request<TeachingTrial>(
+    `/projects/${projectId}/personalization/teaching/${qaRecordId}`,
+  );
+}
+
+export function submitTeachingFeedback(
+  projectId: number,
+  qaRecordId: number,
+  result: "successful" | "partially_successful" | "unsuccessful",
+  reason = "",
+): Promise<{
+  id: string;
+  teachingTrialId: string;
+  result: string;
+  confidence: number;
+  evidenceType: string;
+  authority: number;
+  policyEligible: boolean;
+  createdAt: string;
+}> {
+  return request(
+    `/projects/${projectId}/personalization/teaching/${qaRecordId}/feedback`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        result,
+        reason,
+        idempotency_key: `teaching-feedback:${qaRecordId}:${result}:${Date.now()}`,
+      }),
+    },
+  );
 }
 
 export function voidLearnerInference(projectId: number, inferenceId: string): Promise<{ status: string; id: string }> {

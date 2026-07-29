@@ -26,7 +26,7 @@ import type {
   QAAskPayload, QARecord, TreeNode,
   PersonalizationConcept, PersonalizationMastery, PersonalizationEvent,
   LearnerPreferences, PersonalizationProfile, LearnerInference,
-  KnowledgeStateV2, DiagnosticItem,
+  KnowledgeStateV2,
 } from "../../api/client";
 import {
   buildLearnerContext,
@@ -53,7 +53,11 @@ import {
 
 type ScopeTypeStr = "global" | "project" | "session";
 import promptDefaults from "./default-prompts.json";
+import { AndroidDiagnosticService } from "./diagnosticService";
 import { MobileDatabase } from "./database";
+import { createAndroidPersonalizationRoutes } from "./personalizationRoutes";
+import { dispatchAndroidRoutes } from "./routeRegistry";
+import { AndroidTeachingOutcomeService } from "./teachingOutcomeService";
 import {
   buildTree, downloadGitHubSnapshot, inferLanguage, readGeneratedFile, readRepoFile, readZipFiles, removeGeneratedFile,
   removeProjectFiles, writeGeneratedFileAtomic, writeRepoFile,
@@ -99,6 +103,7 @@ const CHECKPOINT_VERSION = CP_VER;
 type TaskOutput = { filename: string; content: string };
 
 const db = new MobileDatabase();
+const teachingOutcomes = new AndroidTeachingOutcomeService(db);
 const DEFAULT_MODEL = { provider: "deepseek", base_url: "https://api.deepseek.com", model: "deepseek-chat", enabled: false };
 const MOBILE_LESSON_CONCURRENCY = 4;
 const KNOWN_TECH_TERMS = ["FastAPI", "Pydantic", "Uvicorn", "React", "TypeScript", "JavaScript", "Electron", "SQLite", "FTS5", "Cytoscape", "Monaco", "Tree-sitter", "Docker", "CMake", "Cargo", "WebSocket", "REST", "RAG", "LLM", "API", "Git", "依赖注入", "异步任务", "全文检索", "知识图谱", "调用关系", "路由", "中间件"];
@@ -243,6 +248,65 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
   // The coordinator is the only owner of foreground Service state.
   private readonly serviceCoordinator = new GenerationServiceCoordinator(CodeCourseNative);
+  private readonly diagnostics = new AndroidDiagnosticService(db, teachingOutcomes, {
+    ensureProject: (projectId) => this.getProject(projectId),
+    appendEvidence: (projectId, payload, inTransaction) => (
+      this.appendLearningEvidenceV2(projectId, payload, inTransaction)
+    ),
+    voidEvidence: (projectId, evidenceId, idempotencyKey, reason) => (
+      this.voidLearningEvidenceV2(projectId, evidenceId, idempotencyKey, reason)
+    ),
+  });
+  private readonly personalizationRoutes = createAndroidPersonalizationRoutes({
+    listConcepts: (projectId, query) => this.listPersonalizationConcepts(projectId, query),
+    createConcept: (projectId, body) => this.createPersonalizationConcept(
+      projectId,
+      body as Parameters<AndroidLocalProvider["createPersonalizationConcept"]>[1],
+    ),
+    getMastery: (projectId, conceptIds) => this.getPersonalizationMasteryBatch(projectId, conceptIds),
+    resolveTerms: (projectId, terms) => this.resolvePersonalizationTerms(
+      projectId,
+      terms as Array<Record<string, unknown>>,
+    ),
+    getPreferences: (projectId) => this.getLearnerPreferences(projectId),
+    updatePreferences: (projectId, body) => this.updateLearnerPreferences(projectId, body),
+    applyAnswerFeedback: (projectId, body) => this.applyAnswerPreferenceFeedback(projectId, body),
+    saveTermImpressions: (projectId, impressions) => this.saveTermImpressions(
+      projectId,
+      impressions as Array<Record<string, unknown>>,
+    ),
+    getTermDisplayProfiles: (projectId, conceptKeys) => this.getTermDisplayProfiles(projectId, conceptKeys),
+    getKnowledgeStates: (projectId, conceptIds) => this.getKnowledgeStatesV2(projectId, conceptIds),
+    appendEvidence: (projectId, body) => this.appendLearningEvidenceV2(projectId, body),
+    voidEvidence: (projectId, evidenceId, idempotencyKey, reason) => this.voidLearningEvidenceV2(
+      projectId,
+      evidenceId,
+      idempotencyKey,
+      reason,
+    ),
+    rebuildProfile: (projectId) => this.rebuildKnowledgeProfileV2(projectId),
+    getPendingDiagnostic: (projectId) => this.diagnostics.getPending(projectId),
+    answerDiagnostic: (projectId, itemId, answer) => this.diagnostics.answer(projectId, itemId, answer),
+    dismissDiagnostic: (projectId, itemId) => this.diagnostics.dismiss(projectId, itemId),
+    flagDiagnostic: (projectId, itemId) => this.diagnostics.flag(projectId, itemId),
+    getTeachingTrial: (projectId, qaRecordId) => teachingOutcomes.getTrial(projectId, qaRecordId),
+    submitTeachingFeedback: (projectId, qaRecordId, result, key, reason) => (
+      teachingOutcomes.recordManualFeedback(projectId, qaRecordId, result, key, reason)
+    ),
+    getProfile: (projectId) => this.getPersonalizationProfile(projectId),
+    resetProfile: (projectId, scope) => this.resetPersonalizationProfile(projectId, scope),
+    voidInference: (projectId, inferenceId) => this.voidLearnerInference(projectId, inferenceId),
+    answerSurvey: (projectId, surveyId, choice) => this.answerDynamicSurvey(projectId, surveyId, choice),
+    dismissSurvey: (surveyId) => this.dismissDynamicSurvey(surveyId),
+    getExplanation: (conceptId) => this.getReusableConceptExplanation(conceptId),
+    markKnown: (projectId, conceptId, key, evidence) => this.markConceptKnown(projectId, conceptId, key, evidence),
+    markUnknown: (projectId, conceptId, key, evidence) => this.markConceptUnknown(projectId, conceptId, key, evidence),
+    clearOverride: (projectId, conceptId, key) => this.clearConceptOverride(projectId, conceptId, key),
+    getEvents: (projectId, conceptId) => this.getPersonalizationEvents(projectId, conceptId),
+    voidEvent: (projectId, eventId, conceptId, key, reason) => (
+      this.voidPersonalizationEvent(projectId, eventId, conceptId, key, reason)
+    ),
+  });
 
   // ---- permission ----
   private permissionResult: NotificationPermissionResult | null = null;
@@ -575,106 +639,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       if (method === "DELETE") return this.deleteById("knowledge_edges", Number(match[2])) as Promise<T>;
     }
 
-    // Personalization
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/concepts$/))) {
-      if (method === "GET") return this.listPersonalizationConcepts(Number(match[1]), url.searchParams.get("query") || undefined) as Promise<T>;
-      if (method === "POST") return this.createPersonalizationConcept(Number(match[1]), body) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/mastery$/))) {
-      return this.getPersonalizationMasteryBatch(Number(match[1]), (url.searchParams.get("concept_ids") || "").split(",").filter(Boolean)) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/resolve$/)) && method === "POST") {
-      return this.resolvePersonalizationTerms(Number(match[1]), Array.isArray(body.terms) ? body.terms : []) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/preferences$/))) {
-      if (method === "GET") return this.getLearnerPreferences(Number(match[1])) as Promise<T>;
-      if (method === "PUT") return this.updateLearnerPreferences(Number(match[1]), body) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/answer-feedback$/)) && method === "POST") {
-      return this.applyAnswerPreferenceFeedback(Number(match[1]), body) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/term-impressions\/batch$/)) && method === "POST") {
-      return this.saveTermImpressions(Number(match[1]), Array.isArray(body.impressions) ? body.impressions : []) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/term-display-profiles$/)) && method === "POST") {
-      return this.getTermDisplayProfiles(
-        Number(match[1]),
-        Array.isArray(body.concept_keys) ? body.concept_keys.map(String).slice(0, 200) : [],
-      ) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/knowledge-state$/)) && method === "GET") {
-      const ids = (url.searchParams.get("concept_ids") || "").split(",").filter(Boolean);
-      return this.getKnowledgeStatesV2(Number(match[1]), ids) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/evidence$/)) && method === "POST") {
-      return this.appendLearningEvidenceV2(Number(match[1]), body) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/evidence\/([^/]+)\/void$/)) && method === "POST") {
-      return this.voidLearningEvidenceV2(
-        Number(match[1]),
-        decodeURIComponent(match[2]),
-        String(body.idempotencyKey || `void-v2:${decodeURIComponent(match[2])}`),
-        String(body.reason || ""),
-      ) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/rebuild$/)) && method === "POST") {
-      return this.rebuildKnowledgeProfileV2(Number(match[1])) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/diagnostics\/pending$/)) && method === "GET") {
-      return this.getPendingDiagnosticV2(Number(match[1])) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/diagnostics\/([^/]+)\/answer$/)) && method === "POST") {
-      return this.answerDiagnosticV2(Number(match[1]), decodeURIComponent(match[2]), body.answer) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/diagnostics\/([^/]+)\/dismiss$/)) && method === "POST") {
-      return this.dismissDiagnosticV2(Number(match[1]), decodeURIComponent(match[2])) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/diagnostics\/([^/]+)\/flag$/)) && method === "POST") {
-      return this.flagDiagnosticV2(Number(match[1]), decodeURIComponent(match[2])) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/profile$/)) && method === "GET") {
-      return this.getPersonalizationProfile(Number(match[1])) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/inferences\/([^/]+)\/void$/)) && method === "POST") {
-      return this.voidLearnerInference(Number(match[1]), decodeURIComponent(match[2])) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/surveys\/([^/]+)\/answer$/)) && method === "POST") {
-      return this.answerDynamicSurvey(Number(match[1]), decodeURIComponent(match[2]), String(body.choice || "")) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/surveys\/([^/]+)\/dismiss$/)) && method === "POST") {
-      return this.dismissDynamicSurvey(decodeURIComponent(match[2])) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/concepts\/([^/]+)\/explanation$/)) && method === "GET") {
-      return this.getReusableConceptExplanation(decodeURIComponent(match[2])) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/mark-known$/)) && method === "POST") {
-      if (body && typeof body === "object" && "conceptId" in body && "idempotencyKey" in body) {
-        return this.markConceptKnown(Number(match[1]), String(body.conceptId), String(body.idempotencyKey), typeof body.evidenceText === "string" ? body.evidenceText : undefined) as Promise<T>;
-      }
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/mark-unknown$/)) && method === "POST") {
-      if (body && typeof body === "object" && "conceptId" in body && "idempotencyKey" in body) {
-        return this.markConceptUnknown(Number(match[1]), String(body.conceptId), String(body.idempotencyKey), typeof body.evidenceText === "string" ? body.evidenceText : undefined) as Promise<T>;
-      }
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/clear-override$/)) && method === "POST") {
-      if (body && typeof body === "object" && "conceptId" in body && "idempotencyKey" in body) {
-        return this.clearConceptOverride(Number(match[1]), String(body.conceptId), String(body.idempotencyKey)) as Promise<T>;
-      }
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/events\/([^/]+)$/)) && method === "GET") {
-      return this.getPersonalizationEvents(Number(match[1]), decodeURIComponent(match[2])) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/events\/([^/]+)\/void$/)) && method === "POST") {
-      return this.voidPersonalizationEvent(Number(match[1]), decodeURIComponent(match[2]), body?.conceptId || "", body?.idempotencyKey || `void:${decodeURIComponent(match[2])}:${Date.now()}`, body?.reason) as Promise<T>;
-    }
-    if ((match = path.match(/^\/projects\/(\d+)\/personalization\/profile$/)) && method === "DELETE") {
-      const scope = url.searchParams.get("scope");
-      return this.resetPersonalizationProfile(
-        Number(match[1]),
-        scope === "all" ? "all" : scope === "global" ? "global" : "project",
-      ) as Promise<T>;
-    }
+    const personalization = await dispatchAndroidRoutes(this.personalizationRoutes, {
+      path,
+      method,
+      searchParams: url.searchParams,
+      body,
+    });
+    if (personalization.handled) return personalization.value as T;
+
     throw new Error(`移动端尚未实现此操作：${method} ${path}`);
   }
 
@@ -1708,36 +1680,70 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       }
     }
     record = await this.getQA(projectId, id);
-    if (teacherPlan) {
-      const strategyText = teacherPlan
-        .replace(/<\/?teacher_plan>/g, "")
-        .trim();
-      const strategies = strategyText
-        .split(/\r?\n/)
-        .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
-        .filter(Boolean)
-        .slice(0, 5);
-      await db.run(
-        `INSERT OR IGNORE INTO teaching_trials
-         (id,project_id,session_id,qa_record_id,effective_context_json,mode,
-          was_applied,answer_model,created_at)
-         VALUES(?,?,?,?,?,'assist',1,?,?)`,
-        [
-          `android-trial:${id}`,
-          projectId,
-          sessionId,
-          id,
-          JSON.stringify({
-            schemaVersion: 1,
-            mode: "planned",
-            strategies,
-            rawStrategy: strategyText.slice(0, 1800),
-          }),
-          settings.model,
-          stamp,
-        ],
-      );
+    const strategyText = teacherPlan.replace(/<\/?teacher_plan>/g, "").trim();
+    const strategies = strategyText
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
+      .filter(Boolean)
+      .slice(0, 5);
+    const trialConcepts = await this.relevantConcepts(
+      projectId,
+      record.question,
+      record.selected_text,
+      record.source_type,
+      record.source_path,
+    );
+    const preState = (await this.getKnowledgeStatesV2(
+      projectId,
+      trialConcepts.map((concept) => concept.id),
+    )).states;
+    const stateByConceptId = new Map(preState.map((state) => [state.conceptId, state]));
+    const assumedKnown: string[] = [];
+    const explainInDetail: string[] = [];
+    const explainBriefly: string[] = [];
+    for (const concept of trialConcepts) {
+      const dimensions = stateByConceptId.get(concept.id)?.dimensions;
+      if (
+        dimensions?.familiarity.status === "confirmed"
+        || dimensions?.conceptual.status === "confirmed"
+      ) {
+        assumedKnown.push(concept.displayName);
+      } else if (
+        dimensions?.familiarity.status === "learning"
+        || dimensions?.conceptual.status === "learning"
+      ) {
+        explainInDetail.push(concept.displayName);
+      } else {
+        explainBriefly.push(concept.displayName);
+      }
     }
+    await teachingOutcomes.saveTrial({
+      projectId,
+      sessionId,
+      qaRecordId: id,
+      answerModel: settings.model,
+      mode: teacherPlan ? "assist" : "default",
+      context: {
+        schemaVersion: 1,
+        mode: teacherPlan ? "planned" : "default",
+        userGoal: "unknown",
+        teachingGoal: teacherPlan
+          ? "Apply the planned explanation strategy to the current question."
+          : "Answer the current question using the relevant learner context.",
+        strategies: strategies.length ? strategies : ["direct_answer"],
+        assumedKnown,
+        explainBriefly,
+        explainInDetail,
+      },
+      preState,
+      targetConceptIds: trialConcepts.map((concept) => concept.id),
+      targetDimensions: payload.source_type === "file"
+        ? ["familiarity", "conceptual", "code_reading"]
+        : ["familiarity", "conceptual"],
+      strategyRationale: teacherPlan
+        ? strategyText.slice(0, 1200)
+        : "The answer used the current learner context without a separate Planner call.",
+    });
     await this.recordSuccessfulAnswerLearning(projectId, record);
     void this.runAndroidObserver(projectId, record);
     return record;
@@ -2789,119 +2795,6 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return { status: "ok", rebuilt, policyVersion: KNOWLEDGE_POLICY_VERSION };
   }
 
-  private diagnosticFromRow(row: Row): DiagnosticItem {
-    return {
-      id: String(row.id),
-      projectId: Number(row.project_id),
-      sessionId: row.session_id == null ? null : String(row.session_id),
-      sourceQaRecordId: row.source_qa_record_id == null ? null : Number(row.source_qa_record_id),
-      conceptIds: JSON.parse(String(row.concept_ids_json || "[]")),
-      dimension: String(row.dimension) as KnowledgeDimension,
-      itemType: String(row.item_type) as DiagnosticItem["itemType"],
-      prompt: String(row.prompt),
-      options: JSON.parse(String(row.options_json || "[]")),
-      sourceRefs: JSON.parse(String(row.source_refs_json || "[]")),
-      rationale: String(row.rationale || ""),
-      difficulty: Number(row.difficulty),
-      createdAt: String(row.created_at),
-    };
-  }
-
-  private async getPendingDiagnosticV2(projectId: number): Promise<{ item: DiagnosticItem | null }> {
-    await this.getProject(projectId);
-    const row = (await db.query<Row>(
-      "SELECT * FROM diagnostic_items WHERE project_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1",
-      [projectId],
-    ))[0];
-    return { item: row ? this.diagnosticFromRow(row) : null };
-  }
-
-  private canonicalAnswer(value: unknown): string {
-    const normalized = value && typeof value === "object" && !Array.isArray(value)
-      && Object.keys(value as object).length === 1 && "value" in (value as Record<string, unknown>)
-      ? (value as Record<string, unknown>).value
-      : value;
-    return JSON.stringify(normalized);
-  }
-
-  private async answerDiagnosticV2(
-    projectId: number,
-    itemId: string,
-    answer: unknown,
-  ): Promise<{ status: string; correct: boolean; attemptId: string }> {
-    return db.transaction(async () => {
-      const item = (await db.queryInTx<Row>(
-        "SELECT * FROM diagnostic_items WHERE id=? AND project_id=? AND status='pending'",
-        [itemId, projectId],
-      ))[0];
-      if (!item) throw new Error("Diagnostic item is not available");
-      const expected = JSON.parse(String(item.answer_key_json));
-      const correct = this.canonicalAnswer(answer) === this.canonicalAnswer(expected);
-      const attemptId = `diagnostic-attempt:${crypto.randomUUID()}`;
-      const evidenceIds: string[] = [];
-      for (const conceptId of JSON.parse(String(item.concept_ids_json || "[]")) as string[]) {
-        const evidenceId = `${attemptId}:${conceptId}`;
-        await this.appendLearningEvidenceV2(projectId, {
-          id: evidenceId,
-          idempotencyKey: evidenceId,
-          conceptId,
-          dimension: item.dimension,
-          direction: correct ? "positive" : "negative",
-          strength: 1,
-          reliability: 0.9,
-          source: "diagnostic",
-          action: "answered",
-          object: { diagnosticItemId: itemId },
-          result: { answer },
-          sessionId: item.session_id,
-          qaRecordId: item.source_qa_record_id,
-          diagnosticAttemptId: attemptId,
-          objectiveCorrect: correct,
-        }, true);
-        evidenceIds.push(evidenceId);
-      }
-      await db.runInTx(
-        `INSERT INTO diagnostic_attempts
-         (id,item_id,project_id,session_id,answer_json,is_correct,evidence_ids_json,answered_at)
-         VALUES(?,?,?,?,?,?,?,?)`,
-        [attemptId, itemId, projectId, item.session_id, JSON.stringify(answer), correct ? 1 : 0, JSON.stringify(evidenceIds), now()],
-      );
-      await db.runInTx(
-        "UPDATE diagnostic_items SET status='answered',shown_at=COALESCE(shown_at,?) WHERE id=?",
-        [now(), itemId],
-      );
-      return { status: "answered", correct, attemptId };
-    });
-  }
-
-  private async dismissDiagnosticV2(projectId: number, itemId: string): Promise<{ status: string }> {
-    await db.run(
-      "UPDATE diagnostic_items SET status='dismissed',dismissed_at=? WHERE id=? AND project_id=? AND status='pending'",
-      [now(), itemId, projectId],
-    );
-    return { status: "dismissed" };
-  }
-
-  private async flagDiagnosticV2(projectId: number, itemId: string): Promise<{ status: string }> {
-    const attempt = (await db.query<Row>(
-      "SELECT * FROM diagnostic_attempts WHERE item_id=? AND project_id=? ORDER BY answered_at DESC LIMIT 1",
-      [itemId, projectId],
-    ))[0];
-    if (attempt) {
-      for (const evidenceId of JSON.parse(String(attempt.evidence_ids_json || "[]")) as string[]) {
-        await this.voidLearningEvidenceV2(
-          projectId,
-          evidenceId,
-          `diagnostic-flag:${itemId}:${evidenceId}`,
-          "user_flagged_item",
-        );
-      }
-      await db.run("UPDATE diagnostic_attempts SET user_flagged=1 WHERE id=?", [attempt.id]);
-    }
-    await db.run("UPDATE diagnostic_items SET status='flagged' WHERE id=? AND project_id=?", [itemId, projectId]);
-    return { status: "flagged" };
-  }
-
   private jsonArray(value: unknown): Array<Record<string, unknown>> {
     try {
       const parsed = JSON.parse(String(value || "[]"));
@@ -3295,17 +3188,19 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       if (concept) conceptIds.push(concept.id);
     }
     if (!conceptIds.length) return;
+    const teachingTrial = await teachingOutcomes.findTrialForQa(projectId, record.id);
     await db.run(
       `INSERT INTO diagnostic_items
-       (id,project_id,session_id,source_qa_record_id,concept_ids_json,dimension,
-        item_type,prompt,options_json,answer_key_json,source_refs_json,rationale,
-        difficulty,strategy_version,status,created_at)
-       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)`,
+       (id,project_id,session_id,source_qa_record_id,teaching_trial_id,
+        concept_ids_json,dimension,item_type,prompt,options_json,answer_key_json,
+        source_refs_json,rationale,difficulty,strategy_version,status,created_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)`,
       [
         `diagnostic:${crypto.randomUUID()}`,
         projectId,
         record.session_id == null ? null : String(record.session_id),
         record.id,
+        teachingTrial?.id ?? null,
         JSON.stringify(conceptIds),
         candidate.dimension,
         candidate.itemType,
@@ -3393,6 +3288,28 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       const parent = record.parent_qa_id
         ? await this.getQA(projectId, record.parent_qa_id!).catch(() => null)
         : null;
+      const previousTrial = (await db.query<Row>(
+        `SELECT t.* FROM teaching_trials t
+         WHERE t.project_id=?
+           AND ((t.session_id=?)
+             OR (t.session_id IS NULL AND ? IS NULL))
+           AND t.qa_record_id<?
+           AND t.was_applied=1
+           AND NOT EXISTS(
+             SELECT 1 FROM teaching_outcomes o
+             WHERE o.teaching_trial_id=t.id
+           )
+         ORDER BY t.qa_record_id DESC LIMIT 1`,
+        [projectId, record.session_id ?? null, record.session_id ?? null, record.id],
+      ))[0];
+      let previousTeachingContext: Record<string, unknown> = {};
+      if (previousTrial?.effective_context_json) {
+        try {
+          previousTeachingContext = JSON.parse(String(previousTrial.effective_context_json));
+        } catch {
+          previousTeachingContext = {};
+        }
+      }
       const completedAnswerCount = Number((await db.query<Row>(
         "SELECT COUNT(*) AS count FROM qa_records WHERE answer_md <> ''",
       ))[0]?.count || 0);
@@ -3417,6 +3334,13 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         sourceType: record.source_type,
         sourcePath: record.source_path || undefined,
         sourceExcerpt: compactText(sourceExcerpt, 2200),
+        previousAppliedTeaching: previousTrial ? {
+          qaRecordId: Number(previousTrial.qa_record_id),
+          teachingGoal: String(previousTeachingContext.teaching_goal || ""),
+          strategies: Array.isArray(previousTeachingContext.strategies)
+            ? previousTeachingContext.strategies.map(String).filter(Boolean).slice(0, 5)
+            : [],
+        } : null,
       });
       const raw = await this.callLLM([
         { role: "system", content: "You are a conservative, auditable learning-evidence observer. Output valid JSON only." },
@@ -3424,6 +3348,29 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       ]);
       const result = parseObserverResult(raw);
       await this.applyAndroidObserverResult(projectId, record, result, jobId);
+      const teachingOutcome = result.previousTeachingOutcome;
+      if (
+        previousTrial
+        && teachingOutcome
+        && teachingOutcome.confidence >= 0.55
+        && record.id > Number(previousTrial.qa_record_id)
+        && record.question.includes(teachingOutcome.evidenceQuote)
+      ) {
+        await teachingOutcomes.recordOutcome({
+          idempotencyKey: `teaching-outcome:v1:trial:${previousTrial.id}:evaluation-qa:${record.id}`,
+          projectId,
+          teachingTrialId: String(previousTrial.id),
+          result: teachingOutcome.result,
+          confidence: teachingOutcome.confidence,
+          reason: teachingOutcome.reason,
+          evidenceQuote: teachingOutcome.evidenceQuote,
+          evidenceType: "observer_inference",
+          evidenceRefId: `qa:${record.id}`,
+          evaluationQaRecordId: record.id,
+          sourceObservationId: `android-observer:v1:qa:${record.id}:previous_teaching_outcome:0`,
+          observerRunId: jobId,
+        });
+      }
       await this.recordModelCall(projectId, "observer", "completed", start);
       await db.run("UPDATE observer_jobs SET status='completed',updated_at=? WHERE id=?", [now(), jobId]);
     } catch (error) {
@@ -3575,6 +3522,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
        ORDER BY event_time DESC LIMIT 100`,
       [String(projectId)],
     );
+    const evidenceConcept = (entry: PersonalizationProfile["concepts"][number]) => ({
+      conceptId: entry.concept.id,
+      displayName: entry.concept.displayName,
+      domain: entry.concept.domain,
+    });
     return {
       preferences: await this.getLearnerPreferences(projectId),
       concepts: entries,
@@ -3656,6 +3608,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
           scopeId: evidence.scopeId,
         };
       }),
+      evidenceSummary: {
+        verified: entries.filter((entry) => entry.judgement === "known").slice(0, 20).map(evidenceConcept),
+        learning: entries.filter((entry) => entry.judgement === "unfamiliar").slice(0, 20).map(evidenceConcept),
+        insufficient: entries.filter((entry) => entry.judgement === "uncertain").slice(0, 20).map(evidenceConcept),
+        teaching: await teachingOutcomes.evidenceSummary(projectId),
+      },
     };
   }
 

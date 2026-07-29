@@ -18,6 +18,7 @@ from app.models.schemas import (
     AnswerFeedbackRequest,
     LearnerPreferencesUpdate,
     PersonalizationResolveRequest,
+    TeachingFeedbackRequest,
     TermImpressionsBatchRequest,
 )
 from app.services.personalization_service import (
@@ -838,6 +839,37 @@ def get_profile(project_id: int) -> dict:
                ORDER BY event_time DESC LIMIT 100""",
             (GLOBAL_SCOPE_ID, str(project_id)),
         ).fetchall()
+        from app.services.personalization.teaching.outcome_service import (
+            teaching_evidence_summary,
+        )
+        teaching_summary = teaching_evidence_summary(project_id, conn)
+    verified_concepts = [
+        {
+            "conceptId": item["concept"]["id"],
+            "displayName": item["concept"]["displayName"],
+            "domain": item["concept"]["domain"],
+        }
+        for item in entries
+        if item["judgement"] == "known"
+    ][:20]
+    learning_concepts = [
+        {
+            "conceptId": item["concept"]["id"],
+            "displayName": item["concept"]["displayName"],
+            "domain": item["concept"]["domain"],
+        }
+        for item in entries
+        if item["judgement"] == "unfamiliar"
+    ][:20]
+    insufficient_concepts = [
+        {
+            "conceptId": item["concept"]["id"],
+            "displayName": item["concept"]["displayName"],
+            "domain": item["concept"]["domain"],
+        }
+        for item in entries
+        if item["judgement"] == "uncertain"
+    ][:20]
     return {
         "preferences": _preferences_response(effective_preferences(project_id)),
         "concepts": entries,
@@ -881,6 +913,12 @@ def get_profile(project_id: int) -> dict:
             }
             for row in evidence_rows
         ],
+        "evidenceSummary": {
+            "verified": verified_concepts,
+            "learning": learning_concepts,
+            "insufficient": insufficient_concepts,
+            "teaching": teaching_summary,
+        },
         **intelligence,
     }
 
@@ -945,6 +983,42 @@ def pending_diagnostic(project_id: int) -> dict:
     _require_project(project_id)
     from app.services.personalization.knowledge_state_service import get_pending_diagnostic
     return {"item": get_pending_diagnostic(project_id)}
+
+
+@router.get("/{project_id}/personalization/teaching/{qa_record_id}")
+def get_teaching_trial(project_id: int, qa_record_id: int) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.teaching.outcome_service import (
+        teaching_trial_payload,
+    )
+    from app.services.storage import _connect
+    with _connect() as conn:
+        payload = teaching_trial_payload(project_id, qa_record_id, conn)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Teaching trial not found")
+    return payload
+
+
+@router.post("/{project_id}/personalization/teaching/{qa_record_id}/feedback")
+def submit_teaching_feedback(
+    project_id: int,
+    qa_record_id: int,
+    body: TeachingFeedbackRequest,
+) -> dict:
+    _require_project(project_id)
+    from app.services.personalization.teaching.outcome_service import (
+        record_manual_teaching_feedback,
+    )
+    try:
+        return record_manual_teaching_feedback(
+            project_id,
+            qa_record_id,
+            result=body.result,
+            idempotency_key=body.idempotency_key,
+            reason=body.reason,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/{project_id}/personalization/diagnostics/{item_id}/answer")

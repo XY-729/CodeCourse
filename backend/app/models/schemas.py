@@ -240,6 +240,16 @@ class AnswerFeedbackRequest(BaseModel):
     scope: Literal["global", "project"] = "global"
 
 
+class TeachingFeedbackRequest(BaseModel):
+    result: Literal[
+        "successful",
+        "partially_successful",
+        "unsuccessful",
+    ]
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    reason: str = Field(default="", max_length=1000)
+
+
 class TermImpressionRequest(BaseModel):
     concept_id: Optional[str] = None
     source_type: Literal["course", "qa"]

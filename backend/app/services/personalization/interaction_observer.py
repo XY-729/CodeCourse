@@ -833,28 +833,27 @@ def _execute_observer_run(
                 pto = filtered_obs.previous_teaching_outcome
                 if pto.confidence >= 0.55 and qa_record_id > previous_trial_record["qa_record_id"]:
                     outcome_key = f"teaching-outcome:v1:trial:{previous_trial_record['id']}:evaluation-qa:{qa_record_id}"
-                    now_iso = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-                    conn.execute(
-                        """INSERT OR IGNORE INTO teaching_outcomes
-                           (id, idempotency_key, project_id, session_id,
-                            teaching_trial_id, taught_qa_record_id, evaluation_qa_record_id,
-                            result, confidence, reason, evidence_quote,
-                            source_observation_id, observer_run_id, created_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            outcome_key, outcome_key, project_id, qa_record.session_id,
-                            previous_trial_record["id"], previous_trial_record["qa_record_id"],
-                            qa_record_id,
-                            pto.result, pto.confidence, pto.reason, pto.evidence_quote,
-                            f"observer:v1:qa:{qa_record_id}:previous_teaching_outcome:0",
-                            run_key, now_iso,
-                        ),
+                    from app.services.personalization.teaching.outcome_service import (
+                        record_teaching_outcome,
                     )
-                    if pto.result in ("unsuccessful", "partially_successful", "successful"):
-                        conn.execute(
-                            "UPDATE teaching_trials SET previous_outcome = ? WHERE id = ?",
-                            (pto.result, previous_trial_record["id"]),
-                        )
+                    record_teaching_outcome(
+                        conn=conn,
+                        idempotency_key=outcome_key,
+                        project_id=project_id,
+                        teaching_trial_id=str(previous_trial_record["id"]),
+                        result=pto.result,
+                        confidence=pto.confidence,
+                        reason=pto.reason,
+                        evidence_quote=pto.evidence_quote,
+                        evidence_type="observer_inference",
+                        evidence_ref_id=f"qa:{qa_record_id}",
+                        evaluation_qa_record_id=qa_record_id,
+                        source_observation_id=(
+                            f"observer:v1:qa:{qa_record_id}:"
+                            "previous_teaching_outcome:0"
+                        ),
+                        observer_run_id=run_key,
+                    )
 
         run_in_transaction(_write_observations)
 

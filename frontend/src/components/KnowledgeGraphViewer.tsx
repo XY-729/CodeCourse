@@ -9,6 +9,16 @@ import {
   updateKnowledgeNode,
 } from "../api/client";
 import type { KnowledgeEdge, KnowledgeGraph, KnowledgeNode } from "../api/client";
+import {
+  diffKnowledgeGraphs,
+  getKnowledgeGraphIndex,
+  getKnowledgeNeighborhood,
+} from "./knowledgeGraphModel";
+import {
+  positionLabelOverlay,
+  reconcileLabelElements,
+  updateLabelVisibility,
+} from "./knowledgeGraphLabels";
 
 type Props = {
   projectId: number;
@@ -17,6 +27,7 @@ type Props = {
   onOpenCourse: (path: string) => void;
   onOpenFile: (path: string) => void;
   onContentChanged?: () => void | Promise<void>;
+  onGraphChanged?: () => void | Promise<void>;
   compact?: boolean;
   onRequestText?: (options: { title: string; label?: string; initialValue?: string; placeholder?: string; confirmText?: string }) => Promise<string | null>;
   onConfirm?: (title: string, message: string, options?: { confirmText?: string; danger?: boolean }) => Promise<boolean>;
@@ -37,14 +48,7 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function nodeVisuals(graph: KnowledgeGraph, container: HTMLElement | null, darkMode = false): Map<number, NodeVisual> {
-  const metrics = new Map<number, { incoming: number; outgoing: number }>();
-  for (const node of graph.nodes) {
-    metrics.set(node.id, { incoming: 0, outgoing: 0 });
-  }
-  for (const edge of graph.edges) {
-    metrics.get(edge.source_node_id)!.outgoing += 1;
-    metrics.get(edge.target_node_id)!.incoming += 1;
-  }
+  const { degreeById } = getKnowledgeGraphIndex(graph);
 
   const minDimension = Math.min(container?.clientWidth ?? 900, container?.clientHeight ?? 680);
   const density = clamp(Math.sqrt(12 / Math.max(1, graph.nodes.length)), 0.7, 1.18);
@@ -71,8 +75,7 @@ function nodeVisuals(graph: KnowledgeGraph, container: HTMLElement | null, darkM
 
   return new Map(
     graph.nodes.map((node) => {
-      const metric = metrics.get(node.id)!;
-      const degree = metric.incoming + metric.outgoing;
+      const degree = degreeById.get(node.id) ?? 0;
       const level = Math.min(5, degree);
       const size = Math.round(baseSize * sizeSteps[level]);
       const color = colorSteps[level];
@@ -94,7 +97,6 @@ function focusSizes(container: HTMLElement | null) {
 
 const LAYOUT_PADDING = 58;
 const ANIMATION_MS = 360;
-const FOCUS_SECONDARY_FIT_DELAY_MS = 180;
 
 const RELATION_LABELS: Record<string, string> = {
   explains: "解释",
@@ -102,91 +104,6 @@ const RELATION_LABELS: Record<string, string> = {
   related_to: "相关",
   references: "引用",
 };
-
-type LabelOverlayState = {
-  viewMode: ViewMode;
-  focusedNodeId: number | null;
-  focusDepth: 1 | 2;
-  selectedNodeId: number | null;
-  hoveredNodeId: number | null;
-  searchQuery: string;
-};
-
-function syncLabelOverlay(
-  cy: Core,
-  graph: KnowledgeGraph,
-  layer: HTMLDivElement,
-  labels: Map<number, HTMLDivElement>,
-  state: LabelOverlayState,
-) {
-  const degrees = new Map(graph.nodes.map((node) => [node.id, 0]));
-  for (const edge of graph.edges) {
-    degrees.set(edge.source_node_id, (degrees.get(edge.source_node_id) ?? 0) + 1);
-    degrees.set(edge.target_node_id, (degrees.get(edge.target_node_id) ?? 0) + 1);
-  }
-  const query = state.searchQuery.trim().toLocaleLowerCase();
-  const focusedNodeIds = state.viewMode === "focus" && state.focusedNodeId != null
-    ? directNeighborhood(graph, state.focusedNodeId, state.focusDepth).nodeIds
-    : null;
-  const candidates: Array<{ id: number; element: HTMLDivElement; x: number; y: number; width: number; height: number; priority: number }> = [];
-
-  for (const graphNode of graph.nodes) {
-    const node = cy.getElementById(`n${graphNode.id}`);
-    let label = labels.get(graphNode.id);
-    if (!label) {
-      label = document.createElement("div");
-      label.className = "knowledge-node-label";
-      label.textContent = graphNode.title;
-      layer.appendChild(label);
-      labels.set(graphNode.id, label);
-    } else if (label.textContent !== graphNode.title) {
-      label.textContent = graphNode.title;
-    }
-    if (
-      node.empty()
-      || (focusedNodeIds != null && !focusedNodeIds.has(graphNode.id))
-      || node.hasClass("graph-hidden")
-      || (node.hasClass("hover-dim") && graphNode.id !== state.focusedNodeId)
-    ) {
-      label.hidden = true;
-      continue;
-    }
-    const rendered = node.renderedPosition();
-    const y = rendered.y + node.renderedOuterHeight() / 2 + 7;
-    const important = graphNode.id === state.focusedNodeId || graphNode.id === state.selectedNodeId || graphNode.id === state.hoveredNodeId;
-    const matched = Boolean(query && graphNode.title.toLocaleLowerCase().includes(query));
-    label.hidden = false;
-    label.style.left = `${rendered.x}px`;
-    label.style.top = `${y}px`;
-    label.classList.toggle("important", important);
-    label.classList.toggle("matched", matched);
-    const width = Math.min(176, Math.max(48, graphNode.title.length * 7.2));
-    const height = graphNode.title.length > 20 ? 38 : 22;
-    candidates.push({
-      id: graphNode.id,
-      element: label,
-      x: rendered.x,
-      y,
-      width,
-      height,
-      priority: (important ? 1000 : 0) + (matched ? 800 : 0) + (degrees.get(graphNode.id) ?? 0) * 10,
-    });
-  }
-
-  if (graph.nodes.length <= 50) return;
-  const accepted: typeof candidates = [];
-  for (const candidate of [...candidates].sort((a, b) => b.priority - a.priority || a.id - b.id)) {
-    const overlaps = accepted.some((item) => (
-      Math.abs(item.x - candidate.x) < (item.width + candidate.width) / 2 + 6
-      && Math.abs(item.y - candidate.y) < (item.height + candidate.height) / 2 + 4
-    ));
-    if (overlaps && candidate.priority < 800) {
-      candidate.element.hidden = true;
-    } else {
-      accepted.push(candidate);
-    }
-  }
-}
 
 function fallbackPosition(index: number, total: number, anchor: { x: number; y: number }) {
   const ring = Math.floor(index / 10);
@@ -290,6 +207,9 @@ function toElements(graph: KnowledgeGraph, container: HTMLElement | null, darkMo
           color: visual.color,
           borderColor: visual.borderColor,
           size: visual.size,
+          accentColor: darkMode ? "#64a0ff" : "#25766c",
+          focusRootColor: darkMode ? "#8fc9ff" : "#174c43",
+          focusParentColor: darkMode ? "#6e8a84" : "#75998e",
         },
         position,
       };
@@ -302,37 +222,70 @@ function toElements(graph: KnowledgeGraph, container: HTMLElement | null, darkMo
         target: `n${edge.target_node_id}`,
         label: edge.label || RELATION_LABELS[edge.relation_type] || edge.relation_type,
         relationType: edge.relation_type,
+        lineColor: darkMode ? "#606067" : "#9aa7b8",
+        accentColor: darkMode ? "#64a0ff" : "#25766c",
       },
     })),
   ];
 }
 
-function directNeighborhood(graph: KnowledgeGraph, focusedNodeId: number, depth = 1) {
-  const nodeIds = new Set<number>([focusedNodeId]);
-  const levels = new Map<number, number>([[focusedNodeId, 0]]);
-  const edgeIds = new Set<number>();
-  let frontier = [focusedNodeId];
-  for (let level = 1; level <= depth; level += 1) {
-    const next: number[] = [];
-    for (const current of frontier) {
-      for (const edge of graph.edges) {
-        let adjacent: number | null = null;
-        if (edge.source_node_id === current) adjacent = edge.target_node_id;
-        else if (edge.target_node_id === current) adjacent = edge.source_node_id;
-        if (adjacent == null) continue;
-        if (!nodeIds.has(adjacent)) {
-          nodeIds.add(adjacent);
-          levels.set(adjacent, level);
-          next.push(adjacent);
-        }
+function reconcileGraphElements(
+  cy: Core,
+  previous: KnowledgeGraph,
+  next: KnowledgeGraph,
+  container: HTMLElement | null,
+  darkMode: boolean,
+) {
+  const delta = diffKnowledgeGraphs(previous, next);
+  if (!delta.contentChanged) return delta;
+
+  const definitions = new Map(
+    toElements(next, container, darkMode).map((definition) => [String(definition.data?.id), definition]),
+  );
+
+  cy.batch(() => {
+    for (const edgeId of delta.removedEdgeIds) cy.getElementById(`e${edgeId}`).remove();
+    for (const nodeId of delta.removedNodeIds) cy.getElementById(`n${nodeId}`).remove();
+
+    for (const edgeId of delta.updatedEdgeIds) {
+      const oldEdge = previous.edges.find((edge) => edge.id === edgeId);
+      const nextEdge = next.edges.find((edge) => edge.id === edgeId);
+      if (
+        oldEdge
+        && nextEdge
+        && (oldEdge.source_node_id !== nextEdge.source_node_id || oldEdge.target_node_id !== nextEdge.target_node_id)
+      ) {
+        cy.getElementById(`e${edgeId}`).remove();
       }
     }
-    frontier = next;
-  }
-  for (const edge of graph.edges) {
-    if (nodeIds.has(edge.source_node_id) && nodeIds.has(edge.target_node_id)) edgeIds.add(edge.id);
-  }
-  return { nodeIds, edgeIds, levels };
+
+    for (const nodeId of delta.updatedNodeIds) {
+      const definition = definitions.get(`n${nodeId}`);
+      const element = cy.getElementById(`n${nodeId}`);
+      if (definition?.data && !element.empty()) element.data(definition.data);
+    }
+    for (const edgeId of delta.updatedEdgeIds) {
+      const definition = definitions.get(`e${edgeId}`);
+      const element = cy.getElementById(`e${edgeId}`);
+      if (definition?.data && !element.empty()) element.data(definition.data);
+    }
+
+    for (const nodeId of delta.addedNodeIds) {
+      const definition = definitions.get(`n${nodeId}`);
+      if (definition) cy.add(definition);
+    }
+    for (const edgeId of new Set([...delta.addedEdgeIds, ...delta.updatedEdgeIds])) {
+      if (!cy.getElementById(`e${edgeId}`).empty()) continue;
+      const definition = definitions.get(`e${edgeId}`);
+      if (definition) cy.add(definition);
+    }
+  });
+
+  return delta;
+}
+
+function directNeighborhood(graph: KnowledgeGraph, focusedNodeId: number, depth = 1) {
+  return getKnowledgeNeighborhood(graph, focusedNodeId, depth);
 }
 
 function arrangeFocusNeighborhood(cy: Core, graph: KnowledgeGraph, focusedNodeId: number, depth: number, animate: boolean) {
@@ -418,18 +371,6 @@ function focusViewport(cy: Core, focusedNodeId: number, radius: number, animate:
   }
 }
 
-function scheduleViewport(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, depth: number, focusRadius?: number) {
-  window.setTimeout(() => {
-    if (cy.destroyed()) return;
-    cy.resize();
-    if (mode === "focus" && focusedNodeId && focusRadius) {
-      focusViewport(cy, focusedNodeId, focusRadius, true);
-    } else {
-      fitVisible(cy, graph, mode, focusedNodeId, depth, true);
-    }
-  }, FOCUS_SECONDARY_FIT_DELAY_MS);
-}
-
 function fitVisible(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, depth: number, animate: boolean) {
   let fitElements = cy.elements().filter((element) => !element.hasClass("graph-hidden"));
   let padding = LAYOUT_PADDING;
@@ -453,9 +394,24 @@ function fitVisible(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNode
   }
 }
 
-function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focusedNodeId: number | null, depth: number, animate = true) {
-  cy.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge");
-  const overview = nodeVisuals(graph, cy.container());
+type ApplyGraphViewOptions = {
+  animate?: boolean;
+  fitViewport?: boolean;
+  scheduleViewport?: (callback: () => void, delay: number) => void;
+};
+
+function applyGraphView(
+  cy: Core,
+  graph: KnowledgeGraph,
+  mode: ViewMode,
+  focusedNodeId: number | null,
+  depth: number,
+  options: ApplyGraphViewOptions = {},
+) {
+  const animate = options.animate ?? true;
+  const fitViewport = options.fitViewport ?? true;
+  cy.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge hover-dim hover-related");
+  const overview = nodeVisuals(graph, cy.container(), currentDarkMode());
   cy.nodes().forEach((node) => {
     const visual = overview.get(Number(node.data("nodeId")));
     if (visual) {
@@ -503,19 +459,19 @@ function applyGraphView(cy: Core, graph: KnowledgeGraph, mode: ViewMode, focused
       }
     });
     const focusRadius = arrangeFocusNeighborhood(cy, graph, focusedNodeId, depth, animate);
-    if (focusRadius != null) {
-      window.setTimeout(() => focusViewport(cy, focusedNodeId, focusRadius, true), animate ? ANIMATION_MS : 0);
-      scheduleViewport(cy, graph, mode, focusedNodeId, depth, focusRadius);
+    if (fitViewport && focusRadius != null) {
+      const updateViewport = () => {
+        if (!cy.destroyed()) focusViewport(cy, focusedNodeId, focusRadius, animate);
+      };
+      if (options.scheduleViewport) options.scheduleViewport(updateViewport, animate ? ANIMATION_MS : 0);
+      else updateViewport();
     }
     cy.emit("render");
-    window.setTimeout(() => !cy.destroyed() && cy.emit("render"), animate ? ANIMATION_MS + 32 : 0);
     return;
   }
 
-  fitVisible(cy, graph, mode, focusedNodeId, depth, animate);
-  scheduleViewport(cy, graph, mode, focusedNodeId, depth);
+  if (fitViewport) fitVisible(cy, graph, mode, focusedNodeId, depth, animate);
   cy.emit("render");
-  window.setTimeout(() => !cy.destroyed() && cy.emit("render"), animate ? ANIMATION_MS + 32 : 0);
 }
 
 function placeAlongArc(count: number, middle: number, spread: number) {
@@ -524,44 +480,56 @@ function placeAlongArc(count: number, middle: number, spread: number) {
 }
 
 function resolvePositionCollisions(graph: KnowledgeGraph, positions: Map<number, { x: number; y: number }>) {
-  const degree = new Map<number, number>();
-  for (const node of graph.nodes) degree.set(node.id, 0);
-  for (const edge of graph.edges) {
-    degree.set(edge.source_node_id, (degree.get(edge.source_node_id) ?? 0) + 1);
-    degree.set(edge.target_node_id, (degree.get(edge.target_node_id) ?? 0) + 1);
-  }
+  const { degreeById } = getKnowledgeGraphIndex(graph);
+  const cellSize = 196;
 
-  // 保持高连接节点更稳定，迭代推离所有过近的节点，给圆点和标题都留下空间。
-  for (let iteration = 0; iteration < 90; iteration += 1) {
+  // 空间哈希只比较相邻网格，避免整理大型网络时执行全量 O(n²) 碰撞检查。
+  for (let iteration = 0; iteration < 36; iteration += 1) {
+    const buckets = new Map<string, KnowledgeNode[]>();
+    for (const node of graph.nodes) {
+      const position = positions.get(node.id);
+      if (!position) continue;
+      const key = `${Math.floor(position.x / cellSize)}:${Math.floor(position.y / cellSize)}`;
+      const bucket = buckets.get(key) ?? [];
+      bucket.push(node);
+      buckets.set(key, bucket);
+    }
     let moved = false;
-    for (let first = 0; first < graph.nodes.length; first += 1) {
-      for (let second = first + 1; second < graph.nodes.length; second += 1) {
-        const a = graph.nodes[first];
-        const b = graph.nodes[second];
-        const positionA = positions.get(a.id);
-        const positionB = positions.get(b.id);
-        if (!positionA || !positionB) continue;
-        let dx = positionB.x - positionA.x;
-        let dy = positionB.y - positionA.y;
-        let distance = Math.hypot(dx, dy);
-        const requiredDistance = 118 + Math.min(70, ((degree.get(a.id) ?? 0) + (degree.get(b.id) ?? 0)) * 10);
-        if (distance >= requiredDistance) continue;
-        if (distance < 0.001) {
-          const angle = ((a.id * 37 + b.id * 17) % 360) * (Math.PI / 180);
-          dx = Math.cos(angle);
-          dy = Math.sin(angle);
-          distance = 1;
+    for (const a of graph.nodes) {
+      const positionA = positions.get(a.id);
+      if (!positionA) continue;
+      const cellX = Math.floor(positionA.x / cellSize);
+      const cellY = Math.floor(positionA.y / cellSize);
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+          for (const b of buckets.get(`${cellX + offsetX}:${cellY + offsetY}`) ?? []) {
+            if (b.id <= a.id) continue;
+            const positionB = positions.get(b.id);
+            if (!positionB) continue;
+            let dx = positionB.x - positionA.x;
+            let dy = positionB.y - positionA.y;
+            let distance = Math.hypot(dx, dy);
+            const requiredDistance = 118
+              + Math.min(70, ((degreeById.get(a.id) ?? 0) + (degreeById.get(b.id) ?? 0)) * 10);
+            if (distance >= requiredDistance) continue;
+            if (distance < 0.001) {
+              const angle = ((a.id * 37 + b.id * 17) % 360) * (Math.PI / 180);
+              dx = Math.cos(angle);
+              dy = Math.sin(angle);
+              distance = 1;
+            }
+            const push = (requiredDistance - distance) / 2;
+            const massA = 1 + (degreeById.get(a.id) ?? 0) * 0.75;
+            const massB = 1 + (degreeById.get(b.id) ?? 0) * 0.75;
+            const unitX = dx / distance;
+            const unitY = dy / distance;
+            positionA.x -= unitX * push * (massB / (massA + massB));
+            positionA.y -= unitY * push * (massB / (massA + massB));
+            positionB.x += unitX * push * (massA / (massA + massB));
+            positionB.y += unitY * push * (massA / (massA + massB));
+            moved = true;
+          }
         }
-        const push = (requiredDistance - distance) / 2;
-        const massA = 1 + (degree.get(a.id) ?? 0) * 0.75;
-        const massB = 1 + (degree.get(b.id) ?? 0) * 0.75;
-        const unitX = dx / distance;
-        const unitY = dy / distance;
-        positionA.x -= unitX * push * (massB / (massA + massB));
-        positionA.y -= unitY * push * (massB / (massA + massB));
-        positionB.x += unitX * push * (massA / (massA + massB));
-        positionB.y += unitY * push * (massA / (massA + massB));
-        moved = true;
       }
     }
     if (!moved) break;
@@ -788,13 +756,13 @@ function createTreeForestPositions(graph: KnowledgeGraph) {
   return positions;
 }
 
-function createCompactOverviewLayout(cy: Core, graph: KnowledgeGraph) {
+function createCompactOverviewLayout(cy: Core, graph: KnowledgeGraph, animate = true) {
   const positions = createTreeForestPositions(graph);
   return cy.layout({
     name: "preset",
     fit: false,
-    animate: true,
-    animationDuration: 520,
+    animate,
+    animationDuration: animate ? 360 : 0,
     animationEasing: "ease-in-out-cubic",
     positions: (node: NodeSingular) => positions.get(Number(node.data("nodeId"))) ?? { x: 0, y: 0 },
     padding: LAYOUT_PADDING,
@@ -802,12 +770,19 @@ function createCompactOverviewLayout(cy: Core, graph: KnowledgeGraph) {
 }
 
 
-export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compact = false, onRequestText, onConfirm, onOpenQA, onOpenCourse, onOpenFile, onContentChanged, focusRef }: Props) {
+export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compact = false, onRequestText, onConfirm, onOpenQA, onOpenCourse, onOpenFile, onContentChanged, onGraphChanged, focusRef }: Props) {
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const labelLayerRef = useRef<HTMLDivElement | null>(null);
   const labelElementsRef = useRef(new Map<number, HTMLDivElement>());
-  const labelFrameRef = useRef<number | null>(null);
+  const labelPositionFrameRef = useRef<number | null>(null);
+  const labelVisibilityFrameRef = useRef<number | null>(null);
+  const scheduleLabelPositionRef = useRef<() => void>(() => undefined);
+  const scheduleLabelVisibilityRef = useRef<() => void>(() => undefined);
+  const viewportTimeoutRef = useRef<number | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
+  const resizeSettleTimeoutRef = useRef<number | null>(null);
+  const layoutRunningRef = useRef(false);
   const hoveredNodeIdRef = useRef<number | null>(null);
   const selectedNodeIdRef = useRef<number | null>(null);
   const searchQueryRef = useRef("");
@@ -817,6 +792,10 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const cyRef = useRef<Core | null>(null);
   const lastTapRef = useRef<{ id: string; at: number } | null>(null);
   const graphRef = useRef<KnowledgeGraph>({ nodes: [], edges: [] });
+  const renderedGraphRef = useRef<KnowledgeGraph>({ nodes: [], edges: [] });
+  const graphProjectIdRef = useRef<number | null>(null);
+  const projectIdRef = useRef(projectId);
+  const reloadRequestRef = useRef(0);
   const connectModeRef = useRef(false);
   const connectSourceIdRef = useRef<number | null>(null);
   const viewModeRef = useRef<ViewMode>("overview");
@@ -848,13 +827,41 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   }, []);
 
   async function reload() {
-    const next = await getKnowledgeGraph(projectId);
+    const requestId = ++reloadRequestRef.current;
+    const requestedProjectId = projectId;
+    const next = await getKnowledgeGraph(requestedProjectId);
+    if (requestId !== reloadRequestRef.current || projectIdRef.current !== requestedProjectId) return;
+    graphProjectIdRef.current = requestedProjectId;
     setGraph(next);
+  }
+
+  function scheduleViewportUpdate(callback: () => void, delay: number) {
+    if (viewportTimeoutRef.current != null) window.clearTimeout(viewportTimeoutRef.current);
+    viewportTimeoutRef.current = window.setTimeout(() => {
+      viewportTimeoutRef.current = null;
+      callback();
+    }, Math.max(0, delay));
+  }
+
+  async function notifyGraphChanged() {
+    if (onGraphChanged) await onGraphChanged();
+    else await reload();
   }
 
   useEffect(() => {
     graphRef.current = graph;
   }, [graph]);
+
+  useEffect(() => {
+    projectIdRef.current = projectId;
+    graphProjectIdRef.current = null;
+    reloadRequestRef.current += 1;
+    setGraph({ nodes: [], edges: [] });
+    setSelectedNode(null);
+    setSelectedEdge(null);
+    setViewMode("overview");
+    setFocusedNodeId(null);
+  }, [projectId]);
 
   useEffect(() => {
     connectModeRef.current = connectMode;
@@ -869,12 +876,12 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
 
   useEffect(() => {
     selectedNodeIdRef.current = selectedNode?.id ?? null;
-    cyRef.current?.emit("render");
+    scheduleLabelVisibilityRef.current();
   }, [selectedNode?.id]);
 
   useEffect(() => {
     searchQueryRef.current = searchQuery;
-    cyRef.current?.emit("render");
+    scheduleLabelVisibilityRef.current();
   }, [searchQuery]);
 
   useEffect(() => {
@@ -921,7 +928,11 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   }, [relationType]);
 
   useEffect(() => {
-    reload().catch((error) => setMessage(error instanceof Error ? error.message : "加载知识网络失败"));
+    const delay = graphProjectIdRef.current === projectId ? 60 : 0;
+    const timer = window.setTimeout(() => {
+      reload().catch((error) => setMessage(error instanceof Error ? error.message : "加载知识网络失败"));
+    }, delay);
+    return () => window.clearTimeout(timer);
   }, [projectId, refreshKey]);
 
   useEffect(() => {
@@ -966,7 +977,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     cyRef.current?.destroy();
     const cy = cytoscape({
       container,
-      elements: toElements(graph, container, darkMode),
+      elements: [],
       style: [
         {
           selector: "node",
@@ -986,14 +997,14 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         {
           selector: "node.focus-root",
           style: {
-            "border-color": darkMode ? "#8fc9ff" : "#174c43",
+            "border-color": "data(focusRootColor)",
             "border-width": 5,
           },
         },
         {
           selector: "node.focus-parent",
           style: {
-            "border-color": darkMode ? "#6e8a84" : "#75998e",
+            "border-color": "data(focusParentColor)",
             "border-width": 3,
             opacity: 0.95,
           },
@@ -1015,24 +1026,28 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         {
           selector: "node:selected",
           style: {
-            "border-color": darkMode ? "#8fc9ff" : "#174c43",
+            "border-color": "data(focusRootColor)",
             "border-width": 4,
           },
         },
         {
           selector: "node.hover-related",
-          style: { "border-color": darkMode ? "#64a0ff" : "#25766c", "border-width": 4 },
+          style: { "border-color": "data(accentColor)", "border-width": 4 },
         },
         {
           selector: "node.hover-dim",
           style: { opacity: 0.2 },
         },
         {
+          selector: "node.graph-hidden.hover-dim",
+          style: { opacity: 0, events: "no" },
+        },
+        {
           selector: "edge",
           style: {
             width: 2,
-            "line-color": darkMode ? "#606067" : "#9aa7b8",
-            "target-arrow-color": darkMode ? "#606067" : "#9aa7b8",
+            "line-color": "data(lineColor)",
+            "target-arrow-color": "data(lineColor)",
             "target-arrow-shape": "triangle",
             "curve-style": "bezier",
             label: "",
@@ -1046,8 +1061,8 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         {
           selector: "edge.focus-edge",
           style: {
-            "line-color": darkMode ? "#64a0ff" : "#25766c",
-            "target-arrow-color": darkMode ? "#64a0ff" : "#25766c",
+            "line-color": "data(accentColor)",
+            "target-arrow-color": "data(accentColor)",
             width: 3,
             "z-index": 12,
             opacity: 1,
@@ -1064,36 +1079,51 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         {
           selector: "edge:selected",
           style: {
-            "line-color": darkMode ? "#64a0ff" : "#25766c",
-            "target-arrow-color": darkMode ? "#64a0ff" : "#25766c",
+            "line-color": "data(accentColor)",
+            "target-arrow-color": "data(accentColor)",
             width: 3,
             "z-index": 12,
           },
         },
         {
           selector: "edge.hover-related",
-          style: { "line-color": darkMode ? "#64a0ff" : "#25766c", "target-arrow-color": darkMode ? "#64a0ff" : "#25766c", width: 3, opacity: 1 },
+          style: { "line-color": "data(accentColor)", "target-arrow-color": "data(accentColor)", width: 3, opacity: 1 },
         },
         {
           selector: "edge.hover-dim",
           style: { opacity: 0.12 },
         },
+        {
+          selector: "edge.graph-hidden.hover-dim",
+          style: { opacity: 0, events: "no" },
+        },
       ],
       layout: { name: "preset", fit: false },
-      minZoom: compact ? 0.15 : 0.25,
+      // 全览必须能容纳完整树；标签由独立 DOM 层保持可读，不依赖画布最小缩放。
+      minZoom: compact ? 0.05 : 0.1,
       maxZoom: 3,
     });
     cyRef.current = cy;
+    renderedGraphRef.current = { nodes: [], edges: [] };
+    overviewPositionsRef.current.clear();
 
     const labelLayer = labelLayerRef.current;
     labelElementsRef.current.clear();
     labelLayer?.replaceChildren();
-    const scheduleLabels = () => {
-      if (!labelLayer || labelFrameRef.current != null) return;
-      labelFrameRef.current = window.requestAnimationFrame(() => {
-        labelFrameRef.current = null;
+    const scheduleLabelPositions = () => {
+      if (!labelLayer || labelPositionFrameRef.current != null) return;
+      labelPositionFrameRef.current = window.requestAnimationFrame(() => {
+        labelPositionFrameRef.current = null;
         if (cy.destroyed()) return;
-        syncLabelOverlay(cy, graphRef.current, labelLayer, labelElementsRef.current, {
+        positionLabelOverlay(cy, graphRef.current, labelElementsRef.current);
+      });
+    };
+    const scheduleLabelVisibility = () => {
+      if (!labelLayer || labelVisibilityFrameRef.current != null) return;
+      labelVisibilityFrameRef.current = window.requestAnimationFrame(() => {
+        labelVisibilityFrameRef.current = null;
+        if (cy.destroyed()) return;
+        updateLabelVisibility(cy, graphRef.current, labelElementsRef.current, {
           viewMode: viewModeRef.current,
           focusedNodeId: focusedNodeIdRef.current,
           focusDepth: focusDepthRef.current,
@@ -1103,47 +1133,63 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         });
       });
     };
-    cy.on("render pan zoom position resize", scheduleLabels);
+    scheduleLabelPositionRef.current = scheduleLabelPositions;
+    scheduleLabelVisibilityRef.current = scheduleLabelVisibility;
+    cy.on("render", scheduleLabelPositions);
+    cy.on("panend zoomend resize", scheduleLabelVisibility);
     cy.on("mouseover", "node", (event) => {
       const nodeId = Number(event.target.data("nodeId"));
       hoveredNodeIdRef.current = nodeId;
       if (!connectModeRef.current) {
         const { nodeIds, edgeIds } = directNeighborhood(graphRef.current, nodeId, 1);
-        cy.nodes().forEach((node) => { node.toggleClass("hover-dim", !nodeIds.has(Number(node.data("nodeId")))); });
-        cy.nodes().forEach((node) => { node.toggleClass("hover-related", nodeIds.has(Number(node.data("nodeId")))); });
-        cy.edges().forEach((edge) => { edge.toggleClass("hover-dim", !edgeIds.has(Number(edge.data("edgeId")))); });
-        cy.edges().forEach((edge) => { edge.toggleClass("hover-related", edgeIds.has(Number(edge.data("edgeId")))); });
+        const relatedNodes = cy.collection();
+        const relatedEdges = cy.collection();
+        let nextRelatedNodes = relatedNodes;
+        let nextRelatedEdges = relatedEdges;
+        for (const id of nodeIds) nextRelatedNodes = nextRelatedNodes.union(cy.getElementById(`n${id}`));
+        for (const id of edgeIds) nextRelatedEdges = nextRelatedEdges.union(cy.getElementById(`e${id}`));
+        cy.batch(() => {
+          cy.elements().removeClass("hover-dim hover-related");
+          cy.nodes().difference(nextRelatedNodes).addClass("hover-dim");
+          cy.edges().difference(nextRelatedEdges).addClass("hover-dim");
+          nextRelatedNodes.addClass("hover-related");
+          nextRelatedEdges.addClass("hover-related");
+        });
       }
-      scheduleLabels();
+      scheduleLabelVisibility();
     });
     cy.on("mouseout", "node", () => {
       hoveredNodeIdRef.current = null;
       cy.elements().removeClass("hover-dim hover-related");
-      scheduleLabels();
+      scheduleLabelVisibility();
     });
-    scheduleLabels();
+    scheduleLabelPositions();
 
-    const allNodesHavePosition = graph.nodes.length > 0 && graph.nodes.every((node) => node.x != null && node.y != null);
-    if (!allNodesHavePosition && graph.nodes.length > 1) {
-      const initialLayout = createCompactOverviewLayout(cy, graph);
-      initialLayout.one("layoutstop", () => {
-        if (!cy.destroyed()) {
-          const positions = new Map<number, { x: number; y: number }>();
-          cy.nodes().forEach((node) => { positions.set(Number(node.data("nodeId")), { ...node.position() }); });
-          overviewPositionsRef.current = positions;
-          applyGraphView(cy, graphRef.current, viewModeRef.current, focusedNodeIdRef.current, focusDepthRef.current, true);
-        }
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      if (resizeFrameRef.current != null) return;
+      resizeFrameRef.current = window.requestAnimationFrame(() => {
+        resizeFrameRef.current = null;
+        if (cy.destroyed()) return;
+        cy.resize();
+        scheduleLabelPositions();
+        scheduleLabelVisibility();
       });
-      initialLayout.run();
-    } else {
-      cy.layout({ name: "preset", fit: false }).run();
-      overviewPositionsRef.current = new Map(
-        graph.nodes
-          .filter((node) => node.x != null && node.y != null)
-          .map((node) => [node.id, { x: node.x!, y: node.y! }]),
-      );
-      window.setTimeout(() => applyGraphView(cy, graphRef.current, viewModeRef.current, focusedNodeIdRef.current, focusDepthRef.current, false), 0);
-    }
+      if (resizeSettleTimeoutRef.current != null) window.clearTimeout(resizeSettleTimeoutRef.current);
+      resizeSettleTimeoutRef.current = window.setTimeout(() => {
+        resizeSettleTimeoutRef.current = null;
+        if (cy.destroyed() || layoutRunningRef.current || graphRef.current.nodes.length === 0) return;
+        fitVisible(
+          cy,
+          graphRef.current,
+          viewModeRef.current,
+          focusedNodeIdRef.current,
+          focusDepthRef.current,
+          false,
+        );
+        scheduleLabelVisibility();
+      }, 160);
+    });
+    resizeObserver?.observe(container);
 
     cy.on("tap", "node", async (event) => {
       const node = event.target as NodeSingular;
@@ -1169,7 +1215,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
           setConnectSourceId(null);
           setConnectMode(false);
           setMessage("已创建关系");
-          await reload();
+          await notifyGraphChanged();
         }
         return;
       }
@@ -1214,13 +1260,34 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         overviewPositionsRef.current.set(nodeId, { x: position.x, y: position.y });
         updateKnowledgeNode(projectId, nodeId, { x: position.x, y: position.y }).catch(() => undefined);
       }
+      scheduleLabelVisibility();
     });
 
     return () => {
-      if (labelFrameRef.current != null) {
-        window.cancelAnimationFrame(labelFrameRef.current);
-        labelFrameRef.current = null;
+      resizeObserver?.disconnect();
+      layoutRunningRef.current = false;
+      if (labelPositionFrameRef.current != null) {
+        window.cancelAnimationFrame(labelPositionFrameRef.current);
+        labelPositionFrameRef.current = null;
       }
+      if (labelVisibilityFrameRef.current != null) {
+        window.cancelAnimationFrame(labelVisibilityFrameRef.current);
+        labelVisibilityFrameRef.current = null;
+      }
+      if (resizeFrameRef.current != null) {
+        window.cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+      }
+      if (resizeSettleTimeoutRef.current != null) {
+        window.clearTimeout(resizeSettleTimeoutRef.current);
+        resizeSettleTimeoutRef.current = null;
+      }
+      if (viewportTimeoutRef.current != null) {
+        window.clearTimeout(viewportTimeoutRef.current);
+        viewportTimeoutRef.current = null;
+      }
+      scheduleLabelPositionRef.current = () => undefined;
+      scheduleLabelVisibilityRef.current = () => undefined;
       labelLayer?.replaceChildren();
       labelElementsRef.current.clear();
       cy.destroy();
@@ -1228,13 +1295,129 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         cyRef.current = null;
       }
     };
-  }, [graph, projectId, darkMode]);
+  }, [projectId, compact]);
 
   useEffect(() => {
     const cy = cyRef.current;
-    if (!cy) return;
-    applyGraphView(cy, graph, viewMode, focusedNodeId, focusDepth, true);
-  }, [graph, viewMode, focusedNodeId, focusDepth]);
+    const labelLayer = labelLayerRef.current;
+    if (!cy || !labelLayer || graphProjectIdRef.current !== projectId) return;
+
+    const previous = renderedGraphRef.current;
+    const firstPopulation = previous.nodes.length === 0 && graph.nodes.length > 0;
+    const delta = reconcileGraphElements(cy, previous, graph, containerRef.current, darkMode);
+    renderedGraphRef.current = graph;
+    reconcileLabelElements(graph, labelLayer, labelElementsRef.current);
+
+    for (const removedId of delta.removedNodeIds) overviewPositionsRef.current.delete(removedId);
+    for (const addedId of delta.addedNodeIds) {
+      const node = cy.getElementById(`n${addedId}`);
+      if (!node.empty()) overviewPositionsRef.current.set(addedId, { ...node.position() });
+    }
+
+    if (firstPopulation) {
+      const allNodesHavePosition = graph.nodes.every((node) => node.x != null && node.y != null);
+      if (!allNodesHavePosition && graph.nodes.length > 1) {
+        const layout = createCompactOverviewLayout(cy, graph, false);
+        layout.one("layoutstop", () => {
+          if (cy.destroyed()) return;
+          const positions = new Map<number, { x: number; y: number }>();
+          cy.nodes().forEach((node) => {
+            positions.set(Number(node.data("nodeId")), { ...node.position() });
+          });
+          overviewPositionsRef.current = positions;
+          applyGraphView(cy, graphRef.current, viewModeRef.current, focusedNodeIdRef.current, focusDepthRef.current, {
+            animate: false,
+            fitViewport: true,
+            scheduleViewport: scheduleViewportUpdate,
+          });
+          scheduleLabelVisibilityRef.current();
+        });
+        layout.run();
+        return;
+      }
+      overviewPositionsRef.current = new Map(
+        graph.nodes
+          .filter((node) => node.x != null && node.y != null)
+          .map((node) => [node.id, { x: node.x!, y: node.y! }]),
+      );
+      applyGraphView(cy, graph, viewModeRef.current, focusedNodeIdRef.current, focusDepthRef.current, {
+        animate: false,
+        fitViewport: true,
+        scheduleViewport: scheduleViewportUpdate,
+      });
+    } else if (delta.topologyChanged) {
+      applyGraphView(cy, graph, viewModeRef.current, focusedNodeIdRef.current, focusDepthRef.current, {
+        animate: false,
+        fitViewport: false,
+        scheduleViewport: scheduleViewportUpdate,
+      });
+    }
+
+    scheduleLabelPositionRef.current();
+    scheduleLabelVisibilityRef.current();
+  }, [graph, projectId]);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy || renderedGraphRef.current.nodes.length === 0) return;
+    if (layoutRunningRef.current) return;
+    const definitions = new Map(
+      toElements(renderedGraphRef.current, containerRef.current, darkMode)
+        .map((definition) => [String(definition.data?.id), definition]),
+    );
+    cy.batch(() => {
+      cy.nodes().forEach((node) => {
+        const data = definitions.get(node.id())?.data;
+        if (!data) return;
+        node.data("color", data.color);
+        node.data("borderColor", data.borderColor);
+        node.data("size", data.size);
+        node.data("accentColor", data.accentColor);
+        node.data("focusRootColor", data.focusRootColor);
+        node.data("focusParentColor", data.focusParentColor);
+      });
+      cy.edges().forEach((edge) => {
+        const data = definitions.get(edge.id())?.data;
+        if (!data) return;
+        edge.data("lineColor", data.lineColor);
+        edge.data("accentColor", data.accentColor);
+      });
+    });
+    applyGraphView(
+      cy,
+      renderedGraphRef.current,
+      viewModeRef.current,
+      focusedNodeIdRef.current,
+      focusDepthRef.current,
+      { animate: false, fitViewport: false },
+    );
+    scheduleLabelVisibilityRef.current();
+  }, [darkMode]);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy || renderedGraphRef.current.nodes.length === 0) return;
+    if (viewportTimeoutRef.current != null) {
+      window.clearTimeout(viewportTimeoutRef.current);
+      viewportTimeoutRef.current = null;
+    }
+    cy.stop();
+    applyGraphView(cy, renderedGraphRef.current, viewMode, focusedNodeId, focusDepth, {
+      animate: true,
+      fitViewport: true,
+      scheduleViewport: scheduleViewportUpdate,
+    });
+    scheduleLabelVisibilityRef.current();
+  }, [viewMode, focusedNodeId, focusDepth]);
+
+  useEffect(() => {
+    if (selectedNode) {
+      setSelectedNode(graph.nodes.find((node) => node.id === selectedNode.id) ?? null);
+    }
+    if (selectedEdge) {
+      setSelectedEdge(graph.edges.find((edge) => edge.id === selectedEdge.id) ?? null);
+    }
+  }, [graph]);
 
   async function handleRenameNode() {
     if (!selectedNode) return;
@@ -1247,7 +1430,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     if (!title?.trim()) return;
     const updated = await updateKnowledgeNode(projectId, selectedNode.id, { title: title.trim() });
     setSelectedNode(updated);
-    await reload();
+    await notifyGraphChanged();
   }
 
   async function handleDeleteSelected() {
@@ -1262,7 +1445,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         setFocusedNodeId(null);
       }
       setSelectedNode(null);
-      await reload();
+      await notifyGraphChanged();
       await onContentChanged?.();
       return;
     }
@@ -1273,7 +1456,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       }
       await deleteKnowledgeEdge(projectId, selectedEdge.id);
       setSelectedEdge(null);
-      await reload();
+      await notifyGraphChanged();
     }
   }
 
@@ -1301,11 +1484,17 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       return;
     }
 
+    if (viewportTimeoutRef.current != null) {
+      window.clearTimeout(viewportTimeoutRef.current);
+      viewportTimeoutRef.current = null;
+    }
+    cy.stop();
+    layoutRunningRef.current = true;
     cy.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge");
     const layout = createCompactOverviewLayout(cy, graphRef.current);
     layout.one("layoutstop", () => {
       if (cy.destroyed()) return;
-      fitVisible(cy, graphRef.current, "overview", null, 1, true);
+      layoutRunningRef.current = false;
       const updates: Promise<unknown>[] = [];
       cy.nodes().forEach((node) => {
         const nodeId = Number(node.data("nodeId"));
@@ -1313,6 +1502,19 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         overviewPositionsRef.current.set(nodeId, { x: position.x, y: position.y });
         updates.push(updateKnowledgeNode(projectId, nodeId, { x: position.x, y: position.y }));
       });
+      if (viewModeRef.current === "overview") {
+        fitVisible(cy, graphRef.current, "overview", null, 1, true);
+      } else {
+        applyGraphView(
+          cy,
+          graphRef.current,
+          viewModeRef.current,
+          focusedNodeIdRef.current,
+          focusDepthRef.current,
+          { animate: false, fitViewport: true, scheduleViewport: scheduleViewportUpdate },
+        );
+      }
+      scheduleLabelVisibilityRef.current();
       void Promise.allSettled(updates).then((results) => {
         const failedCount = results.filter((result) => result.status === "rejected").length;
         setMessage(failedCount > 0 ? `树状布局已生成，但有 ${failedCount} 个节点的位置保存失败` : "已整理为树状布局并保存");

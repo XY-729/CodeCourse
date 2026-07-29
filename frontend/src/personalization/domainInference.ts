@@ -52,12 +52,26 @@ export type ObserverDiagnosticCandidate = {
   difficulty: number;
 };
 
+export type ObserverTeachingOutcome = {
+  result:
+    | "successful"
+    | "partially_successful"
+    | "unsuccessful"
+    | "advanced_followup"
+    | "topic_changed"
+    | "unknown";
+  confidence: number;
+  reason: string;
+  evidenceQuote: string;
+};
+
 export type ObserverResult = {
   knowledgeEvidence: ObserverKnowledgeEvidence[];
   conceptRelations: ObserverConceptRelation[];
   domainAssessments: ObserverDomainAssessment[];
   surveyCandidate: ObserverSurveyCandidate | null;
   diagnosticCandidate: ObserverDiagnosticCandidate | null;
+  previousTeachingOutcome: ObserverTeachingOutcome | null;
 };
 
 function canonicalDiagnosticValue(value: unknown): string {
@@ -272,7 +286,42 @@ export function parseObserverResult(raw: string): ObserverResult {
     }
   }
 
-  return { knowledgeEvidence, conceptRelations, domainAssessments, surveyCandidate, diagnosticCandidate };
+  const outcomeValue = value.previous_teaching_outcome ?? value.previousTeachingOutcome;
+  let previousTeachingOutcome: ObserverTeachingOutcome | null = null;
+  if (outcomeValue && typeof outcomeValue === "object" && !Array.isArray(outcomeValue)) {
+    const item = outcomeValue as Record<string, unknown>;
+    const result = cleanText(item.result);
+    const reason = cleanText(item.reason);
+    const evidenceQuote = cleanText(item.evidence_quote ?? item.evidenceQuote, 300);
+    if (
+      [
+        "successful",
+        "partially_successful",
+        "unsuccessful",
+        "advanced_followup",
+        "topic_changed",
+        "unknown",
+      ].includes(result)
+      && reason
+      && evidenceQuote
+    ) {
+      previousTeachingOutcome = {
+        result: result as ObserverTeachingOutcome["result"],
+        confidence: finiteScore(item.confidence),
+        reason,
+        evidenceQuote,
+      };
+    }
+  }
+
+  return {
+    knowledgeEvidence,
+    conceptRelations,
+    domainAssessments,
+    surveyCandidate,
+    diagnosticCandidate,
+    previousTeachingOutcome,
+  };
 }
 
 export function mergeInference(
@@ -348,6 +397,11 @@ export function buildObserverPrompt(input: {
   sourceType?: string;
   sourcePath?: string;
   sourceExcerpt?: string;
+  previousAppliedTeaching?: {
+    qaRecordId: number;
+    teachingGoal: string;
+    strategies: string[];
+  } | null;
 }): string {
   return `你是 CodeCourse 的 Observer。只分析用户本轮表达提供的学习证据，不评价回答质量。
 
@@ -359,6 +413,7 @@ export function buildObserverPrompt(input: {
 - sibling/同领域关系绝不能传播掌握状态。
 - 不推断年龄、学历、智力、人格或其他敏感属性。
 - socket、bind 等网络概念的证据不能扩散为数据结构、线程池等其他领域已掌握。
+- 只有提供了上一轮教学策略时才评估 previous_teaching_outcome；证据必须逐字来自当前用户消息。
 - 动态偏好问题必须针对本轮暴露出的真实不确定项，不使用固定问卷。回答数少于 5 时 survey_candidate 必须为 null。
 - 理解检查只能在已完成回答数是 5 的倍数时提出，并且必须完全依据下方真实来源摘录。
 - 理解检查必须有唯一、可本地判定的答案；没有可靠来源、答案存在歧义或当前已有检查时，diagnostic_candidate 必须为 null。
@@ -374,6 +429,11 @@ ${input.parentQuestion || "(无)"}
 
 父回答摘要：
 ${input.parentAnswer?.slice(0, 1600) || "(无)"}
+
+上一轮已应用教学策略：
+${input.previousAppliedTeaching
+    ? JSON.stringify(input.previousAppliedTeaching)
+    : "(无；previous_teaching_outcome 必须为 null)"}
 
 人工确认认识：
 ${input.knownConcepts.join("、") || "(无)"}
@@ -414,6 +474,12 @@ ${input.sourceExcerpt?.slice(0, 2200) || "(无可靠来源，diagnostic_candidat
     "evidence_quotes": ["用户原文"]
   }],
   "survey_candidate": null,
+  "previous_teaching_outcome": ${input.previousAppliedTeaching ? `{
+    "result": "successful|partially_successful|unsuccessful|advanced_followup|topic_changed|unknown",
+    "confidence": 0.0,
+    "reason": "只根据当前用户消息判断上一轮讲解效果",
+    "evidence_quote": "当前用户消息中的原文"
+  }` : "null"},
   "diagnostic_candidate": {
     "concept_keys": ["概念名"],
     "dimension": "familiarity|conceptual|code_reading|implementation|debugging|transfer",

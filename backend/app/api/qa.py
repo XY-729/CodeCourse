@@ -30,6 +30,7 @@ from app.services.qa_service import (
     search_records,
     finalize_question,
     prepare_question,
+    _build_default_teaching_trial_draft,
 )
 from app.services.llm_client import stream_openai_compatible_chat
 from app.services.storage import LearningAnchor, QARecord, get_project, get_qa_record
@@ -145,7 +146,11 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
                     if prepared.existing_record is not None:
                         yield _sse("completed", _to_response(prepared.existing_record).model_dump(mode="json"))
                         return
-                    trial_draft = None
+                    trial_draft = await asyncio.to_thread(
+                        _build_default_teaching_trial_draft,
+                        project_id,
+                        prepared,
+                    )
                     try:
                         from app.services.qa_service import _maybe_plan_teaching
                         tc = await asyncio.to_thread(_maybe_plan_teaching, project_id, prepared)
@@ -180,26 +185,12 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
                         chunks.append(chunk)
                         yield _sse("delta", {"text": chunk})
                     yield _sse("stage", {"stage": "saving", "label": "保存记录"})
-                    record = await asyncio.to_thread(finalize_question, prepared, "".join(chunks))
-                    if trial_draft is not None and trial_draft.should_persist:
-                        try:
-                            from app.services.storage import persist_applied_teaching_trial
-                            await asyncio.to_thread(
-                                persist_applied_teaching_trial,
-                                project_id=project_id,
-                                session_id=record.session_id,
-                                qa_record_id=record.id,
-                                planner_run_id=trial_draft.planner_run_id,
-                                teaching_plan_id=trial_draft.teaching_plan_id,
-                                effective_context_json=trial_draft.effective_context_json,
-                                mode=trial_draft.mode,
-                                answer_model=trial_draft.answer_model,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "Failed to persist streaming teaching trial",
-                                extra={"project_id": project_id, "qa_record_id": record.id},
-                            )
+                    record = await asyncio.to_thread(
+                        finalize_question,
+                        prepared,
+                        "".join(chunks),
+                        trial_draft,
+                    )
                     yield _sse("completed", _to_response(record).model_dump(mode="json"))
 
                 if lock is None:

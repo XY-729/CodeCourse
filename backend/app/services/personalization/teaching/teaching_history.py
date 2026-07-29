@@ -126,7 +126,9 @@ def get_recent_assessed_teaching_history(
                 o.confidence,
                 o.reason,
                 o.evidence_quote,
-                o.evaluation_qa_record_id
+                o.evaluation_qa_record_id,
+                o.evidence_type,
+                o.authority
             FROM teaching_trials AS t
             INNER JOIN teaching_outcomes AS o
                 ON o.teaching_trial_id = t.id
@@ -136,9 +138,17 @@ def get_recent_assessed_teaching_history(
               AND t.was_applied = 1
               AND t.mode = 'assist'
               AND t.fallback_reason IS NULL
-              AND o.evaluation_qa_record_id > t.qa_record_id
+              AND o.policy_eligible = 1
+              AND o.id = (
+                  SELECT strongest.id
+                  FROM teaching_outcomes AS strongest
+                  WHERE strongest.teaching_trial_id = t.id
+                    AND strongest.policy_eligible = 1
+                  ORDER BY strongest.authority DESC, strongest.created_at DESC
+                  LIMIT 1
+              )
               AND o.evaluation_qa_record_id <= ?
-            ORDER BY t.qa_record_id DESC
+            ORDER BY t.qa_record_id DESC, o.authority DESC, o.created_at DESC
             LIMIT ?""",
         (
             project_id,
@@ -166,6 +176,9 @@ def get_recent_assessed_teaching_history(
                 "outcome_reason": row[5],
                 "evidence_quote": row[6],
                 "evaluation_qa_record_id": int(row[7]),
+                "outcome_evidence_type": row[8],
+                "outcome_authority": int(row[9]),
+                "policy_eligible": True,
             }
         )
     return history
