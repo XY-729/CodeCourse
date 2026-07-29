@@ -83,8 +83,6 @@ html.platform-android .prompt-tabs {
   color: var(--mobile-text);
   border-color: var(--mobile-line);
   background: var(--mobile-material-regular);
-  backdrop-filter: blur(24px) saturate(175%);
-  -webkit-backdrop-filter: blur(24px) saturate(175%);
 }
 
 html.platform-android .modal-title {
@@ -492,8 +490,6 @@ html.platform-android .knowledge-search {
   border-radius: 14px;
   background: var(--mobile-material-regular);
   box-shadow: var(--mobile-shadow-sm);
-  backdrop-filter: blur(20px) saturate(170%);
-  -webkit-backdrop-filter: blur(20px) saturate(170%);
 }
 
 html.platform-android .knowledge-search input {
@@ -569,8 +565,6 @@ html.platform-android .term-feedback-popover {
   border-radius: 18px;
   background: var(--mobile-material-thick);
   box-shadow: var(--mobile-shadow-md);
-  backdrop-filter: blur(26px) saturate(175%);
-  -webkit-backdrop-filter: blur(26px) saturate(175%);
 }
 
 html.platform-android .term-feedback-header {
@@ -683,8 +677,6 @@ html.platform-android .learner-profile-header {
   border: 0;
   background: var(--mobile-material-regular);
   box-shadow: 0 1px 0 var(--mobile-line);
-  backdrop-filter: blur(24px) saturate(175%);
-  -webkit-backdrop-filter: blur(24px) saturate(175%);
 }
 
 html.platform-android .learner-profile-tabs {
@@ -726,22 +718,13 @@ html.platform-android .permission-notice-banner {
   border-radius: 18px 18px 0 0;
   background: var(--mobile-material-thick);
   box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(26px) saturate(175%);
-  -webkit-backdrop-filter: blur(26px) saturate(175%);
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  html.platform-android .modal-title,
-  html.platform-android .settings-actions,
-  html.platform-android .prompt-tabs,
-  html.platform-android .knowledge-search,
-  html.platform-android .term-action-popover,
-  html.platform-android .term-feedback-popover,
-  html.platform-android .learner-profile-header,
-  html.platform-android .permission-notice-banner {
-    background: var(--mobile-surface);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+  html.platform-android {
+    --mobile-material-thin: var(--mobile-surface);
+    --mobile-material-regular: var(--mobile-surface);
+    --mobile-material-thick: var(--mobile-surface);
   }
 }
 
@@ -1002,8 +985,8 @@ html.platform-android [role="button"] {
 
 html.platform-android .topbar,
 html.platform-android .activity-rail {
-  backdrop-filter: blur(14px) saturate(145%);
-  -webkit-backdrop-filter: blur(14px) saturate(145%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 html.platform-android .navigation-panel-header,
@@ -1024,8 +1007,8 @@ html.platform-android .prompt-editor-modal,
 html.platform-android .app-dialog,
 html.platform-android .command-palette,
 html.platform-android .more-menu {
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 html.platform-android .apple-feedback,

@@ -110,13 +110,6 @@ export default function ExplainPanel(props: Props) {
   return (
     <aside
       className={`explain-panel qa-panel ${knowledgeOnly ? "knowledge-only" : ""} ${mobileKnowledge ? "mobile-knowledge-only" : ""} ${mobileAssistant ? "mobile-assistant-only" : ""}`}
-      style={{
-        gridTemplateRows: knowledgeOnly
-          ? "minmax(0, 1fr) 0"
-          : mobileAssistant
-            ? "auto minmax(0, 1fr)"
-            : "minmax(140px, 1fr) auto",
-      }}
     >
       <section className="qa-history-section">
         {!embeddedMobileSheet ? <div className="qa-panel-tabs">
@@ -192,7 +185,7 @@ export default function ExplainPanel(props: Props) {
         </div>
       </section>
 
-      <section className="qa-ask-section">
+      {!knowledgeOnly && !mobileKnowledge ? <section className="qa-ask-section">
         <div className="qa-ask-scroll">
           <div className="qa-section selection-card">
             <div className="qa-section-title">附带上下文</div>
@@ -322,7 +315,7 @@ export default function ExplainPanel(props: Props) {
             {loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}{loading ? (loadingLabel || "生成中...") : selectedRecord ? "继续追问" : "询问"}
           </button>
         </div>
-      </section>
+      </section> : null}
     </aside>
   );
 }

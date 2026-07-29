@@ -69,6 +69,7 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     if (!sheet || dismissingRef.current) return;
     cancelEntryFrames();
     dismissingRef.current = true;
+    onDismissRef.current();
     sheet.dataset.motionPhase = "exiting";
     const target = Math.max(entryStartRef.current, sheet.getBoundingClientRect().height - 2);
     animateSpringY(sheet, target, {
@@ -76,7 +77,6 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
       response: 0.3,
       velocity,
       onUpdate: (position) => updateBackdrop(sheet, position),
-      onComplete: () => onDismissRef.current(),
     });
   }
 
@@ -120,7 +120,9 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     entryFramesRef.current = [firstFrame];
     return () => {
       cancelEntryFrames();
-      cancelSpring(sheet);
+      if (!dismissingRef.current) {
+        cancelSpring(sheet);
+      }
     };
   }, []);
 

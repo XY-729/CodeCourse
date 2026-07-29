@@ -15,24 +15,30 @@ html.platform-android {
   --mobile-accent-strong: #0f725e;
   --mobile-accent-soft: rgba(22, 133, 111, 0.14);
   --mobile-accent-glow: rgba(22, 133, 111, 0.24);
+  --mobile-progress: #218967;
   --mobile-danger: #d70015;
+  --mobile-warning: #c93400;
   --mobile-shadow-sm: 0 1px 2px rgba(24, 52, 43, 0.08), 0 5px 16px rgba(24, 52, 43, 0.06);
   --mobile-shadow-md: 0 3px 8px rgba(24, 52, 43, 0.1), 0 14px 34px rgba(24, 52, 43, 0.08);
-  --mobile-radius-sm: 10px;
-  --mobile-radius: 14px;
-  --mobile-radius-lg: 20px;
+  --mobile-material-thin: rgba(250, 253, 252, 0.78);
+  --mobile-material-regular: rgba(241, 248, 245, 0.86);
+  --mobile-material-thick: rgba(255, 255, 255, 0.94);
+  --mobile-radius-sm: 12px;
+  --mobile-radius: 16px;
+  --mobile-radius-lg: 24px;
   --mobile-duration-fast: 120ms;
   --mobile-duration: 200ms;
   --mobile-duration-slow: 320ms;
-  --mobile-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --mobile-ease-standard: cubic-bezier(0.2, 0, 0, 1);
-  --mobile-ease-spring: cubic-bezier(0.22, 1.18, 0.36, 1);
+  --mobile-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --mobile-ease-standard: cubic-bezier(0.77, 0, 0.175, 1);
   --cc-text: var(--mobile-text);
   --cc-text-secondary: var(--mobile-text-secondary);
   --cc-border: var(--mobile-line);
   --cc-hover: var(--mobile-accent-soft);
   --cc-surface: var(--mobile-surface);
   --cc-surface-secondary: var(--mobile-surface-soft);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Noto Sans SC", system-ui, sans-serif;
+  font-optical-sizing: auto;
 }
 
 html.platform-android[data-theme="dark"] {
@@ -51,9 +57,14 @@ html.platform-android[data-theme="dark"] {
   --mobile-accent-strong: #8bbdff;
   --mobile-accent-soft: rgba(76, 150, 242, 0.2);
   --mobile-accent-glow: rgba(76, 150, 242, 0.3);
+  --mobile-progress: #43c6a2;
   --mobile-danger: #ff453a;
+  --mobile-warning: #ff9f0a;
   --mobile-shadow-sm: 0 2px 5px rgba(0, 0, 0, 0.32), 0 8px 22px rgba(0, 0, 0, 0.22);
   --mobile-shadow-md: 0 6px 16px rgba(0, 0, 0, 0.38), 0 20px 46px rgba(0, 0, 0, 0.28);
+  --mobile-material-thin: rgba(13, 27, 45, 0.8);
+  --mobile-material-regular: rgba(11, 24, 40, 0.9);
+  --mobile-material-thick: rgba(23, 39, 60, 0.94);
 }
 
 html.platform-android,
@@ -103,8 +114,6 @@ html.platform-android .topbar {
   border-bottom: 1px solid var(--mobile-line);
   background: color-mix(in srgb, var(--mobile-surface) 94%, transparent);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.46);
-  backdrop-filter: blur(22px) saturate(150%);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
 }
 
 html.platform-android .brand-logo {
@@ -195,8 +204,6 @@ html.platform-android .activity-rail {
   border-top: 1px solid var(--mobile-line);
   background: color-mix(in srgb, var(--mobile-surface) 94%, transparent);
   box-shadow: 0 -8px 28px rgba(14, 55, 43, 0.05);
-  backdrop-filter: blur(24px) saturate(155%);
-  -webkit-backdrop-filter: blur(24px) saturate(155%);
 }
 
 html.platform-android .workbench,
@@ -1091,10 +1098,8 @@ html.platform-android .apple-feedback {
   color: var(--mobile-text);
   border: 1px solid var(--mobile-line);
   border-radius: 13px;
-  background: color-mix(in srgb, var(--mobile-surface-raised) 94%, transparent);
+  background: var(--mobile-material-regular);
   box-shadow: var(--mobile-shadow-md);
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
   pointer-events: auto;
   animation: mobile-feedback-enter 220ms var(--mobile-ease-out) both;
   font-size: 13px;
@@ -1257,12 +1262,10 @@ html.platform-android .permission-notice-banner {
   gap: 10px;
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
   padding: 12px 16px;
-  background: var(--mobile-surface-raised);
+  background: var(--mobile-material-thick);
   border-top: 1px solid var(--mobile-line);
   font-size: 13px;
   color: var(--mobile-text-secondary);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
 }
 html.platform-android .permission-notice-banner span {
   flex: 1;
@@ -1284,69 +1287,6 @@ html.platform-android .permission-notice-actions .icon-button {
   min-width: 32px;
   min-height: 32px;
   padding: 0;
-}
-
-/* -------------------------------------------------------------------------- */
-/* Apple fluid Android refresh                                                 */
-/* -------------------------------------------------------------------------- */
-
-html.platform-android {
-  color-scheme: light;
-  --mobile-canvas: #edf4f1;
-  --mobile-surface: #ffffff;
-  --mobile-surface-raised: rgba(255, 255, 255, 0.94);
-  --mobile-surface-soft: #f1f6f3;
-  --mobile-surface-pressed: #e5eeea;
-  --mobile-text: #17231f;
-  --mobile-text-secondary: #5e6d67;
-  --mobile-text-tertiary: #7f8d88;
-  --mobile-line: rgba(34, 74, 61, 0.14);
-  --mobile-line-strong: rgba(32, 72, 59, 0.24);
-  --mobile-accent: #16856f;
-  --mobile-accent-strong: #0f725e;
-  --mobile-accent-soft: rgba(22, 133, 111, 0.14);
-  --mobile-accent-glow: rgba(22, 133, 111, 0.24);
-  --mobile-progress: #218967;
-  --mobile-danger: #d70015;
-  --mobile-warning: #c93400;
-  --mobile-shadow-sm: 0 1px 2px rgba(24, 52, 43, 0.08), 0 5px 16px rgba(24, 52, 43, 0.06);
-  --mobile-shadow-md: 0 3px 8px rgba(24, 52, 43, 0.1), 0 14px 34px rgba(24, 52, 43, 0.08);
-  --mobile-material-thin: rgba(250, 253, 252, 0.78);
-  --mobile-material-regular: rgba(241, 248, 245, 0.86);
-  --mobile-material-thick: rgba(255, 255, 255, 0.94);
-  --mobile-radius-sm: 12px;
-  --mobile-radius: 16px;
-  --mobile-radius-lg: 24px;
-  --mobile-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --mobile-ease-standard: cubic-bezier(0.77, 0, 0.175, 1);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Noto Sans SC", system-ui, sans-serif;
-  font-optical-sizing: auto;
-}
-
-html.platform-android[data-theme="dark"] {
-  color-scheme: dark;
-  --mobile-canvas: #08111f;
-  --mobile-surface: #101c2d;
-  --mobile-surface-raised: rgba(23, 39, 60, 0.94);
-  --mobile-surface-soft: #132238;
-  --mobile-surface-pressed: #091523;
-  --mobile-text: #edf5fb;
-  --mobile-text-secondary: #a8bac9;
-  --mobile-text-tertiary: #7f94a6;
-  --mobile-line: rgba(165, 201, 233, 0.14);
-  --mobile-line-strong: rgba(170, 208, 239, 0.24);
-  --mobile-accent: #66a8ff;
-  --mobile-accent-strong: #8bbdff;
-  --mobile-accent-soft: rgba(76, 150, 242, 0.2);
-  --mobile-accent-glow: rgba(76, 150, 242, 0.3);
-  --mobile-progress: #43c6a2;
-  --mobile-danger: #ff453a;
-  --mobile-warning: #ff9f0a;
-  --mobile-shadow-sm: 0 2px 5px rgba(0, 0, 0, 0.32), 0 8px 22px rgba(0, 0, 0, 0.22);
-  --mobile-shadow-md: 0 6px 16px rgba(0, 0, 0, 0.38), 0 20px 46px rgba(0, 0, 0, 0.28);
-  --mobile-material-thin: rgba(13, 27, 45, 0.8);
-  --mobile-material-regular: rgba(11, 24, 40, 0.9);
-  --mobile-material-thick: rgba(23, 39, 60, 0.94);
 }
 
 html.platform-android,
@@ -1411,8 +1351,6 @@ html.platform-android .topbar {
   border: 0;
   background: var(--mobile-material-thin);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--mobile-line) 68%, transparent), 0 10px 26px rgba(0, 0, 0, 0.045);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
 html.platform-android .brand-logo {
@@ -1464,8 +1402,6 @@ html.platform-android .activity-rail {
   border: 0;
   background: var(--mobile-material-thin);
   box-shadow: 0 -1px 0 color-mix(in srgb, var(--mobile-line) 72%, transparent), 0 -14px 34px rgba(0, 0, 0, 0.055);
-  backdrop-filter: blur(26px) saturate(180%);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
 }
 
 html.platform-android .activity-rail button {
@@ -1541,8 +1477,6 @@ html.platform-android .reader-learning-toolbar {
   border: 0;
   box-shadow: 0 1px 0 color-mix(in srgb, var(--mobile-line) 70%, transparent);
   background: var(--mobile-material-regular);
-  backdrop-filter: blur(22px) saturate(170%);
-  -webkit-backdrop-filter: blur(22px) saturate(170%);
 }
 
 html.platform-android .navigation-panel-header,
@@ -1712,8 +1646,6 @@ html.platform-android .more-menu {
   border-radius: 24px;
   background: var(--mobile-material-thick);
   box-shadow: var(--mobile-shadow-md);
-  backdrop-filter: blur(30px) saturate(170%);
-  -webkit-backdrop-filter: blur(30px) saturate(170%);
 }
 
 html.platform-android .more-menu {
@@ -1819,8 +1751,6 @@ html.platform-android .apple-feedback {
   border-radius: 16px;
   background: var(--mobile-material-regular);
   box-shadow: var(--mobile-shadow-md);
-  backdrop-filter: blur(26px) saturate(180%);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
 }
 
 html.platform-android .apple-feedback.busy { color: var(--mobile-accent); }
@@ -1833,8 +1763,6 @@ html.platform-android .selection-quick-bar {
   border-radius: 16px;
   background: var(--mobile-material-thick);
   box-shadow: var(--mobile-shadow-md);
-  backdrop-filter: blur(26px) saturate(180%);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
 }
 
 html.platform-android .markdown-body {

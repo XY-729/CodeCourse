@@ -4267,9 +4267,9 @@ export default function App() {
           title="拖拽调整左栏宽度"
         /> : null}
         <section className="center-pane">
-          {project ? (
+          {project && !(mobileRuntime && mobileWorkspaceTab) ? (
             <div className="reader-workspace">{renderLayoutNode(layout)}</div>
-          ) : (
+          ) : project ? null : (
             <section className="learning-empty-state">
               <div className="learning-empty-mark"><BookOpen size={24} /></div>
               <h1>从一个项目开始学习</h1>
