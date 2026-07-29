@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Query
 
 from app.models.schemas import (
     LLMSettingsRequest,
@@ -109,11 +109,63 @@ def read_prompts():
     return result
 
 
+@router.get("/prompts/metadata")
+def read_prompt_metadata():
+    from app.services.prompt_store import prompt_metadata
+
+    return {"prompts": prompt_metadata()}
+
+
+@router.get("/prompts/history")
+def read_prompt_history(key: str = Query(...)):
+    from app.services.prompt_store import prompt_history
+
+    try:
+        return {"key": key, "revisions": prompt_history(key)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/prompts/preview")
+def preview_prompt_template(payload: dict[str, str]):
+    from app.services.prompt_store import preview_prompt
+
+    key = payload.get("key", "")
+    value = payload.get("value", "")
+    try:
+        return {"key": key, "rendered": preview_prompt(key, value)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc).splitlines()) from exc
+
+
+@router.post("/prompts/reset")
+def reset_prompt_template(payload: dict[str, str]):
+    from app.services.prompt_store import reset_prompt
+
+    key = payload.get("key", "")
+    try:
+        return {"key": key, "value": reset_prompt(key)}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.put("/prompts")
 def write_prompts(payload: dict[str, str]):
-    from app.services.prompt_store import EDITABLE_PROMPT_KEYS, save_prompt
+    from app.services.prompt_store import (
+        EDITABLE_PROMPT_KEYS,
+        save_prompt,
+        validate_prompt,
+    )
+
+    errors: dict[str, list[str]] = {}
     for key, value in payload.items():
-        if key not in EDITABLE_PROMPT_KEYS:
-            continue
-        save_prompt(key, value)
+        if key in EDITABLE_PROMPT_KEYS:
+            item_errors = validate_prompt(key, value)
+            if item_errors:
+                errors[key] = item_errors
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    for key, value in payload.items():
+        if key in EDITABLE_PROMPT_KEYS:
+            save_prompt(key, value)
     return {"ok": True}

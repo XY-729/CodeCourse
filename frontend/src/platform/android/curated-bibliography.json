@@ -1,0 +1,100 @@
+[
+  {
+    "id": "cpp-primer-5",
+    "title": "C++ Primer",
+    "edition": "5th Edition",
+    "authors": ["Stanley B. Lippman", "Josée Lajoie", "Barbara E. Moo"],
+    "topics": ["C++ language fundamentals", "classes", "templates", "generic algorithms", "tools for large programs"]
+  },
+  {
+    "id": "cpp-concurrency-in-action-2",
+    "title": "C++ Concurrency in Action",
+    "edition": "2nd Edition",
+    "authors": ["Anthony Williams"],
+    "topics": ["thread management", "shared data", "synchronization", "futures", "atomics", "memory model", "concurrent data structures"]
+  },
+  {
+    "id": "effective-modern-cpp",
+    "title": "Effective Modern C++",
+    "edition": "",
+    "authors": ["Scott Meyers"],
+    "topics": ["type deduction", "move semantics", "smart pointers", "lambdas", "concurrency API usage"]
+  },
+  {
+    "id": "unix-network-programming-v1-3",
+    "title": "UNIX Network Programming, Volume 1: The Sockets Networking API",
+    "edition": "3rd Edition",
+    "authors": ["W. Richard Stevens", "Bill Fenner", "Andrew M. Rudoff"],
+    "topics": ["sockets API", "TCP clients and servers", "UDP", "I/O multiplexing", "nonblocking I/O", "network options"]
+  },
+  {
+    "id": "tcp-ip-illustrated-v1-2",
+    "title": "TCP/IP Illustrated, Volume 1: The Protocols",
+    "edition": "2nd Edition",
+    "authors": ["Kevin R. Fall", "W. Richard Stevens"],
+    "topics": ["IP", "TCP", "UDP", "addressing", "routing", "connection management", "retransmission"]
+  },
+  {
+    "id": "computer-networking-top-down-8",
+    "title": "Computer Networking: A Top-Down Approach",
+    "edition": "8th Edition",
+    "authors": ["James F. Kurose", "Keith W. Ross"],
+    "topics": ["application layer", "transport layer", "network layer", "link layer", "network security"]
+  },
+  {
+    "id": "csapp-3",
+    "title": "Computer Systems: A Programmer's Perspective",
+    "edition": "3rd Edition",
+    "authors": ["Randal E. Bryant", "David R. O'Hallaron"],
+    "topics": ["machine representation", "assembly", "linking", "processes", "virtual memory", "system-level I/O", "network programming", "concurrency"]
+  },
+  {
+    "id": "ostep",
+    "title": "Operating Systems: Three Easy Pieces",
+    "edition": "",
+    "authors": ["Remzi H. Arpaci-Dusseau", "Andrea C. Arpaci-Dusseau"],
+    "topics": ["virtualization", "processes", "threads", "scheduling", "memory", "concurrency", "persistence", "file systems"]
+  },
+  {
+    "id": "clrs-4",
+    "title": "Introduction to Algorithms",
+    "edition": "4th Edition",
+    "authors": ["Thomas H. Cormen", "Charles E. Leiserson", "Ronald L. Rivest", "Clifford Stein"],
+    "topics": ["algorithm analysis", "sorting", "data structures", "dynamic programming", "graphs", "string matching", "parallel algorithms"]
+  },
+  {
+    "id": "database-system-concepts-7",
+    "title": "Database System Concepts",
+    "edition": "7th Edition",
+    "authors": ["Abraham Silberschatz", "Henry F. Korth", "S. Sudarshan"],
+    "topics": ["relational model", "SQL", "database design", "transactions", "concurrency control", "indexing", "query processing"]
+  },
+  {
+    "id": "ddia-1",
+    "title": "Designing Data-Intensive Applications",
+    "edition": "1st Edition",
+    "authors": ["Martin Kleppmann"],
+    "topics": ["data models", "storage engines", "encoding", "replication", "partitioning", "transactions", "distributed systems"]
+  },
+  {
+    "id": "fluent-python-2",
+    "title": "Fluent Python",
+    "edition": "2nd Edition",
+    "authors": ["Luciano Ramalho"],
+    "topics": ["Python data model", "data structures", "functions", "classes", "protocols", "generators", "concurrency", "metaprogramming"]
+  },
+  {
+    "id": "python-crash-course-3",
+    "title": "Python Crash Course",
+    "edition": "3rd Edition",
+    "authors": ["Eric Matthes"],
+    "topics": ["Python fundamentals", "functions", "classes", "files", "testing", "projects"]
+  },
+  {
+    "id": "you-dont-know-js-yet",
+    "title": "You Don't Know JS Yet",
+    "edition": "2nd Edition series",
+    "authors": ["Kyle Simpson"],
+    "topics": ["JavaScript scope", "closures", "objects", "types", "async behavior", "language mechanics"]
+  }
+]

@@ -39,7 +39,13 @@ export type LessonPlan = {
   position: string;
   objectives: string[];
   sections: LessonPlanSection[];
-  textbooks: Array<{ title: string; author: string; topics: string }>;
+  textbooks: Array<{
+    id: string;
+    title: string;
+    edition: string;
+    authors: string[];
+    topics: string[];
+  }>;
 };
 
 export type LessonPlanSection = {

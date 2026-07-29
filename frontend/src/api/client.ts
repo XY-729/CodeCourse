@@ -786,6 +786,50 @@ export function getPrompts(): Promise<Record<string, string>> {
   return request<Record<string, string>>(`/settings/prompts`);
 }
 
+export type PromptTemplateMetadata = {
+  key: string;
+  label: string;
+  description: string;
+  required_placeholders: string[];
+  default: string;
+  current: string;
+};
+
+export type PromptRevision = {
+  id: number;
+  prompt_key: string;
+  value: string;
+  source: string;
+  created_at: string;
+};
+
+export function getPromptMetadata(): Promise<{ prompts: PromptTemplateMetadata[] }> {
+  return request<{ prompts: PromptTemplateMetadata[] }>(`/settings/prompts/metadata`);
+}
+
+export function getPromptHistory(key: string): Promise<{ key: string; revisions: PromptRevision[] }> {
+  return request<{ key: string; revisions: PromptRevision[] }>(
+    `/settings/prompts/history?key=${encodeURIComponent(key)}`,
+  );
+}
+
+export function previewPrompt(
+  key: string,
+  value: string,
+): Promise<{ key: string; rendered: string }> {
+  return request<{ key: string; rendered: string }>(`/settings/prompts/preview`, {
+    method: "POST",
+    body: JSON.stringify({ key, value }),
+  });
+}
+
+export function resetPrompt(key: string): Promise<{ key: string; value: string }> {
+  return request<{ key: string; value: string }>(`/settings/prompts/reset`, {
+    method: "POST",
+    body: JSON.stringify({ key }),
+  });
+}
+
 export function savePrompts(payload: Record<string, string>): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/settings/prompts`, {
     method: "PUT",

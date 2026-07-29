@@ -33,6 +33,12 @@ import {
   inferPreferenceSignals,
   shouldOfferStyleSurvey,
 } from "../../personalization/preferenceEngine";
+import { composeSystemPrompt } from "../../personalization/promptContracts";
+import {
+  previewPromptTemplate,
+  promptTemplateMetadata,
+  validatePromptTemplate,
+} from "../../personalization/promptTemplateContract";
 import { normalizeTerm } from "../../personalization/conceptResolver";
 import {
   buildObserverPrompt,
@@ -53,6 +59,14 @@ import {
 
 type ScopeTypeStr = "global" | "project" | "session";
 import promptDefaults from "./default-prompts.json";
+import {
+  appendValidatedBibliography,
+  bibliographyForPrompt,
+  bibliographyMarkdown,
+  bibliographyMetadataInstruction,
+  parseBibliographyMetadata,
+  validateBibliographySelections,
+} from "./bibliography";
 import { AndroidDiagnosticService } from "./diagnosticService";
 import { MobileDatabase } from "./database";
 import { createAndroidPersonalizationRoutes } from "./personalizationRoutes";
@@ -64,6 +78,18 @@ import {
 } from "./workspace";
 
 type Row = Record<string, unknown>;
+
+const LEGACY_PROMPT_HASHES: Record<string, string> = {
+  "prompt.system": "9492dc15",
+  "prompt.outline": "611b81fc",
+  "prompt.file_lesson.detailed_expected": "2e09c662",
+  "prompt.file_lesson.brief_expected": "43825251",
+  "prompt.file_lesson.template": "38c51719",
+  "prompt.outline_lesson": "e5332c68",
+  "prompt.learning_plan.outline": "9398be36",
+  "prompt.learning_plan.lesson": "8b080e0b",
+  "prompt.qa.answer": "cfa78f24",
+};
 
 function addOutlineLessonLinks(outline: string): string {
   const START = "<!-- CODECOURSE_LESSON_LINKS_START -->";
@@ -167,10 +193,7 @@ function parseLessonPlan(raw: string): LessonPlan {
     return { title: String(record.title || `section ${index + 1}`).trim(), items };
   });
   if (parsedSections.length < 4) throw new Error("lesson plan must contain 4-10 sections");
-  const textbooks = (Array.isArray(value.textbooks) ? value.textbooks : []).map((book) => {
-    const entry = book && typeof book === "object" ? book as Record<string, unknown> : {};
-    return { title: String(entry.title || "").trim(), author: String(entry.author || "").trim(), topics: String(entry.topics || "").trim() };
-  }).filter((book) => book.title && book.author).slice(0, 12);
+  const textbooks = validateBibliographySelections(value.textbooks);
   return {
     lesson_title: String(value.lesson_title || "").trim(),
     position: String(value.position || "").trim(),
@@ -183,6 +206,34 @@ function parseLessonPlan(raw: string): LessonPlan {
 function missingLessonItems(markdown: string, sections: LessonPlanSection[]): LessonPlanItem[] {
   const normalized = markdown.toLocaleLowerCase();
   return sections.flatMap((section) => section.items).filter((item) => !normalized.includes(item.name.toLocaleLowerCase()));
+}
+
+function dedupeLessonMarkdown(markdown: string): string {
+  const blocks = markdown.trim().split(/\n{2,}/);
+  const seenProse = new Set<string>();
+  const seenLessonHeadings = new Set<string>();
+  const kept: string[] = [];
+  for (const raw of blocks) {
+    const block = raw.trim();
+    if (!block) continue;
+    const heading = block.match(/^##\s+(.+)$/);
+    if (heading) {
+      const key = heading[1].replace(/[\s`*_#：:（）()\[\]{}<>]+/g, "").toLocaleLowerCase();
+      if (seenLessonHeadings.has(key)) continue;
+      seenLessonHeadings.add(key);
+      kept.push(block);
+      continue;
+    }
+    const normalized = block.replace(/\s+/g, " ").trim().toLocaleLowerCase();
+    const isProse = normalized.length >= 100
+      && !block.startsWith("```")
+      && !block.startsWith("|")
+      && !block.startsWith(">");
+    if (isProse && seenProse.has(normalized)) continue;
+    if (isProse) seenProse.add(normalized);
+    kept.push(block);
+  }
+  return kept.join("\n\n").trim();
 }
 
 function cleanTerm(value: string): string {
@@ -571,6 +622,16 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
     if (path === "/settings/prompts" && method === "GET") return this.getPrompts() as Promise<T>;
     if (path === "/settings/prompts" && method === "PUT") return this.savePrompts(body) as Promise<T>;
+    if (path === "/settings/prompts/metadata" && method === "GET") return this.getPromptMetadata() as Promise<T>;
+    if (path === "/settings/prompts/history" && method === "GET") {
+      return this.getPromptHistory(url.searchParams.get("key") || "") as Promise<T>;
+    }
+    if (path === "/settings/prompts/preview" && method === "POST") {
+      return this.previewPrompt(String(body.key || ""), String(body.value || "")) as Promise<T>;
+    }
+    if (path === "/settings/prompts/reset" && method === "POST") {
+      return this.resetPrompt(String(body.key || "")) as Promise<T>;
+    }
 
     if ((match = path.match(/^\/projects\/(\d+)$/))) {
       const projectId = Number(match[1]);
@@ -873,11 +934,95 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async getPrompts(): Promise<Record<string, string>> {
     const prompts = { ...(promptDefaults as Record<string, string>) };
     const rows = await db.query<Row>("SELECT key,value FROM settings WHERE key LIKE 'prompt.%'");
-    rows.forEach((row) => { prompts[String(row.key)] = String(row.value); }); return prompts;
+    for (const row of rows) {
+      const key = String(row.key);
+      const saved = String(row.value);
+      const currentDefault = prompts[key];
+      if (
+        currentDefault
+        && currentDefault !== saved
+        && hashText(saved) === LEGACY_PROMPT_HASHES[key]
+      ) {
+        prompts[key] = currentDefault;
+        await this.setSetting(key, currentDefault);
+      } else {
+        prompts[key] = saved;
+      }
+    }
+    return prompts;
   }
   private async savePrompts(payload: Record<string, string>): Promise<{ ok: boolean }> {
-    for (const [key, value] of Object.entries(payload)) if (key.startsWith("prompt.")) await this.setSetting(key, value);
+    const errors: Record<string, string[]> = {};
+    for (const [key, value] of Object.entries(payload)) {
+      if (!key.startsWith("prompt.")) continue;
+      const itemErrors = validatePromptTemplate(key, value);
+      if (itemErrors.length) errors[key] = itemErrors;
+    }
+    if (Object.keys(errors).length) {
+      throw new Error(Object.values(errors).flat().join("\n"));
+    }
+    const current = await this.getPrompts();
+    for (const [key, value] of Object.entries(payload)) {
+      if (!key.startsWith("prompt.") || current[key] === value) continue;
+      await this.setSetting(key, value);
+      await this.addPromptRevision(key, value, "user");
+    }
     return { ok: true };
+  }
+
+  private async addPromptRevision(key: string, value: string, source: string): Promise<void> {
+    await db.run(
+      "INSERT INTO prompt_revisions(prompt_key,value,source,created_at) VALUES(?,?,?,?)",
+      [key, value, source, now()],
+    );
+    await db.run(
+      `DELETE FROM prompt_revisions
+       WHERE prompt_key=?
+         AND id NOT IN (
+           SELECT id FROM prompt_revisions
+           WHERE prompt_key=?
+           ORDER BY id DESC
+           LIMIT 20
+         )`,
+      [key, key],
+    );
+  }
+
+  private async getPromptMetadata() {
+    const current = await this.getPrompts();
+    return {
+      prompts: promptTemplateMetadata(
+        promptDefaults as Record<string, string>,
+        current,
+      ),
+    };
+  }
+
+  private async getPromptHistory(key: string) {
+    if (validatePromptTemplate(key, (promptDefaults as Record<string, string>)[key] || "").includes("未知提示词模板。")) {
+      throw new Error("未知提示词模板。");
+    }
+    const revisions = await db.query<Row>(
+      `SELECT id,prompt_key,value,source,created_at
+       FROM prompt_revisions
+       WHERE prompt_key=?
+       ORDER BY id DESC
+       LIMIT 20`,
+      [key],
+    );
+    return { key, revisions };
+  }
+
+  private async previewPrompt(key: string, value: string) {
+    return { key, rendered: previewPromptTemplate(key, value) };
+  }
+
+  private async resetPrompt(key: string) {
+    const value = (promptDefaults as Record<string, string>)[key];
+    if (value === undefined) throw new Error("未知提示词模板。");
+    await this.setSetting(key, value);
+    await this.addPromptRevision(key, value, "reset");
+    return { key, value };
   }
 
   // ---- task queue ----
@@ -946,13 +1091,29 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await db.run("UPDATE generation_tasks SET stage_label='生成学习总纲',updated_at=? WHERE id=?", [now(), taskId]);
       await this.reportProgress(taskId, "生成学习总纲", 0, 1, true);
       const settings = await this.getLLMSettings();
-      const prompt = renderPrompt(prompts[key] || "生成详细学习总纲", {
+      let prompt = renderPrompt(prompts[key] || "生成详细学习总纲", {
         model: settings.model,
         scope_text: (payload.scope as Record<string, unknown>)?.type as string || (project.project_type === "learning_plan" ? "learning_plan" : "full_project"),
         user_instructions: String(payload.instructions || "无"),
         prompt_input: context,
       });
-      content = await this.callLLM([{ role: "system", content: prompts["prompt.system"] || "你是学习助手。" }, { role: "user", content: prompt }]);
+      if (project.project_type === "learning_plan") {
+        prompt += bibliographyMetadataInstruction();
+      }
+      content = await this.callLLM([
+        {
+          role: "system",
+          content: composeSystemPrompt(prompts["prompt.system"] || "你是学习助手。", "markdown"),
+        },
+        { role: "user", content: prompt },
+      ]);
+      if (project.project_type === "learning_plan") {
+        const parsedBibliography = parseBibliographyMetadata(content);
+        content = appendValidatedBibliography(
+          parsedBibliography.content,
+          parsedBibliography.selections,
+        );
+      }
       if (!content.startsWith("#")) content = `# ${project.project_type === "learning_plan" ? "学习计划总纲" : "项目学习总纲"}\n\n${content}`;
       if (project.project_type === "repository" && content.includes("## FILE:")) {
         const outlinePart = content.match(/## FILE:\s*outline\.md\s*([\s\S]*)/i)?.[1]?.trim(); if (outlinePart) content = outlinePart;
@@ -996,7 +1157,13 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         expected,
         prompt_input: compactText(content, mode === "detailed" ? 24000 : 10000),
       });
-      lesson = await this.callLLM([{ role: "system", content: prompts["prompt.system"] || "你是软件工程讲师。" }, { role: "user", content: prompt }]);
+      lesson = await this.callLLM([
+        {
+          role: "system",
+          content: composeSystemPrompt(prompts["prompt.system"] || "你是软件工程讲师。", "markdown"),
+        },
+        { role: "user", content: prompt },
+      ]);
 
       // Save full-response checkpoint
       const checkpoint: OutlineCheckpoint = {
@@ -1035,12 +1202,19 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         model: settings.model,
         lesson_input: lessonInput,
       });
-    return this.generateDetailedLesson(projectId, payload, taskId, base, prompts["prompt.system"] || "你是学习课程设计师。", inputHash);
+    return this.generateDetailedLesson(
+      projectId,
+      payload,
+      taskId,
+      base,
+      prompts["prompt.system"] || "你是学习课程设计师。",
+      inputHash,
+    );
   }
 
   private async generateDetailedLesson(
     projectId: number, payload: Record<string, unknown>, taskId: number,
-    base: string, systemPrompt: string, inputHash: string,
+    base: string, editableSystemPrompt: string, inputHash: string,
   ): Promise<TaskOutput> {
 
     await db.run("UPDATE generation_tasks SET progress_current=0,progress_total=12,stage_label='planning',updated_at=? WHERE id=?", [now(), taskId]);
@@ -1050,13 +1224,16 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const rawCp = payload._checkpoint;
     const dlCp = parseDetailedLessonCheckpoint(rawCp, inputHash);
 
-    const plannerPrompt = `你是一位课程设计师。现在要根据课程材料，为其中一课制定详细的章节规划。\n\n本课名称：${payload.title}\n本课是课程路线中的第 ${payload.lesson_number} 课。\n\n你的任务：阅读下方课程材料，从中提取本课应该覆盖的全部知识内容，并将其组织为 4-10 个章节。每个章节必须列出明确的知识项（函数、API、语法、概念、公式或方法）。不能使用"其他相关知识"等笼统项。\n\n只输出一个 JSON 对象，不要输出 Markdown 或额外解释：\n\n{\n  "lesson_title": "${payload.title}",\n  "position": "本课在学习路线中的位置（从课程材料推断）",\n  "objectives": ["3-5 条可验证的学习目标"],\n  "sections": [\n    {\n      "title": "章节标题",\n      "items": [\n        {"name": "具体的知识项名称", "kind": "function 或 concept", "focus": "讲解重点（可选，可为空字符串）"}\n      ]\n    }\n  ],\n  "textbooks": [{"title": "确信存在的书名", "author": "作者", "topics": "相关章节主题"}]\n}\n\n教材不确定时 textbooks 返回空数组。不编造页码、版次或书目。\n\n用户补充要求：${payload.instructions || "无"}\n\n课程材料：\n${base}`;
+    const plannerPrompt = `你是一位课程设计师。现在要根据课程材料，为其中一课制定详细的章节规划。\n\n本课名称：${payload.title}\n本课是课程路线中的第 ${payload.lesson_number} 课。\n\n你的任务：阅读下方课程材料，从中提取本课应该覆盖的全部知识内容，并将其组织为 4-10 个章节。每个章节必须列出明确的知识项（函数、API、语法、概念、公式或方法）。不能使用"其他相关知识"等笼统项。\n\n只输出一个 JSON 对象，不要输出 Markdown 或额外解释：\n\n{\n  "lesson_title": "${payload.title}",\n  "position": "本课在学习路线中的位置（从课程材料推断）",\n  "objectives": ["可验证的学习目标"],\n  "sections": [\n    {\n      "title": "章节标题",\n      "items": [\n        {"name": "具体的知识项名称", "kind": "function 或 concept", "focus": "讲解重点（可选，可为空字符串）"}\n      ]\n    }\n  ],\n  "textbooks": [{"id": "只能从允许书目中选择的 ID", "topics": ["只能逐字选择该书允许的主题"]}]\n}\n\n允许书目：\n${bibliographyForPrompt()}\n\n教材不确定或没有直接匹配时 textbooks 返回空数组。不要自行输出书名、作者、章节号、页码、版次或未列出的主题。\n\n用户补充要求：${payload.instructions || "无"}\n\n课程材料：\n${base}`;
 
     const plan = dlCp?.plan
       ? dlCp.plan
-      : parseLessonPlan(await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: plannerPrompt }]));
+      : parseLessonPlan(await this.callLLM([
+        { role: "system", content: composeSystemPrompt(editableSystemPrompt, "json") },
+        { role: "user", content: plannerPrompt },
+      ]));
 
-    let totalCalls = 1 + plan.sections.length;
+    let totalCalls = 2 + plan.sections.length;
 
     // Recover generated sections by index
     const generatedByIndex: Map<number, string> = new Map();
@@ -1096,8 +1273,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
     const genSection = async (sectionIndex: number, sec: LessonPlanSection): Promise<string> => {
       const itemLines = sec.items.map((item) => `- ${item.name}（类型：${item.kind}；重点：${item.focus || "完整讲清"}）`).join("\n");
-      const sectionPrompt = `${base}\n\n现在只生成第 ${payload.lesson_number} 课"${payload.title}"中的一个章节。\n\n章节标题：${sec.title}\n本章必须逐项讲解：\n${itemLines}\n\n输出要求：\n- 直接以 \`## ${sec.title}\` 开始，只输出本章 Markdown。\n- 每个知识项必须以包含其完整名称的 \`###\` 小节单独展开。\n- 不能省略任何知识项，不能用一句定义代替讲解。\n- 不要输出教材原文长引文，不要声称访问了教材全文。\n\n用户补充要求：${payload.instructions || "无"}\n\n学习材料：\n${base}`;
-      let markdown = (await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: sectionPrompt }])).trim();
+      const sectionPrompt = `你正在编写一节课中的一个核心正文章节，而不是完整课件。\n\n本课：第 ${payload.lesson_number} 课"${payload.title}"\n章节标题：${sec.title}\n本章知识项：\n${itemLines}\n\n输出要求：\n- 直接以 \`## ${sec.title}\` 开始，只输出本章 Markdown。\n- 每个知识项必须以包含其完整名称的 \`###\` 小节单独展开。\n- 围绕知识项解释直觉、机制和必要示例；深度以讲清为准，不设置固定段落或示例数量。\n- 不要输出本课定位、目标、知识地图、前置知识总表、综合案例、全课练习、自测、常见误区、总结或教材参照；这些由统一整合阶段生成。\n- 不要重复其他章节应负责的知识；无法由材料确认的内容明确标注证据不足。\n\n用户补充要求：${payload.instructions || "无"}\n\n课程材料：\n${base}`;
+      let markdown = (await this.callLLM([
+        { role: "system", content: composeSystemPrompt(editableSystemPrompt, "markdown") },
+        { role: "user", content: sectionPrompt },
+      ])).trim();
       if (!markdown.startsWith("##")) markdown = `## ${sec.title}\n\n${markdown}`;
       return markdown;
     };
@@ -1151,45 +1331,43 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       if (section) orderedSections.push(section);
     }
     let body = orderedSections.join("\n\n");
+    const missing = missingLessonItems(body, plan.sections);
 
-    // Apply restored repair content
-    if (repairGenerated) {
-      body += `\n\n${repairGenerated}`;
+    if (!repairGenerated) {
+      await db.run(
+        "UPDATE generation_tasks SET progress_current=?,progress_total=?,stage_label=?,updated_at=? WHERE id=?",
+        [totalCalls - 1, totalCalls, "正在统一整合课件", now(), taskId],
+      );
+      await this.reportProgress(taskId, "正在统一整合课件", totalCalls - 1, totalCalls, false);
+      const planLines = plan.sections
+        .map((section) => `- ${section.title}：${section.items.map((item) => item.name).join("、")}`)
+        .join("\n");
+      const missingLines = missing.length
+        ? missing.map((item) => `- ${item.name}（${item.kind}）：${item.focus}`).join("\n")
+        : "- 无";
+      const excerpts = orderedSections
+        .map((markdown, index) => `### ${plan.sections[index].title} 摘要\n${markdown.slice(0, 1600)}`)
+        .join("\n\n");
+      repairGenerated = (await this.callLLM([
+        { role: "system", content: composeSystemPrompt(editableSystemPrompt, "markdown") },
+        {
+          role: "user",
+          content: `你是本课的责任编辑。核心章节已经分别生成，请只补充一次全课公共部分，不要重写章节正文。\n\n本课：第 ${payload.lesson_number} 课"${payload.title}"\n章节与知识项：\n${planLines}\n\n章节正文摘要：\n${excerpts}\n\n尚未被正文明确覆盖的知识项：\n${missingLines}\n\n只输出适用的 Markdown 二级章节：\n- \`## 必要补充\`：仅在存在遗漏知识项时逐项补足。\n- \`## 综合串联\`：用一个连贯流程或案例连接章节，不重复各节定义和完整代码。\n- \`## 常见误区\`：只列能够解释原因和验证方式的误区，不设数量要求。\n- \`## 练习与自测\`：全课只生成一组练习与答案要点，每题写明判断标准。\n- \`## 本课小结\`：简短总结目标之间的关系，不逐节复述。\n\n禁止输出教材参照、前置知识总表、课程目标或知识地图。不要为了凑齐标题输出空泛内容。\n用户补充要求：${payload.instructions || "无"}`,
+        },
+      ])).trim();
+      await saveCheckpoint();
     }
 
-    // Check for missing items
-    const missing = missingLessonItems(body, plan.sections);
-    if (missing.length) {
-      totalCalls += 1;
-      if (totalCalls > 12) throw new Error("课件仍有遗漏知识项，但已达到 12 次 API 调用上限，旧课件已保留。");
-
-      // Only call LLM if repair wasn't already done
-      if (!repairGenerated) {
-        await db.run("UPDATE generation_tasks SET progress_current=?,progress_total=?,stage_label=?,updated_at=? WHERE id=?", [totalCalls - 1, totalCalls, `正在补全 ${missing.length} 个遗漏项`, now(), taskId]);
-        await this.reportProgress(taskId, `正在补全 ${missing.length} 个遗漏项`, totalCalls - 1, totalCalls, false);
-
-        const missingLines = missing.map((item) => `- ${item.name}（${item.kind}）：${item.focus}`).join("\n");
-        let supplement = (await this.callLLM([{ role: "system", content: systemPrompt }, { role: "user", content: `${base}\n\n以下知识项在正文中遗漏。请输出 \`## 遗漏知识补全\`，并为每项建立包含完整名称的独立 \`###\` 小节，完整讲解。\n\n${missingLines}` }])).trim();
-        if (!supplement.startsWith("##")) supplement = `## 遗漏知识补全\n\n${supplement}`;
-
-        // Persist repair to mutable state + checkpoint
-        repairGenerated = supplement;
-        await saveCheckpoint();
-        body += `\n\n${supplement}`;
-      }
-
-      if (missingLessonItems(body, plan.sections).length) {
-        throw new Error("模型补全后仍未覆盖全部规划知识项，旧课件已保留。");
-      }
+    body = dedupeLessonMarkdown(`${body}\n\n${repairGenerated || ""}`);
+    if (missingLessonItems(body, plan.sections).length) {
+      throw new Error("统一整合后仍有规划知识项未覆盖，旧课件已保留。");
     }
 
     const title = plan.lesson_title || String(payload.title || `第 ${payload.lesson_number} 课`);
     const objectiveLines = plan.objectives.length ? plan.objectives.map((item) => `- ${item}`).join("\n") : "- 完成本课知识地图中的全部项目。";
     const mapLines = ["| 章节 | 必须掌握的知识项 |", "|---|---|", ...plan.sections.map((section) => `| ${section.title} | ${section.items.map((item) => item.name).join("、")} |`)];
-    const textbookLines = plan.textbooks.length
-      ? ["> 以下书目来自模型已知的正式出版物，仅作为建议参阅；课件未直接读取教材原文。", "", ...plan.textbooks.map((book) => `- 《${book.title}》— ${book.author}${book.topics ? `；相关主题：${book.topics}` : ""}`)].join("\n")
-      : "本课未列出能够确认书目信息的教材。";
-    const content = `# 第 ${payload.lesson_number} 课：${title}\n\n> 生成方式：AI 分章节生成  \n> 教材说明：书目仅作为建议参阅，模型未直接读取教材原文。\n\n## 本课定位\n\n${plan.position || "本课承接学习总纲中的对应阶段。"}\n\n## 本课目标\n\n${objectiveLines}\n\n## 知识地图\n\n${mapLines.join("\n")}\n\n${body}\n\n## 教材参照\n\n${textbookLines}\n`;
+    const textbookSection = bibliographyMarkdown(plan.textbooks);
+    const content = `# 第 ${payload.lesson_number} 课：${title}\n\n> 生成方式：AI 分章节生成  \n> 教材说明：书目来自 CodeCourse 内置校验目录，课件未读取教材原文。\n\n## 本课定位\n\n${plan.position || "本课承接学习总纲中的对应阶段。"}\n\n## 本课目标\n\n${objectiveLines}\n\n## 知识地图\n\n${mapLines.join("\n")}\n\n${body}\n\n${textbookSection}\n`;
     return { filename: `lessons/lesson_${String(payload.lesson_number).padStart(2, "0")}.md`, content };
   }
 
@@ -1543,7 +1721,6 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       explanationRows.length
         ? `此前解释（不要重复完整定义，给出链接即可）：\n${explanationRows.map((row) => `- ${row.title}：https://codecourse.local/qa/${row.project_id}/${row.qa_record_id}`).join("\n")}`
         : "",
-      `回答偏好：深度 ${preferences.answerDepth.toFixed(2)}，代码比例 ${preferences.codeRatio.toFixed(2)}，讲解顺序 ${preferences.explanationOrder}，前置细节 ${preferences.prerequisiteDetail.toFixed(2)}。`,
     ].filter(Boolean).join("\n\n");
     return `${buildLearnerContext(preferences, status)}\n\n${additions}`;
   }
@@ -1644,7 +1821,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const learnerContext = await this.learnerContextForQuestion(projectId, payload);
     const teacherPlan = await this.teacherStrategyForQuestion(projectId, payload);
     const raw = await this.callLLM([
-      { role: "system", content: prompts["prompt.system"] || "你是项目学习助手。" },
+      {
+        role: "system",
+        content: composeSystemPrompt(prompts["prompt.system"] || "你是项目学习助手。", "qa"),
+      },
       { role: "user", content: `${learnerContext}\n\n${teacherPlan}\n\n${questionPrompt}` },
     ], { provider: payload.provider, base_url: payload.base_url, model: payload.model });
     const parsed = this.parseAnswer(raw, payload); const stamp = now();

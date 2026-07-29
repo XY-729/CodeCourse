@@ -1377,6 +1377,23 @@ def init_storage() -> None:
             """
         )
         conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS prompt_revisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt_key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                source TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_prompt_revisions_key_created
+            ON prompt_revisions(prompt_key, id DESC)
+            """
+        )
+        conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_concept_relations_source ON concept_relations(source_concept_id, status)"
         )
         conn.execute(
@@ -3895,6 +3912,48 @@ def set_setting(key: str, value: str) -> None:
             (key, value, now),
         )
         conn.commit()
+
+
+def add_prompt_revision(prompt_key: str, value: str, source: str = "user") -> int:
+    created_at = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO prompt_revisions (prompt_key, value, source, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (prompt_key, value, source, created_at),
+        )
+        conn.execute(
+            """
+            DELETE FROM prompt_revisions
+            WHERE prompt_key = ?
+              AND id NOT IN (
+                SELECT id FROM prompt_revisions
+                WHERE prompt_key = ?
+                ORDER BY id DESC
+                LIMIT 20
+              )
+            """,
+            (prompt_key, prompt_key),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+
+def list_prompt_revisions(prompt_key: str, limit: int = 20) -> list[dict[str, object]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, prompt_key, value, source, created_at
+            FROM prompt_revisions
+            WHERE prompt_key = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (prompt_key, max(1, min(limit, 50))),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 def get_llm_settings() -> dict[str, str]:

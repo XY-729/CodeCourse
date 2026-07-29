@@ -473,6 +473,7 @@ def build_learner_context(
         f"- {item['title']}：[{item['title']}]({item['url']})"
         for item in inferred["explanations"][:8]
     ]
+    preference_directives = render_preference_directives(preferences)
 
     return f"""<learner_context>
 本轮相关已掌握概念：
@@ -493,6 +494,9 @@ def build_learner_context(
 此前已经生成的相关解释：
 {lines(explanation_lines)}
 
+回答偏好（用语义执行，不展示数值）：
+{preference_directives}
+
 使用要求：
 - 优先回答当前问题，当前问题中的明确要求高于历史偏好。
 - 已掌握且有直接证据的概念不要重复做入门定义。
@@ -503,3 +507,44 @@ def build_learner_context(
 - 不要向用户展示掌握度数值，也不要给用户贴水平标签。
 - 教学方式由当前问题决定：调试优先解决，学习优先建立理解。
 </learner_context>"""
+
+
+def _preference_band(value: float) -> str:
+    if value < 0.34:
+        return "low"
+    if value > 0.66:
+        return "high"
+    return "balanced"
+
+
+def render_preference_directives(preferences: LearnerPreferences) -> str:
+    depth = {
+        "low": "回答深度：紧凑。先给结论与必要依据，用户未要求时不扩展成完整教程。",
+        "balanced": "回答深度：均衡。先解决当前问题，再补足理解结论所需的机制或背景。",
+        "high": "回答深度：详细。说明关键机制、边界与验证方法，但避免重复已掌握内容。",
+    }[_preference_band(preferences.answer_depth)]
+    code = {
+        "low": "代码使用：克制。只有代码明显优于文字或当前任务必须实现时才给示例。",
+        "balanced": "代码使用：均衡。实现与调试问题给必要代码，概念问题按需使用短片段。",
+        "high": "代码使用：偏多。优先用贴合当前语言和上下文的代码展示关键机制。",
+    }[_preference_band(preferences.code_ratio)]
+    order = {
+        "example_first": "讲解顺序：先给具体例子或现象，再归纳原理。",
+        "principle_first": "讲解顺序：先说明原理和约束，再落到例子。",
+        "code_first": "讲解顺序：先给关键代码或修改，再解释其原因。",
+        "balanced": "讲解顺序：结论先行，在原理与例子之间按当前问题选择。",
+    }.get(
+        preferences.explanation_order,
+        "讲解顺序：结论先行，在原理与例子之间按当前问题选择。",
+    )
+    prerequisite = {
+        "low": "前置知识：少量补充。只解释理解当前答案不可缺少的前置概念。",
+        "balanced": "前置知识：适量补充。遇到必要且证据不足的前置概念时给一句铺垫。",
+        "high": "前置知识：主动补足。先建立完成当前目标需要的关键前置链条。",
+    }[_preference_band(preferences.prerequisite_detail)]
+    terminology = {
+        "low": "术语密度：低。优先使用通俗表达，仅保留不可替代的技术名词。",
+        "balanced": "术语密度：适中。使用准确术语，并简短解释当前必要的陌生词。",
+        "high": "术语密度：高。可以使用领域标准术语，但不要堆砌或偏离当前问题。",
+    }[_preference_band(preferences.terminology_density)]
+    return "\n".join(f"- {item}" for item in (depth, code, order, prerequisite, terminology))

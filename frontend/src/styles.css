@@ -1812,9 +1812,15 @@ button:disabled,
 
 /* ---- Prompt editor ---- */
 .prompt-editor-modal {
+  width: min(920px, calc(100vw - 32px));
   max-height: 85vh;
   display: flex;
   flex-direction: column;
+}
+
+.prompt-editor-loading {
+  padding: 32px;
+  text-align: center;
 }
 
 .prompt-tabs {
@@ -1856,6 +1862,7 @@ button:disabled,
   display: flex;
   flex-direction: column;
   padding: 12px 16px;
+  overflow: auto;
 }
 
 .prompt-editor-label {
@@ -1866,6 +1873,48 @@ button:disabled,
   font-size: 13px;
   font-weight: 600;
   color: #344054;
+}
+
+.prompt-editor-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.prompt-editor-heading .prompt-editor-label {
+  margin-bottom: 3px;
+}
+
+.prompt-editor-heading p {
+  margin: 0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.prompt-editor-tools {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.prompt-placeholders {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: #667085;
+  font-size: 11px;
+}
+
+.prompt-placeholders code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent, #16836f) 10%, transparent);
+  color: inherit;
 }
 
 .prompt-editor-textarea {
@@ -1879,6 +1928,88 @@ button:disabled,
   color: #18212f;
   background: #fbfcfd;
   resize: vertical;
+}
+
+.prompt-editor-textarea.invalid {
+  border-color: #d04444;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #d04444 12%, transparent);
+}
+
+.prompt-validation {
+  margin-top: 7px;
+  color: #b42318;
+  font-size: 12px;
+}
+
+.prompt-preview,
+.prompt-history {
+  margin-top: 10px;
+  border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  padding-top: 10px;
+}
+
+.prompt-preview-title {
+  margin-bottom: 7px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.prompt-preview pre {
+  max-height: 220px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  white-space: pre-wrap;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.prompt-history {
+  display: grid;
+  gap: 5px;
+}
+
+.prompt-history-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+  text-align: left;
+  cursor: pointer;
+}
+
+.prompt-history-row:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.prompt-history-row time {
+  justify-self: end;
+  color: #667085;
+  font-size: 11px;
+}
+
+.prompt-history-row small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: #667085;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-history-empty,
+.prompt-editor-error {
+  font-size: 12px;
+}
+
+.prompt-editor-error {
+  padding: 0 16px 8px;
 }
 
 /* ---- Knowledge graph ---- */

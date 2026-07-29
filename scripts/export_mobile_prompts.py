@@ -20,6 +20,15 @@ def main() -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
 
+    bibliography_source = ROOT / "shared" / "curated-bibliography.json"
+    bibliography_target = (
+        ROOT / "frontend" / "src" / "platform" / "android" / "curated-bibliography.json"
+    )
+    bibliography_target.write_text(
+        bibliography_source.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
 
 if __name__ == "__main__":
     main()

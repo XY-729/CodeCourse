@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from app.models.schemas import QAAskRequest
 from app.services.generation_service import extract_file_signals, project_course_dir
 from app.services.knowledge_service import attach_learning_anchor, attach_qa_record, remove_learning_anchor_node
+from app.services.prompt_contracts import compose_system_prompt
 from app.services.prompt_store import load_prompt
 from app.services.llm_client import call_openai_compatible_chat
 from app.services.personalization_service import (
@@ -577,7 +578,10 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
         retrieval_trace=retrieval_trace,
         retrieval_sources=retrieval_sources,
         messages=[
-            {"role": "system", "content": load_prompt("prompt.system")},
+            {
+                "role": "system",
+                "content": compose_system_prompt(load_prompt("prompt.system"), "qa"),
+            },
             {"role": "user", "content": prompt},
         ],
     )

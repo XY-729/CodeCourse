@@ -69,6 +69,15 @@ export class MobileDatabase {
           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
         );
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS prompt_revisions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          prompt_key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          source TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_prompt_revisions_key_created
+          ON prompt_revisions(prompt_key, id DESC);
         CREATE TABLE IF NOT EXISTS generation_tasks (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           project_id INTEGER NOT NULL,

@@ -24,6 +24,15 @@ def _debug_dump(filename, text):
     except Exception:
         pass
 from app.services.prompt_store import load_prompt, save_prompt
+from app.services.prompt_contracts import compose_system_prompt
+from app.services.bibliography import (
+    append_validated_bibliography,
+    bibliography_for_prompt,
+    bibliography_markdown,
+    bibliography_metadata_instruction,
+    parse_bibliography_metadata,
+    validate_bibliography_selections,
+)
 from app.models.schemas import CourseFile, LearningScopeRequest
 from app.services.course_generator import (
     generate_course,
@@ -401,15 +410,25 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
                 user_instructions=user_instructions or "无",
             )
             messages = [
-                {"role": "system", "content": load_prompt("prompt.system")},
+                {
+                    "role": "system",
+                    "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
+                },
                 {
                     "role": "user",
-                    "content": learning_plan_prompt + term_metadata_instruction(),
+                    "content": (
+                        learning_plan_prompt
+                        + bibliography_metadata_instruction()
+                        + term_metadata_instruction()
+                    ),
                 },
             ]
             content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
             content, model_terms = parse_term_metadata(content)
-            outline = _require_markdown(content)
+            content, bibliography = parse_bibliography_metadata(content)
+            outline = append_validated_bibliography(
+                _require_markdown(content), bibliography
+            )
             output_dir = project_course_dir(project_id)
             _atomic_write(output_dir / "outline.md", add_outline_lesson_links(outline))
             register_document_terms(project_id, "course", "outline.md", outline, model_terms)
@@ -427,7 +446,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
         messages = [
             {
                 "role": "system",
-                "content": load_prompt("prompt.system"),
+                "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
             },
             {
                 "role": "user",
@@ -554,7 +573,10 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
             prompt_input=prompt_input,
         ) + term_metadata_instruction()
         messages = [
-            {"role": "system", "content": load_prompt("prompt.system")},
+            {
+                "role": "system",
+                "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
+            },
             {"role": "user", "content": user_prompt},
         ]
         content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
@@ -615,6 +637,7 @@ def _parse_lesson_plan(content: str) -> dict:
             raise RuntimeError("课件章节计划存在空知识项，旧课件已保留。")
         normalized_sections.append({"title": str(section["title"]).strip(), "items": items})
     plan["sections"] = normalized_sections
+    plan["textbooks"] = validate_bibliography_selections(plan.get("textbooks"))
     return plan
 
 
@@ -632,28 +655,41 @@ def _missing_lesson_items(markdown: str, sections: list[dict]) -> list[dict[str,
     return missing
 
 
-def _lesson_textbook_markdown(plan: dict) -> str:
-    textbooks = plan.get("textbooks")
-    if not isinstance(textbooks, list) or not textbooks:
-        return "## 教材参照\n\n本课未列出能够确认书目信息的教材。"
-    lines = [
-        "## 教材参照",
-        "",
-        "> 以下书目来自模型已知的正式出版物，仅作为建议参阅；课件未直接读取教材原文。",
-        "",
-    ]
-    for book in textbooks[:12]:
-        if not isinstance(book, dict):
+def _dedupe_lesson_markdown(markdown: str) -> str:
+    """Remove exact repeated prose and duplicate lesson-level headings."""
+    blocks = re.split(r"\n{2,}", markdown.strip())
+    seen_prose: set[str] = set()
+    seen_lesson_headings: set[str] = set()
+    kept: list[str] = []
+    for block in blocks:
+        stripped = block.strip()
+        if not stripped:
             continue
-        title = str(book.get("title", "")).strip()
-        author = str(book.get("author", "")).strip()
-        topics = str(book.get("topics", "")).strip()
-        if title and author:
-            detail = f"；相关主题：{topics}" if topics else ""
-            lines.append(f"- 《{title}》— {author}{detail}")
-    if len(lines) == 4:
-        lines.append("本课未列出能够确认书目信息的教材。")
-    return "\n".join(lines)
+        heading = re.fullmatch(r"##\s+(.+)", stripped)
+        if heading:
+            key = _normalized_coverage_text(heading.group(1))
+            if key in seen_lesson_headings:
+                continue
+            seen_lesson_headings.add(key)
+            kept.append(stripped)
+            continue
+        normalized = re.sub(r"\s+", " ", stripped).strip().casefold()
+        is_prose = (
+            len(normalized) >= 100
+            and not stripped.startswith("```")
+            and not stripped.startswith("|")
+            and not stripped.startswith(">")
+        )
+        if is_prose and normalized in seen_prose:
+            continue
+        if is_prose:
+            seen_prose.add(normalized)
+        kept.append(stripped)
+    return "\n\n".join(kept).strip()
+
+
+def _lesson_textbook_markdown(plan: dict) -> str:
+    return bibliography_markdown(plan.get("textbooks"))
 
 
 def _run_learning_plan_lesson_task(
@@ -665,7 +701,7 @@ def _run_learning_plan_lesson_task(
     instructions: str,
     settings: dict[str, str],
 ) -> tuple[str, str]:
-    base_prompt = load_prompt("prompt.learning_plan.lesson")
+    lesson_policy = load_prompt("prompt.learning_plan.lesson")
     user_instructions = _clean_instructions(instructions) or "无"
     update_generation_task(
         task_id,
@@ -696,11 +732,14 @@ def _run_learning_plan_lesson_task(
     }}
   ],
   "textbooks": [
-    {{"title": "确信存在的书名", "author": "作者", "topics": "相关章节主题"}}
+    {{"id": "只能从允许书目中选择的 ID", "topics": ["只能逐字选择该书允许的主题"]}}
   ]
 }}
 
-教材不确定时 textbooks 返回空数组。不编造页码、版次或书目。
+允许书目：
+{bibliography_for_prompt()}
+
+教材不确定或没有直接匹配时 textbooks 返回空数组。不要自行输出书名、作者、章节号、页码、版次或未列出的主题。
 
 用户补充要求：{user_instructions}
 
@@ -713,7 +752,10 @@ def _run_learning_plan_lesson_task(
         settings["api_key"],
         settings["model"],
         [
-            {"role": "system", "content": load_prompt("prompt.system")},
+            {
+                "role": "system",
+                "content": compose_system_prompt(load_prompt("prompt.system"), "json"),
+            },
             {"role": "user", "content": planner_prompt},
         ],
         timeout=180,
@@ -721,7 +763,7 @@ def _run_learning_plan_lesson_task(
     plan = _parse_lesson_plan(plan_content)
     _debug_dump("L" + str(lesson_number) + "-plan-response.json", json.dumps(plan, ensure_ascii=False, indent=2))
     sections: list[dict] = plan["sections"]
-    total_calls = 1 + len(sections)
+    total_calls = 2 + len(sections)
     update_generation_task(
         task_id,
         "running",
@@ -737,14 +779,17 @@ def _run_learning_plan_lesson_task(
 
     def _gen_section(idx, sec):
         ls = "\n".join("-" + it.get("name", "") + "（类型：" + it.get("kind", "") + "；重点：" + (it.get("focus") or "完整讲清") + "）" for it in sec.get("items", []))
-        sp = base_prompt + "\n\n"
-        sp += "现在只生成第 " + str(lesson_number) + " 课“" + lesson_title + "”中的一个章节。\n\n"
+        sp = lesson_policy + "\n\n"
+        sp += "你正在编写一节课中的一个核心正文章节，而不是完整课件。\n\n"
+        sp += "本课：" + str(lesson_number) + "“" + lesson_title + "”\n"
         sp += "章节标题：" + sec.get("title", "") + "\n"
-        sp += "本章必须逐项讲解：\n" + ls + "\n\n"
+        sp += "本章知识项：\n" + ls + "\n\n"
         sp += "输出要求：\n"
         sp += "- 直接以 `## " + sec.get("title", "") + "` 开始，只输出本章 Markdown。\n"
         sp += "- 每个知识项必须以包含其完整名称的 `###` 小节单独展开。\n"
-        sp += "- 不能省略任何知识项，不能用一句定义代替讲解。\n"
+        sp += "- 围绕知识项解释直觉、机制和必要示例；深度以讲清为准，不设置固定段落或示例数量。\n"
+        sp += "- 不要输出本课定位、目标、知识地图、前置知识总表、综合案例、全课练习、自测、常见误区、总结或教材参照；这些由统一整合阶段生成。\n"
+        sp += "- 不要重复其他章节应负责的知识；无法由材料确认的内容明确标注证据不足。\n"
         sp += "- 不要输出教材原文长引文，不要声称访问了教材全文。\n\n"
         sp += "用户补充要求：" + user_instructions + "\n\n"
         sp += "学习材料：\n" + lesson_input + "\n"
@@ -752,7 +797,7 @@ def _run_learning_plan_lesson_task(
             _debug_dump("L" + str(lesson_number) + "-section-1-prompt.txt", sp)
         c = call_openai_compatible_chat(
             settings["base_url"], settings["api_key"], settings["model"],
-            [{"role": "system", "content": load_prompt("prompt.system")},
+            [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
              {"role": "user", "content": sp}], timeout=240)
         md = _require_markdown(c)
         if not md.lstrip().startswith("##"):
@@ -777,47 +822,77 @@ def _run_learning_plan_lesson_task(
                     stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
 
         joined_sections = "\n\n".join(generated_sections)
-
         missing = _missing_lesson_items(joined_sections, sections)
-        if missing:
-            total_calls += 1
-            if total_calls > 12:
-                raise RuntimeError("课件仍有遗漏知识项，但已达到 12 次 API 调用上限，旧课件已保留。")
-            update_generation_task(
-                task_id,
-                "running",
-                progress_current=total_calls - 1,
-                progress_total=total_calls,
-                stage_label=f"正在补全 {len(missing)} 个遗漏项",
+        update_generation_task(
+            task_id,
+            "running",
+            progress_current=total_calls - 1,
+            progress_total=total_calls,
+            stage_label="正在统一整合课件",
+        )
+        plan_lines = "\n".join(
+            f"- {section['title']}：{'、'.join(item['name'] for item in section['items'])}"
+            for section in sections
+        )
+        missing_lines = (
+            "\n".join(
+                f"- {item['name']}（{item['kind']}）：{item['focus']}"
+                for item in missing
             )
-            missing_lines = "\n".join(f"- {item['name']}（{item['kind']}）：{item['focus']}" for item in missing)
-            supplement_prompt = f"""{base_prompt}
+            if missing
+            else "- 无"
+        )
+        section_excerpts = "\n\n".join(
+            f"### {sections[index]['title']} 摘要\n{markdown[:1600]}"
+            for index, markdown in enumerate(generated_sections)
+        )
+        synthesis_prompt = f"""{lesson_policy}
 
-以下知识项在第 {lesson_number} 课“{lesson_title}”正文中遗漏。请输出 `## 遗漏知识补全`，并为每个知识项建立包含完整名称的独立 `###` 小节，按课件要求完整讲解。
+你是本课的责任编辑。核心章节已经分别生成，请只补充一次全课公共部分，不要重写章节正文。
 
+本课：第 {lesson_number} 课“{lesson_title}”
+章节与知识项：
+{plan_lines}
+
+章节正文摘要：
+{section_excerpts}
+
+尚未被正文明确覆盖的知识项：
 {missing_lines}
 
+只输出以下适用的 Markdown 二级章节：
+- `## 必要补充`：仅在存在遗漏知识项时逐项补足。
+- `## 综合串联`：用一个连贯流程或案例把章节连接起来，不重复各节定义和完整代码。
+- `## 常见误区`：只列对本课确有价值、能够解释原因和验证方式的误区，不设数量要求。
+- `## 练习与自测`：全课只生成一组练习与答案要点，每题写明完成或判断标准。
+- `## 本课小结`：简短总结目标之间的关系，不逐节复述。
+
+禁止输出教材参照、前置知识总表、课程目标或知识地图。不要为了凑齐标题输出空泛内容。
 用户补充要求：{user_instructions}
 """
-            supplement = _require_markdown(
-                call_openai_compatible_chat(
-                    settings["base_url"],
-                    settings["api_key"],
-                    settings["model"],
-                    [
-                        {"role": "system", "content": load_prompt("prompt.system")},
-                        {"role": "user", "content": supplement_prompt},
-                    ],
-                    timeout=240,
-                )
+        synthesis = _require_markdown(
+            call_openai_compatible_chat(
+                settings["base_url"],
+                settings["api_key"],
+                settings["model"],
+                [
+                    {
+                        "role": "system",
+                        "content": compose_system_prompt(
+                            load_prompt("prompt.system"), "markdown"
+                        ),
+                    },
+                    {"role": "user", "content": synthesis_prompt},
+                ],
+                timeout=240,
             )
-            if not supplement.lstrip().startswith("##"):
-                supplement = "## 遗漏知识补全\n\n" + supplement
-            _atomic_write(staging_dir / "section-supplement.part", supplement)
-            generated_sections.append(supplement.strip())
-            joined_sections = "\n\n".join(generated_sections)
-            if _missing_lesson_items(joined_sections, sections):
-                raise RuntimeError("模型补全后仍未覆盖全部规划知识项，旧课件已保留。")
+        ).strip()
+        _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
+        joined_sections = _dedupe_lesson_markdown(
+            "\n\n".join([*generated_sections, synthesis])
+        )
+        if _missing_lesson_items(joined_sections, sections):
+            raise RuntimeError("统一整合后仍有规划知识项未覆盖，旧课件已保留。")
 
         resolved_title = str(plan.get("lesson_title", "")).strip() or lesson_title
         position = str(plan.get("position", "")).strip() or "本课承接学习总纲中的对应阶段。"
@@ -829,7 +904,7 @@ def _run_learning_plan_lesson_task(
         lesson = "\n\n".join(
             [
                 f"# 第 {lesson_number} 课：{resolved_title}",
-                "> 生成方式：AI 分章节生成  \n> 教材说明：书目仅作为建议参阅，模型未直接读取教材原文。",
+                "> 生成方式：AI 分章节生成并统一整合  \n> 教材说明：书目来自 CodeCourse 内置校验目录，课件未读取教材原文。",
                 f"## 本课定位\n\n{position}",
                 "## 本课目标\n\n" + ("\n".join(objective_lines) if objective_lines else "- 完成本课知识地图中的全部项目。"),
                 "## 知识地图\n\n" + "\n".join(map_lines),
@@ -918,7 +993,10 @@ def run_outline_lesson_task(
             settings["api_key"],
             settings["model"],
             [
-                {"role": "system", "content": load_prompt("prompt.system")},
+                {
+                    "role": "system",
+                    "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
+                },
                 {"role": "user", "content": prompt},
             ],
             timeout=120,
@@ -1084,9 +1162,12 @@ def _learning_plan_lesson_messages(settings: dict[str, str], lesson_number: int,
 
 学习材料：
 {lesson_input}
-""" + term_metadata_instruction()
+    """ + term_metadata_instruction()
     return [
-        {"role": "system", "content": load_prompt("prompt.system")},
+        {
+            "role": "system",
+            "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
+        },
         {"role": "user", "content": user_prompt},
     ]
 
@@ -1123,9 +1204,12 @@ async def stream_outline_generation(
         prompt = load_prompt("prompt.learning_plan.outline").format(
             model=settings["model"],
             user_instructions=user_instructions or "无",
-        ) + term_metadata_instruction()
+        ) + bibliography_metadata_instruction() + term_metadata_instruction()
         messages = [
-            {"role": "system", "content": load_prompt("prompt.system")},
+            {
+                "role": "system",
+                "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
+            },
             {"role": "user", "content": prompt},
         ]
         filename = "outline.md"
@@ -1140,7 +1224,10 @@ async def stream_outline_generation(
             prompt_input=prompt_input,
         ) + term_metadata_instruction()
         messages = [
-            {"role": "system", "content": load_prompt("prompt.system")},
+            {
+                "role": "system",
+                "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
+            },
             {"role": "user", "content": outline_prompt},
         ]
         filename = "outline.md"
@@ -1186,7 +1273,10 @@ async def stream_outline_generation(
         content, model_terms = parse_term_metadata(full_text)
 
         if scope.type == "learning_plan":
-            outline = _require_markdown(content)
+            content, bibliography = parse_bibliography_metadata(content)
+            outline = append_validated_bibliography(
+                _require_markdown(content), bibliography
+            )
             _atomic_write(output_path, add_outline_lesson_links(outline))
             register_document_terms(project_id, "course", filename, outline, model_terms)
         else:
@@ -1248,7 +1338,10 @@ async def stream_file_lesson_generation(
         prompt_input=prompt_input,
     ) + term_metadata_instruction()
     messages = [
-        {"role": "system", "content": load_prompt("prompt.system")},
+        {
+            "role": "system",
+            "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
+        },
         {"role": "user", "content": user_prompt},
     ]
 
@@ -1350,7 +1443,10 @@ async def stream_outline_lesson_generation(
             lesson_input=lesson_input,
         ) + term_metadata_instruction()
         messages = [
-            {"role": "system", "content": load_prompt("prompt.system")},
+            {
+                "role": "system",
+                "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
+            },
             {"role": "user", "content": prompt},
         ]
         task_type = "outline_lesson"
