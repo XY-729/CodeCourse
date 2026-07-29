@@ -4272,9 +4272,9 @@ export default function App() {
           title="拖拽调整左栏宽度"
         /> : null}
         <section className="center-pane">
-          {project && !(mobileRuntime && mobileWorkspaceTab) ? (
+          {project ? (
             <div className="reader-workspace">{renderLayoutNode(layout)}</div>
-          ) : project ? null : error ? (
+          ) : error ? (
             <section className="learning-empty-state">
               <div className="learning-empty-mark"><AlertCircle size={24} /></div>
               <h1>项目无法打开</h1>
