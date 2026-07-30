@@ -491,6 +491,8 @@ export default function App() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const dropPrefetchRef = useRef<Map<string, Promise<OpenItem | null>>>(new Map());
   const layoutHistoryRef = useRef<LayoutNode[]>([]);
+  const paneTabStripRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const paneTabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const closedItemsRef = useRef<Array<{ groupId: string; item: OpenItem }>>([]);
   const activeOpenItemRef = useRef<OpenItem | null>(null);
   const mobileRuntime = isAndroidRuntime();
@@ -838,6 +840,33 @@ export default function App() {
       setNavigationOpen(false);
     }
   }, [assistantOpen, mobileRuntime, navigationOpen]);
+
+  const activeMobileTabKey = useMemo(() => {
+    if (!mobileRuntime) return "";
+    const group = findGroup(layout, activeGroupId);
+    if (!group?.activeItemId) return "";
+    return `${group.id}::${group.activeItemId}`;
+  }, [layout, activeGroupId, mobileRuntime]);
+
+  useEffect(() => {
+    if (!activeMobileTabKey) return;
+    const frame = window.requestAnimationFrame(() => {
+      const sep = activeMobileTabKey.indexOf("::");
+      const groupId = activeMobileTabKey.slice(0, sep);
+      const tab = paneTabRefs.current.get(activeMobileTabKey);
+      const strip = paneTabStripRefs.current.get(groupId);
+      if (!strip || !tab) return;
+      const sr = strip.getBoundingClientRect();
+      const tr = tab.getBoundingClientRect();
+      const pad = 8;
+      if (tr.left < sr.left + pad) {
+        strip.scrollBy({ left: tr.left - sr.left - pad, behavior: "smooth" });
+      } else if (tr.right > sr.right - pad) {
+        strip.scrollBy({ left: tr.right - sr.right + pad, behavior: "smooth" });
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeMobileTabKey]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -1897,11 +1926,14 @@ export default function App() {
     return buildOpenItem(payload);
   }
 
+  function dismissMobileWorkspaceAfterOpen() {
+    if (!mobileRuntime) return;
+    window.requestAnimationFrame(() => {
+      mobileWorkspaceSheetRef.current?.dismiss();
+    });
+  }
+
   async function openFileInActiveGroup(projectId: number, path: string, explicitLine?: number) {
-    if (mobileRuntime) {
-      setNavigationOpen(false);
-      setAssistantOpen(false);
-    }
     const content = await getProjectFile(projectId, path);
     const saved = findLearningState("file", path);
     const restoreLine = saved?.position_kind === "line" ? saved.position_value : 1;
@@ -1921,13 +1953,10 @@ export default function App() {
         align: "start",
       } : undefined,
     });
+    dismissMobileWorkspaceAfterOpen();
   }
 
   async function openCourseInActiveGroup(projectId: number, filename: string) {
-    if (mobileRuntime) {
-      setNavigationOpen(false);
-      setAssistantOpen(false);
-    }
     const content = await getCourseContent(projectId, filename);
     void refreshDocumentTerms("course", filename, projectId);
     setSelectedCourse(filename);
@@ -1941,6 +1970,7 @@ export default function App() {
       content: content.content,
       qaRecordId: matchingQA?.id,
     });
+    dismissMobileWorkspaceAfterOpen();
   }
 
   function _normalizeOutputPath(outputPath: string | null | undefined, recordId: number, projectId: number): string {
@@ -3345,11 +3375,19 @@ export default function App() {
         }}
         onDrop={mobileRuntime ? undefined : (event) => handleGroupDrop(event, group.id)}
       >
-        <div className="pane-tabs">
+        <div className="pane-tabs" ref={(node) => {
+          if (node) paneTabStripRefs.current.set(group.id, node);
+          else paneTabStripRefs.current.delete(group.id);
+        }}>
           {!mobileRuntime ? <span className="pane-name">工作区</span> : null}
           {group.items.map((item) => (
             <div
               key={item.id}
+              ref={(node) => {
+                const key = `${group.id}::${item.id}`;
+                if (node) paneTabRefs.current.set(key, node);
+                else paneTabRefs.current.delete(key);
+              }}
               className={`pane-tab ${item.id === group.activeItemId ? "active" : ""}`}
               role="tab"
               aria-selected={item.id === group.activeItemId}

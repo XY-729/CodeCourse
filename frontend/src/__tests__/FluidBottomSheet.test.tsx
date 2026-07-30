@@ -59,7 +59,7 @@ describe("FluidBottomSheet", () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
-  it("removes backdrop blur once the sheet is dragged halfway down", () => {
+  it("adjusts scrim alpha when the sheet is dragged halfway down", () => {
     const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       x: 0,
       y: 0,
@@ -82,13 +82,12 @@ describe("FluidBottomSheet", () => {
     const sheet = getByRole("region", { name: "课程" });
     const layer = sheet.parentElement;
 
-    expect(layer?.style.getPropertyValue("--sheet-backdrop-blur")).toBe("10px");
+    expect(layer?.style.getPropertyValue("--sheet-scrim-alpha")).toBe("0.24");
     fireEvent.pointerDown(grabber, { button: 0, clientY: 100, pointerId: 8 });
     fireEvent.pointerMove(grabber, { clientY: 399, pointerId: 8 });
 
     expect(sheet.dataset.openProgress).toBe("0.5000");
     expect(sheet.dataset.backdropProgress).toBe("0.0000");
-    expect(layer?.style.getPropertyValue("--sheet-backdrop-blur")).toBe("0px");
     expect(layer?.style.getPropertyValue("--sheet-scrim-alpha")).toBe("0");
     bounds.mockRestore();
   });
