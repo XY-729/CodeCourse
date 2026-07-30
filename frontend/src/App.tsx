@@ -3365,7 +3365,7 @@ export default function App() {
       if (!project || !activeItem || activeItem.type !== "course") return;
       let recordId = activeItem.qaRecordId;
       if (!recordId) {
-        const matchingRecord = qaHistory.find((record) => record.output_path === activeItem.path);
+        const matchingRecord = qaHistory.find((record) => _normalizeOutputPath(record.output_path, record.id, project.id) === activeItem.path);
         recordId = matchingRecord?.id;
       }
       if (!recordId) { setError("找不到当前文档对应的问答记录"); return; }
@@ -3375,16 +3375,35 @@ export default function App() {
         const updated = await updateQARecord(project.id, recordId, { answer_md: activeItem.content });
         setQAHistory((items) => items.map((item) => item.id === updated.id ? updated : item));
         if (selectedQA?.id === updated.id) setSelectedQA(updated);
+        setLayout((previous) => updateGroup(previous, group.id, (currentGroup) => ({
+          ...currentGroup,
+          items: currentGroup.items.map((item) => item.id === activeItem.id ? { ...item, content: updated.answer_md, dirty: false } : item),
+        })));
         try {
           const fresh = await getCourseContent(project.id, activeItem.path);
           setLayout((previous) => updateGroup(previous, group.id, (currentGroup) => ({
             ...currentGroup,
             items: currentGroup.items.map((item) => item.id === activeItem.id ? { ...item, content: fresh.content, dirty: false } : item),
           })));
-        } catch { /* save succeeded; reload failure is non-fatal */ }
+        } catch { /* save succeeded; local dirty already cleared */ }
         setEditingCourseItemId(null);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "保存失败");
+      }
+    }
+
+    async function cancelEditedCourseItem() {
+      if (!project || !activeItem || activeItem.type !== "course") return;
+      if (!activeItem.dirty) { setEditingCourseItemId(null); return; }
+      try {
+        const fresh = await getCourseContent(project.id, activeItem.path);
+        setLayout((previous) => updateGroup(previous, group.id, (currentGroup) => ({
+          ...currentGroup,
+          items: currentGroup.items.map((item) => item.id === activeItem.id ? { ...item, content: fresh.content, dirty: false } : item),
+        })));
+        setEditingCourseItemId(null);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "无法恢复文档原内容");
       }
     }
 
@@ -3395,7 +3414,7 @@ export default function App() {
           <button type="button" className="mobile-reader-action-button" onClick={() => { void saveEditedCourseItem(); }} disabled={!activeItem.dirty} aria-label="保存当前文档" title="保存">
             <Save size={18} aria-hidden="true" />
           </button>
-          <button type="button" className="mobile-reader-action-button" onClick={() => { setEditingCourseItemId(null); }} aria-label="取消编辑" title="取消编辑">
+          <button type="button" className="mobile-reader-action-button" onClick={() => { void cancelEditedCourseItem(); }} aria-label="取消编辑" title="取消编辑">
             <X size={18} aria-hidden="true" />
           </button>
         </>
@@ -3597,7 +3616,7 @@ export default function App() {
                         <Save size={14} />
                         保存
                       </button>
-                      <button className="secondary-button compact" onClick={() => setEditingCourseItemId(null)}>
+                      <button className="secondary-button compact" onClick={() => { void cancelEditedCourseItem(); }}>
                         取消
                       </button>
                     </div>
@@ -3684,16 +3703,15 @@ export default function App() {
                 onSelect={(event) => {
                   const target = event.currentTarget;
                   const text = target.value.slice(target.selectionStart, target.selectionEnd).trim();
-                  if (text) {
-                    setQAHighlightDraft({ sourcePath: activeItem.path, selectedText: text });
-                    const nextSelection = {
-                      sourceType: "selection",
-                      sourcePath: activeItem.path,
-                      selectedText: text,
-                    } as SelectionSummary;
-                    setSelection(nextSelection);
-                    setSelectionAnchor(nextSelection);
+                  if (!text) {
+                    setQAHighlightDraft(null);
+                    if (selectionAnchor?.sourcePath === activeItem.path) { setSelection(null); setSelectionAnchor(null); }
+                    return;
                   }
+                  setQAHighlightDraft({ sourcePath: activeItem.path, selectedText: text });
+                  const nextSelection = { sourceType: "selection", sourcePath: activeItem.path, selectedText: text } as SelectionSummary;
+                  setSelection(nextSelection);
+                  setSelectionAnchor(nextSelection);
                 }}
               />
               {activeQAHighlights.length ? (
