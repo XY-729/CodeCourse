@@ -74,3 +74,65 @@ html:not(.platform-android) .markdown-body pre .hljs::selection {
   color: #ffffff;
   background: color-mix(in srgb, var(--apple-blue) 78%, transparent);
 }
+
+/* ---- Android token colours ---- */
+
+html.platform-android .markdown-body pre code.hljs {
+  color: var(--mobile-text);
+  background: transparent;
+}
+
+html.platform-android .markdown-body pre .hljs-keyword,
+html.platform-android .markdown-body pre .hljs-selector-tag,
+html.platform-android .markdown-body pre .hljs-literal,
+html.platform-android .markdown-body pre .hljs-type {
+  color: #c66ed9;
+}
+
+html.platform-android .markdown-body pre .hljs-string,
+html.platform-android .markdown-body pre .hljs-regexp,
+html.platform-android .markdown-body pre .hljs-addition {
+  color: #26a37c;
+}
+
+html.platform-android .markdown-body pre .hljs-comment,
+html.platform-android .markdown-body pre .hljs-quote,
+html.platform-android .markdown-body pre .hljs-deletion {
+  color: #7d8a94;
+  font-style: italic;
+}
+
+html.platform-android .markdown-body pre .hljs-number,
+html.platform-android .markdown-body pre .hljs-meta .hljs-string {
+  color: #d68f4a;
+}
+
+html.platform-android .markdown-body pre .hljs-title,
+html.platform-android .markdown-body pre .hljs-title.function_,
+html.platform-android .markdown-body pre .hljs-name {
+  color: #4b9cd4;
+}
+
+html.platform-android .markdown-body pre .hljs-built_in,
+html.platform-android .markdown-body pre .hljs-attr {
+  color: #5da8a0;
+}
+
+html.platform-android .markdown-body pre .hljs-params,
+html.platform-android .markdown-body pre .hljs-variable {
+  color: #e0a060;
+}
+
+html.platform-android .markdown-body pre .hljs-meta,
+html.platform-android .markdown-body pre .hljs-punctuation,
+html.platform-android .markdown-body pre .hljs-operator {
+  color: #96a1ab;
+}
+
+html.platform-android .markdown-body pre .hljs-emphasis {
+  font-style: italic;
+}
+
+html.platform-android .markdown-body pre .hljs-strong {
+  font-weight: 700;
+}
