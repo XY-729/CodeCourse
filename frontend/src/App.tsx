@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { AlertCircle, BookOpen, Bot, BrainCircuit, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
+import { AlertCircle, BookOpen, BrainCircuit, Download, FileArchive, FolderTree, MoreHorizontal, PanelLeft, Pencil, Plus, RefreshCw, Save, Search, Sparkles, Star, X } from "lucide-react";
 import {
   buildProjectIndex,
   createEmptyCourseFile,
@@ -83,6 +83,7 @@ import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
 import SelectionQuickBar from "./components/SelectionQuickBar";
 import MobileTopBar from "./components/MobileTopBar";
 import MobileAssistantPanel, { type MobileAssistantView } from "./components/MobileAssistantPanel";
+import MobileMePanel from "./components/MobileMePanel";
 import MobileBottomNavigation, { type MobilePrimaryDestination } from "./components/MobileBottomNavigation";
 import MobileReaderHeader from "./components/MobileReaderHeader";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
@@ -160,7 +161,7 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
-type MobileWorkspaceTab = "projects" | "courses" | "files" | "assistant";
+type MobileWorkspaceTab = "projects" | "courses" | "files" | "assistant" | "me";
 type MobileSurface = "navigation" | "workspace" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts" | "profile";
 
 const EMPTY_COMMAND_PALETTE_ITEMS: CommandPaletteItem[] = [];
@@ -333,6 +334,9 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [learnerProfileOpen, setLearnerProfileOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
+  const [promptEditorDirty, setPromptEditorDirty] = useState(false);
+  const [promptEditorSaving, setPromptEditorSaving] = useState(false);
+  const [settingsDialogBusy, setSettingsDialogBusy] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(() => !isAndroidRuntime());
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -483,6 +487,7 @@ export default function App() {
     loadProfiles: getTermDisplayProfiles,
   });
   const awaitingNotificationSettingsRef = useRef(false);
+  const promptClosePendingRef = useRef(false);
   const [retryingTaskId, setRetryingTaskId] = useState<number | null>(null);
   const handledCompletionNavRef = useRef(new Set<string>());
   const [gestureHint, setGestureHint] = useState<{ id: number; text: string } | null>(null);
@@ -565,6 +570,11 @@ export default function App() {
       mobileWorkspaceTab !==
         "assistant"
     );
+
+  const mobileMeBusy =
+    loading ||
+    isTaskRunning ||
+    qaInteractionBusy;
 
   const clearDropPreview = useCallback(() => {
     const current = dropPreviewRef.current;
@@ -953,6 +963,14 @@ export default function App() {
         closeAppDialog(null);
         return;
       }
+      if (settingsOpen) {
+        closeSettingsDialog();
+        return;
+      }
+      if (promptEditorOpen) {
+        void requestClosePromptEditor();
+        return;
+      }
       if (learnerProfileOpen) {
         setLearnerProfileOpen(false);
         return;
@@ -963,7 +981,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [appDialog, commandPaletteOpen, learnerProfileOpen, mobileRuntime]);
+  }, [appDialog, commandPaletteOpen, learnerProfileOpen, mobileRuntime, promptEditorDirty, promptEditorOpen, promptEditorSaving, settingsDialogBusy, settingsOpen]);
 
   useEffect(() => {
     if (mobileRuntime || !window.codecourseDesktop?.onShortcut) return;
@@ -1167,9 +1185,11 @@ export default function App() {
         if (appDialog) {
           closeAppDialog(null);
         } else if (settingsOpen) {
-          setSettingsOpen(false);
+          closeSettingsDialog();
         } else if (promptEditorOpen) {
-          setPromptEditorOpen(false);
+          void requestClosePromptEditor();
+        } else if (learnerProfileOpen) {
+          setLearnerProfileOpen(false);
         } else if (generationOpen) {
           setGenerationOpen(false);
         } else if (moreMenuOpen) {
@@ -1197,7 +1217,7 @@ export default function App() {
       disposed = true;
       removeListener?.();
     };
-  }, [appDialog, assistantOpen, generationOpen, isTaskRunning, isQAOperationActive, mobileRuntime, mobileWorkspaceTab, moreMenuOpen, navigationOpen, promptEditorOpen, qaInteractionBusy, settingsOpen]);
+  }, [appDialog, assistantOpen, generationOpen, isTaskRunning, isQAOperationActive, learnerProfileOpen, mobileRuntime, mobileWorkspaceTab, moreMenuOpen, navigationOpen, promptEditorDirty, promptEditorOpen, promptEditorSaving, qaInteractionBusy, settingsDialogBusy, settingsOpen]);
 
   useEffect(() => {
     if (!dragState) {
@@ -4523,7 +4543,8 @@ export default function App() {
     if (mobileWorkspaceTab === "courses") return "learn";
     if (mobileWorkspaceTab === "files") return "source";
     if (mobileWorkspaceTab === "assistant") return "ask";
-    if (learnerProfileOpen || settingsOpen || promptEditorOpen || moreMenuOpen) return "me";
+    if (mobileWorkspaceTab === "me") return "me";
+    if (learnerProfileOpen || settingsOpen || promptEditorOpen) return "me";
     if (activeOpenItem?.type === "file") return "source";
     if (activeOpenItem?.type === "qa" || activeOpenItem?.qaRecordId) return "ask";
     return "learn";
@@ -4676,19 +4697,124 @@ export default function App() {
     openAssistant(tab);
   }
 
+  function rejectMobileMeActionWhileBusy() {
+    if (
+      !loading &&
+      !isTaskRunning &&
+      !isQABusyNow()
+    ) {
+      return false;
+    }
+
+    setToast(
+      "当前任务仍在处理，请完成后再修改学习或模型设置",
+    );
+
+    return true;
+  }
+
+  function closeSettingsDialog() {
+    if (settingsDialogBusy) {
+      setToast(
+        "设置正在处理，请完成后再关闭",
+      );
+
+      return;
+    }
+
+    setSettingsOpen(false);
+
+    void loadLLMSettings();
+  }
+
+  async function requestClosePromptEditor() {
+    if (
+      !promptEditorOpen ||
+      promptClosePendingRef.current
+    ) {
+      return;
+    }
+
+    if (promptEditorSaving) {
+      setToast(
+        "提示词正在保存，请完成后再关闭",
+      );
+
+      return;
+    }
+
+    if (promptEditorDirty) {
+      promptClosePendingRef.current =
+        true;
+
+      try {
+        const approved =
+          await confirmAction(
+            "放弃提示词修改",
+            "提示词还有未保存的修改。关闭后，本次修改将被放弃。",
+            {
+              confirmText:
+                "放弃修改",
+              danger: true,
+            },
+          );
+
+        if (!approved) {
+          return;
+        }
+      } finally {
+        promptClosePendingRef.current =
+          false;
+      }
+    }
+
+    setPromptEditorOpen(false);
+    setPromptEditorDirty(false);
+    setPromptEditorSaving(false);
+  }
+
   function openSettings() {
     closeMobileWorkspaceSurfaces("settings");
+    setSettingsDialogBusy(false);
     setSettingsOpen(true);
   }
 
   function openPrompts() {
     closeMobileWorkspaceSurfaces("prompts");
+    setPromptEditorDirty(false);
+    setPromptEditorSaving(false);
     setPromptEditorOpen(true);
   }
 
   function openLearnerProfile() {
-    if (!project) return;
+    if (!project) {
+      return;
+    }
     closeMobileWorkspaceSurfaces("profile");
+    setLearnerProfileOpen(true);
+  }
+
+  function openSettingsFromMobileMe() {
+    if (rejectMobileMeActionWhileBusy()) {
+      return;
+    }
+    setSettingsDialogBusy(false);
+    setSettingsOpen(true);
+  }
+
+  function openPromptsFromMobileMe() {
+    if (rejectMobileMeActionWhileBusy()) {
+      return;
+    }
+    setPromptEditorDirty(false);
+    setPromptEditorSaving(false);
+    setPromptEditorOpen(true);
+  }
+
+  function openLearnerProfileFromMobileMe() {
+    if (!project || rejectMobileMeActionWhileBusy()) {
+      return;
+    }
     setLearnerProfileOpen(true);
   }
 
@@ -4702,6 +4828,15 @@ export default function App() {
     const next = !moreMenuOpen;
     closeMobileWorkspaceSurfaces(next ? "more" : undefined);
     setMoreMenuOpen(next);
+  }
+
+  function toggleMobileMe() {
+    if (mobileWorkspaceTab === "me") {
+      mobileWorkspaceSheetRef.current?.dismiss();
+      return;
+    }
+    closeMobileWorkspaceSurfaces("workspace");
+    setMobileWorkspaceTab("me");
   }
 
   function openGeneration(intent: GenerationIntent) {
@@ -4872,6 +5007,131 @@ export default function App() {
     );
   }
 
+  function renderMobileMePanel() {
+    const modelReady =
+      Boolean(
+        llmSettings?.enabled &&
+        llmSettings.has_api_key,
+      );
+
+    const modelLabel =
+      llmSettings
+        ? modelReady
+          ? `${llmSettings.provider} / ${llmSettings.model}`
+          : "模型尚未启用或没有 API Key"
+        : "尚未读取到模型配置";
+
+    const meIndexLabel =
+      !project
+        ? "打开项目后可查看索引状态"
+        : isLearningPlanProject
+          ? "学习计划无需代码索引"
+          : indexStatusMessage(
+              indexStatus,
+            );
+
+    return (
+      <MobileMePanel
+        projectName={
+          project?.name ?? null
+        }
+
+        projectType={
+          project?.project_type ??
+          null
+        }
+
+        completedLessons={
+          completedLessonCount
+        }
+
+        totalLessons={
+          lessonFilesForProgress
+            .length
+        }
+
+        modelReady={modelReady}
+        modelLabel={modelLabel}
+
+        terminologyDensity={
+          project
+            ? terminologyDensity
+            : null
+        }
+
+        indexLabel={meIndexLabel}
+
+        indexBusy={
+          indexBuilding ||
+          indexStatus?.status ===
+            "building"
+        }
+
+        hasLearningProgress={
+          learningStates.length > 0
+        }
+
+        busy={mobileMeBusy}
+
+        themeMode={themeMode}
+
+        onOpenProjects={() => {
+          if (
+            rejectMobileMeActionWhileBusy()
+          ) {
+            return;
+          }
+
+          setMobileWorkspaceTab(
+            "projects",
+          );
+        }}
+
+        onOpenProfile={
+          openLearnerProfileFromMobileMe
+        }
+
+        onOpenSettings={
+          openSettingsFromMobileMe
+        }
+
+        onOpenPrompts={
+          openPromptsFromMobileMe
+        }
+
+        onBuildIndex={() => {
+          if (
+            rejectMobileMeActionWhileBusy() ||
+            indexBuilding
+          ) {
+            return;
+          }
+
+          void handleBuildIndex();
+        }}
+
+        onResetLearningProgress={() => {
+          if (
+            rejectMobileMeActionWhileBusy()
+          ) {
+            return;
+          }
+
+          void handleResetLearningProgress();
+        }}
+
+        onToggleTheme={() => {
+          setThemeMode(
+            (current) =>
+              current === "dark"
+                ? "light"
+                : "dark",
+          );
+        }}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <TitleBar />
@@ -4931,38 +5191,13 @@ export default function App() {
               知识网络
             </button>
             <div className="more-menu-divider" />
-            <button type="button" role="menuitem" onClick={() => { handleImportRequest(); setMoreMenuOpen(false); }}>
+            <button type="button" role="menuitem" onClick={() => { void handleImportRequest(); setMoreMenuOpen(false); }}>
               <Download size={15} />
               导入 GitHub 仓库
             </button>
             <button type="button" role="menuitem" onClick={() => { archiveInputRef.current?.click(); setMoreMenuOpen(false); }}>
               <FileArchive size={15} />
               导入本地 ZIP
-            </button>
-            <div className="more-menu-divider" />
-            <button type="button" role="menuitem" onClick={openSettings}>
-              <Bot size={15} />
-              设置
-            </button>
-            <button type="button" role="menuitem" disabled={!project} onClick={() => { setMoreMenuOpen(false); openLearnerProfile(); }}>
-              <BrainCircuit size={15} />
-              我的学习档案
-            </button>
-            <button type="button" role="menuitem" onClick={openPrompts}>
-              <Sparkles size={15} />
-              提示词编辑
-            </button>
-            <button type="button" role="menuitem" disabled={!project || isLearningPlanProject || indexBuilding} onClick={() => { void handleBuildIndex(); setMoreMenuOpen(false); }}>
-              <RefreshCw size={15} />
-              {indexBuilding || indexStatus?.status === "building" ? "正在构建索引" : "重新构建索引"}
-            </button>
-            <button type="button" role="menuitem" disabled={!project || learningStates.length === 0} onClick={() => { void handleResetLearningProgress(); setMoreMenuOpen(false); }}>
-              <RotateCcw size={15} />
-              重置学习进度
-            </button>
-            <button type="button" role="menuitem" onClick={() => { setThemeMode((current) => current === "dark" ? "light" : "dark"); setMoreMenuOpen(false); }}>
-              {themeMode === "dark" ? <Sun size={15} /> : <Moon size={15} />}
-              {themeMode === "dark" ? "切换到亮色" : "切换到暗色"}
             </button>
           </div>
         </div>
@@ -5086,25 +5321,20 @@ export default function App() {
           onLearn={() => toggleMobileNavigation("courses")}
           onSource={() => toggleMobileNavigation("files")}
           onAsk={() => toggleMobileAssistant("history")}
-          onMe={() => {
-            if (project) {
-              openLearnerProfile();
-              return;
-            }
-            toggleMobileMoreMenu();
-          }}
+          onMe={toggleMobileMe}
         />
       ) : null}
       {mobileRuntime && mobileWorkspaceTab ? (
         <MobileWorkspaceSheet
           ref={mobileWorkspaceSheetRef}
           tabKey={mobileWorkspaceTab}
-          variant={mobileWorkspaceTab === "assistant" ? "assistant" : "standard"}
+          variant={mobileWorkspaceTab === "assistant" ? "assistant" : mobileWorkspaceTab === "me" ? "me" : "standard"}
           title={{
             projects: "项目",
             courses: "课程",
             files: "源码",
             assistant: "AI 助手",
+            me: "我的",
           }[mobileWorkspaceTab]}
           action={mobileWorkspaceTab === "projects" ? (
             <button className="icon-button" type="button" onClick={() => { void handleCreateMobileLearningPlan(); }} aria-label="新建学习计划" title="新建学习计划">
@@ -5131,7 +5361,9 @@ export default function App() {
         >
           {mobileWorkspaceTab === "projects" || mobileWorkspaceTab === "courses" || mobileWorkspaceTab === "files"
             ? renderSidebar(mobileWorkspaceTab, true)
-            : renderMobileAssistantPanel()}
+            : mobileWorkspaceTab === "assistant"
+              ? renderMobileAssistantPanel()
+              : renderMobileMePanel()}
         </MobileWorkspaceSheet>
       ) : null}
       {!mobileRuntime ? (
@@ -5252,10 +5484,8 @@ export default function App() {
           setTerminologyDensity(density);
           bumpPersonalizationRevision();
         }}
-        onClose={() => {
-          setSettingsOpen(false);
-          loadLLMSettings();
-        }}
+        onBusyChange={setSettingsDialogBusy}
+        onClose={closeSettingsDialog}
       />
       <LearnerProfileDialog
         open={learnerProfileOpen}
@@ -5265,7 +5495,13 @@ export default function App() {
         onConfirm={confirmAction}
       />
       {promptEditorOpen ? (
-        <PromptEditor onClose={() => setPromptEditorOpen(false)} />
+        <PromptEditor
+          onClose={() => {
+            void requestClosePromptEditor();
+          }}
+          onDirtyChange={setPromptEditorDirty}
+          onSavingChange={setPromptEditorSaving}
+        />
       ) : null}
       {!mobileRuntime && selectionAnchor?.selectedText ? (
         <SelectionQuickBar

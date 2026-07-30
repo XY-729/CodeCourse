@@ -41,6 +41,7 @@ type Props = {
   onConfirm: (title: string, message: string, options?: { confirmText?: string; danger?: boolean; skipKey?: string }) => Promise<boolean>;
   onOpenExternal: (url: string) => void;
   onPreferencesChanged?: (terminologyDensity: number) => void;
+  onBusyChange?: (busy: boolean) => void;
 };
 
 export default function LLMSettingsDialog({
@@ -50,6 +51,7 @@ export default function LLMSettingsDialog({
   onConfirm,
   onOpenExternal,
   onPreferencesChanged,
+  onBusyChange,
 }: Props) {
   const [settings, setSettings] = useState<LLMSettings | null>(null);
   const [runtimeSettings, setRuntimeSettings] = useState<PersonalizationRuntimeSettings | null>(null);
@@ -60,6 +62,26 @@ export default function LLMSettingsDialog({
   const [testing, setTesting] = useState(false);
   const [clearing, setClearing] = useState<"project" | "all" | null>(null);
   const [message, setMessage] = useState("");
+
+  const controlsDisabled =
+    saving ||
+    testing ||
+    clearing !== null;
+
+  useEffect(() => {
+    onBusyChange?.(
+      controlsDisabled,
+    );
+  }, [
+    controlsDisabled,
+    onBusyChange,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      onBusyChange?.(false);
+    };
+  }, [onBusyChange]);
 
   useEffect(() => {
     if (!open) return;
@@ -235,17 +257,15 @@ export default function LLMSettingsDialog({
     }
   }
 
-  const controlsDisabled = saving || testing || clearing !== null;
-
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="设置">
-      <form className="settings-modal settings-modal--complete" onSubmit={submit}>
+      <form className="settings-modal settings-modal--complete" onSubmit={submit} aria-busy={controlsDisabled}>
         <div className="modal-title">
           <span>
             <KeyRound size={17} />
             设置
           </span>
-          <button type="button" className="icon-button" onClick={onClose} title="关闭" aria-label="关闭">
+          <button type="button" className="icon-button" onClick={onClose} disabled={controlsDisabled} title="关闭" aria-label="关闭">
             <X size={16} />
           </button>
         </div>

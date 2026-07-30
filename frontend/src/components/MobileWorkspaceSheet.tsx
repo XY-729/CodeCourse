@@ -9,7 +9,7 @@ type Props = {
   onDismiss: () => void;
   tabKey: string;
   title: string;
-  variant?: "standard" | "assistant";
+  variant?: "standard" | "assistant" | "me";
 };
 
 export type MobileWorkspaceSheetHandle = {
@@ -26,11 +26,21 @@ const MobileWorkspaceSheet = forwardRef<MobileWorkspaceSheetHandle, Props>(funct
   const dismiss = () => sheetRef.current?.dismiss();
   useImperativeHandle(forwardedRef, () => ({ dismiss }), []);
 
+  const variantClass =
+    variant === "assistant"
+      ? "is-assistant"
+      : variant === "me"
+        ? "is-me"
+        : "";
+
   return (
     <div className="mobile-workspace-sheet-layer" onMouseDown={dismiss}>
       <FluidBottomSheet
         ref={sheetRef}
-        className={`mobile-workspace-sheet ${variant === "assistant" ? "is-assistant" : ""}`}
+        className={
+          `mobile-workspace-sheet ` +
+          variantClass
+        }
         label={title}
         onDismiss={onDismiss}
       >

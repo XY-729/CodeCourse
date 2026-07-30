@@ -1,0 +1,620 @@
+/*
+ * Android "Me" center.
+ *
+ * Owns:
+ * - full-height Me workspace
+ * - project and learning summary
+ * - personalization/settings actions
+ * - project maintenance actions
+ * - appearance control
+ */
+
+html.platform-android
+  .mobile-workspace-sheet.is-me {
+  height: 100%;
+  max-height: 100%;
+
+  touch-action: auto;
+
+  background: var(--mobile-canvas);
+
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.platform-android
+  .mobile-workspace-sheet.is-me
+  > .fluid-sheet-grabber {
+  height: 24px;
+  min-height: 24px;
+  flex-basis: 24px;
+
+  padding: 9px 0 8px;
+}
+
+html.platform-android
+  .mobile-workspace-sheet.is-me
+  .mobile-workspace-sheet-header {
+  min-height: 52px;
+
+  padding:
+    2px
+    8px
+    6px
+    16px;
+
+  background: var(--mobile-surface);
+}
+
+html.platform-android
+  .mobile-workspace-sheet.is-me
+  .mobile-workspace-sheet-content {
+  display: flex;
+
+  overflow: hidden;
+
+  background: var(--mobile-canvas);
+}
+
+html.platform-android
+  .mobile-me-panel {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+
+  display: flex;
+  flex-direction: column;
+
+  overflow: hidden;
+
+  color: var(--mobile-text);
+
+  background: var(--mobile-canvas);
+}
+
+html.platform-android
+  .mobile-me-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+
+  padding:
+    12px
+    12px
+    calc(
+      18px +
+      env(
+        safe-area-inset-bottom,
+        0px
+      )
+    );
+
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  overflow-x: hidden;
+  overflow-y: auto;
+
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+html.platform-android
+  .mobile-me-hero {
+  padding: 16px;
+
+  display: grid;
+  grid-template-columns:
+    48px
+    minmax(0, 1fr)
+    auto;
+
+  align-items: center;
+  gap: 12px;
+
+  border:
+    1px solid var(--mobile-line);
+
+  border-radius: 18px;
+
+  background: var(--mobile-surface);
+
+  box-shadow: none;
+}
+
+html.platform-android
+  .mobile-me-avatar {
+  width: 48px;
+  height: 48px;
+
+  display: grid;
+  place-items: center;
+
+  color: var(--mobile-accent);
+
+  border-radius: 16px;
+
+  background:
+    var(--mobile-accent-soft);
+}
+
+html.platform-android
+  .mobile-me-hero-copy {
+  min-width: 0;
+
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+html.platform-android
+  .mobile-me-hero-copy
+  small {
+  color:
+    var(--mobile-text-tertiary);
+
+  font-size: 0.6875rem;
+}
+
+html.platform-android
+  .mobile-me-hero-copy
+  strong {
+  overflow: hidden;
+
+  color: var(--mobile-text);
+
+  font-size: 1rem;
+  font-weight: 740;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.platform-android
+  .mobile-me-hero-copy
+  span {
+  overflow: hidden;
+
+  color:
+    var(--mobile-text-secondary);
+
+  font-size: 0.75rem;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.platform-android
+  .mobile-me-project-button {
+  min-width: 64px;
+  height: 44px;
+  min-height: 44px;
+
+  padding: 0 12px;
+
+  color: var(--mobile-accent);
+
+  border: 0;
+  border-radius: 12px;
+
+  background:
+    var(--mobile-accent-soft);
+
+  font-size: 0.75rem;
+  font-weight: 680;
+}
+
+html.platform-android
+  .mobile-me-progress {
+  grid-column:
+    1 / -1;
+
+  margin-top: 2px;
+
+  display: grid;
+  gap: 7px;
+}
+
+html.platform-android
+  .mobile-me-progress
+  > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  color:
+    var(--mobile-text-secondary);
+
+  font-size: 0.75rem;
+}
+
+html.platform-android
+  .mobile-me-progress
+  > div:first-child
+  strong {
+  color: var(--mobile-text);
+
+  font-size: 0.75rem;
+}
+
+html.platform-android
+  .mobile-me-progress-track {
+  height: 6px;
+
+  overflow: hidden;
+
+  border-radius: 999px;
+
+  background:
+    var(--mobile-surface-pressed);
+}
+
+html.platform-android
+  .mobile-me-progress-track
+  > span {
+  height: 100%;
+
+  display: block;
+
+  border-radius: inherit;
+
+  background: var(--mobile-accent);
+
+  transition:
+    width
+    180ms
+    var(--mobile-ease-out);
+}
+
+html.platform-android
+  .mobile-me-status-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(
+      2,
+      minmax(0, 1fr)
+    );
+
+  gap: 10px;
+}
+
+html.platform-android
+  .mobile-me-status-grid
+  article {
+  min-width: 0;
+  min-height: 116px;
+
+  padding: 13px;
+
+  display: flex;
+  flex-direction: column;
+
+  border:
+    1px solid var(--mobile-line);
+
+  border-radius: 16px;
+
+  background: var(--mobile-surface);
+}
+
+html.platform-android
+  .mobile-me-status-grid
+  article
+  > span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  color:
+    var(--mobile-text-secondary);
+
+  font-size: 0.75rem;
+}
+
+html.platform-android
+  .mobile-me-status-grid
+  article
+  > strong {
+  margin-top: 14px;
+
+  color: var(--mobile-text);
+
+  font-size: 0.875rem;
+  font-weight: 720;
+}
+
+html.platform-android
+  .mobile-me-status-grid
+  article
+  > small {
+  margin-top: 5px;
+
+  overflow: hidden;
+
+  color:
+    var(--mobile-text-tertiary);
+
+  font-size: 0.6875rem;
+  line-height: 1.4;
+
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+html.platform-android
+  .mobile-me-status-grid
+  article.ready {
+  border-color:
+    color-mix(
+      in srgb,
+      var(--mobile-accent) 30%,
+      var(--mobile-line)
+    );
+}
+
+html.platform-android
+  .mobile-me-status-grid
+  article.ready
+  > strong {
+  color:
+    var(--mobile-accent-strong);
+}
+
+html.platform-android
+  .mobile-me-section {
+  display: grid;
+  gap: 8px;
+}
+
+html.platform-android
+  .mobile-me-section
+  > h2 {
+  margin: 0;
+  padding: 0 4px;
+
+  color:
+    var(--mobile-text-tertiary);
+
+  font-size: 0.6875rem;
+  font-weight: 720;
+
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+html.platform-android
+  .mobile-me-action-card {
+  overflow: hidden;
+
+  border:
+    1px solid var(--mobile-line);
+
+  border-radius: 16px;
+
+  background: var(--mobile-surface);
+}
+
+html.platform-android
+  .mobile-me-action-row {
+  width: 100%;
+  min-height: 68px;
+
+  padding: 8px 8px 8px 12px;
+
+  display: grid;
+  grid-template-columns:
+    40px
+    minmax(0, 1fr)
+    44px;
+
+  align-items: center;
+  gap: 10px;
+
+  color: var(--mobile-text);
+
+  border: 0;
+  border-bottom:
+    1px solid
+    color-mix(
+      in srgb,
+      var(--mobile-line) 72%,
+      transparent
+    );
+
+  background: transparent;
+
+  text-align: left;
+
+  appearance: none;
+  -webkit-appearance: none;
+
+  transform: none !important;
+}
+
+html.platform-android
+  .mobile-me-action-row:last-child {
+  border-bottom: 0;
+}
+
+html.platform-android
+  .mobile-me-action-row:active:not(
+    :disabled
+  ) {
+  background:
+    var(--mobile-surface-pressed);
+}
+
+html.platform-android
+  .mobile-me-action-icon {
+  width: 40px;
+  height: 40px;
+
+  display: grid;
+  place-items: center;
+
+  color:
+    var(--mobile-text-secondary);
+
+  border-radius: 12px;
+
+  background:
+    var(--mobile-surface-raised);
+}
+
+html.platform-android
+  .mobile-me-action-copy {
+  min-width: 0;
+
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+html.platform-android
+  .mobile-me-action-copy
+  strong {
+  overflow: hidden;
+
+  color: inherit;
+
+  font-size: 0.875rem;
+  font-weight: 680;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.platform-android
+  .mobile-me-action-copy
+  small {
+  overflow: hidden;
+
+  color:
+    var(--mobile-text-tertiary);
+
+  font-size: 0.71875rem;
+  line-height: 1.35;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.platform-android
+  .mobile-me-action-chevron {
+  justify-self: center;
+
+  color:
+    var(--mobile-text-tertiary);
+}
+
+html.platform-android
+  .mobile-me-action-row.active
+  .mobile-me-action-icon {
+  color:
+    var(--mobile-accent-strong);
+
+  background:
+    var(--mobile-accent-soft);
+}
+
+html.platform-android
+  .mobile-me-action-row.danger {
+  color: var(--mobile-danger);
+}
+
+html.platform-android
+  .mobile-me-action-row.danger
+  .mobile-me-action-icon {
+  color: var(--mobile-danger);
+
+  background:
+    color-mix(
+      in srgb,
+      var(--mobile-danger) 9%,
+      transparent
+    );
+}
+
+html.platform-android
+  .mobile-me-action-row:disabled,
+html.platform-android
+  .mobile-me-project-button:disabled {
+  opacity: 0.38;
+
+  pointer-events: none;
+}
+
+@media (max-width: 380px) {
+  html.platform-android
+    .mobile-me-scroll {
+    padding-inline: 9px;
+    gap: 13px;
+  }
+
+  html.platform-android
+    .mobile-me-hero {
+    padding: 13px;
+
+    grid-template-columns:
+      44px
+      minmax(0, 1fr)
+      auto;
+
+    gap: 9px;
+  }
+
+  html.platform-android
+    .mobile-me-avatar {
+    width: 44px;
+    height: 44px;
+  }
+
+  html.platform-android
+    .mobile-me-status-grid {
+    gap: 8px;
+  }
+
+  html.platform-android
+    .mobile-me-status-grid
+    article {
+    min-height: 110px;
+
+    padding: 11px;
+  }
+
+  html.platform-android
+    .mobile-me-action-row {
+    padding-left: 10px;
+
+    gap: 8px;
+  }
+}
+
+@media (orientation: landscape) {
+  html.platform-android
+    .mobile-me-scroll {
+    padding-block: 8px;
+  }
+
+  html.platform-android
+    .mobile-me-hero {
+    padding-block: 12px;
+  }
+}
+
+@media (
+  prefers-reduced-motion:
+    reduce
+) {
+  html.platform-android
+    .mobile-me-panel *,
+  html.platform-android
+    .mobile-workspace-sheet.is-me {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

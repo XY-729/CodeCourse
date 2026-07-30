@@ -12,9 +12,21 @@ import { validatePromptTemplate } from "../personalization/promptTemplateContrac
 
 type Props = {
   onClose: () => void;
+
+  onDirtyChange?: (
+    dirty: boolean,
+  ) => void;
+
+  onSavingChange?: (
+    saving: boolean,
+  ) => void;
 };
 
-export default function PromptEditor({ onClose }: Props) {
+export default function PromptEditor({
+  onClose,
+  onDirtyChange,
+  onSavingChange,
+}: Props) {
   const [metadata, setMetadata] = useState<PromptTemplateMetadata[]>([]);
   const [saved, setSaved] = useState<Record<string, string>>({});
   const [edited, setEdited] = useState<Record<string, string>>({});
@@ -70,8 +82,35 @@ export default function PromptEditor({ onClose }: Props) {
     return () => window.removeEventListener("beforeunload", guard);
   }, [dirty]);
 
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [
+    dirty,
+    onDirtyChange,
+  ]);
+
+  useEffect(() => {
+    onSavingChange?.(saving);
+  }, [
+    saving,
+    onSavingChange,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      onDirtyChange?.(false);
+      onSavingChange?.(false);
+    };
+  }, [
+    onDirtyChange,
+    onSavingChange,
+  ]);
+
   function requestClose() {
-    if (dirty && !window.confirm("提示词还有未保存的修改，确定关闭吗？")) return;
+    if (saving) {
+      return;
+    }
+
     onClose();
   }
 
@@ -135,7 +174,7 @@ export default function PromptEditor({ onClose }: Props) {
       >
         <div className="modal-title">
           <span>提示词编辑</span>
-          <button className="icon-button" onClick={requestClose} title="关闭" aria-label="关闭">
+          <button className="icon-button" onClick={requestClose} disabled={saving} title="关闭" aria-label="关闭">
             <X size={16} />
           </button>
         </div>
@@ -250,7 +289,7 @@ export default function PromptEditor({ onClose }: Props) {
             {error ? <div className="qa-local-error prompt-editor-error" role="alert">{error}</div> : null}
 
             <div className="settings-actions">
-              <button className="secondary-button" onClick={requestClose}>取消</button>
+              <button className="secondary-button" onClick={requestClose} disabled={saving}>取消</button>
               <button
                 className="primary-button"
                 onClick={handleSave}
