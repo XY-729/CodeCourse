@@ -63,12 +63,14 @@ export default function Sidebar({
   if (view === "projects") {
     return (
       <aside className={`sidebar navigation-panel ${embedded ? "is-embedded" : ""}`}>
-        <header className="navigation-panel-header">
-          <span>项目</span>
-          <button className="icon-button" onClick={onCreateLearningPlan} title="新建学习计划" aria-label="新建学习计划">
-            <Plus size={16} />
-          </button>
-        </header>
+        {!embedded ? (
+          <header className="navigation-panel-header">
+            <span>项目</span>
+            <button className="icon-button" onClick={onCreateLearningPlan} title="新建学习计划" aria-label="新建学习计划">
+              <Plus size={16} />
+            </button>
+          </header>
+        ) : null}
         <div className="sidebar-scroll compact">
           {projects.length ? (
             projects.map((item) => (

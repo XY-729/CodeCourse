@@ -3941,6 +3941,11 @@ export default function App() {
     openMobileNavigation("projects");
   }
 
+  function handleSelectMobileProject(nextProject: Project) {
+    mobileWorkspaceSheetRef.current?.dismiss();
+    void openProject(nextProject);
+  }
+
   function toggleMobileNavigation(view: "courses" | "files") {
     if (mobileWorkspaceTab === view) {
       mobileWorkspaceSheetRef.current?.dismiss();
@@ -4029,7 +4034,7 @@ export default function App() {
         projectType={project?.project_type ?? "repository"}
         fileSelectionMode={!isLearningPlanProject && scopeType === "files"}
         busyProjectId={busyProjectId}
-        onSelectProject={openProject}
+        onSelectProject={mobileRuntime && embedded ? handleSelectMobileProject : openProject}
         onCreateLearningPlan={handleCreateLearningPlan}
         onRegenerateProject={handleRegenerate}
         onDeleteProject={handleDelete}
@@ -4368,7 +4373,11 @@ export default function App() {
             assistant: "AI 助手",
             knowledge: "知识网络",
           }[mobileWorkspaceTab]}
-          action={mobileWorkspaceTab === "courses" && courses.length ? (
+          action={mobileWorkspaceTab === "projects" ? (
+            <button className="icon-button" type="button" onClick={handleCreateLearningPlan} aria-label="新建学习计划" title="新建学习计划">
+              <Plus size={17} />
+            </button>
+          ) : mobileWorkspaceTab === "courses" && courses.length ? (
             <button className="icon-button" type="button" onClick={handleCreateCourse} disabled={!project} aria-label="新建文档" title="新建文档">
               <Plus size={17} />
             </button>

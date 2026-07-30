@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import MobileTopBar from "./MobileTopBar";
 import MobileBottomNavigation from "./MobileBottomNavigation";
+import Sidebar from "./Sidebar";
 
 describe("MobileTopBar", () => {
   it("shows the current project and opens projects", () => {
@@ -80,5 +81,37 @@ describe("MobileBottomNavigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "提问" }));
 
     expect(onAsk).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Sidebar embedded", () => {
+  it("hides the nested project header when embedded", () => {
+    const { container } = render(
+      <Sidebar
+        embedded
+        view="projects"
+        projects={[]}
+        currentProjectId={null}
+        tree={null}
+        courses={[]}
+        selectedPath={null}
+        selectedScopePaths={[]}
+        selectedCourse={null}
+        projectType="repository"
+        fileSelectionMode={false}
+        busyProjectId={null}
+        onSelectProject={() => undefined}
+        onCreateLearningPlan={() => undefined}
+        onRegenerateProject={() => undefined}
+        onDeleteProject={() => undefined}
+        onSelectFile={() => undefined}
+        onOpenFile={() => undefined}
+        onSelectCourse={() => undefined}
+      />,
+    );
+
+    expect(
+      container.querySelector(".navigation-panel-header"),
+    ).toBeNull();
   });
 });
