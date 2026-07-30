@@ -658,6 +658,16 @@ export default function App() {
           await provider.reconcileGenerationServiceState?.().catch((error) => {
             console.warn("Generation Service resume reconcile failed", error);
           });
+          /*
+           * 前台服务状态同步完成后，
+           * 重新读取本地数据库中的真实任务状态。
+           */
+          const currentProjectId = currentProjectIdRef.current;
+          if (currentProjectId) {
+            await reloadGenerationTasks(currentProjectId, true).catch((error) => {
+              console.warn("Generation task resume sync failed", error);
+            });
+          }
           if (!awaitingNotificationSettingsRef.current) return;
           awaitingNotificationSettingsRef.current = false;
           provider.invalidatePermissionCache?.();
@@ -2170,6 +2180,11 @@ export default function App() {
     try {
       const freshProject = await getProject(nextProject.id);
       setProject(freshProject);
+      /*
+       * 不能等下一次 React 渲染才更新。
+       * 后面的任务恢复需要立即识别新项目。
+       */
+      currentProjectIdRef.current = freshProject.id;
       window.localStorage.setItem(LAST_PROJECT_STORAGE_KEY, String(freshProject.id));
       const [nextTree, nextCourses, tasks, settings, nextIndexStatus, nextLearningStates, nextQARecords, nextPreferences] = await Promise.all([
         getTree(freshProject.id),
@@ -2182,17 +2197,25 @@ export default function App() {
         getLearnerPreferences(freshProject.id).catch(() => null),
       ]);
       const initialLayout = createInitialLayout();
+      const sortedTasks = replaceGenerationTasks(freshProject.id, tasks);
+      /*
+       * openProject 有多个提前返回。
+       * 所有成功路径都必须经过这个函数，
+       * 才能恢复运行中的任务轮询。
+       */
+      const finishOpenProject = () => {
+        resumeGenerationTracking(freshProject.id, sortedTasks);
+        return true;
+      };
       setTree(nextTree);
       setCourses(nextCourses);
       setLLMSettings(settings);
       setTerminologyDensity(nextPreferences?.terminologyDensity ?? 0.5);
       bumpPersonalizationRevision();
-      setActiveTask(tasks[0] ?? null);
       setIndexStatus(nextIndexStatus);
       setLearningStates(nextLearningStates);
       setQAHistory(nextQARecords);
       setIndexBuilding(nextIndexStatus?.status === "building");
-      setTaskMessage(tasks[0] ? `最近任务：${taskLabel(tasks[0])}` : "待生成");
       setScopeType(freshProject.project_type === "learning_plan" ? "learning_plan" : "full_project");
       setSelectedScopeFiles([]);
       setScopePathsText("");
@@ -2259,7 +2282,7 @@ export default function App() {
               setLayout(restoredLayout); setActiveGroupId(ROOT_GROUP_ID); setNavigationView("courses"); setNavigationOpen(false); setSidebarWidth(264);
               if (ri?.type === "file") setFileContent({ path: ri.path, content: ri.content, language: ri.language ?? "plaintext" });
               else if (ri?.type === "course") { setSelectedCourse(ri.path); void refreshDocumentTerms(ri.qaRecordId ? "qa" : "course", ri.path, freshProject.id); }
-              return true;
+              return finishOpenProject();
             }
           }
         } else {
@@ -2283,7 +2306,7 @@ export default function App() {
                 setSelectedCourse(restoredItem.path);
                 void refreshDocumentTerms(restoredItem.qaRecordId ? "qa" : "course", restoredItem.path, freshProject.id);
               }
-              return true;
+              return finishOpenProject();
             }
           }
         }
@@ -2318,7 +2341,7 @@ export default function App() {
             qaRecordId: record.id,
             favorite: record.favorite,
           })));
-          return true;
+          return finishOpenProject();
         }
       }
       if (recent?.source_type === "file") {
@@ -2333,7 +2356,7 @@ export default function App() {
             content: content.content,
             language: content.language,
           })));
-          return true;
+          return finishOpenProject();
         } catch {
           // A deleted recent file is ignored and the course fallback is opened below.
         }
@@ -2354,7 +2377,7 @@ export default function App() {
           ),
         );
       }
-      return true;
+      return finishOpenProject();
     } catch (caught) {
       const msg = caught instanceof Error ? caught.message : "打开项目失败";
       if (/directory|路径|ENOENT/i.test(msg)) {
@@ -2369,7 +2392,7 @@ export default function App() {
   }
 
   async function handleImport(url: string) {
-    if (rejectProjectMutationWhileQABusy()) {
+    if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
       return;
     }
     setLoading(true);
@@ -2387,7 +2410,7 @@ export default function App() {
   }
 
   async function handleImportArchive(file: File) {
-    if (rejectProjectMutationWhileQABusy()) {
+    if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
       return;
     }
     setLoading(true);
@@ -2406,7 +2429,7 @@ export default function App() {
   }
 
   async function handleCreateLearningPlan(): Promise<boolean> {
-    if (rejectProjectMutationWhileQABusy()) {
+    if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
       return false;
     }
     const name = await requestText({
@@ -2480,7 +2503,7 @@ export default function App() {
   }
 
   async function handleImportRequest() {
-    if (rejectProjectMutationWhileQABusy()) {
+    if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
       return;
     }
     const url = await requestText({
@@ -2570,15 +2593,19 @@ export default function App() {
     return true;
   }
 
+  function resumeGenerationTracking(projectId: number, tasks: GenerationTask[]) {
+    for (const task of tasks) {
+      if (isGenerationTaskRunning(task)) {
+        void trackTask(projectId, task);
+      }
+    }
+  }
+
   async function reloadGenerationTasks(projectId: number, resumeTracking = true) {
     const tasks = await listGenerationTasks(projectId);
     const sorted = replaceGenerationTasks(projectId, tasks);
     if (resumeTracking) {
-      for (const task of sorted) {
-        if (isGenerationTaskRunning(task)) {
-          void trackTask(projectId, task);
-        }
-      }
+      resumeGenerationTracking(projectId, sorted);
     }
     return sorted;
   }
@@ -2689,30 +2716,79 @@ export default function App() {
     if (!project) {
       return;
     }
-    if ((isLearningPlanProject || scopeType === "learning_plan") && !generationInstructions.trim()) {
+
+    if (
+      (
+        isLearningPlanProject ||
+        scopeType === "learning_plan"
+      ) &&
+      !generationInstructions.trim()
+    ) {
       setError("请先在生成要求中写明学习目标或知识点。");
       return;
     }
-    if (!isLearningPlanProject && scopeType === "files" && selectedScopeFiles.length === 0) {
-      setError("请先在文件树中选择至少一个文件。");
+
+    if (
+      !isLearningPlanProject &&
+      scopeType === "files" &&
+      selectedScopeFiles.length === 0
+    ) {
+      setError("请先选择至少一个学习文件。");
+
+      if (mobileRuntime) {
+        setMobileGenerationView("files");
+      }
+
       return;
     }
+
+    /*
+     * 必须在确认框出现前取得同步锁。
+     * 同一帧第二次点击会立即被 ref 拦截。
+     */
+    if (!acquireGenerationStart()) {
+      return;
+    }
+
+    const projectId = project.id;
+    const scope = buildScope();
+    const instructions = generationInstructions;
+
     handleDismissSelection();
-    const ok = await confirmAction("生成 AI 总纲", "将调用模型 API 生成项目总纲，可能消耗 token。是否继续？", {
-      confirmText: "生成", skipKey: "confirm.outline",
-    });
-    if (!ok) {
-      return;
-    }
-    setError("");
-    setGenerationOpen(false);
-    setTaskMessage("生成总纲中…");
 
     try {
-      const task = await generateOutline(project.id, buildScope(), generationInstructions);
-      void trackTask(project.id, task);
+      const ok = await confirmAction(
+        "生成 AI 总纲",
+        "将调用模型 API 生成学习总纲，可能消耗 token。是否继续？",
+        { confirmText: "生成", skipKey: "confirm.outline" },
+      );
+
+      if (!ok) {
+        return;
+      }
+
+      setError("");
+      setTaskMessage("正在创建总纲任务");
+
+      const task = await generateOutline(projectId, scope, instructions);
+
+      /*
+       * 请求返回后立即写入任务列表，
+       * 不等第一次轮询。
+       */
+      upsertCurrentGenerationTask(projectId, task);
+
+      if (mobileRuntime) {
+        setMobileGenerationView("tasks");
+      } else {
+        setGenerationOpen(false);
+      }
+
+      void trackTask(projectId, task);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建总纲任务失败");
+    } finally {
+      releaseGenerationStart();
     }
   }
 
@@ -2811,28 +2887,50 @@ export default function App() {
   }
 
   async function handleGenerateOutlineLesson(lessonNumber: number, title: string) {
-    if (!project || isTaskRunning) {
+    if (!project) {
       return;
     }
+
+    if (!acquireGenerationStart()) {
+      return;
+    }
+
+    const projectId = project.id;
+    const instructions = generationInstructions;
+
     handleDismissSelection();
-    const ok = await confirmAction(
-      `生成第 ${lessonNumber} 课`,
-      isLearningPlanProject
-        ? `将分章节生成"${title}"的详细课件。本次操作最多调用 12 次模型 API，可能消耗较多 token；一次确认将授权完成整节课的规划、分章生成与遗漏补全。是否继续？`
-        : `将调用模型 API 生成"${title}"的详细课件，并使用已构建的项目索引作为代码上下文，可能消耗较多 token。是否继续？`,
-      { confirmText: "生成", skipKey: "confirm.outline_lesson" },
-    );
-    if (!ok) {
-      return;
-    }
-    setError("");
-    setGenerationOpen(false);
+
     try {
-      const task = await generateOutlineLesson(project.id, lessonNumber, title, generationInstructions);
-      void trackTask(project.id, task);
-      setKnowledgeRefreshKey((value) => value + 1);
+      const ok = await confirmAction(
+        `生成第 ${lessonNumber} 课`,
+        isLearningPlanProject
+          ? `将分章节生成"${title}"的详细课件。本次操作最多调用 12 次模型 API，可能消耗较多 token；一次确认将授权完成整节课。是否继续？`
+          : `将调用模型 API 生成"${title}"的详细课件，并使用项目索引作为代码上下文。是否继续？`,
+        { confirmText: "生成", skipKey: "confirm.outline_lesson" },
+      );
+
+      if (!ok) {
+        return;
+      }
+
+      setError("");
+      setTaskMessage("正在创建课件任务");
+
+      const task = await generateOutlineLesson(projectId, lessonNumber, title, instructions);
+
+      upsertCurrentGenerationTask(projectId, task);
+
+      if (mobileRuntime) {
+        setMobileGenerationView("tasks");
+      } else {
+        setGenerationOpen(false);
+      }
+
+      void trackTask(projectId, task);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建课件任务失败");
+    } finally {
+      releaseGenerationStart();
     }
   }
 
@@ -2853,8 +2951,10 @@ export default function App() {
   }
 
   async function handleRegenerate(nextProject: Project) {
-    if (project?.id === nextProject.id && rejectProjectMutationWhileQABusy()) {
-      return;
+    if (project?.id === nextProject.id) {
+      if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
+        return;
+      }
     }
     setBusyProjectId(nextProject.id);
     setError("");
@@ -2872,8 +2972,10 @@ export default function App() {
   }
 
   async function handleDelete(nextProject: Project) {
-    if (project?.id === nextProject.id && rejectProjectMutationWhileQABusy()) {
-      return;
+    if (project?.id === nextProject.id) {
+      if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
+        return;
+      }
     }
     const ok = await confirmAction("删除项目", `删除本地导入项目 ${nextProject.name}？`, {
       confirmText: "删除",
@@ -2894,6 +2996,21 @@ export default function App() {
       setProjects(remaining);
       if (project?.id === nextProject.id) {
         setProject(null);
+
+        currentProjectIdRef.current = null;
+        generationTasksRef.current = [];
+        generationStartLockRef.current = false;
+        trackedGenerationTasksRef.current.clear();
+
+        setGenerationTasks([]);
+        setActiveTask(null);
+        setGenerationStarting(false);
+        setRetryingTaskId(null);
+
+        setTaskMessage("待生成");
+        setMobileGenerationView("configure");
+        setGenerationOpen(false);
+
         setTree(null);
         setCourses([]);
         setFileContent(null);
@@ -4770,7 +4887,7 @@ export default function App() {
   }
 
   async function handleImportLocalPath(path: string) {
-    if (rejectProjectMutationWhileQABusy()) {
+    if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
       return;
     }
     setLoading(true);
@@ -4820,8 +4937,13 @@ export default function App() {
   }
 
   function handleSelectMobileProject(nextProject: Project) {
-    if (project?.id !== nextProject.id && rejectProjectMutationWhileQABusy()) {
-      return;
+    if (project?.id !== nextProject.id) {
+      if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
+        /*
+         * 被阻止时不能关闭项目抽屉。
+         */
+        return;
+      }
     }
     mobileWorkspaceSheetRef.current?.dismiss();
     void openProject(nextProject);
