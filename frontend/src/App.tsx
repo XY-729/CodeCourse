@@ -366,7 +366,6 @@ export default function App() {
 
   const [selection, setSelection] = useState<SelectionSummary | null>(null);
   const [qaQuestionInput, setQAQuestionInput] = useState("");
-  const [qaAskPending, setQAAskPending] = useState(false);
   const [mobileAssistantView, setMobileAssistantView] = useState<MobileAssistantView>("ask");
   const [qaHistory, setQAHistory] = useState<QARecord[]>([]);
   const [qaHistoryQuery, setQAHistoryQuery] = useState("");
@@ -406,12 +405,38 @@ export default function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [toast, setToast] = useState("");
   const {
-    generations: qaGenerations,
-    draftId: qaDraftId,
-    startNewDraft: startNewQADraft,
+    generations:
+      qaGenerations,
+
+    draftId:
+      qaDraftId,
+
+    startNewDraft:
+      startNewQADraft,
+
     runStreamingQuestion,
-    anyLoading: anyQALoading,
-  } = useQAGenerationController(project?.id ?? null);
+
+    operationPending:
+      qaOperationPending,
+
+    beginOperation:
+      beginQAOperation,
+
+    endOperation:
+      endQAOperation,
+
+    isOperationActive:
+      isQAOperationActive,
+
+    anyLoading:
+      anyQALoading,
+
+    busy:
+      qaInteractionBusy,
+  } =
+    useQAGenerationController(
+      project?.id ?? null,
+    );
   const {
     revision: personalizationRevision,
     bumpRevision: bumpPersonalizationRevision,
@@ -504,9 +529,42 @@ export default function App() {
   const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
   const activeQAKey = qaSessionId ? `session:${qaSessionId}` : `draft:${qaDraftId}`;
   const activeQAGeneration = qaGenerations[activeQAKey] ?? null;
-  const qaLoading = Boolean(activeQAGeneration);
-  const qaInteractionBusy = qaAskPending || anyQALoading;
-  const showBusy = loading || isTaskRunning || anyQALoading;
+
+  /*
+   * 术语解释可能使用父会话 key，
+   * 不一定等于当前 activeQAKey。
+   *
+   * 全局互斥后同时最多只有一个，
+   * 因此找不到当前 key 时直接取第一个。
+   */
+  const visibleQAGeneration =
+    activeQAGeneration ??
+    Object.values(
+      qaGenerations,
+    )[0] ??
+    null;
+
+  const qaBusyLabel =
+    qaOperationPending &&
+    !anyQALoading
+      ? "正在准备"
+      : visibleQAGeneration
+          ?.label ||
+        "正在生成回答";
+
+  const showBusy =
+    loading ||
+    isTaskRunning ||
+    qaInteractionBusy;
+
+  const mobileWorkspaceBusy =
+    loading ||
+    isTaskRunning ||
+    (
+      qaInteractionBusy &&
+      mobileWorkspaceTab !==
+        "assistant"
+    );
 
   const clearDropPreview = useCallback(() => {
     const current = dropPreviewRef.current;
@@ -620,7 +678,18 @@ export default function App() {
     if (!project || project.id !== projectId) {
       try {
         const p = await getProject(projectId);
-        await openProject(p);
+        const opened = await openProject(p);
+        if (!opened) {
+          /*
+           * 不确认消费通知。
+           * 当前 QA 完成后仍可再次处理。
+           */
+          handledCompletionNavRef
+            .current
+            .delete(navKey);
+
+          return false;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "";
         if (!/404|not found|不存在/i.test(message)) {
@@ -1111,7 +1180,7 @@ export default function App() {
           setAssistantOpen(false);
         } else if (navigationOpen) {
           setNavigationOpen(false);
-        } else if (isTaskRunning) {
+        } else if (isTaskRunning || qaInteractionBusy || isQAOperationActive()) {
           void CodeCourseNative.moveToBackground().catch(() => NativeApp.exitApp());
         } else {
           void NativeApp.exitApp();
@@ -1128,7 +1197,7 @@ export default function App() {
       disposed = true;
       removeListener?.();
     };
-  }, [appDialog, assistantOpen, generationOpen, isTaskRunning, mobileRuntime, mobileWorkspaceTab, moreMenuOpen, navigationOpen, promptEditorOpen, settingsOpen]);
+  }, [appDialog, assistantOpen, generationOpen, isTaskRunning, isQAOperationActive, mobileRuntime, mobileWorkspaceTab, moreMenuOpen, navigationOpen, promptEditorOpen, qaInteractionBusy, settingsOpen]);
 
   useEffect(() => {
     if (!dragState) {
@@ -2047,10 +2116,9 @@ export default function App() {
     await openQAById(selected.qa_record_id);
   }
 
-  async function openProject(nextProject: Project) {
-    if (project && project.id !== nextProject.id && qaInteractionBusy) {
-      setToast("当前回答仍在生成，请完成后再切换项目");
-      return;
+  async function openProject(nextProject: Project): Promise<boolean> {
+    if (project && project.id !== nextProject.id && rejectProjectMutationWhileQABusy()) {
+      return false;
     }
     flushAllPendingLearningUpdates();
     setError("");
@@ -2149,7 +2217,7 @@ export default function App() {
               setLayout(restoredLayout); setActiveGroupId(ROOT_GROUP_ID); setNavigationView("courses"); setNavigationOpen(false); setSidebarWidth(264);
               if (ri?.type === "file") setFileContent({ path: ri.path, content: ri.content, language: ri.language ?? "plaintext" });
               else if (ri?.type === "course") { setSelectedCourse(ri.path); void refreshDocumentTerms(ri.qaRecordId ? "qa" : "course", ri.path, freshProject.id); }
-              return;
+              return true;
             }
           }
         } else {
@@ -2173,7 +2241,7 @@ export default function App() {
                 setSelectedCourse(restoredItem.path);
                 void refreshDocumentTerms(restoredItem.qaRecordId ? "qa" : "course", restoredItem.path, freshProject.id);
               }
-              return;
+              return true;
             }
           }
         }
@@ -2208,7 +2276,7 @@ export default function App() {
             qaRecordId: record.id,
             favorite: record.favorite,
           })));
-          return;
+          return true;
         }
       }
       if (recent?.source_type === "file") {
@@ -2223,7 +2291,7 @@ export default function App() {
             content: content.content,
             language: content.language,
           })));
-          return;
+          return true;
         } catch {
           // A deleted recent file is ignored and the course fallback is opened below.
         }
@@ -2244,6 +2312,7 @@ export default function App() {
           ),
         );
       }
+      return true;
     } catch (caught) {
       const msg = caught instanceof Error ? caught.message : "打开项目失败";
       if (/directory|路径|ENOENT/i.test(msg)) {
@@ -2251,12 +2320,16 @@ export default function App() {
       } else {
         setError(msg);
       }
+      return false;
     } finally {
       setLoading(false);
     }
   }
 
   async function handleImport(url: string) {
+    if (rejectProjectMutationWhileQABusy()) {
+      return;
+    }
     setLoading(true);
     setError("");
     setTaskMessage("正在导入项目");
@@ -2272,6 +2345,9 @@ export default function App() {
   }
 
   async function handleImportArchive(file: File) {
+    if (rejectProjectMutationWhileQABusy()) {
+      return;
+    }
     setLoading(true);
     setError("");
     setTaskMessage("正在导入本地项目");
@@ -2288,6 +2364,9 @@ export default function App() {
   }
 
   async function handleCreateLearningPlan(): Promise<boolean> {
+    if (rejectProjectMutationWhileQABusy()) {
+      return false;
+    }
     const name = await requestText({
       title: "新建学习计划",
       label: "学习计划名称",
@@ -2302,8 +2381,7 @@ export default function App() {
     try {
       const created = await createLearningPlan(name.trim());
       await loadProjects();
-      await openProject(created);
-      return true;
+      return await openProject(created);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建学习计划失败");
       return false;
@@ -2360,6 +2438,9 @@ export default function App() {
   }
 
   async function handleImportRequest() {
+    if (rejectProjectMutationWhileQABusy()) {
+      return;
+    }
     const url = await requestText({
       title: "导入 GitHub 项目",
       message: "输入公开仓库的 HTTPS 或 SSH 地址。",
@@ -2608,6 +2689,9 @@ export default function App() {
   }
 
   async function handleRegenerate(nextProject: Project) {
+    if (project?.id === nextProject.id && rejectProjectMutationWhileQABusy()) {
+      return;
+    }
     setBusyProjectId(nextProject.id);
     setError("");
     try {
@@ -2624,6 +2708,9 @@ export default function App() {
   }
 
   async function handleDelete(nextProject: Project) {
+    if (project?.id === nextProject.id && rejectProjectMutationWhileQABusy()) {
+      return;
+    }
     const ok = await confirmAction("删除项目", `删除本地导入项目 ${nextProject.name}？`, {
       confirmText: "删除",
       danger: true,
@@ -2694,36 +2781,219 @@ export default function App() {
     });
   }
 
+  function acquireQAOperation() {
+    const token =
+      beginQAOperation();
+
+    if (!token) {
+      setToast(
+        "已有回答正在处理，请等待完成",
+      );
+    }
+
+    return token;
+  }
+
+  function isQABusyNow() {
+    /*
+     * qaInteractionBusy 用于渲染；
+     * isQAOperationActive() 读取 ref，
+     * 同一帧内也能立即拦截。
+     */
+    return (
+      qaInteractionBusy ||
+      isQAOperationActive()
+    );
+  }
+
+  function rejectProjectMutationWhileQABusy() {
+    if (!isQABusyNow()) {
+      return false;
+    }
+
+    setToast(
+      "当前回答仍在处理，请完成后再切换或修改项目",
+    );
+
+    return true;
+  }
+
   async function handleAsk() {
-    const question = qaQuestionInput.trim();
-    if (!project || !question || !llmSettings?.enabled || !llmSettings.has_api_key || qaInteractionBusy) return;
-    setQAAskPending(true);
+    const question =
+      qaQuestionInput.trim();
+
+    if (
+      !project ||
+      !question ||
+      !llmSettings?.enabled ||
+      !llmSettings.has_api_key
+    ) {
+      return;
+    }
+
+    const operationToken =
+      acquireQAOperation();
+
+    if (!operationToken) {
+      return;
+    }
+
     try {
-      const ok = await confirmAction("AI 助手询问", `将调用模型 API 使用 ${llmSettings.model} 回答当前问题，可能消耗 token。是否继续？`, { confirmText: "询问", skipKey: "confirm.ask" });
-      if (!ok) return;
+      const ok =
+        await confirmAction(
+          "AI 助手询问",
+
+          `将调用模型 API 使用 ` +
+            `${llmSettings.model} ` +
+            `回答当前问题，` +
+            `可能消耗 token。` +
+            `是否继续？`,
+
+          {
+            confirmText: "询问",
+            skipKey:
+              "confirm.ask",
+          },
+        );
+
+      if (!ok) {
+        return;
+      }
+
       setQAPanelError("");
-      const generationKey = activeQAKey;
-      const context = buildAskPayloadContext();
-      const record = await runStreamingQuestion({
-        source_type: context.source_type, source_path: context.source_path, selected_text: context.selected_text,
-        question, provider: llmSettings.provider, base_url: llmSettings.base_url, model: llmSettings.model,
-        session_id: qaSessionId, parent_qa_id: selectedQA?.id ?? null, relation_type: "follow_up",
-        selection_range: selectionAnchor?.range ? { start_line: selectionAnchor.range.startLineNumber, start_column: selectionAnchor.range.startColumn, end_line: selectionAnchor.range.endLineNumber, end_column: selectionAnchor.range.endColumn } : null,
-      }, generationKey);
+
+      const generationKey =
+        activeQAKey;
+
+      const context =
+        buildAskPayloadContext();
+
+      const record =
+        await runStreamingQuestion(
+          {
+            source_type:
+              context.source_type,
+
+            source_path:
+              context.source_path,
+
+            selected_text:
+              context.selected_text,
+
+            question,
+
+            provider:
+              llmSettings.provider,
+
+            base_url:
+              llmSettings.base_url,
+
+            model:
+              llmSettings.model,
+
+            session_id:
+              qaSessionId,
+
+            parent_qa_id:
+              selectedQA?.id ??
+              null,
+
+            relation_type:
+              "follow_up",
+
+            selection_range:
+              selectionAnchor?.range
+                ? {
+                    start_line:
+                      selectionAnchor
+                        .range
+                        .startLineNumber,
+
+                    start_column:
+                      selectionAnchor
+                        .range
+                        .startColumn,
+
+                    end_line:
+                      selectionAnchor
+                        .range
+                        .endLineNumber,
+
+                    end_column:
+                      selectionAnchor
+                        .range
+                        .endColumn,
+                  }
+                : null,
+          },
+
+          generationKey,
+          operationToken,
+        );
+
       setSelectedQA(record);
-      setQASessionId(record.session_id ?? qaSessionId);
+
+      setQASessionId(
+        record.session_id ??
+          qaSessionId,
+      );
+
       setQAUpperTab("history");
-      setMobileAssistantView("ask");
-      setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
+      setMobileAssistantView(
+        "ask",
+      );
+
+      setQAHistory(
+        (items) => [
+          record,
+
+          ...items.filter(
+            (item) =>
+              item.id !==
+              record.id,
+          ),
+        ],
+      );
+
       clearQAQuestionInput();
-      await Promise.all([refreshCourses(project.id), refreshQAHistory(project.id), refreshKnowledgeLinks(project.id)]);
-      setKnowledgeRefreshKey((value) => value + 1);
-      notifyTaskCompleted("CodeCourse 回答完成", record.display_title || "AI 助手已经完成回答。");
+
+      await Promise.all([
+        refreshCourses(
+          project.id,
+        ),
+
+        refreshQAHistory(
+          project.id,
+        ),
+
+        refreshKnowledgeLinks(
+          project.id,
+        ),
+      ]);
+
+      setKnowledgeRefreshKey(
+        (value) =>
+          value + 1,
+      );
+
+      notifyTaskCompleted(
+        "CodeCourse 回答完成",
+
+        record.display_title ||
+          "AI 助手已经完成回答。",
+      );
+
       schedulePersonalizationRefresh();
     } catch (caught) {
-      setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
+      setQAPanelError(
+        caught instanceof Error
+          ? caught.message
+          : "生成回答失败",
+      );
     } finally {
-      setQAAskPending(false);
+      endQAOperation(
+        operationToken,
+      );
     }
   }
 
@@ -2740,77 +3010,278 @@ export default function App() {
   }
 
   async function generateTermExplanation(term: DocumentTerm) {
-    if (!project) return;
-    if (term.status === "linked" && term.qa_record_id) {
-      const record = qaHistory.find((entry) => entry.id === term.qa_record_id) ?? await getQARecord(project.id, term.qa_record_id);
-      setSelectedQA(record);
-      setQASessionId(record.session_id ?? null);
-      setQAUpperTab("history");
-      openAssistant("history");
+    if (!project) {
       return;
     }
-    if (term.concept_id) {
-      try {
-        const reusable = await getReusableConceptExplanation(project.id, term.concept_id);
-        if (reusable.explanation) {
-          const { projectId: sourceProjectId, qa: record } = reusable.explanation;
-          setSelectedQA(record);
-          setQASessionId(record.session_id ?? null);
-          setQAUpperTab("history");
-          openAssistant("history");
-          if (sourceProjectId !== project.id) {
-            setToast("已复用其他项目中的此前解释；当前为只读");
-          }
-          return;
-        }
-      } catch {
-        // A stale explanation link must not block generating a fresh answer.
-      }
-    }
-    if (!llmSettings?.enabled || !llmSettings.has_api_key) {
-      setQAPanelError("请先配置模型 API。 ");
-      openSettings();
+
+    const operationToken =
+      acquireQAOperation();
+
+    if (!operationToken) {
       return;
     }
-    const parent = term.source_type === "qa"
-      ? qaHistory.find((record) => (record.output_path || String(record.id)) === term.source_path) ?? selectedQA
-      : null;
-    const ok = await confirmAction(
-      "生成术语解释",
-      `将调用 ${llmSettings.model}，结合当前项目解释"${term.term_text}"，并把回答连接到${parent ? `"${qaTitle(parent)}"` : "当前课件"}。是否继续？`,
-      { confirmText: "生成解释", skipKey: "confirm.term" },
-    );
-    if (!ok) return;
-    setQAPanelError("");
-    openAssistant("history");
-    const generationKey = parent?.session_id ? `session:${parent.session_id}` : activeQAKey;
+
     try {
-      const record = await runStreamingQuestion({
-        source_type: term.source_type,
-        source_path: term.source_path,
-        selected_text: term.term_text,
-        question: `请结合当前项目解释"${term.term_text}"：它是什么、为什么会出现在这里，以及接下来应该看哪里。讲解深度由本轮 learner_context 和我的当前要求决定。`,
-        provider: llmSettings.provider,
-        base_url: llmSettings.base_url,
-        model: llmSettings.model,
-        session_id: parent?.session_id ?? qaSessionId,
-        parent_qa_id: parent?.id ?? null,
-        relation_type: "term_explanation",
-        term_candidate_id: term.id,
-      }, generationKey);
+      if (
+        term.status ===
+          "linked" &&
+        term.qa_record_id
+      ) {
+        const record =
+          qaHistory.find(
+            (entry) =>
+              entry.id ===
+              term.qa_record_id,
+          ) ??
+          await getQARecord(
+            project.id,
+            term.qa_record_id,
+          );
+
+        setSelectedQA(record);
+
+        setQASessionId(
+          record.session_id ??
+            null,
+        );
+
+        setQAUpperTab(
+          "history",
+        );
+
+        openAssistant(
+          "history",
+        );
+
+        return;
+      }
+
+      if (term.concept_id) {
+        try {
+          const reusable =
+            await getReusableConceptExplanation(
+              project.id,
+              term.concept_id,
+            );
+
+          if (
+            reusable.explanation
+          ) {
+            const {
+              projectId:
+                sourceProjectId,
+
+              qa: record,
+            } =
+              reusable.explanation;
+
+            setSelectedQA(record);
+
+            setQASessionId(
+              record.session_id ??
+                null,
+            );
+
+            setQAUpperTab(
+              "history",
+            );
+
+            openAssistant(
+              "history",
+            );
+
+            if (
+              sourceProjectId !==
+              project.id
+            ) {
+              setToast(
+                "已复用其他项目中的此前解释；当前为只读",
+              );
+            }
+
+            return;
+          }
+        } catch {
+          /*
+           * 旧复用链接失效时，
+           * 继续生成新回答。
+           */
+        }
+      }
+
+      if (
+        !llmSettings?.enabled ||
+        !llmSettings.has_api_key
+      ) {
+        setQAPanelError(
+          "请先配置模型 API。",
+        );
+
+        openSettings();
+
+        return;
+      }
+
+      const parent =
+        term.source_type === "qa"
+          ? (
+              qaHistory.find(
+                (record) =>
+                  (
+                    record.output_path ||
+                    String(record.id)
+                  ) ===
+                  term.source_path,
+              ) ??
+              selectedQA
+            )
+          : null;
+
+      const ok =
+        await confirmAction(
+          "生成术语解释",
+
+          `将调用 ` +
+            `${llmSettings.model}，` +
+            `结合当前项目解释` +
+            `"${term.term_text}"，` +
+            `并把回答连接到` +
+            `${
+              parent
+                ? `"${qaTitle(
+                    parent,
+                  )}"`
+                : "当前课件"
+            }。是否继续？`,
+
+          {
+            confirmText:
+              "生成解释",
+
+            skipKey:
+              "confirm.term",
+          },
+        );
+
+      if (!ok) {
+        return;
+      }
+
+      setQAPanelError("");
+
+      openAssistant(
+        "history",
+      );
+
+      const generationKey =
+        parent?.session_id
+          ? `session:${parent.session_id}`
+          : activeQAKey;
+
+      const record =
+        await runStreamingQuestion(
+          {
+            source_type:
+              term.source_type,
+
+            source_path:
+              term.source_path,
+
+            selected_text:
+              term.term_text,
+
+            question:
+              `请结合当前项目解释` +
+              `"${term.term_text}"：` +
+              `它是什么、为什么会出现在这里，` +
+              `以及接下来应该看哪里。` +
+              `讲解深度由本轮 learner_context ` +
+              `和我的当前要求决定。`,
+
+            provider:
+              llmSettings.provider,
+
+            base_url:
+              llmSettings.base_url,
+
+            model:
+              llmSettings.model,
+
+            session_id:
+              parent?.session_id ??
+              qaSessionId,
+
+            parent_qa_id:
+              parent?.id ?? null,
+
+            relation_type:
+              "term_explanation",
+
+            term_candidate_id:
+              term.id,
+          },
+
+          generationKey,
+          operationToken,
+        );
+
       setSelectedQA(record);
-      setQASessionId(record.session_id ?? null);
-      setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
+
+      setQASessionId(
+        record.session_id ??
+          null,
+      );
+
+      setQAHistory(
+        (items) => [
+          record,
+
+          ...items.filter(
+            (item) =>
+              item.id !==
+              record.id,
+          ),
+        ],
+      );
+
       await Promise.all([
-        refreshCourses(project.id),
-        refreshQAHistory(project.id),
-        refreshKnowledgeLinks(project.id),
-        refreshDocumentTerms(term.source_type, term.source_path, project.id).catch(() => {}),
+        refreshCourses(
+          project.id,
+        ),
+
+        refreshQAHistory(
+          project.id,
+        ),
+
+        refreshKnowledgeLinks(
+          project.id,
+        ),
+
+        refreshDocumentTerms(
+          term.source_type,
+          term.source_path,
+          project.id,
+        ).catch(
+          () => undefined,
+        ),
       ]);
-      setKnowledgeRefreshKey((value) => value + 1);
+
+      setKnowledgeRefreshKey(
+        (value) =>
+          value + 1,
+      );
+
       schedulePersonalizationRefresh();
     } catch (caught) {
-      setQAPanelError(caught instanceof Error ? caught.message : "生成术语解释失败");
+      setQAPanelError(
+        caught instanceof Error
+          ? caught.message
+          : "术语解释处理失败",
+      );
+    } finally {
+      endQAOperation(
+        operationToken,
+      );
     }
   }
 
@@ -3004,7 +3475,7 @@ export default function App() {
       }]).catch(() => undefined);
       await refreshDocumentTerms(term.source_type, term.source_path, project.id);
       setTermAction(null);
-      setToast(status === "known" ? `已记住你认识“${term.term_text}”` : `后续会先解释“${term.term_text}”`);
+      setToast(status === "known" ? `已记住你认识"${term.term_text}"` : `后续会先解释"${term.term_text}"`);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "术语状态更新失败");
     }
@@ -3030,70 +3501,242 @@ export default function App() {
   }
 
   async function handleExplainSelectedTerm(anchor = selectionAnchor) {
-    if (!project || !anchor?.selectedText.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) return;
-    const term = anchor.selectedText.trim();
-    try {
-      const resolved = await resolvePersonalizationTerms(project.id, [{
-        text: term.slice(0, 80),
-        source: anchor.sourceType === "file" ? "index" : "selection",
-        confidence: 0.95,
-        context_relevance: 1,
-      }]);
-      const conceptId = resolved.terms[0]?.concept.id;
-      if (conceptId) {
-        const reusable = await getReusableConceptExplanation(project.id, conceptId);
-        if (reusable.explanation) {
-          await handleOpenQAReference(
-            reusable.explanation.projectId,
-            reusable.explanation.qa.id,
-          );
-          handleDismissSelection();
-          return;
-        }
-      }
-    } catch {
-      // Reuse is opportunistic; a stale or unavailable profile must not block explanation.
+    if (
+      !project ||
+      !anchor
+        ?.selectedText
+        .trim()
+    ) {
+      return;
     }
-    const ok = await confirmAction(
-      "解释术语",
-      `将调用 ${llmSettings.model}，结合当前项目和文档解释“${term}”。是否继续？`,
-      { confirmText: "生成解释", skipKey: "confirm.term-selection" },
-    );
-    if (!ok) return;
-    const generationKey = activeQAKey;
+
+    if (
+      !llmSettings?.enabled ||
+      !llmSettings.has_api_key
+    ) {
+      setQAPanelError(
+        "请先配置模型 API。",
+      );
+
+      openSettings();
+
+      return;
+    }
+
+    const operationToken =
+      acquireQAOperation();
+
+    if (!operationToken) {
+      return;
+    }
+
+    const term =
+      anchor.selectedText
+        .trim();
+
     try {
-      const record = await runStreamingQuestion({
-        source_type: anchor.sourceType,
-        source_path: anchor.sourcePath,
-        selected_text: term,
-        question: `请解释“${term}”：先用通俗语言说明它是什么，再说明它在当前上下文中的作用，并给出下一步学习建议。`,
-        provider: llmSettings.provider,
-        base_url: llmSettings.base_url,
-        model: llmSettings.model,
-        session_id: qaSessionId,
-        parent_qa_id: selectedQA?.id ?? null,
-        relation_type: "term_explanation",
-        selection_range: anchor.range
-          ? {
-              start_line: anchor.range.startLineNumber,
-              start_column: anchor.range.startColumn,
-              end_line: anchor.range.endLineNumber,
-              end_column: anchor.range.endColumn,
-            }
-          : null,
-      }, generationKey);
+      try {
+        const resolved =
+          await resolvePersonalizationTerms(
+            project.id,
+            [
+              {
+                text:
+                  term.slice(
+                    0,
+                    80,
+                  ),
+
+                source:
+                  anchor.sourceType ===
+                  "file"
+                    ? "index"
+                    : "selection",
+
+                confidence:
+                  0.95,
+
+                context_relevance:
+                  1,
+              },
+            ],
+          );
+
+        const conceptId =
+          resolved
+            .terms[0]
+            ?.concept.id;
+
+        if (conceptId) {
+          const reusable =
+            await getReusableConceptExplanation(
+              project.id,
+             conceptId,
+            );
+
+          if (
+            reusable.explanation
+          ) {
+            await handleOpenQAReference(
+              reusable
+                .explanation
+                .projectId,
+
+              reusable
+                .explanation
+                .qa.id,
+            );
+
+            handleDismissSelection();
+
+            return;
+          }
+        }
+      } catch {
+        /*
+         * 复用检查失败不能阻止生成。
+         */
+      }
+
+      const ok =
+        await confirmAction(
+          "解释术语",
+
+          `将调用 ` +
+            `${llmSettings.model}，` +
+            `结合当前项目和文档解释` +
+            `"${term}"。是否继续？`,
+
+          {
+            confirmText:
+              "生成解释",
+
+            skipKey:
+              "confirm.term-selection",
+          },
+        );
+
+      if (!ok) {
+        return;
+      }
+
+      const generationKey =
+        activeQAKey;
+
+      const record =
+        await runStreamingQuestion(
+          {
+            source_type:
+              anchor.sourceType,
+
+            source_path:
+              anchor.sourcePath,
+
+            selected_text:
+              term,
+
+            question:
+              `请解释"${term}"：` +
+              `先用通俗语言说明它是什么，` +
+              `再说明它在当前上下文中的作用，` +
+              `并给出下一步学习建议。`,
+
+            provider:
+              llmSettings.provider,
+
+            base_url:
+              llmSettings.base_url,
+
+            model:
+              llmSettings.model,
+
+            session_id:
+              qaSessionId,
+
+            parent_qa_id:
+              selectedQA?.id ??
+              null,
+
+            relation_type:
+              "term_explanation",
+
+            selection_range:
+              anchor.range
+                ? {
+                    start_line:
+                      anchor.range
+                        .startLineNumber,
+
+                    start_column:
+                      anchor.range
+                        .startColumn,
+
+                    end_line:
+                      anchor.range
+                        .endLineNumber,
+
+                    end_column:
+                      anchor.range
+                        .endColumn,
+                  }
+                : null,
+          },
+
+          generationKey,
+          operationToken,
+        );
+
       setSelectedQA(record);
-      setQASessionId(record.session_id ?? qaSessionId);
-      setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
+
+      setQASessionId(
+        record.session_id ??
+          qaSessionId,
+      );
+
+      setQAHistory(
+        (items) => [
+          record,
+
+          ...items.filter(
+            (item) =>
+              item.id !==
+              record.id,
+          ),
+        ],
+      );
+
       await Promise.all([
-        refreshCourses(project.id),
-        refreshQAHistory(project.id),
-        refreshKnowledgeLinks(project.id),
+        refreshCourses(
+          project.id,
+        ),
+
+        refreshQAHistory(
+          project.id,
+        ),
+
+        refreshKnowledgeLinks(
+          project.id,
+        ),
       ]);
-      setKnowledgeRefreshKey((value) => value + 1);
-      openAssistant("history");
+
+      setKnowledgeRefreshKey(
+        (value) =>
+          value + 1,
+      );
+
+      openAssistant(
+        "history",
+      );
     } catch (caught) {
-      setQAPanelError(caught instanceof Error ? caught.message : "术语解释生成失败");
+      setQAPanelError(
+        caught instanceof Error
+          ? caught.message
+          : "术语解释处理失败",
+      );
+    } finally {
+      endQAOperation(
+        operationToken,
+      );
     }
   }
 
@@ -3122,7 +3765,7 @@ export default function App() {
           text,
         );
         bumpPersonalizationRevision();
-        setToast(`已记住你认识“${text}”`);
+        setToast(`已记住你认识"${text}"`);
       }
       handleDismissSelection();
     } catch (caught) {
@@ -3945,6 +4588,9 @@ export default function App() {
   }
 
   async function handleImportLocalPath(path: string) {
+    if (rejectProjectMutationWhileQABusy()) {
+      return;
+    }
     setLoading(true);
     setError("");
     setTaskMessage("正在导入本地项目");
@@ -3992,8 +4638,7 @@ export default function App() {
   }
 
   function handleSelectMobileProject(nextProject: Project) {
-    if (project?.id !== nextProject.id && qaInteractionBusy) {
-      setToast("当前回答仍在生成，请完成后再切换项目");
+    if (project?.id !== nextProject.id && rejectProjectMutationWhileQABusy()) {
       return;
     }
     mobileWorkspaceSheetRef.current?.dismiss();
@@ -4141,8 +4786,8 @@ export default function App() {
         question={qaQuestionInput}
         questionInput={qaQuestionInput}
         loading={qaInteractionBusy}
-        loadingLabel={qaAskPending && !qaLoading ? "等待确认" : activeQAGeneration?.label}
-        streamContent={activeQAGeneration?.partial}
+        loadingLabel={qaBusyLabel}
+        streamContent={visibleQAGeneration?.partial}
         history={qaHistory}
         historyQuery={qaHistoryQuery}
         favoriteOnly={qaFavoriteOnly}
@@ -4190,8 +4835,8 @@ export default function App() {
         contextSummary={assistantContextSummary}
         question={qaQuestionInput}
         loading={qaInteractionBusy}
-        loadingLabel={qaAskPending && !qaLoading ? "等待确认" : activeQAGeneration?.label}
-        streamContent={activeQAGeneration?.partial}
+        loadingLabel={qaBusyLabel}
+        streamContent={visibleQAGeneration?.partial}
         history={qaHistory}
         historyQuery={qaHistoryQuery}
         favoriteOnly={qaFavoriteOnly}
@@ -4340,7 +4985,7 @@ export default function App() {
       <TaskFeedback
         error={mobileRuntime && mobileWorkspaceTab ? "" : error}
         busy={showBusy && !(mobileRuntime && mobileWorkspaceTab)}
-        label={anyQALoading ? (activeQAGeneration?.label || "正在生成回答") : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
+        label={qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
         progressCurrent={activeTask?.progress_current}
         progressTotal={activeTask?.progress_total}
         toast={mobileRuntime && mobileWorkspaceTab ? "" : toast}
@@ -4470,12 +5115,12 @@ export default function App() {
               <Plus size={17} />
             </button>
           ) : undefined}
-          feedback={error || showBusy || toast ? (
+          feedback={error || mobileWorkspaceBusy || toast ? (
             <TaskFeedback
               inline
               error={error}
-              busy={showBusy}
-              label={anyQALoading ? (activeQAGeneration?.label || "正在生成回答") : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
+              busy={mobileWorkspaceBusy}
+              label={mobileWorkspaceTab !== "assistant" && qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
               progressCurrent={activeTask?.progress_current}
               progressTotal={activeTask?.progress_total}
               toast={toast}
