@@ -88,8 +88,9 @@ import MobileBottomNavigation, { type MobilePrimaryDestination } from "./compone
 import MobileReaderHeader from "./components/MobileReaderHeader";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
 import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolbar";
+import { isGenerationTaskRunning, selectPrimaryGenerationTask, sortGenerationTasks, upsertGenerationTask } from "./components/generationTaskModel";
 import GenerationSheet from "./components/GenerationSheet";
-import FluidBottomSheet, { type FluidBottomSheetHandle } from "./components/FluidBottomSheet";
+import MobileGenerationPanel, { type MobileGenerationView } from "./components/MobileGenerationPanel";
 import MobileWorkspaceSheet, { type MobileWorkspaceSheetHandle } from "./components/MobileWorkspaceSheet";
 import TitleBar from "./components/TitleBar";
 import TaskFeedback from "./components/TaskFeedback";
@@ -161,7 +162,7 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
-type MobileWorkspaceTab = "projects" | "courses" | "files" | "assistant" | "me";
+type MobileWorkspaceTab = "projects" | "courses" | "files" | "assistant" | "me" | "generation";
 type MobileSurface = "navigation" | "workspace" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts" | "profile";
 
 const EMPTY_COMMAND_PALETTE_ITEMS: CommandPaletteItem[] = [];
@@ -203,7 +204,6 @@ type StoredWorkbench = {
   sidebarWidth: number;
 };
 
-const TERMINAL_TASK_STATUSES = new Set(["completed", "failed", "cancelled"]);
 const ASSISTANT_WIDTH_STORAGE_KEY = "codecourse.assistantWidth";
 const THEME_STORAGE_KEY = "codecourse.theme";
 const LAST_PROJECT_STORAGE_KEY = "codecourse.lastProjectId";
@@ -343,6 +343,9 @@ export default function App() {
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab | null>(null);
   const [mobileCodeSearchRequestId, setMobileCodeSearchRequestId] = useState(0);
   const [generationOpen, setGenerationOpen] = useState(false);
+  const [mobileGenerationView, setMobileGenerationView] = useState<MobileGenerationView>("configure");
+  const [generationTasks, setGenerationTasks] = useState<GenerationTask[]>([]);
+  const [generationStarting, setGenerationStarting] = useState(false);
   const [generationIntent, setGenerationIntent] = useState<GenerationIntent>("outline");
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [llmSettings, setLLMSettings] = useState<LLMSettings | null>(null);
@@ -512,7 +515,15 @@ export default function App() {
 
   const idCounter = useRef(1);
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
-  const generationSheetRef = useRef<FluidBottomSheetHandle | null>(null);
+  const generationTasksRef = useRef<GenerationTask[]>([]);
+
+  const generationStartLockRef = useRef(false);
+
+  const trackedGenerationTasksRef = useRef<Set<string>>(new Set());
+
+  const currentProjectIdRef = useRef<number | null>(null);
+
+  const mobileWorkspaceTabRef = useRef<MobileWorkspaceTab | null>(null);
   const mobileWorkspaceSheetRef = useRef<MobileWorkspaceSheetHandle | null>(null);
   const desktopDragDepthRef = useRef(0);
   const recordedTermImpressionsRef = useRef<Set<string>>(new Set());
@@ -522,6 +533,10 @@ export default function App() {
     recordedTermImpressionsRef.current.clear();
     termRefreshAttemptsRef.current.clear();
   }, [project?.id]);
+
+  generationTasksRef.current = generationTasks;
+  currentProjectIdRef.current = project?.id ?? null;
+  mobileWorkspaceTabRef.current = mobileWorkspaceTab;
   const streamingContentRef = useRef<Map<string, string>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
   const dropPrefetchRef = useRef<Map<string, Promise<OpenItem | null>>>(new Map());
@@ -531,7 +546,8 @@ export default function App() {
   const mobileRuntime = isAndroidRuntime();
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
-  const isTaskRunning = activeTask ? !TERMINAL_TASK_STATUSES.has(activeTask.status) : false;
+  const isTaskRunning = generationTasks.some(isGenerationTaskRunning);
+  const generationBusy = generationStarting || isTaskRunning;
   const activeQAKey = qaSessionId ? `session:${qaSessionId}` : `draft:${qaDraftId}`;
   const activeQAGeneration = qaGenerations[activeQAKey] ?? null;
 
@@ -559,12 +575,16 @@ export default function App() {
 
   const showBusy =
     loading ||
-    isTaskRunning ||
+    generationBusy ||
     qaInteractionBusy;
 
   const mobileWorkspaceBusy =
     loading ||
-    isTaskRunning ||
+    (
+      generationBusy &&
+      mobileWorkspaceTab !==
+        "generation"
+    ) ||
     (
       qaInteractionBusy &&
       mobileWorkspaceTab !==
@@ -573,7 +593,7 @@ export default function App() {
 
   const mobileMeBusy =
     loading ||
-    isTaskRunning ||
+    generationBusy ||
     qaInteractionBusy;
 
   const clearDropPreview = useCallback(() => {
@@ -2137,8 +2157,10 @@ export default function App() {
   }
 
   async function openProject(nextProject: Project): Promise<boolean> {
-    if (project && project.id !== nextProject.id && rejectProjectMutationWhileQABusy()) {
-      return false;
+    if (project && project.id !== nextProject.id) {
+      if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
+        return false;
+      }
     }
     flushAllPendingLearningUpdates();
     setError("");
@@ -2496,62 +2518,170 @@ export default function App() {
     }
   }
 
-  async function trackTask(initialTask: GenerationTask) {
-    if (!project) {
+  function replaceGenerationTasks(projectId: number, tasks: GenerationTask[]) {
+    const sorted = sortGenerationTasks(tasks);
+    generationTasksRef.current = sorted;
+    if (currentProjectIdRef.current !== projectId) {
+      return sorted;
+    }
+    setGenerationTasks(sorted);
+    const primary = selectPrimaryGenerationTask(sorted);
+    setActiveTask(primary);
+    setTaskMessage(primary ? taskStatusMessage(primary) : "待生成");
+    return sorted;
+  }
+
+  function upsertCurrentGenerationTask(projectId: number, task: GenerationTask) {
+    const next = upsertGenerationTask(generationTasksRef.current, task);
+    generationTasksRef.current = next;
+    if (currentProjectIdRef.current !== projectId) {
       return;
     }
-    setActiveTask(initialTask);
-    setTaskMessage(initialTask.stage_label ? taskStatusMessage(initialTask) : `任务已创建：${taskLabel(initialTask)}`);
+    setGenerationTasks(next);
+    const primary = selectPrimaryGenerationTask(next);
+    setActiveTask(primary);
+    setTaskMessage(primary ? taskStatusMessage(primary) : "待生成");
+  }
+
+  function isGenerationBusyNow() {
+    return generationStartLockRef.current || generationTasksRef.current.some(isGenerationTaskRunning);
+  }
+
+  function acquireGenerationStart() {
+    if (isGenerationBusyNow()) {
+      setToast("当前已有内容正在生成，请等待完成");
+      return false;
+    }
+    generationStartLockRef.current = true;
+    setGenerationStarting(true);
+    return true;
+  }
+
+  function releaseGenerationStart() {
+    generationStartLockRef.current = false;
+    setGenerationStarting(false);
+  }
+
+  function rejectProjectMutationWhileGenerationBusy() {
+    if (!isGenerationBusyNow()) {
+      return false;
+    }
+    setToast("当前内容仍在生成，请完成后再切换或修改项目");
+    return true;
+  }
+
+  async function reloadGenerationTasks(projectId: number, resumeTracking = true) {
+    const tasks = await listGenerationTasks(projectId);
+    const sorted = replaceGenerationTasks(projectId, tasks);
+    if (resumeTracking) {
+      for (const task of sorted) {
+        if (isGenerationTaskRunning(task)) {
+          void trackTask(projectId, task);
+        }
+      }
+    }
+    return sorted;
+  }
+
+  async function trackTask(projectId: number, initialTask: GenerationTask) {
+    const trackingKey = `${projectId}:${initialTask.id}`;
+    if (trackedGenerationTasksRef.current.has(trackingKey)) {
+      return;
+    }
+    trackedGenerationTasksRef.current.add(trackingKey);
     let nextTask = initialTask;
-    const trackingDeadline = Date.now() + 60 * 60 * 1000;
-    while (Date.now() < trackingDeadline) {
-      if (TERMINAL_TASK_STATUSES.has(nextTask.status)) {
-        break;
+    upsertCurrentGenerationTask(projectId, nextTask);
+    const trackingDeadline = Date.now() + 2 * 60 * 60 * 1000;
+    let consecutiveErrors = 0;
+    try {
+      while (Date.now() < trackingDeadline) {
+        if (!isGenerationTaskRunning(nextTask)) {
+          break;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        try {
+          nextTask = await getGenerationTask(projectId, initialTask.id);
+          consecutiveErrors = 0;
+          upsertCurrentGenerationTask(projectId, nextTask);
+        } catch (caught) {
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= 5) {
+            throw caught;
+          }
+        }
       }
-      await new Promise((resolve) => window.setTimeout(resolve, 1500));
-      nextTask = await getGenerationTask(project.id, initialTask.id);
-      setActiveTask(nextTask);
-      setTaskMessage(taskStatusMessage(nextTask));
-    }
-    if (!TERMINAL_TASK_STATUSES.has(nextTask.status)) {
-      setTaskMessage("任务仍在后端生成，可稍后在任务状态中查看结果");
-      return;
-    }
-    const nextCourses = await refreshCourses(project.id);
-    const freshProject = await getProject(project.id);
-    setProject(freshProject);
-    setProjects((items) => items.map((item) => (item.id === freshProject.id ? freshProject : item)));
-    if (nextTask.status === "completed") {
-      setTaskMessage("生成完成");
-      setToast("内容已生成");
-      notifyTaskCompleted("CodeCourse 生成完成", `${taskLabel(nextTask)}已经可以阅读。`);
-      const preferred = nextTask.task_type === "file_lesson" || nextTask.task_type === "outline_lesson"
-        ? nextCourses.find((item) => item.filename === nextTask.output_path?.split("/").slice(-2).join("/"))
-        : nextCourses.find((item) => item.filename === "outline.md");
-      if (preferred) {
-        await openCourseInActiveGroup(project.id, preferred.filename);
+      if (isGenerationTaskRunning(nextTask)) {
+        if (currentProjectIdRef.current === projectId) {
+          setTaskMessage("任务仍在后台生成，稍后会继续同步进度");
+        }
+        return;
       }
-    } else if (nextTask.status === "failed") {
-      setTaskMessage(`生成失败：${nextTask.error_message ?? "未知错误"}`);
-    } else if (nextTask.status === "cancelled") {
-      setTaskMessage("生成已取消");
+      if (currentProjectIdRef.current !== projectId) {
+        return;
+      }
+      const [nextCourses, freshProject] = await Promise.all([getCourseFiles(projectId), getProject(projectId)]);
+      if (currentProjectIdRef.current !== projectId) {
+        return;
+      }
+      setCourses(nextCourses);
+      setProject(freshProject);
+      setProjects((items) => items.map((item) => (item.id === freshProject.id ? freshProject : item)));
+      if (nextTask.status === "completed") {
+        setTaskMessage("生成完成");
+        setToast("内容已生成");
+        notifyTaskCompleted("CodeCourse 生成完成", `${taskLabel(nextTask)}已经可以阅读。`);
+        const outputPath = nextTask.output_path ?? (nextTask.task_type === "outline" ? "outline.md" : null);
+        const preferred = outputPath
+          ? nextCourses.find((item) => item.filename === outputPath || outputPath.endsWith(`/${item.filename}`))
+          : null;
+        if (preferred) {
+          await openCourseInActiveGroup(projectId, preferred.filename);
+          if (mobileRuntime && mobileWorkspaceTabRef.current === "generation") {
+            mobileWorkspaceSheetRef.current?.dismiss();
+          }
+        }
+        setKnowledgeRefreshKey((value) => value + 1);
+        return;
+      }
+      if (nextTask.status === "failed") {
+        setTaskMessage(`生成失败：${nextTask.error_message ?? "未知错误"}`);
+        return;
+      }
+      if (nextTask.status === "cancelled") {
+        setTaskMessage("生成已取消");
+      }
+    } catch (caught) {
+      if (currentProjectIdRef.current === projectId) {
+        setError(caught instanceof Error ? `同步生成任务失败：${caught.message}` : "同步生成任务失败");
+      }
+    } finally {
+      trackedGenerationTasksRef.current.delete(trackingKey);
     }
   }
 
-  async function handleRetryTask() {
-    if (!project || !activeTask) return;
-    if (!canRetry(activeTask.status)) return;
-    if (retryingTaskId === activeTask.id) return;
-
-    setRetryingTaskId(activeTask.id);
+  async function handleRetryTask(task: GenerationTask) {
+    if (!project || task.project_id !== project.id) {
+      return;
+    }
+    if (!acquireGenerationStart()) {
+      return;
+    }
+    if (retryingTaskId === task.id) {
+      releaseGenerationStart();
+      return;
+    }
+    setRetryingTaskId(task.id);
     setError("");
     try {
-      const retried = await retryGenerationTask(project.id, activeTask.id);
-      void trackTask(retried);
-    } catch (err) {
-      setError(`重试失败：${err instanceof Error ? err.message : String(err)}`);
+      const retried = await retryGenerationTask(project.id, task.id);
+      upsertCurrentGenerationTask(project.id, retried);
+      setMobileGenerationView("tasks");
+      void trackTask(project.id, retried);
+    } catch (caught) {
+      setError(`重试失败：${caught instanceof Error ? caught.message : String(caught)}`);
     } finally {
       setRetryingTaskId(null);
+      releaseGenerationStart();
     }
   }
 
@@ -2580,7 +2710,7 @@ export default function App() {
 
     try {
       const task = await generateOutline(project.id, buildScope(), generationInstructions);
-      await trackTask(task);
+      void trackTask(project.id, task);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建总纲任务失败");
     }
@@ -2590,56 +2720,69 @@ export default function App() {
     if (!project || !fileContent) {
       return;
     }
-    handleDismissSelection();
-    const label = nextMode === "brief" ? "粗略介绍" : "详细分析";
-    const ok = await confirmAction(`生成${label}`, `将调用模型 API 为 ${fileContent.path} 生成${label}，可能消耗 token。是否继续？`, {
-      confirmText: "生成", skipKey: "confirm.file_lesson",
-    });
-    if (!ok) {
+    if (!acquireGenerationStart()) {
       return;
     }
-    setError("");
-    setGenerationOpen(false);
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = new AbortController();
-
-    const pathParts = fileContent.path.split("/").filter(Boolean);
-    const baseFileName = pathParts[pathParts.length - 1] ?? fileContent.path;
-    const modeSuffix = nextMode === "brief" ? "_brief" : "_detailed";
-    const safeName = baseFileName.replace(/[^a-zA-Z0-9_\-.]/g, "_");
-    const filename = `lessons/${safeName}${modeSuffix}.md`;
-
-    setCourses((prev) => {
-      if (prev.some((c) => c.filename === filename)) return prev;
-      return [{ filename, title: "生成中…", group: "lessons" }, ...prev];
-    });
-    streamingContentRef.current.set(filename, "");
-
-    openItemInGroup(activeGroupId, {
-      id: `course:${filename}`,
-      type: "course",
-      path: filename,
-      title: `${baseFileName} ${label}`,
-      content: "",
-    });
-    setTaskMessage(`${label}生成中…`);
-
+    handleDismissSelection();
+    const label = nextMode === "brief" ? "粗略介绍" : "详细分析";
     try {
+      const ok = await confirmAction(`生成${label}`, `将调用模型 API 为 ${fileContent.path} 生成${label}，可能消耗 token。是否继续？`, {
+        confirmText: "生成", skipKey: "confirm.file_lesson",
+      });
+      if (!ok) {
+        return;
+      }
+      setError("");
+
+      if (mobileRuntime) {
+        const projectId = project.id;
+        const task = await generateFileLesson(projectId, fileContent.path, nextMode, generationInstructions);
+        upsertCurrentGenerationTask(projectId, task);
+        setMobileGenerationView("tasks");
+        void trackTask(projectId, task);
+        return;
+      }
+
+      setGenerationOpen(false);
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = new AbortController();
+
+      const pathParts = fileContent.path.split("/").filter(Boolean);
+      const baseFileName = pathParts[pathParts.length - 1] ?? fileContent.path;
+      const modeSuffix = nextMode === "brief" ? "_brief" : "_detailed";
+      const safeName = baseFileName.replace(/[^a-zA-Z0-9_\-.]/g, "_");
+      const filename = `lessons/${safeName}${modeSuffix}.md`;
+
+      setCourses((prev) => {
+        if (prev.some((c) => c.filename === filename)) return prev;
+        return [{ filename, title: "生成中…", group: "lessons" }, ...prev];
+      });
+      streamingContentRef.current.set(filename, "");
+
+      openItemInGroup(activeGroupId, {
+        id: `course:${filename}`,
+        type: "course",
+        path: filename,
+        title: `${baseFileName} ${label}`,
+        content: "",
+      });
+      setTaskMessage(`${label}生成中…`);
+
       const streamedFilename = await generateFileLessonStream(
         project.id,
         fileContent.path,
         nextMode,
         generationInstructions,
         {
-          onStage(_stage, label) { setTaskMessage(label); },
+          onStage(_stage, nextLabel) { setTaskMessage(nextLabel); },
           onDelta(text) {
             const current = streamingContentRef.current.get(filename) ?? "";
             const updated = current + text;
             streamingContentRef.current.set(filename, updated);
-            setLayout((prev) =>
-              updateGroup(prev, activeGroupId, (g) => ({
-                ...g,
-                items: g.items.map((item) =>
+            setLayout((previous) =>
+              updateGroup(previous, activeGroupId, (group) => ({
+                ...group,
+                items: group.items.map((item) =>
                   item.id === `course:${filename}` ? { ...item, content: updated } : item,
                 ),
               })),
@@ -2662,7 +2805,8 @@ export default function App() {
     } catch (caught) {
       if (caught instanceof Error && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "创建文件课件任务失败");
-      streamingContentRef.current.delete(filename);
+    } finally {
+      releaseGenerationStart();
     }
   }
 
@@ -2685,7 +2829,7 @@ export default function App() {
     setGenerationOpen(false);
     try {
       const task = await generateOutlineLesson(project.id, lessonNumber, title, generationInstructions);
-      await trackTask(task);
+      void trackTask(project.id, task);
       setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建课件任务失败");
@@ -4572,6 +4716,23 @@ export default function App() {
     };
   }, [courses, learningStates]);
   const progressLabel = lessonFilesForProgress.length ? `${completedLessonCount}/${lessonFilesForProgress.length} 课已完成` : undefined;
+
+  const generationValidationMessage =
+    !project
+      ? "请先选择项目"
+      : generationBusy
+        ? "当前已有内容正在生成"
+        : generationIntent === "outline" && (isLearningPlanProject || scopeType === "learning_plan") && !generationInstructions.trim()
+          ? "请先填写学习目标或知识范围"
+          : generationIntent === "outline" && !isLearningPlanProject && scopeType === "files" && selectedScopeFiles.length === 0
+            ? "请至少选择一个学习文件"
+            : generationIntent === "lesson" && !activeLessonNumber
+              ? "请先打开需要生成的课程"
+              : (generationIntent === "brief" || generationIntent === "detailed") && !fileContent
+                ? "请先打开需要分析的源码文件"
+                : "";
+
+  const canStartGeneration = Boolean(project) && !generationValidationMessage;
   const activeDocumentTitle = activeOpenItem?.title ?? (project ? "学习工作台" : "CodeCourse");
   const commandItems = useMemo(
     () => commandPaletteOpen ? commandPaletteItems() : EMPTY_COMMAND_PALETTE_ITEMS,
@@ -4840,8 +5001,14 @@ export default function App() {
   }
 
   function openGeneration(intent: GenerationIntent) {
-    closeMobileWorkspaceSurfaces("generation");
     setGenerationIntent(intent);
+    if (mobileRuntime) {
+      closeMobileWorkspaceSurfaces("workspace");
+      setMobileGenerationView(isTaskRunning ? "tasks" : "configure");
+      setMobileWorkspaceTab("generation");
+      return;
+    }
+    closeMobileWorkspaceSurfaces("generation");
     setGenerationOpen(true);
   }
 
@@ -5132,6 +5299,64 @@ export default function App() {
     );
   }
 
+  function openPromptsFromMobileGeneration() {
+    if (generationBusy) {
+      setToast("当前内容仍在生成，请完成后再修改提示词");
+      return;
+    }
+    setPromptEditorDirty(false);
+    setPromptEditorSaving(false);
+    setPromptEditorOpen(true);
+  }
+
+  async function handleOpenGenerationTask(task: GenerationTask) {
+    if (!project || task.project_id !== project.id || task.status !== "completed" || !task.output_path) {
+      return;
+    }
+    try {
+      const outputPath = task.output_path;
+      const matchingCourse = courses.find((course) => course.filename === outputPath || outputPath.endsWith(`/${course.filename}`));
+      const filename = matchingCourse?.filename ?? outputPath;
+      await openCourseInActiveGroup(project.id, filename);
+      mobileWorkspaceSheetRef.current?.dismiss();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "打开生成结果失败");
+    }
+  }
+
+  function renderMobileGenerationPanel() {
+    return (
+      <MobileGenerationPanel
+        view={mobileGenerationView}
+        projectName={project?.name ?? null}
+        projectType={project?.project_type ?? null}
+        tree={tree}
+        intent={generationIntent}
+        scope={isLearningPlanProject ? "learning_plan" : scopeType}
+        selectedFiles={selectedScopeFiles}
+        instructions={generationInstructions}
+        currentFilePath={fileContent?.path ?? null}
+        currentLesson={activeLessonNumber ? { number: activeLessonNumber, title: activeLessonTitle || `第 ${activeLessonNumber} 课` } : null}
+        tasks={generationTasks}
+        generationBusy={generationBusy}
+        generationStarting={generationStarting}
+        retryingTaskId={retryingTaskId}
+        canGenerate={canStartGeneration}
+        validationMessage={generationValidationMessage}
+        onViewChange={setMobileGenerationView}
+        onIntentChange={setGenerationIntent}
+        onScopeChange={(nextScope) => { setScopeType(nextScope); if (nextScope !== "files") setSelectedScopeFiles([]); }}
+        onToggleFile={(path) => { setSelectedScopeFiles((items) => items.includes(path) ? items.filter((item) => item !== path) : [...items, path]); setScopePathsText(""); }}
+        onClearFiles={() => { setSelectedScopeFiles([]); setScopePathsText(""); }}
+        onInstructionsChange={setGenerationInstructions}
+        onGenerate={runSelectedGeneration}
+        onRetry={(task) => { void handleRetryTask(task); }}
+        onOpenTask={(task) => { void handleOpenGenerationTask(task); }}
+        onOpenPrompts={openPromptsFromMobileGeneration}
+      />
+    );
+  }
+
   return (
     <div className="app-shell">
       <TitleBar />
@@ -5328,13 +5553,14 @@ export default function App() {
         <MobileWorkspaceSheet
           ref={mobileWorkspaceSheetRef}
           tabKey={mobileWorkspaceTab}
-          variant={mobileWorkspaceTab === "assistant" ? "assistant" : mobileWorkspaceTab === "me" ? "me" : "standard"}
+          variant={mobileWorkspaceTab === "assistant" ? "assistant" : mobileWorkspaceTab === "me" ? "me" : mobileWorkspaceTab === "generation" ? "generation" : "standard"}
           title={{
             projects: "项目",
             courses: "课程",
             files: "源码",
             assistant: "AI 助手",
             me: "我的",
+            generation: "生成中心",
           }[mobileWorkspaceTab]}
           action={mobileWorkspaceTab === "projects" ? (
             <button className="icon-button" type="button" onClick={() => { void handleCreateMobileLearningPlan(); }} aria-label="新建学习计划" title="新建学习计划">
@@ -5363,7 +5589,9 @@ export default function App() {
             ? renderSidebar(mobileWorkspaceTab, true)
             : mobileWorkspaceTab === "assistant"
               ? renderMobileAssistantPanel()
-              : renderMobileMePanel()}
+              : mobileWorkspaceTab === "generation"
+                ? renderMobileGenerationPanel()
+                : renderMobileMePanel()}
         </MobileWorkspaceSheet>
       ) : null}
       {!mobileRuntime ? (
@@ -5374,7 +5602,7 @@ export default function App() {
           scope={scopeType}
           selectedFileCount={selectedScopeFiles.length}
           instructions={generationInstructions}
-          running={isTaskRunning}
+          running={generationBusy}
           activeTask={activeTask}
           taskMessage={taskMessage}
           onClose={() => setGenerationOpen(false)}
@@ -5390,75 +5618,6 @@ export default function App() {
           onOpenPrompts={openPrompts}
           onGenerate={runSelectedGeneration}
         />
-      ) : generationOpen ? (
-        <div className="tool-drawer-backdrop" onMouseDown={() => generationSheetRef.current?.dismiss()}>
-          <FluidBottomSheet ref={generationSheetRef} className="generation-drawer" label="生成课程" onDismiss={() => setGenerationOpen(false)}>
-          <div onMouseDown={(event) => event.stopPropagation()}>
-            <header className="drawer-header">
-              <div><strong>生成学习内容</strong><small>仅在你确认后调用模型 API</small></div>
-              <button className="icon-button" onClick={() => generationSheetRef.current?.dismiss()} title="关闭"><X size={17} /></button>
-            </header>
-            <div className="generation-drawer-body">
-              <label className="field-label">
-                <span>学习范围</span>
-                <select
-                  value={isLearningPlanProject ? "learning_plan" : scopeType}
-                  onChange={(event) => {
-                    const nextScope = event.target.value as ScopeType;
-                    setScopeType(nextScope);
-                    if (nextScope !== "files") {
-                      setSelectedScopeFiles([]);
-                    } else {
-                      openMobileNavigation("files");
-                    }
-                  }}
-                  disabled={!project || isTaskRunning || isLearningPlanProject}
-                >
-                  <option value="full_project">全项目</option>
-                  <option value="files">指定文件</option>
-                  <option value="learning_plan">学习计划</option>
-                </select>
-              </label>
-              <div className="scope-helper">
-                {isLearningPlanProject || scopeType === "learning_plan"
-                  ? "根据下面的学习要求生成总纲。"
-                  : scopeType === "files"
-                    ? selectedScopeFiles.length ? `已选择 ${selectedScopeFiles.length} 个文件。` : "请从左侧「源码」中选择文件。"
-                    : "模型将结合项目结构、README 和关键文件生成学习总纲。"}
-              </div>
-              <label className="field-label">
-                <span>生成要求</span>
-                <textarea value={generationInstructions} onChange={(event) => setGenerationInstructions(event.target.value)} placeholder="例如：面向初学者，优先解释后端请求流程" disabled={!project || isTaskRunning} />
-              </label>
-              <div className="generation-drawer-actions">
-                <button className="primary-button" onClick={handleGenerateOutline} disabled={!project || isTaskRunning}><Sparkles size={15} />生成 AI 总纲</button>
-                {activeLessonNumber ? (
-                  <button className="primary-button" onClick={() => handleGenerateOutlineLesson(activeLessonNumber, activeLessonTitle)} disabled={!project || isTaskRunning}>
-                    <BookOpen size={15} />生成当前课件
-                  </button>
-                ) : null}
-                {fileContent ? (
-                  <>
-                    <button className="secondary-button" onClick={() => handleGenerateFileLesson("brief")} disabled={!canGenerateFileLesson || isTaskRunning}>粗略介绍</button>
-                    <button className="secondary-button" onClick={() => handleGenerateFileLesson("detailed")} disabled={!canGenerateFileLesson || isTaskRunning}>详细分析</button>
-                  </>
-                ) : null}
-              </div>
-              <div className={`drawer-task-status ${activeTask?.status === "failed" || activeTask?.status === "cancelled" ? "failed" : ""}`}>
-                {taskMessage || "准备好后即可生成"}
-                {activeTask && canRetry(activeTask.status) ? (
-                  <button className="primary-button" style={{ marginLeft: 8 }}
-                    onClick={handleRetryTask}
-                    disabled={retryingTaskId === activeTask.id}>
-                    <RefreshCw size={14} className={retryingTaskId === activeTask.id ? "spin" : ""} />
-                    继续生成
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </div>
-          </FluidBottomSheet>
-        </div>
       ) : null}
       {termAction ? (
         <TermActionPopover

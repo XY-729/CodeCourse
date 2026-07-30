@@ -9,7 +9,7 @@ type Props = {
   onDismiss: () => void;
   tabKey: string;
   title: string;
-  variant?: "standard" | "assistant" | "me";
+  variant?: "standard" | "assistant" | "me" | "generation";
 };
 
 export type MobileWorkspaceSheetHandle = {
@@ -31,7 +31,9 @@ const MobileWorkspaceSheet = forwardRef<MobileWorkspaceSheetHandle, Props>(funct
       ? "is-assistant"
       : variant === "me"
         ? "is-me"
-        : "";
+        : variant === "generation"
+          ? "is-generation"
+          : "";
 
   return (
     <div className="mobile-workspace-sheet-layer" onMouseDown={dismiss}>

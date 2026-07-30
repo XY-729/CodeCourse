@@ -18,6 +18,7 @@ import "./styles/android-shell.css";
 import "./styles/android-reader.css";
 import "./styles/android-assistant.css";
 import "./styles/android-me.css";
+import "./styles/android-generation.css";
 import { applyPlatformClass } from "./platform/runtime";
 
 applyPlatformClass();
