@@ -2543,10 +2543,14 @@ export default function App() {
 
   function replaceGenerationTasks(projectId: number, tasks: GenerationTask[]) {
     const sorted = sortGenerationTasks(tasks);
-    generationTasksRef.current = sorted;
+    /*
+     * 异步请求返回时项目可能已经切换。
+     * 旧项目结果不得修改共享 ref 或页面状态。
+     */
     if (currentProjectIdRef.current !== projectId) {
       return sorted;
     }
+    generationTasksRef.current = sorted;
     setGenerationTasks(sorted);
     const primary = selectPrimaryGenerationTask(sorted);
     setActiveTask(primary);
@@ -2555,11 +2559,15 @@ export default function App() {
   }
 
   function upsertCurrentGenerationTask(projectId: number, task: GenerationTask) {
-    const next = upsertGenerationTask(generationTasksRef.current, task);
-    generationTasksRef.current = next;
+    /*
+     * 旧项目 tracker 完成或更新时，
+     * 不能写入当前项目的任务容器。
+     */
     if (currentProjectIdRef.current !== projectId) {
       return;
     }
+    const next = upsertGenerationTask(generationTasksRef.current, task);
+    generationTasksRef.current = next;
     setGenerationTasks(next);
     const primary = selectPrimaryGenerationTask(next);
     setActiveTask(primary);
@@ -2594,6 +2602,13 @@ export default function App() {
   }
 
   function resumeGenerationTracking(projectId: number, tasks: GenerationTask[]) {
+    /*
+     * openProject 或前台恢复期间，
+     * 项目可能已经再次发生切换。
+     */
+    if (currentProjectIdRef.current !== projectId) {
+      return;
+    }
     for (const task of tasks) {
       if (isGenerationTaskRunning(task)) {
         void trackTask(projectId, task);
@@ -2603,6 +2618,14 @@ export default function App() {
 
   async function reloadGenerationTasks(projectId: number, resumeTracking = true) {
     const tasks = await listGenerationTasks(projectId);
+    /*
+     * 请求期间切换了项目：
+     * 返回排序结果供调用方使用，
+     * 但不触碰当前项目状态。
+     */
+    if (currentProjectIdRef.current !== projectId) {
+      return sortGenerationTasks(tasks);
+    }
     const sorted = replaceGenerationTasks(projectId, tasks);
     if (resumeTracking) {
       resumeGenerationTracking(projectId, sorted);
