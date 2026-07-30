@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useCallback, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import hljs from "highlight.js";
 import type { CodeJumpRequest, ViewerRange, ViewerSelection } from "./CodeViewer";
@@ -59,29 +59,6 @@ export function splitHighlightedToLines(html: string): string[] {
   for (const c of Array.from(doc.body.childNodes)) walk(c);
   flush();
   return lines;
-}
-
-// ====================================================================
-//  Render one highlighted line to ReactNode
-// ====================================================================
-
-function renderHighlightedLine(html: string): ReactNode[] {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(`<body>${html}</body>`, "text/html");
-  const nodes: ReactNode[] = []; let idx = 0;
-  function walk(el: Node, out: ReactNode[]) {
-    if (el.nodeType === Node.TEXT_NODE) { out.push(el.textContent ?? ""); return; }
-    if (el.nodeType !== Node.ELEMENT_NODE) return;
-    const e = el as Element;
-    if (e.tagName === "SPAN") {
-      const cls = (e.getAttribute("class") ?? "").split(/\s+/).filter(c => ALLOWED_SPAN_CLASS_RE.test(c)).join(" ");
-      const ch: ReactNode[] = [];
-      for (const c of Array.from(e.childNodes)) walk(c, ch);
-      out.push(<span key={idx++} className={cls || undefined}>{ch}</span>);
-    } else { for (const c of Array.from(e.childNodes)) walk(c, out); }
-  }
-  walk(doc.body, nodes);
-  return nodes.length > 0 ? nodes : [html || " "];
 }
 
 // ====================================================================
@@ -369,9 +346,11 @@ export default function MobileCodeViewer({
       <div className={`mobile-code-line ${anchored ? "selection-anchor" : ""} ${matched ? "search-match" : ""} ${active ? "search-match-active" : ""}`}
         data-line={ln} key={index} style={pos}>
         <span className="mobile-line-number">{ln}</span>
-        <code className={highlightedLines ? "hljs" : ""}>
-          {highlightedLines ? renderHighlightedLine(highlightedLines[index] || " ") : [plainLines[index] || " "]}
-        </code>
+        {highlightedLines ? (
+          <code className="hljs" dangerouslySetInnerHTML={{ __html: highlightedLines[index] || " " }} />
+        ) : (
+          <code>{plainLines[index] || " "}</code>
+        )}
       </div>
     );
   }

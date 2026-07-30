@@ -1898,6 +1898,10 @@ export default function App() {
   }
 
   async function openFileInActiveGroup(projectId: number, path: string, explicitLine?: number) {
+    if (mobileRuntime) {
+      setNavigationOpen(false);
+      setAssistantOpen(false);
+    }
     const content = await getProjectFile(projectId, path);
     const saved = findLearningState("file", path);
     const restoreLine = saved?.position_kind === "line" ? saved.position_value : 1;
@@ -1917,13 +1921,13 @@ export default function App() {
         align: "start",
       } : undefined,
     });
+  }
+
+  async function openCourseInActiveGroup(projectId: number, filename: string) {
     if (mobileRuntime) {
       setNavigationOpen(false);
       setAssistantOpen(false);
     }
-  }
-
-  async function openCourseInActiveGroup(projectId: number, filename: string) {
     const content = await getCourseContent(projectId, filename);
     void refreshDocumentTerms("course", filename, projectId);
     setSelectedCourse(filename);
@@ -1937,10 +1941,6 @@ export default function App() {
       content: content.content,
       qaRecordId: matchingQA?.id,
     });
-    if (mobileRuntime) {
-      setNavigationOpen(false);
-      setAssistantOpen(false);
-    }
   }
 
   function _normalizeOutputPath(outputPath: string | null | undefined, recordId: number, projectId: number): string {

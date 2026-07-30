@@ -465,10 +465,22 @@ html.platform-android .reader-learning-toolbar {
 }
 
 html.platform-android .pane-tabs {
+  display: flex;
+  flex-wrap: nowrap;
+  width: 100%;
+  min-width: 0;
   min-height: 44px;
   padding: 4px 6px 0;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+}
+
+html.platform-android .pane-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 html.platform-android .pane-name,
@@ -478,9 +490,20 @@ html.platform-android .lesson-position {
 }
 
 html.platform-android .pane-tab {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 128px;
+  max-width: min(78vw, 260px);
   color: var(--mobile-text-secondary);
   border-color: transparent;
   background: transparent;
+  touch-action: pan-x;
+}
+
+html.platform-android .pane-tab-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  touch-action: pan-x;
 }
 
 html.platform-android .pane-tab.active {
