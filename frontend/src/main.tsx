@@ -14,6 +14,7 @@ import "./styles/android-experience.css";
 import "./styles/learner-profile.css";
 import "./styles/gesture-drawer.css";
 import "./styles/apple-android-final.css";
+import "./styles/android-shell.css";
 import { applyPlatformClass } from "./platform/runtime";
 
 applyPlatformClass();

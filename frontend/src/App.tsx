@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { AlertCircle, BookOpen, Bot, BrainCircuit, ChevronDown, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, Plus, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bot, BrainCircuit, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, Plus, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
 import {
   buildProjectIndex,
   createEmptyCourseFile,
@@ -81,6 +81,8 @@ import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
 import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
 import SelectionQuickBar from "./components/SelectionQuickBar";
+import MobileTopBar from "./components/MobileTopBar";
+import MobileBottomNavigation, { type MobilePrimaryDestination } from "./components/MobileBottomNavigation";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
 import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolbar";
 import GenerationSheet from "./components/GenerationSheet";
@@ -156,7 +158,7 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
-type MobileWorkspaceTab = "courses" | "files" | "assistant" | "knowledge";
+type MobileWorkspaceTab = "projects" | "courses" | "files" | "assistant" | "knowledge";
 type MobileSurface = "navigation" | "workspace" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts" | "profile";
 
 const EMPTY_COMMAND_PALETTE_ITEMS: CommandPaletteItem[] = [];
@@ -3823,6 +3825,17 @@ export default function App() {
 
   const activeOpenItem = getActiveOpenItem();
   activeOpenItemRef.current = activeOpenItem;
+
+  const mobilePrimaryDestination: MobilePrimaryDestination = (() => {
+    if (mobileWorkspaceTab === "courses") return "learn";
+    if (mobileWorkspaceTab === "files") return "source";
+    if (mobileWorkspaceTab === "assistant" || mobileWorkspaceTab === "knowledge") return "ask";
+    if (learnerProfileOpen || settingsOpen || promptEditorOpen || moreMenuOpen) return "me";
+    if (activeOpenItem?.type === "file") return "source";
+    if (activeOpenItem?.type === "qa" || activeOpenItem?.qaRecordId) return "ask";
+    return "learn";
+  })();
+
   const assistantContextSummary = useMemo(
     () => buildAssistantContextSummary(),
     [project, layout, activeGroupId],
@@ -3914,17 +3927,18 @@ export default function App() {
       setNavigationOpen(true);
       return;
     }
-    if (view === "projects") {
-      closeMobileWorkspaceSurfaces("navigation");
-      setMobileWorkspaceTab(null);
-      setNavigationView(view);
-      setNavigationOpen(true);
-      return;
-    }
     closeMobileWorkspaceSurfaces("workspace");
     setNavigationView(view);
     setNavigationOpen(false);
     setMobileWorkspaceTab(view);
+  }
+
+  function toggleMobileProjects() {
+    if (mobileWorkspaceTab === "projects") {
+      mobileWorkspaceSheetRef.current?.dismiss();
+      return;
+    }
+    openMobileNavigation("projects");
   }
 
   function toggleMobileNavigation(view: "courses" | "files") {
@@ -4159,30 +4173,26 @@ export default function App() {
           onToggleTheme={() => setThemeMode((current) => current === "dark" ? "light" : "dark")}
         />
       ) : (
-        <header className="topbar mobile-topbar">
-          <div className="brand">
-            <img src="/logo.ico" alt="CodeCourse logo" className="brand-logo" />
-            <div className="brand-text"><strong>CodeCourse</strong><span>{project?.name ?? "学习工作台"}</span></div>
-          </div>
-          <div className="topbar-workspace-actions">
-            <button
-              className="project-switch"
-              onClick={() => navigationOpen && navigationView === "projects"
-                ? closeMobileWorkspaceSurfaces()
-                : openMobileNavigation("projects")}
-              aria-expanded={navigationOpen && navigationView === "projects"}
-            >
-              <span>{project?.name ?? "选择项目"}</span><ChevronDown size={15} />
-            </button>
-            <button className="icon-button header-icon-button mobile-topbar-action" onClick={toggleMobileCommandPalette} title="搜索" aria-label="搜索"><Search size={18} /></button>
-            <button className="icon-button header-icon-button mobile-topbar-action" onClick={() => openGeneration(activeLessonNumber ? "lesson" : "outline")} disabled={!project} title="生成学习内容" aria-label="生成学习内容"><Sparkles size={18} /></button>
-            <button className="icon-button header-icon-button mobile-topbar-action" onClick={toggleMobileMoreMenu} title="更多" aria-label="更多"><MoreHorizontal size={18} /></button>
-          </div>
-        </header>
+        <MobileTopBar
+          projectName={project?.name ?? null}
+          projectSheetOpen={mobileWorkspaceTab === "projects"}
+          onToggleProjects={toggleMobileProjects}
+          onSearch={toggleMobileCommandPalette}
+          onMore={toggleMobileMoreMenu}
+        />
       )}
       {mobileRuntime && moreMenuOpen ? (
         <div className="more-menu-layer" onMouseDown={() => setMoreMenuOpen(false)}>
           <div className="more-menu topbar-more-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" role="menuitem" disabled={!project} onClick={() => { openGeneration(activeLessonNumber ? "lesson" : fileContent ? "brief" : "outline"); setMoreMenuOpen(false); }}>
+              <Sparkles size={15} />
+              {activeLessonNumber ? "生成当前课件" : fileContent ? "分析当前文件" : "生成学习内容"}
+            </button>
+            <button type="button" role="menuitem" disabled={!project} onClick={() => { openAssistant("knowledge"); setMoreMenuOpen(false); }}>
+              <BrainCircuit size={15} />
+              知识网络
+            </button>
+            <div className="more-menu-divider" />
             <button type="button" role="menuitem" onClick={() => { handleImportRequest(); setMoreMenuOpen(false); }}>
               <Download size={15} />
               导入 GitHub 仓库
@@ -4286,23 +4296,14 @@ export default function App() {
         className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen && !mobileRuntime ? "assistant-open" : ""} ${mobileRuntime && (navigationOpen || mobileWorkspaceTab) ? "mobile-panel-open" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
         style={{
           gridTemplateColumns: [
-            ...(mobileRuntime ? ["48px"] : []),
-            ...(navigationOpen && (!mobileRuntime || navigationView === "projects") ? [`var(--nav-width, ${sidebarWidth}px)`, "5px"] : []),
+            ...(navigationOpen && !mobileRuntime ? [`var(--nav-width, ${sidebarWidth}px)`, "5px"] : []),
             "minmax(0, 1fr)",
             ...(assistantOpen && !mobileRuntime ? ["5px", `var(--explain-width, ${explainWidth}px)`] : []),
           ].join(" "),
         }}
       >
-        {mobileRuntime ? <nav className="activity-rail" aria-label="学习导航">
-          <button className={mobileWorkspaceTab === "courses" ? "active" : ""} onClick={() => toggleMobileNavigation("courses")} title="课程"><BookOpen size={18} /><span>课程</span></button>
-          <button className={mobileWorkspaceTab === "files" ? "active" : ""} onClick={() => toggleMobileNavigation("files")} title="源码"><FolderTree size={18} /><span>源码</span></button>
-          <button className={`desktop-project-nav ${navigationOpen && navigationView === "projects" ? "active" : ""}`} onClick={() => navigationOpen && navigationView === "projects" ? closeMobileWorkspaceSurfaces() : openMobileNavigation("projects")} title="项目"><PanelLeft size={18} /><span>项目</span></button>
-          <span className="activity-rail-spacer" />
-          <button className={mobileWorkspaceTab === "assistant" ? "active" : ""} onClick={() => toggleMobileAssistant("history")} title="AI 助手"><Bot size={18} /><span>助手</span></button>
-          <button className={`mobile-only ${mobileWorkspaceTab === "knowledge" ? "active" : ""}`} onClick={() => toggleMobileAssistant("knowledge")} title="知识网络"><Sparkles size={18} /><span>网络</span></button>
-        </nav> : null}
-        {navigationOpen && (!mobileRuntime || navigationView === "projects")
-          ? renderSidebar(mobileRuntime ? "projects" : navigationView === "files" ? "files" : "courses")
+        {navigationOpen && !mobileRuntime
+          ? renderSidebar(navigationView === "files" ? "files" : "courses")
           : null}
         {navigationOpen && !mobileRuntime ? <div
           className="resize-handle navigation-resizer"
@@ -4341,11 +4342,27 @@ export default function App() {
         /> : null}
         {!mobileRuntime && assistantOpen ? <div className="assistant-drawer open">{renderAssistantPanel()}</div> : null}
       </main>
+      {mobileRuntime ? (
+        <MobileBottomNavigation
+          active={mobilePrimaryDestination}
+          onLearn={() => toggleMobileNavigation("courses")}
+          onSource={() => toggleMobileNavigation("files")}
+          onAsk={() => toggleMobileAssistant("history")}
+          onMe={() => {
+            if (project) {
+              openLearnerProfile();
+              return;
+            }
+            toggleMobileMoreMenu();
+          }}
+        />
+      ) : null}
       {mobileRuntime && mobileWorkspaceTab ? (
         <MobileWorkspaceSheet
           ref={mobileWorkspaceSheetRef}
           tabKey={mobileWorkspaceTab}
           title={{
+            projects: "项目",
             courses: "课程",
             files: "源码",
             assistant: "AI 助手",
@@ -4370,7 +4387,7 @@ export default function App() {
           ) : undefined}
           onDismiss={() => setMobileWorkspaceTab(null)}
         >
-          {mobileWorkspaceTab === "courses" || mobileWorkspaceTab === "files"
+          {mobileWorkspaceTab === "projects" || mobileWorkspaceTab === "courses" || mobileWorkspaceTab === "files"
             ? renderSidebar(mobileWorkspaceTab, true)
             : renderAssistantPanel(true)}
         </MobileWorkspaceSheet>

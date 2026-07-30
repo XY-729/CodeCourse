@@ -1,0 +1,340 @@
+/*
+ * Android application shell.
+ *
+ * This file owns:
+ * - mobile top application bar
+ * - mobile bottom navigation
+ * - shell safe-area spacing
+ * - workspace sheet positioning
+ *
+ * Do not add these rules to apple-android-final.css.
+ */
+
+html.platform-android {
+  --android-app-bar-height: calc(56px + env(safe-area-inset-top));
+  --android-bottom-navigation-height: calc(64px + env(safe-area-inset-bottom));
+}
+
+/* -------------------------------------------------------------------------- */
+/* Top application bar                                                        */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android .mobile-app-bar {
+  position: relative;
+  z-index: 120;
+
+  width: 100%;
+  min-height: var(--android-app-bar-height);
+  height: var(--android-app-bar-height);
+  flex: 0 0 var(--android-app-bar-height);
+
+  padding:
+    calc(6px + env(safe-area-inset-top))
+    8px
+    6px
+    10px;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  color: var(--mobile-text);
+  border: 0;
+  border-bottom:
+    1px solid
+    color-mix(in srgb, var(--mobile-line) 78%, transparent);
+
+  background: var(--mobile-surface);
+  box-shadow: none;
+
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.platform-android .mobile-project-control {
+  min-width: 0;
+  height: 44px;
+  flex: 1 1 auto;
+
+  padding: 5px 9px 5px 10px;
+
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  color: var(--mobile-text);
+  border: 0;
+  border-radius: 12px;
+  outline: 0;
+
+  background: transparent;
+  box-shadow: none;
+
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+
+  transform: none !important;
+}
+
+html.platform-android .mobile-project-control:active {
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .mobile-project-control-copy {
+  min-width: 0;
+  flex: 1;
+
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+html.platform-android .mobile-project-control-copy small {
+  color: var(--mobile-text-tertiary);
+
+  font-size: 0.625rem;
+  font-weight: 620;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+
+  text-transform: uppercase;
+}
+
+html.platform-android .mobile-project-control-copy strong {
+  overflow: hidden;
+
+  color: var(--mobile-text);
+
+  font-size: 0.9375rem;
+  font-weight: 690;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.platform-android .mobile-project-control > svg {
+  flex: 0 0 auto;
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .mobile-app-bar-actions {
+  flex: 0 0 auto;
+
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+html.platform-android .mobile-shell-icon-button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+
+  padding: 0;
+
+  display: grid;
+  place-items: center;
+
+  color: var(--mobile-text-secondary);
+  border: 0;
+  border-radius: 12px;
+  outline: 0;
+
+  background: transparent;
+  box-shadow: none;
+
+  appearance: none;
+  -webkit-appearance: none;
+
+  transform: none !important;
+}
+
+html.platform-android .mobile-shell-icon-button:active {
+  color: var(--mobile-accent);
+  background: var(--mobile-surface-pressed);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Bottom navigation                                                          */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android .mobile-bottom-navigation {
+  position: fixed;
+  z-index: 160;
+
+  right: 0;
+  bottom: 0;
+  left: 0;
+
+  height: var(--android-bottom-navigation-height);
+
+  padding:
+    4px
+    8px
+    env(safe-area-inset-bottom);
+
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;
+
+  border: 0;
+  border-top:
+    1px solid
+    color-mix(in srgb, var(--mobile-line) 78%, transparent);
+
+  background: var(--mobile-surface);
+  box-shadow: none;
+
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.platform-android .mobile-bottom-navigation > button {
+  min-width: 0;
+  min-height: 56px;
+  height: 56px;
+
+  padding: 3px 2px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+
+  color: var(--mobile-text-tertiary);
+  border: 0;
+  border-radius: 12px;
+  outline: 0;
+
+  background: transparent;
+  box-shadow: none;
+
+  font-size: 0.6875rem;
+  font-weight: 580;
+  line-height: 1.15;
+
+  appearance: none;
+  -webkit-appearance: none;
+
+  transform: none !important;
+}
+
+html.platform-android .mobile-bottom-navigation-icon {
+  width: 38px;
+  height: 28px;
+
+  display: grid;
+  place-items: center;
+
+  border-radius: 14px;
+
+  background: transparent;
+
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+html.platform-android .mobile-bottom-navigation > button.active {
+  color: var(--mobile-accent);
+  font-weight: 690;
+}
+
+html.platform-android
+  .mobile-bottom-navigation
+  > button.active
+  .mobile-bottom-navigation-icon {
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android
+  .mobile-bottom-navigation
+  > button:active
+  .mobile-bottom-navigation-icon {
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .mobile-bottom-navigation svg {
+  transform: none !important;
+  transition: none !important;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Application content                                                        */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android .workbench,
+html.platform-android .workbench.navigation-open {
+  padding-bottom: var(--android-bottom-navigation-height);
+}
+
+html.platform-android .activity-rail {
+  display: none !important;
+}
+
+html.platform-android .mobile-workspace-sheet-layer {
+  inset:
+    0
+    0
+    var(--android-bottom-navigation-height);
+
+  padding:
+    var(--android-app-bar-height)
+    8px
+    0;
+}
+
+html.platform-android .tool-drawer-backdrop {
+  bottom: var(--android-bottom-navigation-height);
+}
+
+html.platform-android .permission-notice-banner {
+  bottom: var(--android-bottom-navigation-height);
+}
+
+/*
+ * The old reading-immersive CSS targets .mobile-topbar and
+ * .activity-rail. The v2 shell remains stable in this phase.
+ *
+ * Scroll-driven shell hiding will be reintroduced only after
+ * reader headers have been consolidated in phase two.
+ */
+html.platform-android.android-reading-immersive .mobile-app-bar,
+html.platform-android.android-reading-immersive .mobile-bottom-navigation {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+html.platform-android[data-theme="dark"] .mobile-app-bar,
+html.platform-android[data-theme="dark"] .mobile-bottom-navigation {
+  background: var(--mobile-surface);
+}
+
+@media (max-width: 380px) {
+  html.platform-android .mobile-project-control-copy small {
+    display: none;
+  }
+
+  html.platform-android .mobile-project-control-copy strong {
+    font-size: 0.875rem;
+  }
+
+  html.platform-android .mobile-app-bar {
+    padding-right: 5px;
+    padding-left: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.platform-android .mobile-app-bar *,
+  html.platform-android .mobile-bottom-navigation * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
