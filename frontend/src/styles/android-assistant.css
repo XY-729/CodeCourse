@@ -30,7 +30,8 @@ html.platform-android .mobile-assistant-panel {
 }
 
 html.platform-android .mobile-assistant-tabs {
-  min-height: 52px; flex: 0 0 52px; padding: 5px 8px;
+  min-height: 52px; flex: 0 0 52px;
+  padding: 4px 8px;
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch; gap: 4px;
   border-bottom: 1px solid var(--mobile-line);
@@ -38,7 +39,7 @@ html.platform-android .mobile-assistant-tabs {
 }
 
 html.platform-android .mobile-assistant-tabs > button {
-  min-width: 0; min-height: 42px; padding: 0 8px;
+  min-width: 0; height: 44px; min-height: 44px; padding: 0 8px;
   display: flex; align-items: center; justify-content: center; gap: 6px;
   color: var(--mobile-text-secondary); border: 0; border-radius: 11px;
   background: transparent; font-size: 0.8125rem; font-weight: 620;
@@ -50,6 +51,15 @@ html.platform-android .mobile-assistant-tabs > button.active {
 }
 
 html.platform-android .mobile-assistant-tabs > button:disabled { opacity: 0.36; }
+
+html.platform-android .mobile-assistant-tabs > button:disabled,
+html.platform-android .mobile-assistant-text-action:disabled,
+html.platform-android .mobile-assistant-composer-heading button:disabled,
+html.platform-android .mobile-assistant-history-main:disabled,
+html.platform-android .mobile-assistant-history-actions button:disabled {
+  opacity: 0.38;
+  pointer-events: none;
+}
 
 html.platform-android .mobile-assistant-view { min-width: 0; min-height: 0; flex: 1 1 auto; overflow: hidden; }
 
@@ -217,7 +227,7 @@ html.platform-android .mobile-assistant-composer-heading {
 html.platform-android .mobile-assistant-composer-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 html.platform-android .mobile-assistant-composer-heading button {
-  min-height: 36px; padding: 0 8px; color: var(--mobile-accent);
+  min-height: 44px; padding: 0 8px; color: var(--mobile-accent);
   border: 0; border-radius: 9px; background: transparent; font-size: 0.75rem;
 }
 

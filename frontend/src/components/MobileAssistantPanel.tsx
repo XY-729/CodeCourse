@@ -142,10 +142,10 @@ export default function MobileAssistantPanel({
         <button type="button" role="tab" id="mobile-assistant-tab-ask" aria-controls="mobile-assistant-view-ask" aria-selected={view === "ask"} className={view === "ask" ? "active" : ""} onClick={() => onViewChange("ask")}>
           <MessageCircle size={18} aria-hidden="true" /><span>提问</span>
         </button>
-        <button type="button" role="tab" id="mobile-assistant-tab-history" aria-controls="mobile-assistant-view-history" aria-selected={view === "history"} className={view === "history" ? "active" : ""} onClick={() => onViewChange("history")}>
+        <button type="button" role="tab" id="mobile-assistant-tab-history" aria-controls="mobile-assistant-view-history" aria-selected={view === "history"} className={view === "history" ? "active" : ""} onClick={() => onViewChange("history")} disabled={loading}>
           <HistoryIcon size={18} aria-hidden="true" /><span>历史</span>
         </button>
-        <button type="button" role="tab" id="mobile-assistant-tab-knowledge" aria-controls="mobile-assistant-view-knowledge" aria-selected={view === "knowledge"} className={view === "knowledge" ? "active" : ""} onClick={() => onViewChange("knowledge")} disabled={knowledgeDisabled}>
+        <button type="button" role="tab" id="mobile-assistant-tab-knowledge" aria-controls="mobile-assistant-view-knowledge" aria-selected={view === "knowledge"} className={view === "knowledge" ? "active" : ""} onClick={() => onViewChange("knowledge")} disabled={loading || knowledgeDisabled}>
           <BrainCircuit size={18} aria-hidden="true" /><span>知识</span>
         </button>
       </div>
@@ -162,7 +162,7 @@ export default function MobileAssistantPanel({
               <section className="mobile-assistant-answer-card">
                 <header>
                   <div><small>{selectedRecordReadOnly ? "跨项目历史回答" : "当前回答"}</small><strong>{recordTitle(selectedRecord)}</strong></div>
-                  <button type="button" className="mobile-assistant-text-action" onClick={onNewConversation}>新问题</button>
+                  <button type="button" className="mobile-assistant-text-action" onClick={onNewConversation} disabled={loading}>新问题</button>
                 </header>
                 <p>{summarizeMarkdown(selectedRecord.answer_md) || "回答内容为空"}</p>
                 {!selectedRecordReadOnly ? (
@@ -272,7 +272,7 @@ export default function MobileAssistantPanel({
           <div className="mobile-assistant-composer">
             <div className="mobile-assistant-composer-heading">
               <span>{selectedRecord ? `继续：${recordTitle(selectedRecord)}` : "新问题"}</span>
-              {selectedRecord ? <button type="button" onClick={onNewConversation}>清空会话</button> : null}
+              {selectedRecord ? <button type="button" onClick={onNewConversation} disabled={loading}>清空会话</button> : null}
             </div>
             {selectedRecordReadOnly ? <div className="mobile-assistant-readonly-note">这是其他项目中的历史回答，当前只能查看，不能继续追问。</div> : null}
             <textarea
@@ -309,16 +309,16 @@ export default function MobileAssistantPanel({
               const selected = selectedRecord?.id === record.id;
               return (
                 <article key={record.id} className={`mobile-assistant-history-card ${selected ? "selected" : ""}`}>
-                  <button type="button" className="mobile-assistant-history-main" onClick={() => selectHistoryRecord(record)}>
+                  <button type="button" className="mobile-assistant-history-main" onClick={() => selectHistoryRecord(record)} disabled={loading}>
                     <strong>{recordTitle(record)}</strong>
                     <span>{summarizeMarkdown(record.answer_md) || record.question}</span>
                     <small>{record.model}{record.updated_at ? ` · ${formatRecordDate(record.updated_at)}` : ""}</small>
                   </button>
                   <div className="mobile-assistant-history-actions">
-                    <button type="button" onClick={() => onOpenRecord(record)} aria-label={`打开 ${recordTitle(record)}`} title="打开完整回答"><ExternalLink size={17} aria-hidden="true" /></button>
-                    <button type="button" className={record.favorite ? "active" : ""} onClick={() => onToggleFavorite(record)} aria-label={record.favorite ? `取消收藏 ${recordTitle(record)}` : `收藏 ${recordTitle(record)}`} aria-pressed={record.favorite} title={record.favorite ? "取消收藏" : "收藏"}><Star size={17} aria-hidden="true" /></button>
-                    <button type="button" onClick={() => onRenameRecord(record)} aria-label={`重命名 ${recordTitle(record)}`} title="重命名"><Edit3 size={17} aria-hidden="true" /></button>
-                    {onDeleteRecord ? <button type="button" className="danger" onClick={() => onDeleteRecord(record)} aria-label={`删除 ${recordTitle(record)}`} title="删除"><Trash2 size={17} aria-hidden="true" /></button> : null}
+                    <button type="button" onClick={() => onOpenRecord(record)} disabled={loading} aria-label={`打开 ${recordTitle(record)}`} title="打开完整回答"><ExternalLink size={17} aria-hidden="true" /></button>
+                    <button type="button" className={record.favorite ? "active" : ""} onClick={() => onToggleFavorite(record)} disabled={loading} aria-label={record.favorite ? `取消收藏 ${recordTitle(record)}` : `收藏 ${recordTitle(record)}`} aria-pressed={record.favorite} title={record.favorite ? "取消收藏" : "收藏"}><Star size={17} aria-hidden="true" /></button>
+                    <button type="button" onClick={() => onRenameRecord(record)} disabled={loading} aria-label={`重命名 ${recordTitle(record)}`} title="重命名"><Edit3 size={17} aria-hidden="true" /></button>
+                    {onDeleteRecord ? <button type="button" className="danger" onClick={() => onDeleteRecord(record)} disabled={loading} aria-label={`删除 ${recordTitle(record)}`} title="删除"><Trash2 size={17} aria-hidden="true" /></button> : null}
                   </div>
                 </article>
               );

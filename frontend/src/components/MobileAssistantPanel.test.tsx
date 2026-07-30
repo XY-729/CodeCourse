@@ -105,4 +105,20 @@ describe("MobileAssistantPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
     expect(props.onAnswerDiagnostic).toHaveBeenCalledWith("a");
   });
+
+  it("locks session-changing actions while loading", () => {
+    const props = { ...createProps(), loading: true, selectedRecord: RECORD };
+    render(<MobileAssistantPanel {...props} />);
+    expect((screen.getByRole("tab", { name: "历史" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("tab", { name: "知识" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "清空会话" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("disables history actions while loading", () => {
+    const props = { ...createProps(), view: "history" as const, loading: true };
+    render(<MobileAssistantPanel {...props} />);
+    expect((screen.getByRole("button", { name: "收藏 状态管理" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "打开 状态管理" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(props.onSelectRecord).not.toHaveBeenCalled();
+  });
 });

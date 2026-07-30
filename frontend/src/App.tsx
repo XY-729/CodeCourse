@@ -505,6 +505,7 @@ export default function App() {
   const activeQAKey = qaSessionId ? `session:${qaSessionId}` : `draft:${qaDraftId}`;
   const activeQAGeneration = qaGenerations[activeQAKey] ?? null;
   const qaLoading = Boolean(activeQAGeneration);
+  const qaInteractionBusy = qaAskPending || anyQALoading;
   const showBusy = loading || isTaskRunning || anyQALoading;
 
   const clearDropPreview = useCallback(() => {
@@ -1104,6 +1105,8 @@ export default function App() {
           setGenerationOpen(false);
         } else if (moreMenuOpen) {
           setMoreMenuOpen(false);
+        } else if (mobileWorkspaceTab) {
+          mobileWorkspaceSheetRef.current?.dismiss();
         } else if (assistantOpen) {
           setAssistantOpen(false);
         } else if (navigationOpen) {
@@ -1125,7 +1128,7 @@ export default function App() {
       disposed = true;
       removeListener?.();
     };
-  }, [appDialog, assistantOpen, generationOpen, isTaskRunning, mobileRuntime, moreMenuOpen, navigationOpen, promptEditorOpen, settingsOpen]);
+  }, [appDialog, assistantOpen, generationOpen, isTaskRunning, mobileRuntime, mobileWorkspaceTab, moreMenuOpen, navigationOpen, promptEditorOpen, settingsOpen]);
 
   useEffect(() => {
     if (!dragState) {
@@ -2045,6 +2048,10 @@ export default function App() {
   }
 
   async function openProject(nextProject: Project) {
+    if (project && project.id !== nextProject.id && qaInteractionBusy) {
+      setToast("当前回答仍在生成，请完成后再切换项目");
+      return;
+    }
     flushAllPendingLearningUpdates();
     setError("");
     setLoading(true);
@@ -2689,7 +2696,7 @@ export default function App() {
 
   async function handleAsk() {
     const question = qaQuestionInput.trim();
-    if (!project || !question || !llmSettings?.enabled || !llmSettings.has_api_key || qaAskPending || qaLoading) return;
+    if (!project || !question || !llmSettings?.enabled || !llmSettings.has_api_key || qaInteractionBusy) return;
     setQAAskPending(true);
     try {
       const ok = await confirmAction("AI 助手询问", `将调用模型 API 使用 ${llmSettings.model} 回答当前问题，可能消耗 token。是否继续？`, { confirmText: "询问", skipKey: "confirm.ask" });
@@ -2926,6 +2933,7 @@ export default function App() {
       setSelectedQA((current) => current?.id === updated.id ? updated : current);
       setQAHistory((items) => items.map((entry) => (entry.id === updated.id ? updated : entry)));
       updateOpenQARecord(updated);
+      await refreshQAHistory(project.id);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "重命名失败");
     }
@@ -3240,6 +3248,7 @@ export default function App() {
       setSelectedQA((current) => current?.id === updated.id ? updated : current);
       setQAHistory((items) => items.map((item) => (item.id === updated.id ? updated : item)));
       updateOpenQARecord(updated);
+      await refreshQAHistory(project.id);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "切换收藏失败");
     }
@@ -3983,6 +3992,10 @@ export default function App() {
   }
 
   function handleSelectMobileProject(nextProject: Project) {
+    if (project?.id !== nextProject.id && qaInteractionBusy) {
+      setToast("当前回答仍在生成，请完成后再切换项目");
+      return;
+    }
     mobileWorkspaceSheetRef.current?.dismiss();
     void openProject(nextProject);
   }
@@ -4127,7 +4140,7 @@ export default function App() {
         contextSummary={assistantContextSummary}
         question={qaQuestionInput}
         questionInput={qaQuestionInput}
-        loading={qaLoading || qaAskPending}
+        loading={qaInteractionBusy}
         loadingLabel={qaAskPending && !qaLoading ? "等待确认" : activeQAGeneration?.label}
         streamContent={activeQAGeneration?.partial}
         history={qaHistory}
@@ -4176,7 +4189,7 @@ export default function App() {
         selection={selection}
         contextSummary={assistantContextSummary}
         question={qaQuestionInput}
-        loading={qaLoading || qaAskPending}
+        loading={qaInteractionBusy}
         loadingLabel={qaAskPending && !qaLoading ? "等待确认" : activeQAGeneration?.label}
         streamContent={activeQAGeneration?.partial}
         history={qaHistory}
