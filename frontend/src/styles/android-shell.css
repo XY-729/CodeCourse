@@ -264,6 +264,15 @@ html.platform-android .mobile-bottom-navigation svg {
   transition: none !important;
 }
 
+/*
+ * An exiting sheet remains mounted until the spring finishes.
+ * Block repeated actions while it is leaving.
+ */
+html.platform-android
+  .mobile-workspace-sheet[data-motion-phase="exiting"] {
+  pointer-events: none;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Application content                                                        */
 /* -------------------------------------------------------------------------- */

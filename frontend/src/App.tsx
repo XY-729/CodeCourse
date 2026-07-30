@@ -2320,7 +2320,7 @@ export default function App() {
     }
   }
 
-  async function handleCreateLearningPlan() {
+  async function handleCreateLearningPlan(): Promise<boolean> {
     const name = await requestText({
       title: "新建学习计划",
       label: "学习计划名称",
@@ -2328,7 +2328,7 @@ export default function App() {
       confirmText: "创建",
     });
     if (!name?.trim()) {
-      return;
+      return false;
     }
     setLoading(true);
     setError("");
@@ -2336,11 +2336,19 @@ export default function App() {
       const created = await createLearningPlan(name.trim());
       await loadProjects();
       await openProject(created);
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建学习计划失败");
+      return false;
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleCreateMobileLearningPlan() {
+    const created = await handleCreateLearningPlan();
+    if (!created) return;
+    mobileWorkspaceSheetRef.current?.dismiss();
   }
 
   async function handleSelectFile(path: string) {
@@ -4374,7 +4382,7 @@ export default function App() {
             knowledge: "知识网络",
           }[mobileWorkspaceTab]}
           action={mobileWorkspaceTab === "projects" ? (
-            <button className="icon-button" type="button" onClick={handleCreateLearningPlan} aria-label="新建学习计划" title="新建学习计划">
+            <button className="icon-button" type="button" onClick={() => { void handleCreateMobileLearningPlan(); }} aria-label="新建学习计划" title="新建学习计划">
               <Plus size={17} />
             </button>
           ) : mobileWorkspaceTab === "courses" && courses.length ? (
