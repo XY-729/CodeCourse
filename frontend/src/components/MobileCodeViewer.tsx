@@ -10,6 +10,7 @@ type Props = {
   jumpRequest?: CodeJumpRequest | null;
   onJumpConsumed?: (requestId: string) => void;
   onVisibleLineChange?: (line: number) => void;
+  mobileSearchRequestId?: number;
 };
 
 const LARGE_FILE_BYTES = 400_000;
@@ -129,6 +130,7 @@ export default function MobileCodeViewer({
   jumpRequest,
   onJumpConsumed,
   onVisibleLineChange,
+  mobileSearchRequestId,
 }: Props) {
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -139,6 +141,7 @@ export default function MobileCodeViewer({
   const [selectionAnchorLine, setSelectionAnchorLine] = useState<number | null>(null);
   const [selectionActive, setSelectionActive] = useState(false);
   const searchTimerRef = useRef<number>(0);
+  const prevSearchRequestRef = useRef<number | undefined>(undefined);
 
   const plainLines = useMemo(() => content.split("\n"), [content]);
   const totalLines = plainLines.length;
@@ -157,6 +160,13 @@ export default function MobileCodeViewer({
   useEffect(() => {
     setSearchInput(""); setDebouncedQuery(""); setActiveMatch(-1); setSelectionAnchorLine(null); setSelectionActive(false);
   }, [content, path]);
+
+  // external search trigger from unified reader header
+  useEffect(() => {
+    if (mobileSearchRequestId === undefined || mobileSearchRequestId === prevSearchRequestRef.current) return;
+    prevSearchRequestRef.current = mobileSearchRequestId;
+    setSearchOpen(true);
+  }, [mobileSearchRequestId]);
 
   // Keep the native selection anchor mounted while a learner drags Android's
   // handles across a virtualized file. Only that anchor row is pinned; the
@@ -357,13 +367,6 @@ export default function MobileCodeViewer({
 
   return (
     <div ref={viewerRef} className="viewer mobile-code-viewer">
-      <div className="viewer-header">
-        <span>{path ?? "代码"}</span>
-        <div className="viewer-actions">
-          <strong>{shouldVirtualize ? `${language} · 大文件` : language}</strong>
-          <button className="icon-button" onClick={() => setSearchOpen(o => !o)} title="搜索" aria-label="搜索"><Search size={15} /></button>
-        </div>
-      </div>
       {shouldVirtualize && <div className="mobile-code-notice">大文件：虚拟列表仅渲染可见行</div>}
       {searchOpen && (
         <div className="mobile-code-search">

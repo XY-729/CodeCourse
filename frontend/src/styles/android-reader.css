@@ -1,0 +1,338 @@
+/*
+ * Android reader chrome.
+ *
+ * Owns:
+ * - unified document tab row
+ * - course navigation controls
+ * - file language and search controls
+ * - scroll-driven reader-header hiding
+ *
+ * This file must load after android-shell.css.
+ */
+
+html.platform-android {
+  --android-reader-header-height: 52px;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Unified reader header                                                      */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android .mobile-reader-header {
+  width: 100%;
+  height: var(--android-reader-header-height);
+  min-height: var(--android-reader-header-height);
+  flex: 0 0 var(--android-reader-header-height);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  color: var(--mobile-text);
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--mobile-line) 74%, transparent);
+  background: var(--mobile-surface);
+  box-shadow: none;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  transition: height 180ms var(--mobile-ease-out), min-height 180ms var(--mobile-ease-out), opacity 120ms ease, transform 180ms var(--mobile-ease-out);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Scrollable tabs                                                            */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android .mobile-reader-tabs {
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  padding: 5px 5px 5px 7px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  scrollbar-width: none;
+}
+
+html.platform-android .mobile-reader-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+html.platform-android .mobile-reader-tab {
+  height: 40px;
+  min-width: 112px;
+  max-width: min(56vw, 220px);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  color: var(--mobile-text-secondary);
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  box-shadow: none;
+  touch-action: pan-x;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+html.platform-android .mobile-reader-tab.active {
+  color: var(--mobile-text);
+  border-color: color-mix(in srgb, var(--mobile-accent) 18%, var(--mobile-line));
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .mobile-reader-tab-main {
+  min-width: 72px;
+  height: 100%;
+  flex: 1 1 auto;
+  padding: 0 5px 0 10px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  color: inherit;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 620;
+  line-height: 1;
+  text-align: left;
+  appearance: none;
+  -webkit-appearance: none;
+  touch-action: pan-x;
+  transform: none !important;
+}
+
+html.platform-android .mobile-reader-tab-main > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html.platform-android .mobile-reader-tab-close {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  flex: 0 0 36px;
+  margin-right: 1px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--mobile-text-tertiary);
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
+  touch-action: manipulation;
+  transform: none !important;
+}
+
+html.platform-android .mobile-reader-tab-close:active {
+  color: var(--mobile-text);
+  background: var(--mobile-surface-pressed);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Context actions                                                            */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android .mobile-reader-actions {
+  max-width: 58vw;
+  height: 100%;
+  flex: 0 0 auto;
+  padding: 5px 6px 5px 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: visible;
+  border-left: 1px solid color-mix(in srgb, var(--mobile-line) 64%, transparent);
+  background: var(--mobile-surface);
+  scrollbar-width: none;
+}
+
+html.platform-android .mobile-reader-actions::-webkit-scrollbar {
+  display: none;
+}
+
+html.platform-android .mobile-reader-action-button {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  flex: 0 0 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--mobile-text-secondary);
+  border: 0;
+  border-radius: 10px;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  appearance: none;
+  -webkit-appearance: none;
+  transform: none !important;
+}
+
+html.platform-android .mobile-reader-action-button:active {
+  color: var(--mobile-accent);
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .mobile-reader-action-button:disabled {
+  opacity: 0.32;
+  pointer-events: none;
+}
+
+html.platform-android .mobile-reader-position {
+  min-width: 43px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mobile-text-secondary);
+  border: 1px solid color-mix(in srgb, var(--mobile-line) 82%, transparent);
+  border-radius: 16px;
+  background: var(--mobile-surface-raised);
+  font-size: 0.6875rem;
+  font-weight: 690;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+html.platform-android .mobile-reader-complete-button.completed {
+  color: var(--mobile-accent-strong);
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .mobile-reader-language {
+  max-width: 76px;
+  height: 32px;
+  flex: 0 1 auto;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  color: var(--mobile-text-secondary);
+  border: 1px solid color-mix(in srgb, var(--mobile-line) 82%, transparent);
+  border-radius: 16px;
+  background: var(--mobile-surface-raised);
+  font-size: 0.6875rem;
+  font-weight: 650;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Compact teaching-rationale action                                          */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android .mobile-reader-actions .teaching-rationale {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+html.platform-android .mobile-reader-actions .teaching-rationale-trigger.icon-only {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: var(--mobile-text-secondary);
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  transform: none !important;
+}
+
+html.platform-android .mobile-reader-actions .teaching-rationale-trigger.icon-only:active {
+  color: var(--mobile-accent);
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .mobile-reader-actions .teaching-rationale-popover {
+  position: fixed;
+  top: calc(var(--android-app-bar-height) + var(--android-reader-header-height) + 6px);
+  right: 8px;
+  left: auto;
+  width: min(360px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Remove old mobile reader headers                                           */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android .reader-pane > .pane-body > .reader-learning-toolbar {
+  display: none !important;
+}
+
+html.platform-android .mobile-code-viewer > .viewer-header,
+html.platform-android .markdown-viewer > .viewer-header {
+  display: none !important;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reading immersion                                                         */
+/* -------------------------------------------------------------------------- */
+
+html.platform-android.android-reading-immersive .mobile-reader-header {
+  height: 0;
+  min-height: 0;
+  border-width: 0;
+  opacity: 0;
+  transform: translate3d(0, -10px, 0);
+  pointer-events: none;
+}
+
+html.platform-android.android-reading-immersive .mobile-app-bar,
+html.platform-android.android-reading-immersive .mobile-bottom-navigation {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Small screens                                                              */
+/* -------------------------------------------------------------------------- */
+
+@media (max-width: 380px) {
+  html.platform-android .mobile-reader-tab {
+    min-width: 104px;
+    max-width: 54vw;
+  }
+  html.platform-android .mobile-reader-actions {
+    max-width: 60vw;
+  }
+  html.platform-android .mobile-reader-action-button {
+    width: 38px;
+    min-width: 38px;
+    flex-basis: 38px;
+  }
+  html.platform-android .mobile-reader-position {
+    min-width: 40px;
+    padding-inline: 5px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.platform-android .mobile-reader-header,
+  html.platform-android .mobile-reader-tab {
+    transition: none !important;
+  }
+  html.platform-android .mobile-reader-tabs {
+    scroll-behavior: auto;
+  }
+}

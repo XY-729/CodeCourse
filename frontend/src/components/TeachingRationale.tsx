@@ -10,6 +10,7 @@ type Props = {
   projectId: number;
   qaRecordId: number;
   onChanged?: () => void;
+  compact?: boolean;
 };
 
 const STRATEGY_LABELS: Record<string, string> = {
@@ -36,6 +37,7 @@ export default function TeachingRationale({
   projectId,
   qaRecordId,
   onChanged,
+  compact = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [trial, setTrial] = useState<TeachingTrial | null>(null);
@@ -78,16 +80,22 @@ export default function TeachingRationale({
     <div className={`teaching-rationale ${open ? "open" : ""}`}>
       <button
         type="button"
-        className="secondary-button compact teaching-rationale-trigger"
+        className={`secondary-button compact teaching-rationale-trigger ${compact ? "icon-only" : ""}`}
         onClick={(event) => {
           event.stopPropagation();
           void toggle();
         }}
         aria-expanded={open}
+        aria-label={compact ? "查看老师为何这样讲" : undefined}
+        title={compact ? "老师为何这样讲" : undefined}
       >
         <CircleHelp size={14} />
-        老师为何这样讲
-        <ChevronDown size={13} />
+        {compact ? null : (
+          <>
+            老师为何这样讲
+            <ChevronDown size={13} />
+          </>
+        )}
       </button>
       {open ? (
         <section className="teaching-rationale-popover" onClick={(event) => event.stopPropagation()}>

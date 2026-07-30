@@ -238,9 +238,8 @@ describe("MobileCodeViewer production component", () => {
       (_, index) => index === 39999 ? "unique-distant-symbol" : `line ${index + 1}`,
     ).join("\n");
     const { container } = render(
-      <MobileCodeViewer path="/search.ts" language="typescript" content={content} />,
+      <MobileCodeViewer path="/search.ts" language="typescript" content={content} mobileSearchRequestId={1} />,
     );
-    fireEvent.click(container.querySelector(".viewer-actions button")!);
     const input = container.querySelector<HTMLInputElement>(".mobile-code-search input")!;
     fireEvent.change(input, { target: { value: "unique-distant-symbol" } });
     act(() => vi.advanceTimersByTime(199));
@@ -327,10 +326,9 @@ describe("MobileCodeViewer production component", () => {
     const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
     const content = largeContent(2000);
     const { container, rerender } = render(
-      <MobileCodeViewer key="A" path="/a.ts" language="typescript" content={content} restoreLine={400} />,
+      <MobileCodeViewer key="A" path="/a.ts" language="typescript" content={content} restoreLine={400} mobileSearchRequestId={1} />,
     );
     flushAnimationFrames();
-    fireEvent.click(container.querySelector(".viewer-actions button")!);
     fireEvent.change(container.querySelector(".mobile-code-search input")!, {
       target: { value: "line 900" },
     });

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { AlertCircle, BookOpen, Bot, BrainCircuit, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, Plus, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
+import { AlertCircle, BookOpen, Bot, BrainCircuit, Download, FileArchive, FolderTree, Moon, MoreHorizontal, PanelLeft, Pencil, Plus, RefreshCw, RotateCcw, Save, Search, Sparkles, Star, Sun, X } from "lucide-react";
 import {
   buildProjectIndex,
   createEmptyCourseFile,
@@ -83,6 +83,7 @@ import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
 import SelectionQuickBar from "./components/SelectionQuickBar";
 import MobileTopBar from "./components/MobileTopBar";
 import MobileBottomNavigation, { type MobilePrimaryDestination } from "./components/MobileBottomNavigation";
+import MobileReaderHeader from "./components/MobileReaderHeader";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
 import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolbar";
 import GenerationSheet from "./components/GenerationSheet";
@@ -335,6 +336,7 @@ export default function App() {
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab | null>(null);
+  const [mobileCodeSearchRequestId, setMobileCodeSearchRequestId] = useState(0);
   const [generationOpen, setGenerationOpen] = useState(false);
   const [generationIntent, setGenerationIntent] = useState<GenerationIntent>("outline");
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -493,8 +495,6 @@ export default function App() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const dropPrefetchRef = useRef<Map<string, Promise<OpenItem | null>>>(new Map());
   const layoutHistoryRef = useRef<LayoutNode[]>([]);
-  const paneTabStripRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const paneTabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const closedItemsRef = useRef<Array<{ groupId: string; item: OpenItem }>>([]);
   const activeOpenItemRef = useRef<OpenItem | null>(null);
   const mobileRuntime = isAndroidRuntime();
@@ -842,33 +842,6 @@ export default function App() {
       setNavigationOpen(false);
     }
   }, [assistantOpen, mobileRuntime, navigationOpen]);
-
-  const activeMobileTabKey = useMemo(() => {
-    if (!mobileRuntime) return "";
-    const group = findGroup(layout, activeGroupId);
-    if (!group?.activeItemId) return "";
-    return `${group.id}::${group.activeItemId}`;
-  }, [layout, activeGroupId, mobileRuntime]);
-
-  useEffect(() => {
-    if (!activeMobileTabKey) return;
-    const frame = window.requestAnimationFrame(() => {
-      const sep = activeMobileTabKey.indexOf("::");
-      const groupId = activeMobileTabKey.slice(0, sep);
-      const tab = paneTabRefs.current.get(activeMobileTabKey);
-      const strip = paneTabStripRefs.current.get(groupId);
-      if (!strip || !tab) return;
-      const sr = strip.getBoundingClientRect();
-      const tr = tab.getBoundingClientRect();
-      const pad = 8;
-      if (tr.left < sr.left + pad) {
-        strip.scrollBy({ left: tr.left - sr.left - pad, behavior: "smooth" });
-      } else if (tr.right > sr.right - pad) {
-        strip.scrollBy({ left: tr.right - sr.right + pad, behavior: "smooth" });
-      }
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [activeMobileTabKey]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -3361,6 +3334,33 @@ export default function App() {
     const activeQAHighlights =
       activeItem?.type === "qa" ? highlights.filter((highlight) => highlight.source_type === "qa" && highlight.source_path === activeItem.path) : [];
 
+    const markdownHasDocumentActions = Boolean(
+      activeItem?.type === "course" &&
+        (activeItem.qaRecordId ||
+          activeItem.path.startsWith("selection_answers/") ||
+          activeItem.path.startsWith("qa/")),
+    );
+
+    function renderMarkdownDocumentActions(compact: boolean) {
+      if (!activeItem || !markdownHasDocumentActions) return null;
+      return (
+        <>
+          {activeItem.qaRecordId && project ? (
+            <TeachingRationale projectId={project.id} qaRecordId={activeItem.qaRecordId} onChanged={bumpPersonalizationRevision} compact={compact} />
+          ) : null}
+          <button
+            type="button"
+            className={compact ? "mobile-reader-action-button" : "secondary-button compact"}
+            onClick={(event) => { event.stopPropagation(); setEditingCourseItemId(activeItem.id); }}
+            aria-label={compact ? "编辑当前文档" : undefined}
+            title={compact ? "编辑当前文档" : undefined}
+          >
+            {compact ? <Pencil size={17} aria-hidden="true" /> : "编辑"}
+          </button>
+        </>
+      );
+    }
+
     return (
       <section
         key={group.id}
@@ -3385,60 +3385,53 @@ export default function App() {
         }}
         onDrop={mobileRuntime ? undefined : (event) => handleGroupDrop(event, group.id)}
       >
-        <div className="pane-tabs" ref={(node) => {
-          if (node) paneTabStripRefs.current.set(group.id, node);
-          else paneTabStripRefs.current.delete(group.id);
-        }}>
-          {!mobileRuntime ? <span className="pane-name">工作区</span> : null}
-          {group.items.map((item) => (
-            <div
-              key={item.id}
-              ref={(node) => {
-                const key = `${group.id}::${item.id}`;
-                if (node) paneTabRefs.current.set(key, node);
-                else paneTabRefs.current.delete(key);
-              }}
-              className={`pane-tab ${item.id === group.activeItemId ? "active" : ""}`}
-              role="tab"
-              aria-selected={item.id === group.activeItemId}
-              title={item.path}
-              draggable={!mobileRuntime && item.type !== "knowledge_graph"}
-              onDragStart={(event) => {
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("application/codecourse-tab", item.id);
-                event.dataTransfer.setData(
-                  "application/codecourse-item",
-                  JSON.stringify({ kind: "tab", itemId: item.id, sourceGroupId: group.id }),
-                );
-                setCodeCourseDragImage(event.dataTransfer, item.title);
-              }}
-              onDragEnd={(event) => {
-                clearDropPreview();
-                void handleTabDragEnd(event, group.id, item);
-              }}
-            >
-              <button
-                type="button"
-                className="pane-tab-main"
-                onClick={() => activateItem(group.id, item)}
-              >
-                <span>{item.dirty ? `${item.title} *` : item.title}</span>
-              </button>
-              <button
-                type="button"
-                className="pane-tab-close"
-                aria-label={`关闭 ${item.title}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeItemInGroup(group.id, item.id);
+        {mobileRuntime ? (
+          <MobileReaderHeader
+            tabs={group.items.map((item) => ({ id: item.id, title: item.title, path: item.path, dirty: Boolean(item.dirty) }))}
+            activeId={group.activeItemId}
+            onActivate={(itemId) => { const item = group.items.find((entry) => entry.id === itemId); if (item) activateItem(group.id, item); }}
+            onClose={(itemId) => { closeItemInGroup(group.id, itemId); }}
+            lesson={activeItem?.type === "course" && lessonIndex >= 0 ? {
+              index: lessonIndex,
+              total: lessonFiles.length,
+              completed: activeLearningState?.status === "completed",
+              onPrevious: lessonIndex > 0 ? () => { void openCourseInActiveGroup(project!.id, lessonFiles[lessonIndex - 1].filename); } : undefined,
+              onNext: lessonIndex < lessonFiles.length - 1 ? () => { void openCourseInActiveGroup(project!.id, lessonFiles[lessonIndex + 1].filename); } : undefined,
+              onToggleComplete: () => { void toggleLessonComplete(activeItem.path); },
+            } : undefined}
+            language={activeItem?.type === "file" ? activeItem.language ?? "plaintext" : undefined}
+            onSearch={activeItem?.type === "file" ? () => { setMobileCodeSearchRequestId((current) => current + 1); } : undefined}
+            actions={activeItem?.type === "course" ? renderMarkdownDocumentActions(true) : undefined}
+          />
+        ) : (
+          <div className="pane-tabs">
+            <span className="pane-name">工作区</span>
+            {group.items.map((item) => (
+              <div
+                key={item.id}
+                className={`pane-tab ${item.id === group.activeItemId ? "active" : ""}`}
+                role="tab"
+                aria-selected={item.id === group.activeItemId}
+                title={item.path}
+                draggable={item.type !== "knowledge_graph"}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("application/codecourse-tab", item.id);
+                  event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "tab", itemId: item.id, sourceGroupId: group.id }));
+                  setCodeCourseDragImage(event.dataTransfer, item.title);
                 }}
-                onPointerDown={(event) => event.stopPropagation()}
+                onDragEnd={(event) => { clearDropPreview(); void handleTabDragEnd(event, group.id, item); }}
               >
-                <X size={13} />
-              </button>
-            </div>
-          ))}
-        </div>
+                <button type="button" className="pane-tab-main" onClick={() => activateItem(group.id, item)}>
+                  <span>{item.dirty ? `${item.title} *` : item.title}</span>
+                </button>
+                <button type="button" className="pane-tab-close" aria-label={`关闭 ${item.title}`} onClick={(event) => { event.stopPropagation(); closeItemInGroup(group.id, item.id); }} onPointerDown={(event) => event.stopPropagation()}>
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {!mobileRuntime ? <div className="pane-workspace-actions" onClick={(event) => event.stopPropagation()}>
             <button
               className="icon-button pane-workspace-menu-button"
@@ -3461,7 +3454,7 @@ export default function App() {
         </div> : null}
         <div className="pane-body">
           {editorMountDeferred ? <div className="viewer-loading deferred-editor-loading">正在准备工作区…</div> : null}
-          {activeItem?.type === "course" && lessonIndex >= 0 ? (
+          {!mobileRuntime && activeItem?.type === "course" && lessonIndex >= 0 ? (
             <ReaderLearningToolbar
               title={activeItem.title}
               index={lessonIndex}
@@ -3497,6 +3490,7 @@ export default function App() {
                 })));
               }}
               onVisibleLineChange={(line) => queueLearningUpdate("file", activeItem.path, "line", line)}
+              mobileSearchRequestId={mobileRuntime ? mobileCodeSearchRequestId : undefined}
             />
           ) : null}
           {!editorMountDeferred && activeItem?.type === "course" ? (
@@ -3566,6 +3560,7 @@ export default function App() {
                 sourcePath={activeItem.path}
                 sourceType={activeItem.qaRecordId ? "qa" : "course"}
                 content={activeItem.content}
+                embedded={mobileRuntime}
                 termSourceKey={activeTermSourceKey}
                 highlights={highlights.filter((highlight) => highlight.source_type === (activeItem.qaRecordId ? "qa" : "course") && highlight.source_path === activeItem.path)}
                 knowledgeLinks={knowledgeLinks.filter((link) => link.source_type === "course" && link.source_path === activeItem.path)}
@@ -3586,26 +3581,7 @@ export default function App() {
                 immersiveReading={mobileRuntime && activeGroupId === group.id}
                 initialScrollRatio={activeLearningState?.position_kind === "scroll_ratio" ? activeLearningState.position_value : 0}
                 onScrollRatioChange={(ratio) => queueLearningUpdate(activeItem.qaRecordId ? "qa" : "course", activeItem.path, "scroll_ratio", ratio)}
-                headerActions={(activeItem.qaRecordId || activeItem.path.startsWith("selection_answers/") || activeItem.path.startsWith("qa/")) ? (
-                  <>
-                    {activeItem.qaRecordId && project ? (
-                      <TeachingRationale
-                        projectId={project.id}
-                        qaRecordId={activeItem.qaRecordId}
-                        onChanged={bumpPersonalizationRevision}
-                      />
-                    ) : null}
-                    <button
-                      className="secondary-button compact"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditingCourseItemId(activeItem.id);
-                      }}
-                    >
-                      编辑
-                    </button>
-                  </>
-                ) : null}
+                headerActions={mobileRuntime ? undefined : renderMarkdownDocumentActions(false)}
               />
             )
           ) : null}

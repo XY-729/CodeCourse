@@ -18,9 +18,11 @@ type Props = {
   jumpRequest?: CodeJumpRequest | null;
   onJumpConsumed?: (requestId: string) => void;
   onVisibleLineChange?: (line: number) => void;
+  mobileSearchRequestId?: number;
 };
 
 export default function CodeViewer(props: Props) {
   if (isAndroidRuntime()) return <MobileCodeViewer {...props} />;
-  return <Suspense fallback={<div className="viewer-loading">正在打开代码…</div>}><MonacoCodeViewer {...props} /></Suspense>;
+  const { mobileSearchRequestId: _, ...desktopProps } = props;
+  return <Suspense fallback={<div className="viewer-loading">正在打开代码…</div>}><MonacoCodeViewer {...desktopProps} /></Suspense>;
 }
