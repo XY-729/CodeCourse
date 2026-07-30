@@ -36,6 +36,8 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
   const onDismissRef = useRef(onDismiss);
   const entryStartRef = useRef(1);
   const entryFramesRef = useRef<number[]>([]);
+  const dragPaintFrameRef = useRef<number | null>(null);
+  const pendingDragPositionRef = useRef<number | null>(null);
   const gestureRef = useRef<{
     pointerId: number;
     startClientY: number;
@@ -61,6 +63,32 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     sheet.dataset.openProgress = openProgress.toFixed(4);
     sheet.dataset.backdropProgress = effect.toFixed(4);
     layer.style.setProperty("--sheet-scrim-alpha", String(effect * 0.24));
+  }
+
+  function paintDragPosition(sheet: HTMLElement, position: number) {
+    sheet.style.transform = `translate3d(0, ${position}px, 0)`;
+    updateBackdrop(sheet, position);
+  }
+
+  function scheduleDragPaint(sheet: HTMLElement, position: number) {
+    pendingDragPositionRef.current = position;
+    if (dragPaintFrameRef.current !== null) return;
+    dragPaintFrameRef.current = window.requestAnimationFrame(() => {
+      dragPaintFrameRef.current = null;
+      const next = pendingDragPositionRef.current;
+      pendingDragPositionRef.current = null;
+      if (next !== null) paintDragPosition(sheet, next);
+    });
+  }
+
+  function flushDragPaint(sheet: HTMLElement) {
+    if (dragPaintFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragPaintFrameRef.current);
+      dragPaintFrameRef.current = null;
+    }
+    const next = pendingDragPositionRef.current;
+    pendingDragPositionRef.current = null;
+    if (next !== null) paintDragPosition(sheet, next);
   }
 
   function dismiss(velocity = 0) {
@@ -122,6 +150,10 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     return () => {
       cancelEntryFrames();
       cancelSpring(sheet);
+      if (dragPaintFrameRef.current !== null) {
+        window.cancelAnimationFrame(dragPaintFrameRef.current);
+        dragPaintFrameRef.current = null;
+      }
     };
   }, []);
 
@@ -156,8 +188,7 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     if (next < 0) {
       next = rubberband(next, Math.max(sheet.clientHeight, 1));
     }
-    sheet.style.transform = `translate3d(0, ${next}px, 0)`;
-    updateBackdrop(sheet, next);
+    scheduleDragPaint(sheet, next);
 
     gesture.samples.push({ position: next, time: event.timeStamp });
     const cutoff = event.timeStamp - 120;
@@ -177,6 +208,8 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     if (!gesture.dragging) return;
     event.preventDefault();
     draggedRef.current = true;
+
+    flushDragPaint(sheet);
 
     const samples = gesture.samples;
     const first = samples[0];

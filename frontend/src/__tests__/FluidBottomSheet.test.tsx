@@ -60,6 +60,12 @@ describe("FluidBottomSheet", () => {
   });
 
   it("adjusts scrim alpha when the sheet is dragged halfway down", () => {
+    // Capture rAF callbacks so we can flush the coalesced paint
+    const rafCb: { current: null | ((t: number) => void) } = { current: null };
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: any) => {
+      rafCb.current = cb;
+      return 1;
+    });
     const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
       x: 0,
       y: 0,
@@ -85,6 +91,8 @@ describe("FluidBottomSheet", () => {
     expect(layer?.style.getPropertyValue("--sheet-scrim-alpha")).toBe("0.24");
     fireEvent.pointerDown(grabber, { button: 0, clientY: 100, pointerId: 8 });
     fireEvent.pointerMove(grabber, { clientY: 399, pointerId: 8 });
+    // Flush the coalesced rAF paint
+    rafCb.current?.(16);
 
     expect(sheet.dataset.openProgress).toBe("0.5000");
     expect(sheet.dataset.backdropProgress).toBe("0.0000");

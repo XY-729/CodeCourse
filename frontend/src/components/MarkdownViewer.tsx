@@ -20,8 +20,8 @@ type Props = {
   highlights?: HighlightRecord[];
   knowledgeLinks?: KnowledgeLink[];
   documentTerms?: DocumentTerm[];
-  visibleTermCandidateIds?: Set<string>;
-  termDisplayTiers?: Map<string, string>;
+  visibleTermCandidateIds?: ReadonlySet<string>;
+  termDisplayTiers?: ReadonlyMap<string, string>;
   annotations?: Annotation[];
   tempSelectedText?: string | null;
   onSelectionChange?: (selection: ViewerSelection) => void;

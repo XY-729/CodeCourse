@@ -3560,8 +3560,8 @@ export default function App() {
                 highlights={highlights.filter((highlight) => highlight.source_type === (activeItem.qaRecordId ? "qa" : "course") && highlight.source_path === activeItem.path)}
                 knowledgeLinks={knowledgeLinks.filter((link) => link.source_type === "course" && link.source_path === activeItem.path)}
                 documentTerms={activeTermRawTerms}
-                visibleTermCandidateIds={new Set(termDisplay.visibleCandidateIds)}
-                termDisplayTiers={new Map(termDisplay.tiersByCandidateId)}
+                visibleTermCandidateIds={termDisplay.visibleCandidateIds}
+                termDisplayTiers={termDisplay.tiersByCandidateId}
                 tempSelectedText={
                   !mobileRuntime && selectionAnchor?.sourceType === (activeItem.qaRecordId ? "qa" : "course") && selectionAnchor.sourcePath === activeItem.path
                     ? selectionAnchor.selectedText
