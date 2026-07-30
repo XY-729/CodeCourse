@@ -112,7 +112,7 @@ html.platform-android .topbar {
   padding: 7px 10px;
   color: var(--mobile-text);
   border-bottom: 1px solid var(--mobile-line);
-  background: color-mix(in srgb, var(--mobile-surface) 94%, transparent);
+  background: var(--mobile-surface);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.46);
 }
 
@@ -153,6 +153,11 @@ html.platform-android .assistant-drawer {
 
 html.platform-android .navigation-panel {
   animation: mobile-surface-enter var(--mobile-duration) var(--mobile-ease-out) both;
+}
+
+html.platform-android .workbench.navigation-closing .navigation-panel {
+  animation: mobile-surface-exit 200ms var(--mobile-ease-standard) both;
+  pointer-events: none;
 }
 
 html.platform-android .assistant-drawer {
@@ -202,7 +207,7 @@ html.platform-android .activity-rail {
   height: calc(66px + env(safe-area-inset-bottom));
   padding: 5px 8px env(safe-area-inset-bottom);
   border-top: 1px solid var(--mobile-line);
-  background: color-mix(in srgb, var(--mobile-surface) 94%, transparent);
+  background: var(--mobile-surface);
   box-shadow: 0 -8px 28px rgba(14, 55, 43, 0.05);
 }
 
@@ -576,8 +581,9 @@ html.platform-android .reader-learning-actions .complete-button.completed {
 
 /* Tab close button — proper touch target */
 html.platform-android .pane-tab-close {
-  width: 40px;
-  min-width: 40px;
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
   height: 40px;
   min-height: 40px;
   margin: 0;
@@ -1043,8 +1049,8 @@ html.platform-android .settings-overlay,
 html.platform-android .tool-drawer-backdrop,
 html.platform-android .command-palette-layer {
   background: rgba(5, 15, 12, 0.34);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   animation: mobile-fade-in 160ms ease-out both;
 }
 
@@ -1185,6 +1191,11 @@ html.platform-android .selection-quick-bar button {
 @keyframes mobile-surface-enter {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mobile-surface-exit {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(8px); }
 }
 
 @keyframes mobile-card-enter {

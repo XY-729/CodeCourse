@@ -338,6 +338,8 @@ export default function App() {
   const [promptEditorSaving, setPromptEditorSaving] = useState(false);
   const [settingsDialogBusy, setSettingsDialogBusy] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(() => !isAndroidRuntime());
+  const [navigationClosing, setNavigationClosing] = useState(false);
+  const navigationRender = navigationOpen || navigationClosing;
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab | null>(null);
@@ -953,6 +955,34 @@ export default function App() {
       setNavigationOpen(false);
     }
   }, [assistantOpen, mobileRuntime, navigationOpen]);
+
+  // Auto-scroll active tab into view on Android
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    const group = findGroup(layout, activeGroupId);
+    if (!group?.activeItemId) return;
+    const tabKey = `${group.id}:${group.activeItemId}`;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const strip = paneTabStripRefs.current.get(group.id);
+        const tab = paneTabRefs.current.get(tabKey);
+        if (!strip || !tab) return;
+        const stripRect = strip.getBoundingClientRect();
+        const tabRect = tab.getBoundingClientRect();
+        const pad = 8;
+        if (tabRect.left < stripRect.left + pad) {
+          strip.scrollBy({ left: tabRect.left - stripRect.left - pad, behavior: "smooth" });
+        } else if (tabRect.right > stripRect.right - pad) {
+          strip.scrollBy({ left: tabRect.right - stripRect.right + pad, behavior: "smooth" });
+        }
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [layout, activeGroupId, mobileRuntime]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -4878,6 +4908,17 @@ export default function App() {
     () => commandPaletteOpen ? commandPaletteItems() : EMPTY_COMMAND_PALETTE_ITEMS,
     [commandPaletteOpen, courses, tree, qaHistory, projects, project, learningStates, isLearningPlanProject],
   );
+
+  function closeNavigationAnimated() {
+    if (navigationOpen && !navigationClosing) {
+      setNavigationClosing(true);
+      setNavigationOpen(false);
+      setTimeout(() => setNavigationClosing(false), 220);
+    } else {
+      setNavigationOpen(false);
+      setNavigationClosing(false);
+    }
+  }
 
   function closeMobileWorkspaceSurfaces(except?: MobileSurface) {
     if (!mobileRuntime) return;
