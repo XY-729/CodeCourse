@@ -668,6 +668,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(() => !isAndroidRuntime());
+  const [navigationClosing, setNavigationClosing] = useState(false);
+  const navigationRender = navigationOpen || navigationClosing;
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [generationOpen, setGenerationOpen] = useState(false);
@@ -747,6 +749,8 @@ export default function App() {
   const pendingLearningUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
   const learningUpdateSequences = useRef<Map<string, number>>(new Map());
   const learningInFlightSequences = useRef<Map<string, number>>(new Map());
+  const paneTabStripRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const paneTabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => () => learningSaveScheduler.current.cancelAll(), []);
   const streamingContentRef = useRef<Map<string, string>>(new Map());
@@ -1065,6 +1069,34 @@ export default function App() {
       setNavigationOpen(false);
     }
   }, [assistantOpen, mobileRuntime, navigationOpen]);
+
+  // Auto-scroll active tab into view on Android
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    const group = findGroup(layout, activeGroupId);
+    if (!group?.activeItemId) return;
+    const tabKey = `${group.id}:${group.activeItemId}`;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        const strip = paneTabStripRefs.current.get(group.id);
+        const tab = paneTabRefs.current.get(tabKey);
+        if (!strip || !tab) return;
+        const stripRect = strip.getBoundingClientRect();
+        const tabRect = tab.getBoundingClientRect();
+        const pad = 8;
+        if (tabRect.left < stripRect.left + pad) {
+          strip.scrollBy({ left: tabRect.left - stripRect.left - pad, behavior: "smooth" });
+        } else if (tabRect.right > stripRect.right - pad) {
+          strip.scrollBy({ left: tabRect.right - stripRect.right + pad, behavior: "smooth" });
+        }
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, [layout, activeGroupId, mobileRuntime]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -2347,7 +2379,7 @@ export default function App() {
       } : undefined,
     });
     if (mobileRuntime) {
-      setNavigationOpen(false);
+      closeNavigationAnimated();
       setAssistantOpen(false);
     }
   }
@@ -2367,7 +2399,7 @@ export default function App() {
       qaRecordId: matchingQA?.id,
     });
     if (mobileRuntime) {
-      setNavigationOpen(false);
+      closeNavigationAnimated();
       setAssistantOpen(false);
     }
   }
@@ -2432,7 +2464,7 @@ export default function App() {
       });
     }
     if (mobileRuntime) {
-      setNavigationOpen(false);
+      closeNavigationAnimated();
       setAssistantOpen(false);
     }
   }
@@ -3609,11 +3641,19 @@ export default function App() {
         }}
         onDrop={mobileRuntime ? undefined : (event) => handleGroupDrop(event, group.id)}
       >
-        <div className="pane-tabs">
+        <div className="pane-tabs" ref={(node) => {
+          if (node) paneTabStripRefs.current.set(group.id, node);
+          else paneTabStripRefs.current.delete(group.id);
+        }}>
           {!mobileRuntime ? <span className="pane-name">工作区</span> : null}
           {group.items.map((item) => (
             <div
               key={item.id}
+              ref={(node) => {
+                const key = `${group.id}:${item.id}`;
+                if (node) paneTabRefs.current.set(key, node);
+                else paneTabRefs.current.delete(key);
+              }}
               className={`pane-tab ${item.id === group.activeItemId ? "active" : ""}`}
               role="tab"
               aria-selected={item.id === group.activeItemId}
@@ -4040,9 +4080,20 @@ export default function App() {
   const progressLabel = lessonFilesForProgress.length ? `${completedLessonCount}/${lessonFilesForProgress.length} 课已完成` : undefined;
   const activeDocumentTitle = activeOpenItem?.title ?? (project ? "学习工作台" : "CodeCourse");
 
+  function closeNavigationAnimated() {
+    if (navigationOpen && !navigationClosing) {
+      setNavigationClosing(true);
+      setNavigationOpen(false);
+      setTimeout(() => setNavigationClosing(false), 220);
+    } else {
+      setNavigationOpen(false);
+      setNavigationClosing(false);
+    }
+  }
+
   function closeMobileWorkspaceSurfaces(except?: MobileSurface) {
     if (!mobileRuntime) return;
-    if (except !== "navigation") setNavigationOpen(false);
+    if (except !== "navigation") closeNavigationAnimated();
     if (except !== "assistant") setAssistantOpen(false);
     if (except !== "generation") setGenerationOpen(false);
     if (except !== "more") setMoreMenuOpen(false);
@@ -4097,6 +4148,7 @@ export default function App() {
 
   function openMobileNavigation(view: NavigationView) {
     closeMobileWorkspaceSurfaces("navigation");
+    setNavigationClosing(false);
     setNavigationView(view);
     setNavigationOpen(true);
   }
@@ -4105,7 +4157,6 @@ export default function App() {
     const isCurrent = navigationOpen && !assistantOpen && navigationView === view;
     if (isCurrent) {
       closeMobileWorkspaceSurfaces();
-      setNavigationOpen(false);
       return;
     }
     openMobileNavigation(view);
@@ -4317,11 +4368,11 @@ export default function App() {
         </div>
       ) : null}
       <main
-        className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen ? "assistant-open" : ""} ${mobileRuntime && (navigationOpen || assistantOpen) ? "mobile-panel-open" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
+        className={`workbench ${navigationRender ? "navigation-open" : ""} ${navigationClosing ? "navigation-closing" : ""} ${assistantOpen ? "assistant-open" : ""} ${mobileRuntime && (navigationRender || assistantOpen) ? "mobile-panel-open" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
         style={{
           gridTemplateColumns: [
             ...(mobileRuntime ? ["48px"] : []),
-            ...(navigationOpen ? [`var(--nav-width, ${sidebarWidth}px)`, "5px"] : []),
+            ...(navigationRender ? [`var(--nav-width, ${sidebarWidth}px)`, "5px"] : []),
             "minmax(0, 1fr)",
             ...(assistantOpen ? ["5px", `var(--explain-width, ${explainWidth}px)`] : []),
           ].join(" "),
@@ -4335,7 +4386,7 @@ export default function App() {
           <button className={assistantOpen && !navigationOpen && qaUpperTab === "history" ? "active" : ""} onClick={() => toggleMobileAssistant("history")} title="AI 助手"><Bot size={18} /><span>助手</span></button>
           <button className={`mobile-only ${assistantOpen && !navigationOpen && qaUpperTab === "knowledge" ? "active" : ""}`} onClick={() => toggleMobileAssistant("knowledge")} title="知识网络"><Sparkles size={18} /><span>网络</span></button>
         </nav> : null}
-        {navigationOpen ? (
+        {navigationRender ? (
           <>
             <Sidebar
               view={mobileRuntime ? navigationView : navigationView === "files" ? "files" : "courses"}
@@ -4365,7 +4416,7 @@ export default function App() {
             />
           </>
         ) : null}
-        {navigationOpen ? <div
+        {navigationRender ? <div
           className="resize-handle navigation-resizer"
           onMouseDown={(event) => setDragState({ kind: "sidebar-width", startX: event.clientX, startWidth: sidebarWidth })}
           title="拖拽调整左栏宽度"
