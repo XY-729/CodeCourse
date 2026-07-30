@@ -33,7 +33,7 @@ html.platform-android .mobile-reader-header {
   box-shadow: none;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
-  transition: height 180ms var(--mobile-ease-out), min-height 180ms var(--mobile-ease-out), opacity 120ms ease, transform 180ms var(--mobile-ease-out);
+  transition: height 180ms var(--mobile-ease-out), min-height 180ms var(--mobile-ease-out), flex-basis 180ms var(--mobile-ease-out), opacity 120ms ease, transform 180ms var(--mobile-ease-out);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -44,7 +44,7 @@ html.platform-android .mobile-reader-tabs {
   min-width: 0;
   height: 100%;
   flex: 1 1 auto;
-  padding: 5px 5px 5px 7px;
+  padding: 4px 5px 4px 7px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -61,8 +61,8 @@ html.platform-android .mobile-reader-tabs::-webkit-scrollbar {
 }
 
 html.platform-android .mobile-reader-tab {
-  height: 40px;
-  min-width: 112px;
+  height: 44px;
+  min-width: 120px;
   max-width: min(56vw, 220px);
   flex: 0 0 auto;
   display: flex;
@@ -113,18 +113,18 @@ html.platform-android .mobile-reader-tab-main > span {
 }
 
 html.platform-android .mobile-reader-tab-close {
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  min-height: 36px;
-  flex: 0 0 36px;
-  margin-right: 1px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  flex: 0 0 44px;
+  margin-right: 0;
   padding: 0;
   display: grid;
   place-items: center;
   color: var(--mobile-text-tertiary);
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   background: transparent;
   appearance: none;
   -webkit-appearance: none;
@@ -145,7 +145,7 @@ html.platform-android .mobile-reader-actions {
   max-width: 58vw;
   height: 100%;
   flex: 0 0 auto;
-  padding: 5px 6px 5px 4px;
+  padding: 4px 6px 4px 4px;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -161,11 +161,11 @@ html.platform-android .mobile-reader-actions::-webkit-scrollbar {
 }
 
 html.platform-android .mobile-reader-action-button {
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
-  min-height: 40px;
-  flex: 0 0 40px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  flex: 0 0 44px;
   padding: 0;
   display: grid;
   place-items: center;
@@ -242,10 +242,10 @@ html.platform-android .mobile-reader-actions .teaching-rationale {
 }
 
 html.platform-android .mobile-reader-actions .teaching-rationale-trigger.icon-only {
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
-  min-height: 40px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
   padding: 0;
   display: grid;
   place-items: center;
@@ -291,6 +291,7 @@ html.platform-android .markdown-viewer > .viewer-header {
 html.platform-android.android-reading-immersive .mobile-reader-header {
   height: 0;
   min-height: 0;
+  flex-basis: 0;
   border-width: 0;
   opacity: 0;
   transform: translate3d(0, -10px, 0);
@@ -310,16 +311,11 @@ html.platform-android.android-reading-immersive .mobile-bottom-navigation {
 
 @media (max-width: 380px) {
   html.platform-android .mobile-reader-tab {
-    min-width: 104px;
+    min-width: 112px;
     max-width: 54vw;
   }
   html.platform-android .mobile-reader-actions {
-    max-width: 60vw;
-  }
-  html.platform-android .mobile-reader-action-button {
-    width: 38px;
-    min-width: 38px;
-    flex-basis: 38px;
+    max-width: 62vw;
   }
   html.platform-android .mobile-reader-position {
     min-width: 40px;

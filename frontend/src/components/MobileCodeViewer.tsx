@@ -141,7 +141,7 @@ export default function MobileCodeViewer({
   const [selectionAnchorLine, setSelectionAnchorLine] = useState<number | null>(null);
   const [selectionActive, setSelectionActive] = useState(false);
   const searchTimerRef = useRef<number>(0);
-  const prevSearchRequestRef = useRef<number | undefined>(undefined);
+  const prevSearchRequestRef = useRef<number | undefined>(mobileSearchRequestId);
 
   const plainLines = useMemo(() => content.split("\n"), [content]);
   const totalLines = plainLines.length;

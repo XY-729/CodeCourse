@@ -18,7 +18,7 @@ describe("MobileReaderHeader", () => {
     const onClose = vi.fn();
     render(<MobileReaderHeader tabs={TABS} activeId="lesson-1" onActivate={onActivate} onClose={onClose} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "状态管理" }));
+    fireEvent.click(screen.getByRole("tab", { name: "状态管理" }));
     expect(onActivate).toHaveBeenCalledWith("lesson-2");
 
     fireEvent.click(screen.getByRole("button", { name: "关闭 状态管理" }));

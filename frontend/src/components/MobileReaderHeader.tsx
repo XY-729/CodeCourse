@@ -68,16 +68,19 @@ export default function MobileReaderHeader({
           return (
             <div
               key={tab.id}
-              ref={(node) => {
-                if (node) tabRefs.current.set(tab.id, node);
-                else tabRefs.current.delete(tab.id);
-              }}
+              ref={(node) => { if (node) tabRefs.current.set(tab.id, node); else tabRefs.current.delete(tab.id); }}
               className={`mobile-reader-tab ${active ? "active" : ""}`}
-              role="tab"
-              aria-selected={active}
+              role="presentation"
               title={tab.path}
             >
-              <button type="button" className="mobile-reader-tab-main" onClick={() => onActivate(tab.id)}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={active}
+                tabIndex={active ? 0 : -1}
+                className="mobile-reader-tab-main"
+                onClick={() => onActivate(tab.id)}
+              >
                 <span>{tab.dirty ? `${tab.title} *` : tab.title}</span>
               </button>
               <button

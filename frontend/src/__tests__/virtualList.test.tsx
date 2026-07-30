@@ -237,7 +237,11 @@ describe("MobileCodeViewer production component", () => {
       { length: 50000 },
       (_, index) => index === 39999 ? "unique-distant-symbol" : `line ${index + 1}`,
     ).join("\n");
-    const { container } = render(
+    const { container, rerender } = render(
+      <MobileCodeViewer path="/search.ts" language="typescript" content={content} mobileSearchRequestId={0} />,
+    );
+    expect(container.querySelector(".mobile-code-search")).toBeNull();
+    rerender(
       <MobileCodeViewer path="/search.ts" language="typescript" content={content} mobileSearchRequestId={1} />,
     );
     const input = container.querySelector<HTMLInputElement>(".mobile-code-search input")!;
@@ -250,6 +254,17 @@ describe("MobileCodeViewer production component", () => {
     fireEvent.click(buttons[1]);
     expect(container.querySelector('[data-line="40000"]')).not.toBeNull();
     expect(container.querySelector('[data-line="40000"]')?.classList).toContain("search-match-active");
+  });
+
+  it("opens search only after request id changes", () => {
+    const { container, rerender } = render(
+      <MobileCodeViewer path="/search-trigger.ts" language="typescript" content="const value = 1;" mobileSearchRequestId={0} />,
+    );
+    expect(container.querySelector(".mobile-code-search")).toBeNull();
+    rerender(
+      <MobileCodeViewer path="/search-trigger.ts" language="typescript" content="const value = 1;" mobileSearchRequestId={1} />,
+    );
+    expect(container.querySelector(".mobile-code-search")).not.toBeNull();
   });
 
   it("reports a visible line once per animation frame", () => {
@@ -326,9 +341,13 @@ describe("MobileCodeViewer production component", () => {
     const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
     const content = largeContent(2000);
     const { container, rerender } = render(
-      <MobileCodeViewer key="A" path="/a.ts" language="typescript" content={content} restoreLine={400} mobileSearchRequestId={1} />,
+      <MobileCodeViewer key="A" path="/a.ts" language="typescript" content={content} restoreLine={400} mobileSearchRequestId={0} />,
     );
     flushAnimationFrames();
+    expect(container.querySelector(".mobile-code-search")).toBeNull();
+    rerender(
+      <MobileCodeViewer key="A" path="/a.ts" language="typescript" content={content} restoreLine={400} mobileSearchRequestId={1} />,
+    );
     fireEvent.change(container.querySelector(".mobile-code-search input")!, {
       target: { value: "line 900" },
     });

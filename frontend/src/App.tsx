@@ -3385,7 +3385,7 @@ export default function App() {
         }}
         onDrop={mobileRuntime ? undefined : (event) => handleGroupDrop(event, group.id)}
       >
-        {mobileRuntime ? (
+        {mobileRuntime && group.items.length > 0 ? (
           <MobileReaderHeader
             tabs={group.items.map((item) => ({ id: item.id, title: item.title, path: item.path, dirty: Boolean(item.dirty) }))}
             activeId={group.activeItemId}
