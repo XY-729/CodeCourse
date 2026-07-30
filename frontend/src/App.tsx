@@ -956,34 +956,6 @@ export default function App() {
     }
   }, [assistantOpen, mobileRuntime, navigationOpen]);
 
-  // Auto-scroll active tab into view on Android
-  useEffect(() => {
-    if (!mobileRuntime) return;
-    const group = findGroup(layout, activeGroupId);
-    if (!group?.activeItemId) return;
-    const tabKey = `${group.id}:${group.activeItemId}`;
-    let secondFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => {
-        const strip = paneTabStripRefs.current.get(group.id);
-        const tab = paneTabRefs.current.get(tabKey);
-        if (!strip || !tab) return;
-        const stripRect = strip.getBoundingClientRect();
-        const tabRect = tab.getBoundingClientRect();
-        const pad = 8;
-        if (tabRect.left < stripRect.left + pad) {
-          strip.scrollBy({ left: tabRect.left - stripRect.left - pad, behavior: "smooth" });
-        } else if (tabRect.right > stripRect.right - pad) {
-          strip.scrollBy({ left: tabRect.right - stripRect.right + pad, behavior: "smooth" });
-        }
-      });
-    });
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      if (secondFrame) window.cancelAnimationFrame(secondFrame);
-    };
-  }, [layout, activeGroupId, mobileRuntime]);
-
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "n") {
