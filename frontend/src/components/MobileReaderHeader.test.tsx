@@ -66,4 +66,19 @@ describe("MobileReaderHeader", () => {
     expect(onSearch).toHaveBeenCalledTimes(1);
     expect(screen.getByText("typescript")).toBeTruthy();
   });
+
+  it("renders document actions", () => {
+    const onSave = vi.fn();
+    render(
+      <MobileReaderHeader
+        tabs={TABS}
+        activeId="lesson-1"
+        onActivate={() => undefined}
+        onClose={() => undefined}
+        actions={<button type="button" aria-label="保存测试文档" onClick={onSave}>保存</button>}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "保存测试文档" }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+  });
 });

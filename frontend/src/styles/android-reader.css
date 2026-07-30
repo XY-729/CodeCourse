@@ -190,6 +190,11 @@ html.platform-android .mobile-reader-action-button:disabled {
   pointer-events: none;
 }
 
+html.platform-android .mobile-reader-action-button.active {
+  color: var(--mobile-accent-strong);
+  background: var(--mobile-accent-soft);
+}
+
 html.platform-android .mobile-reader-position {
   min-width: 43px;
   height: 32px;

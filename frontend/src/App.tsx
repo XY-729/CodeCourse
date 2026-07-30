@@ -3361,6 +3361,89 @@ export default function App() {
       );
     }
 
+    async function saveEditedCourseItem() {
+      if (!project || !activeItem || activeItem.type !== "course") return;
+      let recordId = activeItem.qaRecordId;
+      if (!recordId) {
+        const matchingRecord = qaHistory.find((record) => record.output_path === activeItem.path);
+        recordId = matchingRecord?.id;
+      }
+      if (!recordId) { setError("找不到当前文档对应的问答记录"); return; }
+      try {
+        const record = qaHistory.find((item) => item.id === recordId);
+        if (!record) { setError("找不到当前文档对应的问答记录"); return; }
+        const updated = await updateQARecord(project.id, recordId, { answer_md: activeItem.content });
+        setQAHistory((items) => items.map((item) => item.id === updated.id ? updated : item));
+        if (selectedQA?.id === updated.id) setSelectedQA(updated);
+        try {
+          const fresh = await getCourseContent(project.id, activeItem.path);
+          setLayout((previous) => updateGroup(previous, group.id, (currentGroup) => ({
+            ...currentGroup,
+            items: currentGroup.items.map((item) => item.id === activeItem.id ? { ...item, content: fresh.content, dirty: false } : item),
+          })));
+        } catch { /* save succeeded; reload failure is non-fatal */ }
+        setEditingCourseItemId(null);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "保存失败");
+      }
+    }
+
+    function renderMobileCourseEditActions() {
+      if (!activeItem || activeItem.type !== "course" || editingCourseItemId !== activeItem.id) return null;
+      return (
+        <>
+          <button type="button" className="mobile-reader-action-button" onClick={() => { void saveEditedCourseItem(); }} disabled={!activeItem.dirty} aria-label="保存当前文档" title="保存">
+            <Save size={18} aria-hidden="true" />
+          </button>
+          <button type="button" className="mobile-reader-action-button" onClick={() => { setEditingCourseItemId(null); }} aria-label="取消编辑" title="取消编辑">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </>
+      );
+    }
+
+    function renderMobileQAActions() {
+      if (!activeItem || activeItem.type !== "qa") return null;
+      const canCreateHighlight = Boolean(qaHighlightDraft && qaHighlightDraft.sourcePath === activeItem.path);
+      return (
+        <>
+          {project && activeItem.qaRecordId ? (
+            <TeachingRationale projectId={project.id} qaRecordId={activeItem.qaRecordId} onChanged={bumpPersonalizationRevision} compact />
+          ) : null}
+          <button
+            type="button"
+            className={`mobile-reader-action-button ${activeItem.favorite ? "active" : ""}`}
+            onClick={() => { void handleToggleFavorite(activeItem); }}
+            aria-label={activeItem.favorite ? "取消收藏" : "收藏当前回答"}
+            aria-pressed={Boolean(activeItem.favorite)}
+            title={activeItem.favorite ? "取消收藏" : "收藏"}
+          >
+            <Star size={18} className={activeItem.favorite ? "starred" : ""} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="mobile-reader-action-button"
+            onClick={() => { if (!qaHighlightDraft) return; void handleCreateHighlight("qa", qaHighlightDraft.sourcePath, qaHighlightDraft.selectedText); }}
+            disabled={!canCreateHighlight}
+            aria-label="标记选中的回答内容"
+            title="标记选中内容"
+          >
+            <Pencil size={17} aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="mobile-reader-action-button"
+            onClick={() => { void handleSaveQAItem(group.id, activeItem); }}
+            disabled={!activeItem.dirty}
+            aria-label="保存当前回答"
+            title="保存"
+          >
+            <Save size={18} aria-hidden="true" />
+          </button>
+        </>
+      );
+    }
+
     return (
       <section
         key={group.id}
@@ -3385,24 +3468,34 @@ export default function App() {
         }}
         onDrop={mobileRuntime ? undefined : (event) => handleGroupDrop(event, group.id)}
       >
-        {mobileRuntime && group.items.length > 0 ? (
-          <MobileReaderHeader
-            tabs={group.items.map((item) => ({ id: item.id, title: item.title, path: item.path, dirty: Boolean(item.dirty) }))}
-            activeId={group.activeItemId}
-            onActivate={(itemId) => { const item = group.items.find((entry) => entry.id === itemId); if (item) activateItem(group.id, item); }}
-            onClose={(itemId) => { closeItemInGroup(group.id, itemId); }}
-            lesson={activeItem?.type === "course" && lessonIndex >= 0 ? {
-              index: lessonIndex,
-              total: lessonFiles.length,
-              completed: activeLearningState?.status === "completed",
-              onPrevious: lessonIndex > 0 ? () => { void openCourseInActiveGroup(project!.id, lessonFiles[lessonIndex - 1].filename); } : undefined,
-              onNext: lessonIndex < lessonFiles.length - 1 ? () => { void openCourseInActiveGroup(project!.id, lessonFiles[lessonIndex + 1].filename); } : undefined,
-              onToggleComplete: () => { void toggleLessonComplete(activeItem.path); },
-            } : undefined}
-            language={activeItem?.type === "file" ? activeItem.language ?? "plaintext" : undefined}
-            onSearch={activeItem?.type === "file" ? () => { setMobileCodeSearchRequestId((current) => current + 1); } : undefined}
-            actions={activeItem?.type === "course" ? renderMarkdownDocumentActions(true) : undefined}
-          />
+        {mobileRuntime ? (
+          group.items.length > 0 ? (
+            <MobileReaderHeader
+              tabs={group.items.map((item) => ({ id: item.id, title: item.title, path: item.path, dirty: Boolean(item.dirty) }))}
+              activeId={group.activeItemId}
+              onActivate={(itemId) => { const item = group.items.find((entry) => entry.id === itemId); if (item) activateItem(group.id, item); }}
+              onClose={(itemId) => { closeItemInGroup(group.id, itemId); }}
+              lesson={activeItem?.type === "course" && lessonIndex >= 0 && editingCourseItemId !== activeItem.id ? {
+                index: lessonIndex,
+                total: lessonFiles.length,
+                completed: activeLearningState?.status === "completed",
+                onPrevious: lessonIndex > 0 ? () => { void openCourseInActiveGroup(project!.id, lessonFiles[lessonIndex - 1].filename); } : undefined,
+                onNext: lessonIndex < lessonFiles.length - 1 ? () => { void openCourseInActiveGroup(project!.id, lessonFiles[lessonIndex + 1].filename); } : undefined,
+                onToggleComplete: () => { void toggleLessonComplete(activeItem.path); },
+              } : undefined}
+              language={activeItem?.type === "file" ? activeItem.language ?? "plaintext" : undefined}
+              onSearch={activeItem?.type === "file" ? () => { setMobileCodeSearchRequestId((current) => current + 1); } : undefined}
+              actions={
+                activeItem?.type === "course"
+                  ? editingCourseItemId === activeItem.id
+                    ? renderMobileCourseEditActions()
+                    : renderMarkdownDocumentActions(true)
+                  : activeItem?.type === "qa"
+                    ? renderMobileQAActions()
+                    : undefined
+              }
+            />
+          ) : null
         ) : (
           <div className="pane-tabs">
             <span className="pane-name">工作区</span>
@@ -3496,47 +3589,20 @@ export default function App() {
           {!editorMountDeferred && activeItem?.type === "course" ? (
             editingCourseItemId === activeItem.id ? (
               <div className="viewer qa-editor-view">
-                <div className="viewer-header">
-                  <span>{activeItem.title} - 编辑 Markdown</span>
-                  <div className="viewer-actions">
-                    <button
-                      className="secondary-button compact"
-                      onClick={async () => {
-                        if (!project) return; let rid = activeItem.qaRecordId; if (!rid) { const found = qaHistory.find((x) => x.output_path === activeItem.path); rid = found?.id; } if (!rid) return;
-                        try {
-                          const record = qaHistory.find((r) => r.id === rid);
-                          if (!record) return;
-                          const updated = await updateQARecord(project.id, rid!, { answer_md: activeItem.content });
-                          setQAHistory((items) => items.map((item) => (item.id === updated.id ? updated : item)));
-                          if (selectedQA?.id === updated.id) setSelectedQA(updated);
-                          try {
-                            const fresh = await getCourseContent(project.id, activeItem.path);
-                            setLayout((prev) =>
-                              updateGroup(prev, group.id, (g) => ({
-                                ...g,
-                                items: g.items.map((item) =>
-                                  item.id === activeItem.id ? { ...item, content: fresh.content, dirty: false } : item,
-                                ),
-                              })),
-                            );
-                          } catch {}
-                          setEditingCourseItemId(null);
-                        } catch (caught) {
-                          setError(caught instanceof Error ? caught.message : "保存失败");
-                        }
-                      }}
-                    >
-                      <Save size={14} />
-                      保存
-                    </button>
-                    <button
-                      className="secondary-button compact"
-                      onClick={() => setEditingCourseItemId(null)}
-                    >
-                      取消
-                    </button>
+                {!mobileRuntime ? (
+                  <div className="viewer-header">
+                    <span>{activeItem.title} - 编辑 Markdown</span>
+                    <div className="viewer-actions">
+                      <button className="secondary-button compact" onClick={() => { void saveEditedCourseItem(); }}>
+                        <Save size={14} />
+                        保存
+                      </button>
+                      <button className="secondary-button compact" onClick={() => setEditingCourseItemId(null)}>
+                        取消
+                      </button>
+                    </div>
                   </div>
-                </div>
+                ) : null}
                 <textarea
                   className="qa-workspace-editor"
                   value={activeItem.content}
@@ -3587,32 +3653,30 @@ export default function App() {
           ) : null}
           {!editorMountDeferred && activeItem?.type === "qa" ? (
             <div className="viewer qa-editor-view">
-              <div className="viewer-header">
-                <span>{activeItem.dirty ? `${activeItem.title} *` : activeItem.title}</span>
-                <div className="viewer-actions">
-                  {project && activeItem.qaRecordId ? (
-                    <TeachingRationale
-                      projectId={project.id}
-                      qaRecordId={activeItem.qaRecordId}
-                      onChanged={bumpPersonalizationRevision}
-                    />
-                  ) : null}
-                  <button className="icon-button" onClick={() => handleToggleFavorite(activeItem)} title="收藏/取消收藏">
-                    <Star size={14} className={activeItem.favorite ? "starred" : ""} />
-                  </button>
-                  <button
-                    className="secondary-button compact"
-                    onClick={() => qaHighlightDraft && handleCreateHighlight("qa", qaHighlightDraft.sourcePath, qaHighlightDraft.selectedText)}
-                    disabled={!qaHighlightDraft || qaHighlightDraft.sourcePath !== activeItem.path}
-                  >
-                    标记
-                  </button>
-                  <button className="secondary-button compact" onClick={() => handleSaveQAItem(group.id, activeItem)} disabled={!activeItem.dirty}>
-                    <Save size={14} />
-                    保存
-                  </button>
+              {!mobileRuntime ? (
+                <div className="viewer-header">
+                  <span>{activeItem.dirty ? `${activeItem.title} *` : activeItem.title}</span>
+                  <div className="viewer-actions">
+                    {project && activeItem.qaRecordId ? (
+                      <TeachingRationale projectId={project.id} qaRecordId={activeItem.qaRecordId} onChanged={bumpPersonalizationRevision} />
+                    ) : null}
+                    <button className="icon-button" onClick={() => handleToggleFavorite(activeItem)} title="收藏/取消收藏">
+                      <Star size={14} className={activeItem.favorite ? "starred" : ""} />
+                    </button>
+                    <button
+                      className="secondary-button compact"
+                      onClick={() => qaHighlightDraft && handleCreateHighlight("qa", qaHighlightDraft.sourcePath, qaHighlightDraft.selectedText)}
+                      disabled={!qaHighlightDraft || qaHighlightDraft.sourcePath !== activeItem.path}
+                    >
+                      标记
+                    </button>
+                    <button className="secondary-button compact" onClick={() => handleSaveQAItem(group.id, activeItem)} disabled={!activeItem.dirty}>
+                      <Save size={14} />
+                      保存
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : null}
               <textarea
                 className="qa-workspace-editor"
                 value={activeItem.content}
