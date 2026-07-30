@@ -82,6 +82,7 @@ import PromptEditor from "./components/PromptEditor";
 import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
 import SelectionQuickBar from "./components/SelectionQuickBar";
 import MobileTopBar from "./components/MobileTopBar";
+import MobileAssistantPanel, { type MobileAssistantView } from "./components/MobileAssistantPanel";
 import MobileBottomNavigation, { type MobilePrimaryDestination } from "./components/MobileBottomNavigation";
 import MobileReaderHeader from "./components/MobileReaderHeader";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
@@ -159,7 +160,7 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
-type MobileWorkspaceTab = "projects" | "courses" | "files" | "assistant" | "knowledge";
+type MobileWorkspaceTab = "projects" | "courses" | "files" | "assistant";
 type MobileSurface = "navigation" | "workspace" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts" | "profile";
 
 const EMPTY_COMMAND_PALETTE_ITEMS: CommandPaletteItem[] = [];
@@ -364,9 +365,9 @@ export default function App() {
   const [desktopDropActive, setDesktopDropActive] = useState(false);
 
   const [selection, setSelection] = useState<SelectionSummary | null>(null);
-  const [qaQuestion, setQAQuestion] = useState("");
   const [qaQuestionInput, setQAQuestionInput] = useState("");
-  const qaQuestionTimerRef = useRef<number | null>(null);
+  const [qaAskPending, setQAAskPending] = useState(false);
+  const [mobileAssistantView, setMobileAssistantView] = useState<MobileAssistantView>("ask");
   const [qaHistory, setQAHistory] = useState<QARecord[]>([]);
   const [qaHistoryQuery, setQAHistoryQuery] = useState("");
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
@@ -1085,12 +1086,6 @@ export default function App() {
   }, [activeGroupId, appDialog, clearDropPreview, layout, project?.id, qaHistory]);
 
   useEffect(() => {
-    return () => {
-      if (qaQuestionTimerRef.current != null) clearTimeout(qaQuestionTimerRef.current);
-    };
-  }, []);
-
-  useEffect(() => {
     if (!mobileRuntime) {
       return;
     }
@@ -1295,20 +1290,11 @@ export default function App() {
   }
 
   function clearQAQuestionInput() {
-    if (qaQuestionTimerRef.current != null) {
-      clearTimeout(qaQuestionTimerRef.current);
-      qaQuestionTimerRef.current = null;
-    }
     setQAQuestionInput("");
-    setQAQuestion("");
   }
 
   const handleQAQuestionChange = useCallback((value: string) => {
     setQAQuestionInput(value);
-    if (qaQuestionTimerRef.current != null) clearTimeout(qaQuestionTimerRef.current);
-    qaQuestionTimerRef.current = window.setTimeout(() => {
-      setQAQuestion(value);
-    }, 300);
   }, []);
 
   function openExternal(url: string) {
@@ -2007,10 +1993,7 @@ export default function App() {
         dirty: false,
       });
     }
-    if (mobileRuntime) {
-      setNavigationOpen(false);
-      setAssistantOpen(false);
-    }
+    dismissMobileWorkspaceAfterOpen();
   }
 
   function openKnowledgeGraphInActiveGroup() {
@@ -2099,14 +2082,18 @@ export default function App() {
       setFileContent(null);
       setSelectedCourse(null);
       setSelection(null);
-      setQAQuestion("");
+      setSelectionAnchor(null);
+      clearQAQuestionInput();
       setSelectedQA(null);
       setQASessionId(null);
       setQASessionTree([]);
       setActiveDocumentTerms([]);
       setRawDocumentTermsBySource({});
       setLearningAnchor(null);
+      setQAHistoryQuery("");
+      setQAFavoriteOnly(false);
       setQAUpperTab("history");
+      setMobileAssistantView("ask");
       setQAPanelError("");
       setHighlights([]);
       setKnowledgeLinks([]);
@@ -2701,54 +2688,35 @@ export default function App() {
   }
 
   async function handleAsk() {
-    if (!project || !qaQuestion.trim() || !llmSettings?.enabled || !llmSettings.has_api_key) {
-      return;
-    }
-    const ok = await confirmAction("AI 助手询问", `将调用模型 API 使用 ${llmSettings.model} 回答当前问题，可能消耗 token。是否继续？`, {
-      confirmText: "询问", skipKey: "confirm.ask",
-    });
-    if (!ok) {
-      return;
-    }
-    setQAPanelError("");
-    const generationKey = activeQAKey;
+    const question = qaQuestionInput.trim();
+    if (!project || !question || !llmSettings?.enabled || !llmSettings.has_api_key || qaAskPending || qaLoading) return;
+    setQAAskPending(true);
     try {
+      const ok = await confirmAction("AI 助手询问", `将调用模型 API 使用 ${llmSettings.model} 回答当前问题，可能消耗 token。是否继续？`, { confirmText: "询问", skipKey: "confirm.ask" });
+      if (!ok) return;
+      setQAPanelError("");
+      const generationKey = activeQAKey;
       const context = buildAskPayloadContext();
       const record = await runStreamingQuestion({
-        source_type: context.source_type,
-        source_path: context.source_path,
-        selected_text: context.selected_text,
-        question: qaQuestion,
-        provider: llmSettings.provider,
-        base_url: llmSettings.base_url,
-        model: llmSettings.model,
-        session_id: qaSessionId,
-        parent_qa_id: selectedQA?.id ?? null,
-        relation_type: "follow_up",
-        selection_range: selectionAnchor?.range
-          ? {
-              start_line: selectionAnchor.range.startLineNumber,
-              start_column: selectionAnchor.range.startColumn,
-              end_line: selectionAnchor.range.endLineNumber,
-              end_column: selectionAnchor.range.endColumn,
-            }
-          : null,
+        source_type: context.source_type, source_path: context.source_path, selected_text: context.selected_text,
+        question, provider: llmSettings.provider, base_url: llmSettings.base_url, model: llmSettings.model,
+        session_id: qaSessionId, parent_qa_id: selectedQA?.id ?? null, relation_type: "follow_up",
+        selection_range: selectionAnchor?.range ? { start_line: selectionAnchor.range.startLineNumber, start_column: selectionAnchor.range.startColumn, end_line: selectionAnchor.range.endLineNumber, end_column: selectionAnchor.range.endColumn } : null,
       }, generationKey);
       setSelectedQA(record);
       setQASessionId(record.session_id ?? qaSessionId);
       setQAUpperTab("history");
+      setMobileAssistantView("ask");
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
-      setQAQuestion("");
-      await Promise.all([
-        refreshCourses(project.id),
-        refreshQAHistory(project.id),
-        refreshKnowledgeLinks(project.id),
-      ]);
+      clearQAQuestionInput();
+      await Promise.all([refreshCourses(project.id), refreshQAHistory(project.id), refreshKnowledgeLinks(project.id)]);
       setKnowledgeRefreshKey((value) => value + 1);
       notifyTaskCompleted("CodeCourse 回答完成", record.display_title || "AI 助手已经完成回答。");
       schedulePersonalizationRefresh();
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "生成回答失败");
+    } finally {
+      setQAAskPending(false);
     }
   }
 
@@ -2758,8 +2726,9 @@ export default function App() {
     setQASessionTree([]);
     setActiveDocumentTerms([]);
     setLearningAnchor(null);
-    setQAQuestion("");
+    clearQAQuestionInput();
     setQAUpperTab("history");
+    setMobileAssistantView("ask");
     startNewQADraft();
   }
 
@@ -2954,7 +2923,7 @@ export default function App() {
     }
     try {
       const updated = await updateQARecord(project.id, record.id, { display_title: nextTitle.trim() });
-      setSelectedQA(updated);
+      setSelectedQA((current) => current?.id === updated.id ? updated : current);
       setQAHistory((items) => items.map((entry) => (entry.id === updated.id ? updated : entry)));
       updateOpenQARecord(updated);
     } catch (caught) {
@@ -3169,6 +3138,12 @@ export default function App() {
       setQAHistory((items) => items.filter((item) => item.id !== record.id));
       if (selectedQA?.id === record.id) {
         setSelectedQA(null);
+        setQASessionId(null);
+        setQASessionTree([]);
+        setActiveDocumentTerms([]);
+        setLearningAnchor(null);
+        clearQAQuestionInput();
+        setMobileAssistantView("history");
       }
       setLayout((prev) =>
         updateEveryGroup(prev, (group) => ({
@@ -3262,7 +3237,7 @@ export default function App() {
     }
     try {
       const updated = await setQAFavorite(project.id, id, !favorite);
-      setSelectedQA(updated);
+      setSelectedQA((current) => current?.id === updated.id ? updated : current);
       setQAHistory((items) => items.map((item) => (item.id === updated.id ? updated : item)));
       updateOpenQARecord(updated);
     } catch (caught) {
@@ -3895,7 +3870,7 @@ export default function App() {
   const mobilePrimaryDestination: MobilePrimaryDestination = (() => {
     if (mobileWorkspaceTab === "courses") return "learn";
     if (mobileWorkspaceTab === "files") return "source";
-    if (mobileWorkspaceTab === "assistant" || mobileWorkspaceTab === "knowledge") return "ask";
+    if (mobileWorkspaceTab === "assistant") return "ask";
     if (learnerProfileOpen || settingsOpen || promptEditorOpen || moreMenuOpen) return "me";
     if (activeOpenItem?.type === "file") return "source";
     if (activeOpenItem?.type === "qa" || activeOpenItem?.qaRecordId) return "ask";
@@ -4023,8 +3998,8 @@ export default function App() {
   function openAssistant(tab: "history" | "knowledge") {
     if (mobileRuntime) {
       closeMobileWorkspaceSurfaces("workspace");
-      setQAUpperTab(tab);
-      setMobileWorkspaceTab(tab === "history" ? "assistant" : "knowledge");
+      setMobileAssistantView(tab === "knowledge" ? "knowledge" : "ask");
+      setMobileWorkspaceTab("assistant");
       return;
     }
     closeMobileWorkspaceSurfaces("assistant");
@@ -4033,8 +4008,10 @@ export default function App() {
   }
 
   function toggleMobileAssistant(tab: "history" | "knowledge") {
-    const workspaceTab = tab === "history" ? "assistant" : "knowledge";
-    if (mobileWorkspaceTab === workspaceTab) {
+    if (!mobileRuntime) { openAssistant(tab); return; }
+    const nextView: MobileAssistantView = tab === "knowledge" ? "knowledge" : "ask";
+    if (mobileWorkspaceTab === "assistant") {
+      if (mobileAssistantView !== nextView) { setMobileAssistantView(nextView); return; }
       mobileWorkspaceSheetRef.current?.dismiss();
       return;
     }
@@ -4117,16 +4094,41 @@ export default function App() {
     );
   }
 
-  function renderAssistantPanel(mobileSheet = false) {
+  function renderKnowledgeGraph() {
+    if (!project) return <div className="empty small">请选择项目后查看知识网络</div>;
+    const activeItem = getActiveOpenItem();
+    const focusRef = activeItem
+      ? activeItem.qaRecordId ? { ref_type: "qa" as const, ref_id: activeItem.qaRecordId }
+      : activeItem.type === "course" ? { ref_type: "course" as const, ref_path: activeItem.path }
+      : activeItem.type === "file" ? { ref_type: "file" as const, ref_path: activeItem.path }
+      : null
+      : selectedQA ? { ref_type: "qa" as const, ref_id: selectedQA.id }
+      : null;
+    return (
+      <Suspense fallback={<div className="viewer-loading">正在加载知识网络…</div>}>
+        <KnowledgeGraphViewer
+          projectId={project.id} refreshKey={knowledgeRefreshKey} compact focusRef={focusRef}
+          onRequestText={requestText} onConfirm={confirmAction}
+          onContentChanged={async () => { await refreshCourses(project.id); await refreshQAHistory(project.id); }}
+          onGraphChanged={() => { setKnowledgeRefreshKey((value) => value + 1); }}
+          onOpenQA={(qaId) => { void openQAById(qaId).catch((caught) => { setError(caught instanceof Error ? caught.message : "打开回答失败"); }); }}
+          onOpenCourse={(path) => { void openCourseInActiveGroup(project.id, path).catch((caught) => { setError(caught instanceof Error ? caught.message : "打开课件失败"); }); }}
+          onOpenFile={(path) => { void openFileInActiveGroup(project.id, path).catch((caught) => { setError(caught instanceof Error ? caught.message : "打开文件失败"); }); }}
+        />
+      </Suspense>
+    );
+  }
+
+  function renderAssistantPanel() {
     const showKnowledgeGraph = qaUpperTab === "knowledge" && Boolean(project);
     return (
       <ExplainPanel
         selection={selection}
         contextSummary={assistantContextSummary}
-        question={qaQuestion}
+        question={qaQuestionInput}
         questionInput={qaQuestionInput}
-        loading={qaLoading}
-        loadingLabel={activeQAGeneration?.label}
+        loading={qaLoading || qaAskPending}
+        loadingLabel={qaAskPending && !qaLoading ? "等待确认" : activeQAGeneration?.label}
         streamContent={activeQAGeneration?.partial}
         history={qaHistory}
         historyQuery={qaHistoryQuery}
@@ -4137,47 +4139,11 @@ export default function App() {
         diagnosticItem={diagnosticItem}
         diagnosticResult={diagnosticResult}
         settings={llmSettings}
-        panelError={mobileSheet && qaPanelError === error ? "" : qaPanelError}
+        panelError={qaPanelError}
         upperTab={qaUpperTab}
-        mobileMode={mobileSheet}
-        embeddedMobileSheet={mobileSheet}
         onUpperTabChange={setQAUpperTab}
         knowledgeDisabled={!project}
-        knowledgeContent={showKnowledgeGraph && project ? (
-          <Suspense fallback={<div className="viewer-loading">正在加载知识网络…</div>}><KnowledgeGraphViewer
-            projectId={project.id}
-            refreshKey={knowledgeRefreshKey}
-            compact
-            focusRef={(() => {
-              const item = getActiveOpenItem();
-              if (item) {
-                if (item.qaRecordId) return { ref_type: "qa", ref_id: item.qaRecordId };
-                if (item.type === "course") return { ref_type: "course", ref_path: item.path };
-                if (item.type === "file") return { ref_type: "file", ref_path: item.path };
-              }
-              if (selectedQA) return { ref_type: "qa", ref_id: selectedQA.id };
-              return null;
-            })()}
-            onRequestText={requestText}
-            onConfirm={confirmAction}
-            onContentChanged={async () => {
-              await refreshCourses(project.id);
-              await refreshQAHistory(project.id);
-            }}
-            onGraphChanged={() => {
-              setKnowledgeRefreshKey((value) => value + 1);
-            }}
-            onOpenQA={(qaId) => {
-              openQAById(qaId).catch((caught) => setError(caught instanceof Error ? caught.message : "打开回答失败"));
-            }}
-            onOpenCourse={(path) => {
-              openCourseInActiveGroup(project.id, path).catch((caught) => setError(caught instanceof Error ? caught.message : "打开课件失败"));
-            }}
-            onOpenFile={(path) => {
-              openFileInActiveGroup(project.id, path).catch((caught) => setError(caught instanceof Error ? caught.message : "打开文件失败"));
-            }}
-          /></Suspense>
-        ) : null}
+        knowledgeContent={showKnowledgeGraph ? renderKnowledgeGraph() : null}
         onQuestionChange={handleQAQuestionChange}
         onSelectionTextChange={handleSelectionTextChange}
         onClearSelection={handleClearSelection}
@@ -4185,22 +4151,65 @@ export default function App() {
         onNewConversation={handleNewConversation}
         onHistoryQueryChange={setQAHistoryQuery}
         onFavoriteOnlyChange={setQAFavoriteOnly}
-        onSelectRecord={(record) => {
-          setSelectedQA(record);
-          setQASessionId(record.session_id ?? null);
-        }}
-        onOpenRecord={(record) => openQAInActiveGroup(record)}
+        onSelectRecord={(record) => { setSelectedQA(record); setQASessionId(record.session_id ?? null); }}
+        onOpenRecord={(record) => { void openQAInActiveGroup(record); }}
         onDeleteRecord={handleDeleteQA}
         onRenameRecord={handleRenameQA}
         onToggleFavorite={handleToggleFavorite}
         onOpenSettings={openSettings}
-        onAnswerSurvey={(choice) => void handleDynamicSurveyAnswer(choice)}
-        onDismissSurvey={() => void handleDynamicSurveyDismiss()}
-        onDisableSurveys={() => void handleDisableDynamicSurveys()}
-        onAnswerDiagnostic={(answer) => void handleDiagnosticAnswer(answer)}
-        onDismissDiagnostic={() => void handleDiagnosticDismiss()}
-        onFlagDiagnostic={() => void handleDiagnosticFlag()}
-        onClose={mobileSheet ? undefined : () => setAssistantOpen(false)}
+        onAnswerSurvey={(choice) => { void handleDynamicSurveyAnswer(choice); }}
+        onDismissSurvey={() => { void handleDynamicSurveyDismiss(); }}
+        onDisableSurveys={() => { void handleDisableDynamicSurveys(); }}
+        onAnswerDiagnostic={(answer) => { void handleDiagnosticAnswer(answer); }}
+        onDismissDiagnostic={() => { void handleDiagnosticDismiss(); }}
+        onFlagDiagnostic={() => { void handleDiagnosticFlag(); }}
+        onClose={() => setAssistantOpen(false)}
+      />
+    );
+  }
+
+  function renderMobileAssistantPanel() {
+    return (
+      <MobileAssistantPanel
+        view={mobileAssistantView}
+        onViewChange={setMobileAssistantView}
+        selection={selection}
+        contextSummary={assistantContextSummary}
+        question={qaQuestionInput}
+        loading={qaLoading || qaAskPending}
+        loadingLabel={qaAskPending && !qaLoading ? "等待确认" : activeQAGeneration?.label}
+        streamContent={activeQAGeneration?.partial}
+        history={qaHistory}
+        historyQuery={qaHistoryQuery}
+        favoriteOnly={qaFavoriteOnly}
+        selectedRecord={selectedQA}
+        selectedRecordReadOnly={Boolean(selectedQA && project && selectedQA.project_id !== project.id)}
+        surveyCandidate={dynamicSurvey}
+        diagnosticItem={diagnosticItem}
+        diagnosticResult={diagnosticResult}
+        settings={llmSettings}
+        panelError={qaPanelError}
+        knowledgeDisabled={!project}
+        knowledgeContent={project ? renderKnowledgeGraph() : null}
+        onQuestionChange={handleQAQuestionChange}
+        onSelectionTextChange={handleSelectionTextChange}
+        onClearSelection={handleClearSelection}
+        onAsk={handleAsk}
+        onNewConversation={handleNewConversation}
+        onHistoryQueryChange={setQAHistoryQuery}
+        onFavoriteOnlyChange={setQAFavoriteOnly}
+        onSelectRecord={(record) => { setSelectedQA(record); setQASessionId(record.session_id ?? null); }}
+        onOpenRecord={(record) => { void openQAInActiveGroup(record); }}
+        onDeleteRecord={handleDeleteQA}
+        onRenameRecord={handleRenameQA}
+        onToggleFavorite={handleToggleFavorite}
+        onOpenSettings={openSettings}
+        onAnswerSurvey={(choice) => { void handleDynamicSurveyAnswer(choice); }}
+        onDismissSurvey={() => { void handleDynamicSurveyDismiss(); }}
+        onDisableSurveys={() => { void handleDisableDynamicSurveys(); }}
+        onAnswerDiagnostic={(answer) => { void handleDiagnosticAnswer(answer); }}
+        onDismissDiagnostic={() => { void handleDiagnosticDismiss(); }}
+        onFlagDiagnostic={() => { void handleDiagnosticFlag(); }}
       />
     );
   }
@@ -4432,12 +4441,12 @@ export default function App() {
         <MobileWorkspaceSheet
           ref={mobileWorkspaceSheetRef}
           tabKey={mobileWorkspaceTab}
+          variant={mobileWorkspaceTab === "assistant" ? "assistant" : "standard"}
           title={{
             projects: "项目",
             courses: "课程",
             files: "源码",
             assistant: "AI 助手",
-            knowledge: "知识网络",
           }[mobileWorkspaceTab]}
           action={mobileWorkspaceTab === "projects" ? (
             <button className="icon-button" type="button" onClick={() => { void handleCreateMobileLearningPlan(); }} aria-label="新建学习计划" title="新建学习计划">
@@ -4464,7 +4473,7 @@ export default function App() {
         >
           {mobileWorkspaceTab === "projects" || mobileWorkspaceTab === "courses" || mobileWorkspaceTab === "files"
             ? renderSidebar(mobileWorkspaceTab, true)
-            : renderAssistantPanel(true)}
+            : renderMobileAssistantPanel()}
         </MobileWorkspaceSheet>
       ) : null}
       {!mobileRuntime ? (

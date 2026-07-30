@@ -9,6 +9,7 @@ type Props = {
   onDismiss: () => void;
   tabKey: string;
   title: string;
+  variant?: "standard" | "assistant";
 };
 
 export type MobileWorkspaceSheetHandle = {
@@ -16,12 +17,8 @@ export type MobileWorkspaceSheetHandle = {
 };
 
 const MobileWorkspaceSheet = forwardRef<MobileWorkspaceSheetHandle, Props>(function MobileWorkspaceSheet({
-    action,
-    children,
-    feedback,
-    onDismiss,
-    tabKey,
-    title,
+    action, children, feedback, onDismiss, tabKey, title,
+    variant = "standard",
   },
   forwardedRef,
 ) {
@@ -33,7 +30,7 @@ const MobileWorkspaceSheet = forwardRef<MobileWorkspaceSheetHandle, Props>(funct
     <div className="mobile-workspace-sheet-layer" onMouseDown={dismiss}>
       <FluidBottomSheet
         ref={sheetRef}
-        className="mobile-workspace-sheet"
+        className={`mobile-workspace-sheet ${variant === "assistant" ? "is-assistant" : ""}`}
         label={title}
         onDismiss={onDismiss}
       >

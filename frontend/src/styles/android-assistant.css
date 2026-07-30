@@ -1,0 +1,381 @@
+/* Android assistant workspace. See MobileAssistantPanel for DOM structure. */
+
+html.platform-android .mobile-workspace-sheet.is-assistant {
+  height: 100%; max-height: 100%;
+  touch-action: auto;
+  background: var(--mobile-canvas);
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html.platform-android .mobile-workspace-sheet.is-assistant > .fluid-sheet-grabber {
+  height: 24px; min-height: 24px; flex-basis: 24px;
+  padding: 9px 0 8px;
+}
+
+html.platform-android .mobile-workspace-sheet.is-assistant .mobile-workspace-sheet-header {
+  min-height: 52px; padding: 2px 8px 6px 16px;
+  background: var(--mobile-surface);
+}
+
+html.platform-android .mobile-workspace-sheet.is-assistant .mobile-workspace-sheet-content {
+  display: flex; overflow: hidden;
+  background: var(--mobile-canvas);
+}
+
+html.platform-android .mobile-assistant-panel {
+  width: 100%; min-width: 0; height: 100%; min-height: 0; flex: 1 1 auto;
+  display: flex; flex-direction: column; overflow: hidden;
+  color: var(--mobile-text); background: var(--mobile-canvas);
+}
+
+html.platform-android .mobile-assistant-tabs {
+  min-height: 52px; flex: 0 0 52px; padding: 5px 8px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch; gap: 4px;
+  border-bottom: 1px solid var(--mobile-line);
+  background: var(--mobile-surface);
+}
+
+html.platform-android .mobile-assistant-tabs > button {
+  min-width: 0; min-height: 42px; padding: 0 8px;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  color: var(--mobile-text-secondary); border: 0; border-radius: 11px;
+  background: transparent; font-size: 0.8125rem; font-weight: 620;
+  appearance: none; -webkit-appearance: none; transform: none !important;
+}
+
+html.platform-android .mobile-assistant-tabs > button.active {
+  color: var(--mobile-accent-strong); background: var(--mobile-accent-soft);
+}
+
+html.platform-android .mobile-assistant-tabs > button:disabled { opacity: 0.36; }
+
+html.platform-android .mobile-assistant-view { min-width: 0; min-height: 0; flex: 1 1 auto; overflow: hidden; }
+
+html.platform-android .mobile-assistant-ask-view { display: flex; flex-direction: column; }
+
+html.platform-android .mobile-assistant-scroll {
+  min-height: 0; flex: 1 1 auto; padding: 12px;
+  display: flex; flex-direction: column; gap: 12px;
+  overflow-x: hidden; overflow-y: auto;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+}
+
+html.platform-android .mobile-assistant-answer-card,
+html.platform-android .mobile-assistant-context-card,
+html.platform-android .mobile-assistant-suggestions,
+html.platform-android .mobile-assistant-survey-card,
+html.platform-android .mobile-assistant-diagnostic-card,
+html.platform-android .mobile-assistant-welcome {
+  padding: 14px; color: var(--mobile-text);
+  border: 1px solid var(--mobile-line); border-radius: 16px;
+  background: var(--mobile-surface); box-shadow: none;
+}
+
+html.platform-android .mobile-assistant-answer-card header,
+html.platform-android .mobile-assistant-context-card header,
+html.platform-android .mobile-assistant-survey-card header,
+html.platform-android .mobile-assistant-diagnostic-card header {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+
+html.platform-android .mobile-assistant-answer-card header > div,
+html.platform-android .mobile-assistant-context-card header > div {
+  min-width: 0; display: flex; align-items: center; gap: 7px;
+}
+
+html.platform-android .mobile-assistant-answer-card header > div { flex-direction: column; align-items: flex-start; gap: 2px; }
+
+html.platform-android .mobile-assistant-answer-card small,
+html.platform-android .mobile-assistant-context-meta,
+html.platform-android .mobile-assistant-history-card small {
+  color: var(--mobile-text-tertiary); font-size: 0.6875rem; line-height: 1.35;
+}
+
+html.platform-android .mobile-assistant-answer-card strong,
+html.platform-android .mobile-assistant-context-card strong,
+html.platform-android .mobile-assistant-suggestions > strong {
+  font-size: 0.875rem; font-weight: 700;
+}
+
+html.platform-android .mobile-assistant-answer-card p,
+html.platform-android .mobile-assistant-context-card p,
+html.platform-android .mobile-assistant-welcome p {
+  margin: 10px 0 0; color: var(--mobile-text-secondary); font-size: 0.8125rem; line-height: 1.58;
+}
+
+html.platform-android .mobile-assistant-answer-card.is-loading header { justify-content: flex-start; }
+
+html.platform-android .mobile-assistant-open-answer {
+  width: 100%; min-height: 44px; margin-top: 12px; padding: 0 12px;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  color: var(--mobile-accent-strong); border: 0; border-radius: 11px;
+  background: var(--mobile-accent-soft); font-weight: 650;
+}
+
+html.platform-android .mobile-assistant-text-action {
+  min-height: 44px; padding: 0 10px;
+  color: var(--mobile-accent); border: 0; border-radius: 10px;
+  background: transparent; font-size: 0.75rem; font-weight: 650;
+}
+
+html.platform-android .mobile-assistant-context-meta { margin-top: 10px; display: flex; justify-content: space-between; gap: 8px; }
+
+html.platform-android .mobile-assistant-context-path {
+  margin-top: 5px; overflow: hidden;
+  color: var(--mobile-text-secondary); font-size: 0.75rem;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+html.platform-android .mobile-assistant-context-card textarea {
+  width: 100%; min-height: 76px; max-height: 150px; margin-top: 10px; padding: 10px 11px;
+  resize: vertical; color: var(--mobile-text);
+  border: 1px solid var(--mobile-line); border-radius: 12px; outline: 0;
+  background: var(--mobile-surface-raised); font: inherit; font-size: 0.8125rem; line-height: 1.5;
+}
+
+html.platform-android .mobile-assistant-suggestions > div { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+
+html.platform-android .mobile-assistant-suggestions button,
+html.platform-android .mobile-assistant-option-list button {
+  min-height: 44px; padding: 8px 11px; color: var(--mobile-text);
+  border: 1px solid var(--mobile-line); border-radius: 12px;
+  background: var(--mobile-surface-raised); font-size: 0.75rem; line-height: 1.3; text-align: left;
+}
+
+html.platform-android .mobile-assistant-option-list { margin-top: 10px; display: grid; gap: 8px; }
+
+html.platform-android .mobile-assistant-option-list button.selected {
+  color: var(--mobile-accent-strong); border-color: var(--mobile-accent); background: var(--mobile-accent-soft);
+}
+
+html.platform-android .mobile-assistant-survey-card p,
+html.platform-android .mobile-assistant-diagnostic-card p { margin: 10px 0 0; font-size: 0.8125rem; line-height: 1.5; }
+
+html.platform-android .mobile-assistant-survey-card footer,
+html.platform-android .mobile-assistant-diagnostic-card footer { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+
+html.platform-android .mobile-assistant-survey-card footer button,
+html.platform-android .mobile-assistant-diagnostic-card footer button {
+  min-height: 44px; padding: 0 12px; color: var(--mobile-text-secondary);
+  border: 0; border-radius: 11px; background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .mobile-assistant-diagnostic-card footer button.primary {
+  color: white; background: var(--mobile-accent);
+}
+
+html.platform-android .mobile-assistant-order-list { margin-top: 10px; display: grid; gap: 7px; }
+
+html.platform-android .mobile-assistant-order-list > div {
+  min-height: 48px; padding: 3px 3px 3px 11px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 44px 44px;
+  align-items: center; gap: 2px;
+  border: 1px solid var(--mobile-line); border-radius: 12px;
+  background: var(--mobile-surface-raised);
+}
+
+html.platform-android .mobile-assistant-order-list button {
+  width: 44px; height: 44px; display: grid; place-items: center;
+  color: var(--mobile-text-secondary); border: 0; border-radius: 10px; background: transparent;
+}
+
+html.platform-android .mobile-assistant-diagnostic-input {
+  width: 100%; min-height: 44px; margin-top: 10px; padding: 0 12px;
+  color: var(--mobile-text); border: 1px solid var(--mobile-line);
+  border-radius: 12px; outline: 0; background: var(--mobile-surface-raised);
+}
+
+html.platform-android .mobile-assistant-diagnostic-result { margin-top: 10px; display: grid; gap: 8px; font-size: 0.8125rem; }
+html.platform-android .mobile-assistant-diagnostic-result.correct { color: var(--mobile-progress); }
+html.platform-android .mobile-assistant-diagnostic-result.incorrect { color: var(--mobile-danger); }
+
+html.platform-android .mobile-assistant-diagnostic-result button {
+  min-height: 44px; color: currentColor; border: 0; border-radius: 10px;
+  background: transparent; text-align: left;
+}
+
+html.platform-android .mobile-assistant-welcome { display: grid; justify-items: center; text-align: center; }
+html.platform-android .mobile-assistant-welcome > div {
+  width: 48px; height: 48px; display: grid; place-items: center;
+  color: var(--mobile-accent); border-radius: 16px; background: var(--mobile-accent-soft);
+}
+html.platform-android .mobile-assistant-welcome strong { margin-top: 10px; }
+
+html.platform-android .mobile-assistant-composer {
+  flex: 0 0 auto; padding: 9px 10px 10px;
+  border-top: 1px solid var(--mobile-line); background: var(--mobile-surface);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.06);
+}
+
+html.platform-android .mobile-assistant-composer-heading {
+  min-height: 28px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  color: var(--mobile-text-secondary); font-size: 0.75rem;
+}
+
+html.platform-android .mobile-assistant-composer-heading span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+html.platform-android .mobile-assistant-composer-heading button {
+  min-height: 36px; padding: 0 8px; color: var(--mobile-accent);
+  border: 0; border-radius: 9px; background: transparent; font-size: 0.75rem;
+}
+
+html.platform-android .mobile-assistant-composer > textarea {
+  width: 100%; min-height: 72px; max-height: 132px; margin-top: 4px; padding: 10px 11px;
+  resize: none; color: var(--mobile-text);
+  border: 1px solid var(--mobile-line); border-radius: 13px; outline: 0;
+  background: var(--mobile-surface-raised); font: inherit; font-size: 0.875rem; line-height: 1.45;
+}
+
+html.platform-android .mobile-assistant-composer > textarea:focus {
+  border-color: var(--mobile-accent); box-shadow: 0 0 0 3px var(--mobile-accent-soft);
+}
+
+html.platform-android .mobile-assistant-composer-actions { margin-top: 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+
+html.platform-android .mobile-assistant-model {
+  min-width: 0; flex: 1 1 auto; overflow: hidden;
+  color: var(--mobile-text-tertiary); font-size: 0.6875rem;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+html.platform-android .mobile-assistant-configure,
+html.platform-android .mobile-assistant-send {
+  min-height: 44px; padding: 0 13px; display: inline-flex;
+  align-items: center; justify-content: center; gap: 7px;
+  border: 0; border-radius: 12px; font-weight: 680;
+}
+
+html.platform-android .mobile-assistant-configure { color: var(--mobile-accent); background: var(--mobile-accent-soft); }
+html.platform-android .mobile-assistant-send { min-width: 96px; color: white; background: var(--mobile-accent); }
+html.platform-android .mobile-assistant-send:disabled { opacity: 0.38; }
+
+html.platform-android .mobile-assistant-readonly-note,
+html.platform-android .mobile-assistant-error {
+  margin-top: 8px; padding: 8px 10px; border-radius: 10px; font-size: 0.75rem; line-height: 1.45;
+}
+
+html.platform-android .mobile-assistant-readonly-note { color: var(--mobile-text-secondary); background: var(--mobile-surface-pressed); }
+
+html.platform-android .mobile-assistant-error {
+  color: var(--mobile-danger); background: color-mix(in srgb, var(--mobile-danger) 10%, transparent);
+}
+
+html.platform-android .mobile-assistant-history-view { display: flex; flex-direction: column; }
+
+html.platform-android .mobile-assistant-history-tools {
+  min-height: 60px; flex: 0 0 auto; padding: 8px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 8px;
+  border-bottom: 1px solid var(--mobile-line); background: var(--mobile-surface);
+}
+
+html.platform-android .mobile-assistant-history-tools label { position: relative; min-width: 0; }
+
+html.platform-android .mobile-assistant-history-tools label > svg {
+  position: absolute; top: 50%; left: 12px;
+  color: var(--mobile-text-tertiary); transform: translateY(-50%); pointer-events: none;
+}
+
+html.platform-android .mobile-assistant-history-tools input {
+  width: 100%; height: 44px; padding: 0 11px 0 38px;
+  color: var(--mobile-text); border: 1px solid var(--mobile-line);
+  border-radius: 12px; outline: 0; background: var(--mobile-surface-raised);
+}
+
+html.platform-android .mobile-assistant-history-tools > button {
+  min-width: 72px; height: 44px; padding: 0 10px; display: inline-flex;
+  align-items: center; justify-content: center; gap: 6px;
+  color: var(--mobile-text-secondary); border: 0; border-radius: 12px;
+  background: var(--mobile-surface-pressed);
+}
+
+html.platform-android .mobile-assistant-history-tools > button.active {
+  color: var(--mobile-accent-strong); background: var(--mobile-accent-soft);
+}
+
+html.platform-android .mobile-assistant-history-list {
+  min-height: 0; flex: 1 1 auto; padding: 10px;
+  display: flex; flex-direction: column; gap: 9px;
+  overflow-x: hidden; overflow-y: auto;
+  overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+}
+
+html.platform-android .mobile-assistant-history-card {
+  overflow: hidden; border: 1px solid var(--mobile-line); border-radius: 15px;
+  background: var(--mobile-surface);
+}
+
+html.platform-android .mobile-assistant-history-card.selected {
+  border-color: color-mix(in srgb, var(--mobile-accent) 56%, var(--mobile-line));
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .mobile-assistant-history-main {
+  width: 100%; min-height: 88px; padding: 12px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 5px;
+  color: var(--mobile-text); border: 0; background: transparent; text-align: left;
+}
+
+html.platform-android .mobile-assistant-history-main strong,
+html.platform-android .mobile-assistant-history-main span { width: 100%; overflow: hidden; text-overflow: ellipsis; }
+html.platform-android .mobile-assistant-history-main strong { font-size: 0.875rem; white-space: nowrap; }
+
+html.platform-android .mobile-assistant-history-main span {
+  color: var(--mobile-text-secondary); font-size: 0.75rem; line-height: 1.45;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+
+html.platform-android .mobile-assistant-history-actions {
+  min-height: 48px; padding: 2px 5px 5px; display: flex; justify-content: flex-end; gap: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--mobile-line) 70%, transparent);
+}
+
+html.platform-android .mobile-assistant-history-actions button {
+  width: 44px; min-width: 44px; height: 44px; display: grid; place-items: center;
+  color: var(--mobile-text-secondary); border: 0; border-radius: 10px; background: transparent;
+}
+
+html.platform-android .mobile-assistant-history-actions button.active { color: var(--mobile-accent-strong); background: var(--mobile-accent-soft); }
+html.platform-android .mobile-assistant-history-actions button.danger { color: var(--mobile-danger); }
+
+html.platform-android .mobile-assistant-empty-state {
+  min-height: 240px; flex: 1 1 auto; padding: 24px;
+  display: grid; place-content: center; justify-items: center; gap: 9px;
+  color: var(--mobile-text-secondary); text-align: center;
+}
+
+html.platform-android .mobile-assistant-empty-state strong { color: var(--mobile-text); }
+html.platform-android .mobile-assistant-empty-state p { margin: 0; max-width: 280px; font-size: 0.8125rem; line-height: 1.5; }
+
+html.platform-android .mobile-assistant-empty-state button {
+  min-height: 44px; margin-top: 5px; padding: 0 14px;
+  color: var(--mobile-accent); border: 0; border-radius: 11px;
+  background: var(--mobile-accent-soft); font-weight: 650;
+}
+
+html.platform-android .mobile-assistant-knowledge-view { display: flex; overflow: hidden; background: var(--mobile-canvas); }
+html.platform-android .mobile-assistant-knowledge-view > * { min-width: 0; min-height: 0; flex: 1 1 auto; }
+
+@media (max-width: 380px) {
+  html.platform-android .mobile-assistant-tabs > button { gap: 4px; padding-inline: 5px; font-size: 0.75rem; }
+  html.platform-android .mobile-assistant-scroll { padding: 9px; gap: 9px; }
+  html.platform-android .mobile-assistant-answer-card,
+  html.platform-android .mobile-assistant-context-card,
+  html.platform-android .mobile-assistant-suggestions,
+  html.platform-android .mobile-assistant-survey-card,
+  html.platform-android .mobile-assistant-diagnostic-card { padding: 12px; }
+}
+
+@media (orientation: landscape) {
+  html.platform-android .mobile-assistant-composer > textarea { min-height: 56px; max-height: 92px; }
+  html.platform-android .mobile-assistant-scroll { padding-block: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.platform-android .mobile-assistant-panel *,
+  html.platform-android .mobile-workspace-sheet.is-assistant {
+    animation: none !important; transition: none !important; scroll-behavior: auto !important;
+  }
+}
