@@ -344,6 +344,17 @@ def get_task(project_id: int, task_id: int) -> GenerationTaskResponse:
     return _to_task_response(task)
 
 
+def _remove_readonly(func, path, exc):
+    """Clear the read-only bit on Windows and retry."""
+    import os as _os
+    import stat as _stat
+    if not _os.access(path, _os.W_OK):
+        _os.chmod(path, _stat.S_IWRITE)
+        func(path)
+    else:
+        raise exc
+
+
 @router.delete("/projects/{project_id}", response_model=ProjectActionResponse)
 def remove_project(project_id: int) -> ProjectActionResponse:
     project = get_project(project_id)
@@ -356,10 +367,10 @@ def remove_project(project_id: int) -> ProjectActionResponse:
     if repo_root.exists():
         if REPOS_ROOT.resolve() not in repo_root.parents:
             raise HTTPException(status_code=400, detail="Stored project path is outside the repos workspace")
-        shutil.rmtree(repo_root)
+        shutil.rmtree(repo_root, onerror=_remove_readonly)
     generated_dir = project_course_dir(project_id)
     if generated_dir.exists():
-        shutil.rmtree(generated_dir)
+        shutil.rmtree(generated_dir, onerror=_remove_readonly)
     deleted = delete_project(project_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Project not found")
