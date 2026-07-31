@@ -61,7 +61,12 @@ def call_openai_compatible_chat_result(
     timeout: int = 30,
 ) -> LLMCallResult:
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
-    payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "max_tokens": 16384,
+    }
     started = perf_counter()
     try:
         response = _SYNC_CLIENT.post(
@@ -117,7 +122,12 @@ async def stream_openai_compatible_chat(
     timeout: int = 90,
 ) -> AsyncIterator[str]:
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
-    payload: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "max_tokens": 16384,
+    }
     client = _async_client()
     try:
         async with client.stream(
