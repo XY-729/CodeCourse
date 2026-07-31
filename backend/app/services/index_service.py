@@ -139,6 +139,16 @@ _BUILDING_LOCKS: set[int] = set()
 _BUILDING_LOCK_MUTEX = threading.Lock()
 
 
+def is_project_index_building(project_id: int) -> bool:
+    """Check the real in-process build state.
+
+    Do not rely only on the persisted ``building`` status because an
+    earlier process crash may leave stale status data in the database.
+    """
+    with _BUILDING_LOCK_MUTEX:
+        return project_id in _BUILDING_LOCKS
+
+
 def build_project_index(project_id: int, *, force_verify: bool = False) -> int:
     project = get_project(project_id)
     if project is None:

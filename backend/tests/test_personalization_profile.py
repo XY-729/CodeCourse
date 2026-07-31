@@ -25,6 +25,12 @@ def _setup_temp_workspace():
     storage.GENERATED_ROOT = cfg.GENERATED_ROOT
     generation_service.GENERATED_ROOT = cfg.GENERATED_ROOT
     term_service.GENERATED_ROOT = cfg.GENERATED_ROOT
+
+    import app.services.project_deletion_service as deletion_svc
+    deletion_svc.REPOS_ROOT = cfg.REPOS_ROOT
+    deletion_svc.GENERATED_ROOT = cfg.GENERATED_ROOT
+    deletion_svc.WORKSPACE_ROOT = cfg.WORKSPACE_ROOT
+
     import app.api.projects as project_api
 
     project_api.REPOS_ROOT = cfg.REPOS_ROOT

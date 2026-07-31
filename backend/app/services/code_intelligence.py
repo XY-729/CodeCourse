@@ -84,17 +84,31 @@ def _snapshot_dir(project_id: int) -> Path:
     return CODE_INTELLIGENCE_SNAPSHOTS_ROOT / str(project_id)
 
 
-def remove_structural_project_data(project_id: int) -> None:
-    status = get_project_index_status(project_id)
-    project_name = str(status.get("structural_project_name") or "").strip()
+def remove_structural_project_data(project_id: int, structural_project_name: Optional[str] = None) -> None:
+    """Best-effort cleanup for structural index artifacts.
+
+    ``structural_project_name`` may be captured before the project
+    database record is deleted, allowing this cleanup to run afterward.
+    """
+    project_name = str(structural_project_name or "").strip()
+
+    if not project_name:
+        try:
+            status = get_project_index_status(project_id)
+            project_name = str(status.get("structural_project_name") or "").strip()
+        except Exception:
+            project_name = ""
+
     if project_name and structural_available():
         try:
             _run_tool("delete_project", {"project": project_name})
         except StructuralEngineError:
             pass
+
     snapshot = _snapshot_dir(project_id)
     if snapshot.exists():
         shutil.rmtree(snapshot, ignore_errors=True)
+
     project_cache = CODE_INTELLIGENCE_CACHE_ROOT / "projects" / str(project_id)
     if project_cache.exists():
         shutil.rmtree(project_cache, ignore_errors=True)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json as json_module
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -35,13 +36,12 @@ from app.services.generation_service import (
 from app.services.git_service import clone_or_reuse, repo_name_from_url, validate_git_url
 from app.services.local_import_service import import_local_archive, import_local_directory
 from app.services.index_service import build_project_index
-from app.services.code_intelligence import remove_structural_project_data
 from app.services.project_deletion_service import (
     ProjectDeletionBusy,
     ProjectDeletionError,
     ProjectDeletionNotFound,
     ProjectDeletionUnsafePath,
-    cleanup_staged_project,
+    cleanup_deleted_project_artifacts,
     stage_and_delete_project,
 )
 from app.services.scanner import scan_tree
@@ -52,6 +52,7 @@ from app.services.storage import (
     get_generation_task,
     get_llm_settings,
     get_project,
+    get_project_index_status,
     list_generation_tasks,
     list_projects,
     update_project_status,
@@ -59,6 +60,8 @@ from app.services.storage import (
 )
 
 router = APIRouter(prefix="/api", tags=["projects"])
+
+logger = logging.getLogger(__name__)
 
 
 def _project_root(project_id: int) -> Path:
@@ -353,7 +356,23 @@ def get_task(project_id: int, task_id: int) -> GenerationTaskResponse:
 @router.delete("/projects/{project_id}", response_model=ProjectActionResponse)
 def remove_project(project_id: int, background_tasks: BackgroundTasks) -> ProjectActionResponse:
     try:
-        remove_structural_project_data(project_id)
+        project = get_project(project_id)
+        if project is None:
+            raise ProjectDeletionNotFound("Project not found or already deleted.")
+
+        structural_project_name = ""
+
+        try:
+            index_status = get_project_index_status(project_id)
+            structural_project_name = str(
+                index_status.get("structural_project_name") or ""
+            ).strip()
+        except Exception:
+            # Reading the index name must never block deletion
+            logger.exception(
+                "Failed to read structural project name before deleting project %s",
+                project_id,
+            )
 
         trash_root = stage_and_delete_project(project_id)
 
@@ -367,9 +386,25 @@ def remove_project(project_id: int, background_tasks: BackgroundTasks) -> Projec
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     except ProjectDeletionError as error:
+        logger.exception("Project deletion failed for project %s", project_id)
         raise HTTPException(status_code=500, detail=str(error)) from error
 
-    background_tasks.add_task(cleanup_staged_project, trash_root)
+    except Exception as error:
+        logger.exception("Unexpected project deletion failure for project %s", project_id)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "An unexpected error occurred during project deletion: "
+                f"{type(error).__name__}: {error}"
+            ),
+        ) from error
+
+    background_tasks.add_task(
+        cleanup_deleted_project_artifacts,
+        trash_root,
+        project_id,
+        structural_project_name,
+    )
 
     return ProjectActionResponse(id=project_id, status="deleted", message="Project deleted", course_files=[])
 

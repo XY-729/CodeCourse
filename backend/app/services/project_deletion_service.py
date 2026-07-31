@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import logging
 import os
 import shutil
@@ -16,11 +17,20 @@ from app.core.config import (
     WORKSPACE_ROOT,
 )
 
+from app.services.code_intelligence import (
+    remove_structural_project_data,
+)
+
+from app.services.index_service import (
+    is_project_index_building,
+)
+
 from app.services.storage import (
     delete_project,
     get_project,
     list_generation_tasks,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +42,23 @@ TERMINAL_TASK_STATUSES = {
 }
 
 
+_BUSY_ERRNOS = {
+    errno.EACCES,
+    errno.EBUSY,
+    errno.EPERM,
+}
+
+
+_BUSY_WINERRORS = {
+    5,    # Access denied
+    32,   # Sharing violation
+    33,   # Lock violation
+    145,  # Directory not empty / busy
+}
+
+
 class ProjectDeletionError(RuntimeError):
-    """Base error for safe project deletion."""
+    """Base error for safe deletion."""
 
 
 class ProjectDeletionNotFound(ProjectDeletionError):
@@ -57,13 +82,52 @@ def _is_managed_child(path: Path, root: Path) -> bool:
     )
 
 
+def _is_busy_os_error(error: OSError) -> bool:
+    winerror = getattr(error, "winerror", None)
+    return (
+        isinstance(error, PermissionError)
+        or error.errno in _BUSY_ERRNOS
+        or winerror in _BUSY_WINERRORS
+    )
+
+
 def _remove_readonly(func, path: str, exc_info) -> None:
-    """shutil.rmtree callback that clears the read-only flag on Windows."""
+    """Clear read-only attributes during final trash cleanup on Windows."""
     error = exc_info[1]
     if not isinstance(error, PermissionError):
         raise error
     os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
     func(path)
+
+
+def _move_to_staging(source_path: Path, staged_path: Path) -> None:
+    """Retry transient Windows sharing violations before reporting busy."""
+    delays = (0.0, 0.10, 0.25, 0.50, 1.00)
+    last_error: OSError | None = None
+
+    for attempt, delay in enumerate(delays, start=1):
+        if delay:
+            time.sleep(delay)
+
+        try:
+            os.replace(source_path, staged_path)
+            return
+        except OSError as error:
+            last_error = error
+
+            if not _is_busy_os_error(error):
+                raise ProjectDeletionError(
+                    f"Failed to move project directory to staging: {error}"
+                ) from error
+
+            if attempt < len(delays):
+                continue
+
+    raise ProjectDeletionBusy(
+        "Project files are in use by another program. "
+        "Please wait for index building to finish, and close any editor, "
+        "terminal, or Git program using this repository before retrying."
+    ) from last_error
 
 
 def _restore_staged_paths(
@@ -104,11 +168,22 @@ def _rollback_and_raise(
 
 
 def _assert_project_idle(project_id: int) -> None:
+    """Repository imports automatically build an index.
+
+    Deleting while that worker is scanning or writing the database is unsafe.
+    """
+    if is_project_index_building(project_id):
+        raise ProjectDeletionBusy(
+            "Project code index is still building. "
+            "Please wait for indexing to complete before deleting."
+        )
+
     running_tasks = [
         task
         for task in list_generation_tasks(project_id)
         if task.status not in TERMINAL_TASK_STATUSES
     ]
+
     if running_tasks:
         raise ProjectDeletionBusy(
             "A generation task is still running for this project. "
@@ -117,10 +192,9 @@ def _assert_project_idle(project_id: int) -> None:
 
 
 def stage_and_delete_project(project_id: int) -> Path:
-    """Move project files into quarantine, then remove database metadata.
+    """Move project files into quarantine, then delete database metadata.
 
-    The move happens on the same workspace volume and is normally atomic.
-    If the database operation fails, the original directories are restored.
+    Files are restored if database deletion fails.
     """
     project = get_project(project_id)
     if project is None:
@@ -159,37 +233,36 @@ def stage_and_delete_project(project_id: int) -> Path:
         for source_path, staged_path in sources:
             if not source_path.exists():
                 continue
+
             staged_path.parent.mkdir(parents=True, exist_ok=True)
-            # os.replace is atomic on the same filesystem volume
-            os.replace(source_path, staged_path)
+            _move_to_staging(source_path, staged_path)
             moved_paths.append((source_path, staged_path))
 
-    except PermissionError:
-        _rollback_and_raise(
-            ProjectDeletionBusy(
-                "Project files are in use by another program. "
-                "Please close any editor, terminal, or Git program "
-                "using this project and try again."
-            ),
-            moved_paths,
-            trash_root,
-        )
+    except ProjectDeletionError as error:
+        _rollback_and_raise(error, moved_paths, trash_root)
 
     except OSError as error:
-        _rollback_and_raise(
-            ProjectDeletionError(f"Failed to move project files to staging: {error}"),
-            moved_paths,
-            trash_root,
-        )
+        if _is_busy_os_error(error):
+            wrapped = ProjectDeletionBusy(
+                "Project files are in use by another program. "
+                "Please close any related programs and try again."
+            )
+        else:
+            wrapped = ProjectDeletionError(
+                f"Failed to prepare project staging directory: {error}"
+            )
+        _rollback_and_raise(wrapped, moved_paths, trash_root)
 
     try:
         deleted = delete_project(project_id)
+
     except sqlite3.OperationalError as error:
         message = str(error)
         if "locked" in message.lower():
             _rollback_and_raise(
                 ProjectDeletionBusy(
-                    "CodeCourse database is busy. Please try deleting again shortly."
+                    "CodeCourse database is busy (code index or another task). "
+                    "Please try deleting again shortly."
                 ),
                 moved_paths,
                 trash_root,
@@ -199,15 +272,19 @@ def stage_and_delete_project(project_id: int) -> Path:
             moved_paths,
             trash_root,
         )
+
     except sqlite3.Error as error:
         _rollback_and_raise(
             ProjectDeletionError(f"Failed to clean project database records: {error}"),
             moved_paths,
             trash_root,
         )
+
     except Exception as error:
         _rollback_and_raise(
-            ProjectDeletionError(f"Failed to delete project database records: {error}"),
+            ProjectDeletionError(
+                f"Failed to delete project database records: {type(error).__name__}: {error}"
+            ),
             moved_paths,
             trash_root,
         )
@@ -223,18 +300,16 @@ def stage_and_delete_project(project_id: int) -> Path:
 
 
 def cleanup_staged_project(trash_root: Path) -> None:
-    """Delete quarantined files after the database deletion has succeeded.
-
-    Cleanup failure is logged rather than making the project appear undeleted.
-    """
+    """Delete staged files after the logical project deletion succeeds."""
     if not trash_root.exists():
         return
 
-    delays = (0.0, 0.15, 0.4, 0.8, 1.5)
+    delays = (0.0, 0.15, 0.40, 0.80, 1.50)
 
     for attempt, delay in enumerate(delays, start=1):
         if delay:
             time.sleep(delay)
+
         try:
             shutil.rmtree(trash_root, onerror=_remove_readonly)
             return
@@ -245,3 +320,23 @@ def cleanup_staged_project(trash_root: Path) -> None:
                 "Failed to clean staged project directory: %s",
                 trash_root,
             )
+
+
+def cleanup_deleted_project_artifacts(
+    trash_root: Path,
+    project_id: int,
+    structural_project_name: str,
+) -> None:
+    """Cache cleanup must never turn a successful deletion into an HTTP failure."""
+    try:
+        remove_structural_project_data(
+            project_id,
+            structural_project_name=structural_project_name,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to clean structural index for deleted project %s",
+            project_id,
+        )
+
+    cleanup_staged_project(trash_root)
