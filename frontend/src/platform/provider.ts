@@ -27,12 +27,50 @@ class HttpProvider implements CodeCourseProvider {
       ...init,
     });
     if (!response.ok) {
-      const body = await response.json().catch(() => ({ detail: response.statusText }));
-      const detail = Array.isArray(body.detail)
-        ? body.detail.map((item: { msg?: string }) => item.msg).join("; ")
-        : body.detail;
-      if (detail === "Not Found") throw new Error("接口未找到，请重启后端服务后重试。");
-      throw new Error(detail ?? (response.status === 404 ? "请求的资源不存在或已被删除。" : response.statusText));
+      const rawBody = await response.text();
+      let detail: unknown = null;
+
+      if (rawBody.trim()) {
+        try {
+          const parsed = JSON.parse(rawBody) as { detail?: unknown };
+          detail = parsed.detail;
+        } catch {
+          detail = rawBody.trim();
+        }
+      }
+
+      const detailText = Array.isArray(detail)
+        ? detail
+            .map((item) => {
+              if (typeof item === "string") return item;
+              if (item && typeof item === "object" && "msg" in item) {
+                return String((item as { msg?: unknown }).msg ?? "");
+              }
+              return "";
+            })
+            .filter(Boolean)
+            .join("; ")
+        : typeof detail === "string"
+          ? detail
+          : "";
+
+      if (detailText === "Not Found") {
+        throw new Error("接口未找到，请重启后端服务后重试。");
+      }
+
+      if (detailText && detailText !== "Internal Server Error") {
+        throw new Error(detailText);
+      }
+
+      if (response.status >= 500) {
+        throw new Error("服务器处理请求失败，请查看后端日志中的具体异常。");
+      }
+
+      throw new Error(
+        response.status === 404
+          ? "请求的资源不存在或已被删除。"
+          : response.statusText || "请求失败",
+      );
     }
     return response.json() as Promise<T>;
   }

@@ -25,7 +25,6 @@ from app.services.generation_service import (
     create_or_reuse_outline_task,
     generate_rule_course,
     list_project_course_files,
-    project_course_dir,
     run_file_lesson_task,
     run_outline_lesson_task,
     run_outline_generation_task,
@@ -37,12 +36,19 @@ from app.services.git_service import clone_or_reuse, repo_name_from_url, validat
 from app.services.local_import_service import import_local_archive, import_local_directory
 from app.services.index_service import build_project_index
 from app.services.code_intelligence import remove_structural_project_data
+from app.services.project_deletion_service import (
+    ProjectDeletionBusy,
+    ProjectDeletionError,
+    ProjectDeletionNotFound,
+    ProjectDeletionUnsafePath,
+    cleanup_staged_project,
+    stage_and_delete_project,
+)
 from app.services.scanner import scan_tree
 from app.core.config import REPOS_ROOT
 from app.services.storage import (
     GenerationTask,
     create_learning_plan_project,
-    delete_project,
     get_generation_task,
     get_llm_settings,
     get_project,
@@ -344,35 +350,26 @@ def get_task(project_id: int, task_id: int) -> GenerationTaskResponse:
     return _to_task_response(task)
 
 
-def _remove_readonly(func, path, exc):
-    """Clear the read-only bit on Windows and retry."""
-    import os as _os
-    import stat as _stat
-    if not _os.access(path, _os.W_OK):
-        _os.chmod(path, _stat.S_IWRITE)
-        func(path)
-    else:
-        raise exc
-
-
 @router.delete("/projects/{project_id}", response_model=ProjectActionResponse)
-def remove_project(project_id: int) -> ProjectActionResponse:
-    project = get_project(project_id)
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found")
-    repo_root = Path(project.local_path).resolve()
-    import shutil
+def remove_project(project_id: int, background_tasks: BackgroundTasks) -> ProjectActionResponse:
+    try:
+        remove_structural_project_data(project_id)
 
-    remove_structural_project_data(project_id)
-    if repo_root.exists():
-        if REPOS_ROOT.resolve() not in repo_root.parents:
-            raise HTTPException(status_code=400, detail="Stored project path is outside the repos workspace")
-        shutil.rmtree(repo_root, onerror=_remove_readonly)
-    generated_dir = project_course_dir(project_id)
-    if generated_dir.exists():
-        shutil.rmtree(generated_dir, onerror=_remove_readonly)
-    deleted = delete_project(project_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Project not found")
+        trash_root = stage_and_delete_project(project_id)
+
+    except ProjectDeletionNotFound as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    except ProjectDeletionBusy as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+    except ProjectDeletionUnsafePath as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    except ProjectDeletionError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+    background_tasks.add_task(cleanup_staged_project, trash_root)
+
     return ProjectActionResponse(id=project_id, status="deleted", message="Project deleted", course_files=[])
 
