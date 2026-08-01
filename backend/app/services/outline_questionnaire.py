@@ -136,7 +136,7 @@ def generate_questionnaire(
         settings["api_key"],
         settings["model"],
         messages,
-        timeout=90,
+        timeout=180,
     )
     questions = _parse_questions(content)
     preflight_id = f"pf:{project_id}:{uuid4().hex[:12]}"

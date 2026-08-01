@@ -928,8 +928,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         if (response.status < 200 || response.status >= 300) {
           throw new Error(`模型调用失败（${response.status}）：${JSON.stringify(response.data)}`);
         }
-        const data = response.data as { choices?: Array<{ message?: { content?: string } }> };
-        const content = String(data?.choices?.[0]?.message?.content || "").trim();
+        const data = response.data as { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }> };
+        const message = data?.choices?.[0]?.message ?? {};
+        // Reasoning models (DeepSeek R1 lineage) put the visible answer in
+        // reasoning_content and often leave content empty.
+        const content = String(message.content || message.reasoning_content || "").trim();
         if (!content) throw new Error("模型返回了空内容。");
         return content;
       } catch (error) {

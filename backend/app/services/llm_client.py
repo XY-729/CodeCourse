@@ -49,6 +49,10 @@ def _message_content(data: dict[str, Any]) -> str:
     message = choices[0].get("message") or {}
     content = message.get("content")
     if not content:
+        # Reasoning models (e.g. DeepSeek R1 lineage) put the visible answer
+        # in reasoning_content and often leave content empty.
+        content = message.get("reasoning_content")
+    if not content:
         raise RuntimeError("LLM response has no message content")
     return str(content)
 

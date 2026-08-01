@@ -449,7 +449,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
                     ),
                 },
             ]
-            content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
+            content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=180)
             content, model_terms = parse_term_metadata(content)
             content, bibliography = parse_bibliography_metadata(content)
             outline = append_validated_bibliography(
@@ -479,7 +479,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
                 "content": outline_prompt,
             },
         ]
-        content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
+        content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=180)
         content, model_terms = parse_term_metadata(content)
         project_map, outline = _parse_outline_files(content)
         output_dir = project_course_dir(project_id)
@@ -606,7 +606,7 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
             },
             {"role": "user", "content": user_prompt},
         ]
-        content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
+        content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=180)
         content, model_terms = parse_term_metadata(content)
         lesson = _require_markdown(content)
         if not lesson.lstrip().startswith("#"):
@@ -1026,7 +1026,7 @@ def run_outline_lesson_task(
                 },
                 {"role": "user", "content": prompt},
             ],
-            timeout=120,
+            timeout=180,
         )
         content, model_terms = parse_term_metadata(content)
         lesson = _require_markdown(content)
@@ -1299,7 +1299,7 @@ async def stream_outline_generation(
 
     try:
         full_text = ""
-        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=120):
+        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=180):
             if event["event"] == "accumulated":
                 full_text = event["data"]["text"]
             else:
@@ -1408,7 +1408,7 @@ async def stream_file_lesson_generation(
 
     try:
         full_text = ""
-        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=120):
+        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=180):
             if event["event"] == "accumulated":
                 full_text = event["data"]["text"]
             else:
@@ -1509,7 +1509,7 @@ async def stream_outline_lesson_generation(
 
     try:
         full_text = ""
-        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=120):
+        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=180):
             if event["event"] == "accumulated":
                 full_text = event["data"]["text"]
             else:
