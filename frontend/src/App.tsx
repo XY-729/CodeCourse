@@ -17,6 +17,8 @@ import {
   generateOutlineLesson,
   generateOutline,
   generateOutlineStream,
+  generateOutlinePreflight,
+  confirmOutlineAnswers,
   generateFileLessonStream,
   generateOutlineLessonStream,
   getCourseContent,
@@ -70,6 +72,8 @@ import type {
   QAAskPayload,
   RetrievalSource,
   TreeNode,
+  OutlinePreflight,
+  OutlineSurveyAnswer,
 } from "./api/client";
 import AppDialog from "./components/AppDialog";
 import CodeViewer, { ViewerRange, ViewerSelection } from "./components/CodeViewer";
@@ -77,6 +81,7 @@ import CommandPalette, { type CommandPaletteItem } from "./components/CommandPal
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import LearnerProfileDialog from "./components/LearnerProfileDialog";
+import OutlineQuestionnaireDialog from "./components/OutlineQuestionnaireDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
 import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
@@ -501,6 +506,10 @@ export default function App() {
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
   const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
   const [editingCourseItemId, setEditingCourseItemId] = useState<string | null>(null);
+  const [outlinePreflight, setOutlinePreflight] = useState<OutlinePreflight | null>(null);
+  const [outlinePreflightLoading, setOutlinePreflightLoading] = useState(false);
+  const [outlinePreflightError, setOutlinePreflightError] = useState("");
+  const outlinePreflightResolveRef = useRef<((answers: OutlineSurveyAnswer[] | null) => void) | null>(null);
   const {
     dialog: appDialog,
     value: appDialogValue,
@@ -2782,20 +2791,28 @@ export default function App() {
     handleDismissSelection();
 
     try {
-      const ok = await confirmAction(
-        "生成 AI 总纲",
-        "将调用模型 API 生成学习总纲，可能消耗 token。是否继续？",
-        { confirmText: "生成", skipKey: "confirm.outline" },
-      );
+      setError("");
+      setTaskMessage("正在准备问卷");
 
-      if (!ok) {
-        return;
+      const preflight = await generateOutlinePreflight(projectId, scope, instructions);
+
+      let answers: OutlineSurveyAnswer[] | null = [];
+      if (preflight.status === "error") {
+        // 问卷生成失败（例如未配置 API），直接回落为原有确认框，不阻塞总纲生成。
+        answers = [];
+      } else if (preflight.questions.length > 0) {
+        answers = await openOutlineQuestionnaire(preflight);
       }
 
-      setError("");
       setTaskMessage("正在创建总纲任务");
-
-      const task = await generateOutline(projectId, scope, instructions);
+      const task = answers === null || preflight.status === "error"
+        ? await generateOutline(projectId, scope, instructions, [])
+        : await confirmOutlineAnswers(projectId, {
+            preflight_id: preflight.preflight_id,
+            answers,
+            scope,
+            instructions,
+          });
 
       /*
        * 请求返回后立即写入任务列表，
@@ -2814,6 +2831,26 @@ export default function App() {
       setError(caught instanceof Error ? caught.message : "创建总纲任务失败");
     } finally {
       releaseGenerationStart();
+    }
+  }
+
+  async function openOutlineQuestionnaire(
+    preflight: OutlinePreflight,
+  ): Promise<OutlineSurveyAnswer[] | null> {
+    setOutlinePreflight(preflight);
+    setOutlinePreflightLoading(false);
+    setOutlinePreflightError("");
+    return new Promise((resolve) => {
+      outlinePreflightResolveRef.current = resolve;
+    });
+  }
+
+  function handleOutlineQuestionnaireAnswers(answers: OutlineSurveyAnswer[] | null) {
+    const resolver = outlinePreflightResolveRef.current;
+    outlinePreflightResolveRef.current = null;
+    setOutlinePreflight(null);
+    if (resolver) {
+      resolver(answers);
     }
   }
 
@@ -5852,6 +5889,13 @@ export default function App() {
         onValueChange={setAppDialogValue}
         onCancel={() => closeAppDialog(null)}
         onConfirm={handleAppDialogConfirm}
+      />
+      <OutlineQuestionnaireDialog
+        preflight={outlinePreflight}
+        loading={outlinePreflightLoading}
+        error={outlinePreflightError}
+        onAnswers={handleOutlineQuestionnaireAnswers}
+        onClose={() => handleOutlineQuestionnaireAnswers(null)}
       />
     </div>
   );

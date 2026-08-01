@@ -1529,6 +1529,23 @@ def init_storage() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS outline_preflights (
+                id TEXT PRIMARY KEY,
+                project_id INTEGER NOT NULL,
+                scope_json TEXT NOT NULL DEFAULT '{}',
+                questions_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'pending',
+                answers_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_outline_preflights_pending ON outline_preflights(project_id, status, created_at DESC)"
+        )
         # ---------- Verifiable teacher V2 ----------
         conn.execute(
             """
@@ -4952,3 +4969,60 @@ def update_link_origin_automatic(document_term_id: int) -> None:
         raise
     finally:
         conn.close()
+
+
+def insert_outline_preflight(
+    project_id: int,
+    preflight_id: str,
+    scope_json: str,
+    questions_json: str,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO outline_preflights (
+                id, project_id, scope_json, questions_json, status,
+                answers_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'pending', '[]', ?, ?)
+            """,
+            (preflight_id, project_id, scope_json, questions_json, now, now),
+        )
+        conn.commit()
+
+
+def get_outline_preflight(preflight_id: str) -> Optional[dict]:
+    columns: list[str] = []
+    with _connect() as conn:
+        columns = [item[0] for item in conn.execute("SELECT * FROM outline_preflights LIMIT 0").description]
+        row = conn.execute(
+            "SELECT * FROM outline_preflights WHERE id = ?",
+            (preflight_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return dict(zip(columns, row))
+
+
+def update_outline_preflight(
+    preflight_id: str,
+    *,
+    status: Optional[str] = None,
+    answers_json: Optional[str] = None,
+) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    sets: list[str] = ["updated_at = ?"]
+    params: list[object] = [now]
+    if status is not None:
+        sets.append("status = ?")
+        params.append(status)
+    if answers_json is not None:
+        sets.append("answers_json = ?")
+        params.append(answers_json)
+    params.append(preflight_id)
+    with _connect() as conn:
+        conn.execute(
+            f"UPDATE outline_preflights SET {', '.join(sets)} WHERE id = ?",
+            params,
+        )
+        conn.commit()

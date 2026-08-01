@@ -683,6 +683,7 @@ class QARecordEndpointTests(unittest.TestCase):
                 "prompt.learning_plan.outline",
                 "prompt.learning_plan.lesson",
                 "prompt.qa.answer",
+                "prompt.outline.questionnaire",
             ],
         )
         self.assertIn("prompt.qa.answer", prompts)

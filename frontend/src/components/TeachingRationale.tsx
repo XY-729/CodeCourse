@@ -2,6 +2,7 @@ import { Check, ChevronDown, CircleHelp, X } from "lucide-react";
 import { useState } from "react";
 import {
   getTeachingTrial,
+  submitAnswerFeedback,
   submitTeachingFeedback,
 } from "../api/client";
 import type { TeachingTrial } from "../api/client";
@@ -66,6 +67,28 @@ export default function TeachingRationale({
     setMessage("");
     try {
       await submitTeachingFeedback(projectId, qaRecordId, result);
+      // 把讲解有效性映射到偏好维度，慢速微调后续讲解尺度。
+      // "讲懂了"不改变偏好（当前尺度恰好合适）；部分明白多给例子；仍不懂则补前置知识、简化术语。
+      const preferenceSignals: Array<{ dimension: string; choice: string }> =
+        result === "successful"
+          ? []
+          : result === "unsuccessful"
+            ? [
+                { dimension: "prerequisite_detail", choice: "more" },
+                { dimension: "terminology_density", choice: "less" },
+              ]
+            : [{ dimension: "code_ratio", choice: "more" }];
+      await Promise.all(
+        preferenceSignals.map((signal) =>
+          submitAnswerFeedback(projectId, {
+            dimension: signal.dimension,
+            choice: signal.choice,
+            qa_record_id: qaRecordId,
+            source: "explicit_user",
+            idempotency_key: `teaching:${qaRecordId}:${result}:${signal.dimension}`,
+          }),
+        ),
+      );
       setTrial(await getTeachingTrial(projectId, qaRecordId));
       setMessage("已记录，你的反馈会影响后续讲解方式");
       onChanged?.();

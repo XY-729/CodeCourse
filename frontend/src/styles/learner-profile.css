@@ -89,7 +89,7 @@
 
 .learner-profile-tabs {
   display: grid;
-  grid-template-columns: repeat(4, max-content);
+  grid-template-columns: repeat(5, max-content);
   width: max-content;
   margin: 12px 18px 4px;
   padding: 3px;
@@ -210,6 +210,70 @@
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
+}
+
+.learner-preference-view {
+  display: grid;
+  gap: 10px;
+}
+
+.learner-preference-hint {
+  margin: 0;
+  color: var(--lp-text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.learner-preference-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(120px, 1.2fr) 48px;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 8px 12px;
+  color: var(--lp-text);
+  background: var(--lp-surface-raised);
+  border: 1px solid var(--lp-line);
+  border-radius: 8px;
+  box-shadow: var(--lp-inner-highlight), var(--lp-shadow-sm);
+}
+
+.learner-preference-row span {
+  display: grid;
+  gap: 2px;
+}
+
+.learner-preference-row small {
+  color: var(--lp-text-soft);
+  font-size: 12px;
+}
+
+.learner-preference-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--lp-accent);
+}
+
+.learner-preference-row select {
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--lp-text);
+  background: var(--lp-surface);
+  border: 1px solid var(--lp-line);
+  border-radius: 7px;
+  font: inherit;
+}
+
+.learner-preference-row output {
+  text-align: right;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--lp-text-soft);
+}
+
+.learner-preference-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .domain-profile-list,
@@ -786,7 +850,7 @@ html.platform-android .learner-profile-content {
 }
 
 html.platform-android .learner-profile-tabs {
-  grid-template-columns: repeat(4, minmax(max-content, 1fr));
+  grid-template-columns: repeat(5, minmax(max-content, 1fr));
   overflow-x: auto;
   scrollbar-width: none;
   background: var(--lp-fill);
@@ -811,7 +875,7 @@ html.platform-android .assistant-survey-card button {
 
 @media (max-width: 620px) {
   .learner-profile-tabs {
-    grid-template-columns: repeat(4, minmax(76px, 1fr));
+    grid-template-columns: repeat(5, minmax(72px, 1fr));
     width: auto;
     margin-inline: 12px;
   }

@@ -304,6 +304,35 @@ export type LearningScope = {
   paths: string[];
 };
 
+export type OutlineQuestion = {
+  question: string;
+  question_type: string;
+  dimension: string;
+  options: Array<{ value: string; label: string }>;
+  rationale?: string;
+};
+
+export type OutlinePreflight = {
+  preflight_id: string;
+  questions: OutlineQuestion[];
+  status?: "pending" | "error";
+  message?: string | null;
+};
+
+export type OutlineSurveyAnswer = {
+  question: string;
+  question_type: string;
+  dimension: string;
+  selected: string | string[];
+  _key: string;
+};
+
+export type GenerateOutlineRequestPayload = {
+  scope: LearningScope;
+  instructions: string;
+  survey_answers: OutlineSurveyAnswer[];
+};
+
 export type GenerationTask = {
   id: number;
   project_id: number;
@@ -428,10 +457,41 @@ export function deleteCourseFile(projectId: number, filename: string): Promise<{
   );
 }
 
-export function generateOutline(projectId: number, scope: LearningScope, instructions: string): Promise<GenerationTask> {
+export function generateOutline(
+  projectId: number,
+  scope: LearningScope,
+  instructions: string,
+  surveyAnswers: OutlineSurveyAnswer[] = [],
+): Promise<GenerationTask> {
   return request<GenerationTask>(`/projects/${projectId}/outline/generate`, {
     method: "POST",
+    body: JSON.stringify({ scope, instructions, survey_answers: surveyAnswers }),
+  });
+}
+
+export function generateOutlinePreflight(
+  projectId: number,
+  scope: LearningScope,
+  instructions: string,
+): Promise<OutlinePreflight> {
+  return request<OutlinePreflight>(`/projects/${projectId}/outline/generate/preflight`, {
+    method: "POST",
     body: JSON.stringify({ scope, instructions }),
+  });
+}
+
+export function confirmOutlineAnswers(
+  projectId: number,
+  payload: {
+    preflight_id: string;
+    answers: OutlineSurveyAnswer[];
+    scope: LearningScope;
+    instructions: string;
+  },
+): Promise<GenerationTask> {
+  return request<GenerationTask>(`/projects/${projectId}/outline/generate/confirm`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

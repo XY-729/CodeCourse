@@ -16,6 +16,9 @@ from app.models.schemas import (
     GenerationTaskResponse,
     ImportLocalProjectRequest,
     ImportProjectRequest,
+    OutlineConfirmRequest,
+    OutlinePreflightRequest,
+    OutlinePreflightResponse,
     ProjectActionResponse,
     ProjectResponse,
     TreeNode,
@@ -241,7 +244,64 @@ def generate_outline(project_id: int, payload: GenerateOutlineRequest, backgroun
     settings = get_llm_settings()
     task, reused = create_or_reuse_outline_task(project_id, repo_root, payload.scope, settings.get("model"), payload.instructions)
     if not reused:
-        background_tasks.add_task(run_outline_generation_task, project_id, task.id, payload.scope, payload.instructions)
+        background_tasks.add_task(
+            run_outline_generation_task,
+            project_id,
+            task.id,
+            payload.scope,
+            payload.instructions,
+            payload.survey_answers,
+        )
+    return _to_task_response(task)
+
+
+@router.post("/projects/{project_id}/outline/generate/preflight", response_model=OutlinePreflightResponse)
+def generate_outline_preflight(project_id: int, payload: OutlinePreflightRequest) -> OutlinePreflightResponse:
+    try:
+        from app.services.outline_questionnaire import generate_questionnaire
+
+        result = generate_questionnaire(project_id, payload.scope, payload.instructions)
+        return OutlinePreflightResponse(preflight_id=result["preflight_id"], questions=result["questions"])
+    except Exception as exc:
+        return OutlinePreflightResponse(
+            preflight_id="",
+            questions=[],
+            status="error",
+            message=str(exc),
+        )
+
+
+@router.post("/projects/{project_id}/outline/generate/confirm", response_model=GenerationTaskResponse)
+def confirm_outline_generation(project_id: int, payload: OutlineConfirmRequest, background_tasks: BackgroundTasks) -> GenerationTaskResponse:
+    from app.services.outline_questionnaire import (
+        mark_preflight_answered,
+        persist_prerequisite_answers,
+        resolve_preflight,
+    )
+
+    preflight = resolve_preflight(payload.preflight_id)
+    if preflight is not None and preflight.get("project_id") == project_id:
+        mark_preflight_answered(payload.preflight_id, payload.answers)
+        persist_prerequisite_answers(project_id, payload.answers)
+
+    repo_root = _project_root(project_id)
+    settings = get_llm_settings()
+    task, reused = create_or_reuse_outline_task(
+        project_id,
+        repo_root,
+        payload.scope,
+        settings.get("model"),
+        payload.instructions,
+    )
+    if not reused:
+        background_tasks.add_task(
+            run_outline_generation_task,
+            project_id,
+            task.id,
+            payload.scope,
+            payload.instructions,
+            payload.answers,
+        )
     return _to_task_response(task)
 
 
@@ -301,7 +361,7 @@ def _format_sse(event: dict) -> str:
 async def generate_outline_stream(project_id: int, payload: GenerateOutlineRequest):
     async def generate():
         try:
-            async for event in stream_outline_generation(project_id, payload.scope, payload.instructions):
+            async for event in stream_outline_generation(project_id, payload.scope, payload.instructions, payload.survey_answers):
                 yield _format_sse(event)
         except asyncio.CancelledError:
             yield _format_sse({"event": "error", "data": {"message": "生成已取消"}})

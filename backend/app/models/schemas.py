@@ -87,6 +87,26 @@ class LearningScopeRequest(BaseModel):
 class GenerateOutlineRequest(BaseModel):
     scope: LearningScopeRequest = Field(default_factory=LearningScopeRequest)
     instructions: str = Field(default="", max_length=4000)
+    survey_answers: list[dict] = Field(default_factory=list)
+
+
+class OutlinePreflightRequest(BaseModel):
+    scope: LearningScopeRequest = Field(default_factory=LearningScopeRequest)
+    instructions: str = Field(default="", max_length=4000)
+
+
+class OutlinePreflightResponse(BaseModel):
+    preflight_id: str
+    questions: list[dict]
+    status: Literal["pending", "error"] = "pending"
+    message: Optional[str] = None
+
+
+class OutlineConfirmRequest(BaseModel):
+    preflight_id: str = Field(min_length=1)
+    answers: list[dict] = Field(default_factory=list)
+    scope: LearningScopeRequest = Field(default_factory=LearningScopeRequest)
+    instructions: str = Field(default="", max_length=4000)
 
 
 class GenerateFileLessonRequest(BaseModel):

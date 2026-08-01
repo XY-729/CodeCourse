@@ -391,11 +391,17 @@ def build_outline_lesson_input(
     return lesson_title, lesson_input, input_hash
 
 
-def run_outline_generation_task(project_id: int, task_id: int, scope: LearningScopeRequest, instructions: str = "") -> None:
+def run_outline_generation_task(project_id: int, task_id: int, scope: LearningScopeRequest, instructions: str = "", survey_answers: Optional[list] = None) -> None:
     project = get_project(project_id)
     if project is None:
         update_generation_task(task_id, "failed", error_message="Project not found")
         return
+    if survey_answers:
+        from app.services.outline_questionnaire import serialize_learning_intent
+
+        intent = serialize_learning_intent(survey_answers)
+        if intent:
+            instructions = instructions + "\n\n" + intent
     repo_root = Path(project.local_path).resolve()
     try:
         settings = _llm_settings_or_error()
@@ -1180,6 +1186,7 @@ async def stream_outline_generation(
     project_id: int,
     scope: LearningScopeRequest,
     instructions: str = "",
+    survey_answers: Optional[list] = None,
 ) -> AsyncIterator[dict[str, Any]]:
     from app.services.storage import (
         GenerationTask,
@@ -1189,6 +1196,13 @@ async def stream_outline_generation(
         update_generation_task,
         update_project_status,
     )
+
+    if survey_answers:
+        from app.services.outline_questionnaire import serialize_learning_intent
+
+        intent = serialize_learning_intent(survey_answers)
+        if intent:
+            instructions = instructions + "\n\n" + intent
 
     project = get_project(project_id)
     if project is None:

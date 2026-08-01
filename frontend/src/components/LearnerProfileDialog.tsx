@@ -14,6 +14,7 @@ import {
   answerDynamicSurvey,
   clearConceptOverride,
   dismissDynamicSurvey,
+  getLearnerPreferences,
   getPersonalizationProfile,
   markConceptKnown,
   markConceptUnknown,
@@ -23,8 +24,9 @@ import {
   voidLearnerInference,
   type KnowledgeDimension,
   type KnowledgeStateV2,
-  type LearningEvidenceV2,
   type LearnerInference,
+  type LearnerPreferences,
+  type LearningEvidenceV2,
   type PersonalizationProfile,
 } from "../api/client";
 
@@ -36,7 +38,7 @@ type Props = {
   onConfirm?: (title: string, message: string, options?: { confirmText?: string; danger?: boolean }) => Promise<boolean>;
 };
 
-type View = "overview" | "concepts" | "evidence" | "calls";
+type View = "overview" | "concepts" | "evidence" | "calls" | "preferences";
 
 const STATE_LABELS: Record<LearnerInference["state"], string> = {
   confirmed: "有直接掌握证据",
@@ -131,6 +133,8 @@ export default function LearnerProfileDialog({
   const [message, setMessage] = useState("");
   const [expandedInference, setExpandedInference] = useState<string | null>(null);
   const [expandedEvidence, setExpandedEvidence] = useState<string | null>(null);
+  const [preferences, setPreferences] = useState<LearnerPreferences | null>(null);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
 
   async function load() {
     if (projectId == null) return;
@@ -138,6 +142,7 @@ export default function LearnerProfileDialog({
     setMessage("");
     try {
       setProfile(await getPersonalizationProfile(projectId));
+      setPreferences(await getLearnerPreferences(projectId));
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "读取学习档案失败");
     } finally {
@@ -307,6 +312,38 @@ export default function LearnerProfileDialog({
     onChanged?.();
   }
 
+  async function savePreferences(patch: Partial<{
+    answer_depth: number;
+    code_ratio: number;
+    explanation_order: LearnerPreferences["explanationOrder"];
+    prerequisite_detail: number;
+    terminology_density: number;
+  }>) {
+    if (projectId == null) return;
+    setPreferencesSaving(true);
+    setMessage("");
+    try {
+      setPreferences(await updateLearnerPreferences(projectId, { ...patch, scope: "global" }));
+      setMessage("偏好已保存");
+      onChanged?.();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "保存偏好失败");
+    } finally {
+      setPreferencesSaving(false);
+    }
+  }
+
+  async function resetPreferences() {
+    if (projectId == null || !preferences) return;
+    await savePreferences({
+      answer_depth: 0.5,
+      code_ratio: 0.5,
+      explanation_order: "balanced",
+      prerequisite_detail: 0.5,
+      terminology_density: 0.5,
+    });
+  }
+
   return (
     <div className="modal-backdrop learner-profile-backdrop" role="dialog" aria-modal="true" aria-label="我的学习档案">
       <section className="learner-profile-sheet">
@@ -323,6 +360,7 @@ export default function LearnerProfileDialog({
           <button className={view === "concepts" ? "active" : ""} onClick={() => setView("concepts")}>概念状态</button>
           <button className={view === "evidence" ? "active" : ""} onClick={() => setView("evidence")}>判断依据</button>
           <button className={view === "calls" ? "active" : ""} onClick={() => setView("calls")}>模型调用</button>
+          <button className={view === "preferences" ? "active" : ""} onClick={() => setView("preferences")}>讲解偏好</button>
         </nav>
 
         <div className="learner-profile-content">
@@ -561,6 +599,73 @@ export default function LearnerProfileDialog({
                   {call.errorMessage ? <p>{call.errorMessage}</p> : null}
                 </article>
               )) : <div className="learner-profile-empty"><Clock3 size={22} /><span>暂无后台模型调用记录。</span></div>}
+            </div>
+          ) : null}
+
+          {preferences && view === "preferences" ? (
+            <div className="learner-preference-view">
+              <p className="learner-preference-hint">
+                这些偏好决定 AI 老师默认怎样讲解。你可以在一次问答后点"这次讲解是否有效"微调，此处手动调整立即生效。
+              </p>
+              <label className="learner-preference-row">
+                <span><strong>回答深度</strong><small>讲得详细还是紧凑</small></span>
+                <input
+                  type="range" min="0" max="1" step="0.05"
+                  value={preferences.answerDepth}
+                  onChange={(event) => setPreferences({ ...preferences, answerDepth: Number(event.target.value) })}
+                  onBlur={() => void savePreferences({ answer_depth: preferences.answerDepth })}
+                />
+                <output>{Math.round(preferences.answerDepth * 100)}%</output>
+              </label>
+              <label className="learner-preference-row">
+                <span><strong>代码比例</strong><small>多给代码示例还是少给</small></span>
+                <input
+                  type="range" min="0" max="1" step="0.05"
+                  value={preferences.codeRatio}
+                  onChange={(event) => setPreferences({ ...preferences, codeRatio: Number(event.target.value) })}
+                  onBlur={() => void savePreferences({ code_ratio: preferences.codeRatio })}
+                />
+                <output>{Math.round(preferences.codeRatio * 100)}%</output>
+              </label>
+              <label className="learner-preference-row">
+                <span><strong>讲解顺序</strong><small>先讲例子还是先讲原理</small></span>
+                <select
+                  value={preferences.explanationOrder}
+                  onChange={(event) => {
+                    const next = event.target.value as LearnerPreferences["explanationOrder"];
+                    setPreferences({ ...preferences, explanationOrder: next });
+                    void savePreferences({ explanation_order: next });
+                  }}
+                >
+                  <option value="balanced">均衡</option>
+                  <option value="example_first">例子优先</option>
+                  <option value="principle_first">原理优先</option>
+                  <option value="code_first">代码优先</option>
+                </select>
+              </label>
+              <label className="learner-preference-row">
+                <span><strong>前置知识详细度</strong><small>需要多少前置知识铺垫</small></span>
+                <input
+                  type="range" min="0" max="1" step="0.05"
+                  value={preferences.prerequisiteDetail}
+                  onChange={(event) => setPreferences({ ...preferences, prerequisiteDetail: Number(event.target.value) })}
+                  onBlur={() => void savePreferences({ prerequisite_detail: preferences.prerequisiteDetail })}
+                />
+                <output>{Math.round(preferences.prerequisiteDetail * 100)}%</output>
+              </label>
+              <label className="learner-preference-row">
+                <span><strong>术语密度</strong><small>专业名词解释到什么程度</small></span>
+                <input
+                  type="range" min="0" max="1" step="0.05"
+                  value={preferences.terminologyDensity}
+                  onChange={(event) => setPreferences({ ...preferences, terminologyDensity: Number(event.target.value) })}
+                  onBlur={() => void savePreferences({ terminology_density: preferences.terminologyDensity })}
+                />
+                <output>{Math.round(preferences.terminologyDensity * 100)}%</output>
+              </label>
+              <div className="learner-preference-actions">
+                <button type="button" className="secondary-button" disabled={preferencesSaving} onClick={() => void resetPreferences()}>重置为默认</button>
+              </div>
             </div>
           ) : null}
         </div>
