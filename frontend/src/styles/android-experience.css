@@ -1906,3 +1906,97 @@ html.platform-android .markdown-body h3 {
     min-width: 42px;
   }
 }
+
+/* ---- Outline questionnaire (Android) ---- */
+html.platform-android .outline-questionnaire-header {
+  border-bottom: 1px solid var(--mobile-line);
+}
+
+html.platform-android .outline-questionnaire-header .icon-button {
+  min-width: 44px;
+  min-height: 44px;
+  color: var(--mobile-text-secondary);
+  background: transparent;
+}
+
+html.platform-android .outline-questionnaire-progress-track {
+  background: var(--mobile-line);
+}
+
+html.platform-android .outline-questionnaire-progress-track span {
+  background: var(--mobile-progress, #218967);
+}
+
+html.platform-android .outline-questionnaire-progress small {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .outline-question-index {
+  color: var(--mobile-accent-strong);
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .outline-question-head h3 {
+  color: var(--mobile-text);
+}
+
+html.platform-android .outline-question-rationale {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .outline-question-multi-hint {
+  color: var(--mobile-accent-strong);
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .outline-question-option {
+  min-height: 52px;
+  color: var(--mobile-text);
+  background: var(--mobile-surface);
+  border-color: var(--mobile-line);
+  border-radius: var(--mobile-radius-sm);
+}
+
+html.platform-android .outline-question-option:hover {
+  border-color: var(--mobile-line-strong);
+  background: var(--mobile-surface-soft);
+}
+
+html.platform-android .outline-question-option.selected {
+  color: var(--mobile-accent-strong);
+  background: var(--mobile-accent-soft);
+  border-color: var(--mobile-accent);
+  box-shadow: 0 0 0 3px var(--mobile-accent-soft);
+}
+
+html.platform-android .outline-question-option-glyph {
+  background: var(--mobile-surface);
+  border-color: var(--mobile-line-strong);
+}
+
+html.platform-android .outline-question-option.selected .outline-question-option-glyph {
+  background: var(--mobile-accent);
+  border-color: var(--mobile-accent);
+}
+
+html.platform-android .outline-question-text {
+  min-height: 110px;
+  color: var(--mobile-text);
+  background: var(--mobile-surface-raised);
+  border-color: var(--mobile-line-strong);
+  border-radius: var(--mobile-radius-sm);
+}
+
+html.platform-android .outline-question-text::placeholder {
+  color: var(--mobile-text-tertiary);
+}
+
+html.platform-android .outline-questionnaire-skip.link-button {
+  min-height: 44px;
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .outline-questionnaire-nav .primary-button,
+html.platform-android .outline-questionnaire-nav .secondary-button {
+  min-height: 44px;
+}

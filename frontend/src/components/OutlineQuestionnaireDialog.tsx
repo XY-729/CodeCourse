@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Check, ChevronLeft, ChevronRight, Sparkles, X } from "lucide-react";
 import type {
   OutlinePreflight,
   OutlineQuestion,
@@ -45,8 +46,22 @@ function toAnswer(
 export default function OutlineQuestionnaireDialog({ preflight, loading, error, onAnswers, onClose }: Props) {
   const [selections, setSelections] = useState<Record<string, Selection>>({});
   const [texts, setTexts] = useState<Record<string, string>>({});
+  const [currentIndex, setCurrentIndex] = useState(0);
 
   const questions = preflight?.questions ?? [];
+  const preflightId = preflight?.preflight_id;
+
+  useEffect(() => {
+    setCurrentIndex(0);
+  }, [preflightId]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onAnswers(null);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onAnswers]);
 
   const answersReady = useMemo(() => {
     if (questions.length === 0) return false;
@@ -56,6 +71,16 @@ export default function OutlineQuestionnaireDialog({ preflight, loading, error, 
       return isMulti(q) ? selected.length > 0 : selected.length === 1;
     });
   }, [questions, selections, texts]);
+
+  const current = questions[currentIndex];
+  const isLast = currentIndex === questions.length - 1;
+
+  function questionAnswered(question: OutlineQuestion | undefined): boolean {
+    if (!question) return false;
+    if (isText(question)) return (texts[question.question] ?? "").trim().length > 0;
+    const selected = selections[question.question] ?? [];
+    return isMulti(question) ? selected.length > 0 : selected.length === 1;
+  }
 
   function toggleOption(question: OutlineQuestion, value: string) {
     const key = question.question;
@@ -79,72 +104,147 @@ export default function OutlineQuestionnaireDialog({ preflight, loading, error, 
     onAnswers(answers);
   }
 
+  function goNext() {
+    if (currentIndex < questions.length - 1) {
+      setCurrentIndex((index) => index + 1);
+    } else {
+      submit();
+    }
+  }
+
+  function goBack() {
+    if (currentIndex > 0) setCurrentIndex((index) => index - 1);
+  }
+
+  function skip() {
+    onAnswers(null);
+  }
+
+  function handleTextKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      goNext();
+    }
+  }
+
   if (!preflight && !loading) {
     return null;
   }
 
+  const progressPct = questions.length > 0 ? ((currentIndex + 1) / questions.length) * 100 : 0;
+
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="生成总纲前问卷">
       <div className="app-dialog outline-questionnaire-dialog">
-        <div className="app-dialog-title">生成总纲前问卷</div>
-        <div className="app-dialog-message">
-          先回答几个问题，让总纲更贴合你的学习意图。所有答案会注入本次总纲，其中前置知识程度会更新你的学习档案。
-        </div>
+        <header className="outline-questionnaire-header">
+          <div className="modal-title">
+            <span>
+              <Sparkles size={16} />
+              生成总纲前问卷
+            </span>
+            <button type="button" className="icon-button" aria-label="关闭" onClick={skip}>
+              <X size={17} />
+            </button>
+          </div>
+          {questions.length > 0 ? (
+            <div
+              className="outline-questionnaire-progress"
+              role="progressbar"
+              aria-valuemin={1}
+              aria-valuemax={questions.length}
+              aria-valuenow={currentIndex + 1}
+            >
+              <div className="outline-questionnaire-progress-track">
+                <span style={{ width: `${progressPct}%` }} />
+              </div>
+              <small>
+                第 {currentIndex + 1} / {questions.length} 题
+              </small>
+            </div>
+          ) : null}
+        </header>
 
         <div className="outline-questionnaire-body">
           {loading ? <div className="outline-questionnaire-loading">正在生成问卷...</div> : null}
           {error ? <div className="outline-questionnaire-error">{error}</div> : null}
 
-          {!loading && !error
-            ? questions.map((q, index) => {
-                const key = q.question;
-                const multi = isMulti(q);
-                const text = isText(q);
-                return (
-                  <section className="learner-survey-card" key={key}>
-                    <div>
-                      <strong>{index + 1}. {q.question}</strong>
-                      {q.rationale ? <small className="outline-question-rationale">{q.rationale}</small> : null}
-                    </div>
-                    {text ? (
-                      <input
-                        className="outline-question-text"
-                        placeholder="输入你的回答..."
-                        value={texts[key] ?? ""}
-                        onChange={(event) => setTexts((prev) => ({ ...prev, [key]: event.target.value }))}
-                      />
-                    ) : (
-                      <div className="learner-survey-options">
-                        {q.options.map((option) => {
-                          const checked = (selections[key] ?? []).includes(option.value);
-                          return (
-                            <button
-                              type="button"
-                              key={option.value}
-                              className={checked ? "selected" : ""}
-                              onClick={() => toggleOption(q, option.value)}
-                            >
-                              {option.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </section>
-                );
-              })
-            : null}
+          {!loading && !error && current ? renderQuestion(current, currentIndex) : null}
         </div>
 
-        <div className="app-dialog-actions">
-          <button type="button" className="secondary-button" onClick={() => onAnswers(null)}>
+        <div className="app-dialog-actions outline-questionnaire-nav">
+          <button type="button" className="link-button outline-questionnaire-skip" onClick={skip}>
             跳过，直接生成
           </button>
-          <button type="submit" className="primary-button" disabled={!answersReady || loading} onClick={submit}>
-            生成总纲
+          <span className="outline-questionnaire-nav-spacer" />
+          {currentIndex > 0 ? (
+            <button type="button" className="secondary-button" onClick={goBack}>
+              <ChevronLeft size={14} />
+              上一步
+            </button>
+          ) : null}
+          <button
+            type="submit"
+            className="primary-button"
+            disabled={!questionAnswered(current) || loading}
+            onClick={goNext}
+          >
+            {isLast ? "生成总纲" : (
+              <>
+                下一步
+                <ChevronRight size={14} />
+              </>
+            )}
           </button>
         </div>
       </div>
     </div>
   );
+
+  function renderQuestion(q: OutlineQuestion, index: number) {
+    const key = q.question;
+    const multi = isMulti(q);
+    const text = isText(q);
+    return (
+      <section className="outline-question-card" key={key}>
+        <div className="outline-question-head">
+          <span className="outline-question-index">{index + 1}</span>
+          <div>
+            <h3>{q.question}</h3>
+            {q.rationale ? <small className="outline-question-rationale">{q.rationale}</small> : null}
+          </div>
+          {multi ? <span className="outline-question-multi-hint">可多选</span> : null}
+        </div>
+        {text ? (
+          <textarea
+            className="outline-question-text"
+            rows={3}
+            placeholder="输入你的回答..."
+            value={texts[key] ?? ""}
+            autoFocus={index === 0}
+            onChange={(event) => setTexts((prev) => ({ ...prev, [key]: event.target.value }))}
+            onKeyDown={handleTextKeyDown}
+          />
+        ) : (
+          <div className="learner-survey-options">
+            {q.options.map((option) => {
+              const checked = (selections[key] ?? []).includes(option.value);
+              return (
+                <button
+                  type="button"
+                  key={option.value}
+                  className={`outline-question-option ${checked ? "selected" : ""} ${multi ? "multi" : "single"}`}
+                  onClick={() => toggleOption(q, option.value)}
+                >
+                  <span className="outline-question-option-glyph">
+                    {checked ? <Check size={13} /> : null}
+                  </span>
+                  <span className="outline-question-option-label">{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    );
+  }
 }

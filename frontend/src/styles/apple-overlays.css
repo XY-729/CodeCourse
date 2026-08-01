@@ -904,3 +904,35 @@ html.platform-android .style-survey-card.mobile {
     animation: none;
   }
 }
+
+/* ---- Outline questionnaire (desktop) ---- */
+html:not(.platform-android) .outline-questionnaire-header {
+  border-bottom: 1px solid var(--apple-separator);
+}
+
+html:not(.platform-android) .outline-questionnaire-progress-track {
+  background: var(--apple-fill);
+}
+
+html:not(.platform-android) .outline-questionnaire-progress-track span {
+  background: var(--apple-blue);
+}
+
+html:not(.platform-android) .outline-question-text {
+  border-color: var(--apple-separator-strong);
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .outline-question-text:focus {
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 3px var(--apple-blue-soft);
+}
+
+html:not(.platform-android) .outline-questionnaire-skip.link-button:hover {
+  color: var(--apple-blue);
+}
+
+html:not(.platform-android) .outline-questionnaire-header .icon-button:hover {
+  color: var(--apple-text);
+  background: var(--apple-fill);
+}
