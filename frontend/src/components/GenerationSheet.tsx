@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Sparkles, X } from "lucide-react";
 import type { GenerationTask, Project } from "../api/client";
 import type { GenerationIntent } from "./DesktopToolbar";
+import { generationTaskProgress } from "./generationTaskModel";
 
 export type GenerationScope = "full_project" | "files" | "learning_plan";
 
@@ -54,6 +55,7 @@ export default function GenerationSheet(props: Props) {
   if (!open) return null;
   const copy = labels[intent];
   const learningPlan = project?.project_type === "learning_plan";
+  const progress = activeTask ? generationTaskProgress(activeTask) : null;
 
   return (
     <div className="apple-sheet-layer" onMouseDown={onClose}>
@@ -101,7 +103,11 @@ export default function GenerationSheet(props: Props) {
           {taskMessage ? (
             <div className={`generation-sheet-status ${activeTask?.status === "failed" ? "failed" : ""}`}>
               <span>{taskMessage}</span>
-              {activeTask && activeTask.progress_total > 0 ? <small>{activeTask.progress_current}/{activeTask.progress_total}</small> : null}
+              {progress != null ? (
+                <div className="generation-sheet-progress" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
+                  <i style={{ width: `${progress}%` }} />
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

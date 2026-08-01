@@ -1172,6 +1172,11 @@ html.platform-android .apple-feedback-progress i {
   transition: width 420ms var(--mobile-ease-out);
 }
 
+html.platform-android .generation-sheet-status { padding: 9px 10px; border-radius: var(--mobile-radius-sm); display: flex; flex-direction: column; gap: 6px; color: var(--mobile-text-secondary); background: var(--mobile-surface); font-size: 12px; }
+html.platform-android .generation-sheet-status.failed { color: var(--mobile-danger); }
+html.platform-android .generation-sheet-progress { height: 4px; overflow: hidden; border-radius: 999px; background: var(--mobile-surface-pressed); }
+html.platform-android .generation-sheet-progress i { display: block; height: 100%; border-radius: inherit; background: var(--mobile-accent); transition: width 420ms var(--mobile-ease-out); }
+
 html.platform-android .selection-quick-bar {
   bottom: calc(76px + env(safe-area-inset-bottom));
   color: var(--mobile-text);

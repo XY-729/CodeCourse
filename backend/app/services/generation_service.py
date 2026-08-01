@@ -425,7 +425,13 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
     repo_root = Path(project.local_path).resolve()
     try:
         settings = _llm_settings_or_error()
-        update_generation_task(task_id, "running")
+        update_generation_task(
+            task_id,
+            "running",
+            progress_current=0,
+            progress_total=4,
+            stage_label="正在分析项目",
+        )
         update_project_status(project_id, "generating_outline")
         prompt_input, _ = build_outline_input(repo_root, scope, instructions)
         scope_text = _scope_to_text(scope)
@@ -449,7 +455,21 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
                     ),
                 },
             ]
+            update_generation_task(
+                task_id,
+                "running",
+                progress_current=1,
+                progress_total=4,
+                stage_label="正在生成总纲",
+            )
             content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=180)
+            update_generation_task(
+                task_id,
+                "running",
+                progress_current=2,
+                progress_total=4,
+                stage_label="正在解析与归档",
+            )
             content, model_terms = parse_term_metadata(content)
             content, bibliography = parse_bibliography_metadata(content)
             outline = append_validated_bibliography(
@@ -458,7 +478,14 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
             output_dir = project_course_dir(project_id)
             _atomic_write(output_dir / "outline.md", add_outline_lesson_links(outline))
             register_document_terms(project_id, "course", "outline.md", outline, model_terms)
-            update_generation_task(task_id, "completed", output_path=output_dir)
+            update_generation_task(
+                task_id,
+                "completed",
+                output_path=output_dir,
+                progress_current=4,
+                progress_total=4,
+                stage_label="生成完成",
+            )
             update_project_status(project_id, "outline_ready")
             return
 
@@ -479,7 +506,21 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
                 "content": outline_prompt,
             },
         ]
+        update_generation_task(
+            task_id,
+            "running",
+            progress_current=1,
+            progress_total=4,
+            stage_label="正在生成总纲",
+        )
         content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=180)
+        update_generation_task(
+            task_id,
+            "running",
+            progress_current=2,
+            progress_total=4,
+            stage_label="正在解析与归档",
+        )
         content, model_terms = parse_term_metadata(content)
         project_map, outline = _parse_outline_files(content)
         output_dir = project_course_dir(project_id)
@@ -488,10 +529,17 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
         register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
         register_document_terms(project_id, "course", "outline.md", outline, model_terms)
         _select_and_persist_lesson_files(project_id, repo_root, outline)
-        update_generation_task(task_id, "completed", output_path=output_dir)
+        update_generation_task(
+            task_id,
+            "completed",
+            output_path=output_dir,
+            progress_current=4,
+            progress_total=4,
+            stage_label="生成完成",
+        )
         update_project_status(project_id, "outline_ready")
     except Exception as exc:  # noqa: BLE001
-        update_generation_task(task_id, "failed", error_message=str(exc))
+        update_generation_task(task_id, "failed", error_message=str(exc), stage_label="生成失败")
         update_project_status(project_id, "outline_failed")
 
 
@@ -586,7 +634,13 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
     repo_root = Path(project.local_path).resolve()
     try:
         settings = _llm_settings_or_error()
-        update_generation_task(task_id, "running")
+        update_generation_task(
+            task_id,
+            "running",
+            progress_current=0,
+            progress_total=3,
+            stage_label="正在读取文件",
+        )
         prompt_input, _, _ = build_file_lesson_input(project_id, repo_root, relative_path, mode, instructions)
         user_instructions = _clean_instructions(instructions)
         mode_label = "粗略介绍" if mode == "brief" else "详细分析"
@@ -606,6 +660,13 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
             },
             {"role": "user", "content": user_prompt},
         ]
+        update_generation_task(
+            task_id,
+            "running",
+            progress_current=1,
+            progress_total=3,
+            stage_label="正在生成课件",
+        )
         content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=180)
         content, model_terms = parse_term_metadata(content)
         lesson = _require_markdown(content)
@@ -615,9 +676,16 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
         output_path = project_course_dir(project_id) / _safe_lesson_filename(relative_path, mode)
         _atomic_write(output_path, lesson)
         register_document_terms(project_id, "course", _safe_lesson_filename(relative_path, mode), lesson, model_terms)
-        update_generation_task(task_id, "completed", output_path=output_path)
+        update_generation_task(
+            task_id,
+            "completed",
+            output_path=output_path,
+            progress_current=3,
+            progress_total=3,
+            stage_label="生成完成",
+        )
     except Exception as exc:  # noqa: BLE001
-        update_generation_task(task_id, "failed", error_message=str(exc))
+        update_generation_task(task_id, "failed", error_message=str(exc), stage_label="生成失败")
 
 
 def _parse_lesson_plan(content: str) -> dict:
@@ -944,6 +1012,222 @@ def _run_learning_plan_lesson_task(
         shutil.rmtree(staging_dir, ignore_errors=True)
 
 
+def _run_repository_lesson_task(
+    project_id: int,
+    task_id: int,
+    lesson_number: int,
+    lesson_title: str,
+    lesson_input: str,
+    instructions: str,
+    settings: dict[str, str],
+) -> tuple[str, str]:
+    lesson_policy = load_prompt("prompt.outline_lesson")
+    user_instructions = _clean_instructions(instructions) or "无"
+    update_generation_task(
+        task_id,
+        "running",
+        progress_current=0,
+        progress_total=12,
+        stage_label="正在规划课件",
+    )
+    planner_prompt = f"""你是一位严谨的软件工程讲师。现在要把项目学习总纲中的“第 {lesson_number} 课”拆分为可并发编写的详细课件章节规划。
+
+本课名称：{lesson_title}
+用户补充要求：{user_instructions}
+
+你会得到三类材料：
+1. 项目学习总纲：用于理解本课在整体路线中的位置；
+2. 本课计划：用于确定本课应该解决什么问题；
+3. RAG 索引检索片段：来自真实项目文件，带有路径和行号，是讲解代码的主要证据。
+
+你的任务：阅读下方课程材料，提取本课应该覆盖的全部知识内容，并将其组织为 4-10 个章节。每个章节必须列出明确的知识项（函数、API、语法、概念或代码阅读动作）。不能使用“其他相关知识”等笼统项。
+
+只输出一个 JSON 对象，不要输出 Markdown 或额外解释：
+
+{{
+  "lesson_title": "{lesson_title}",
+  "position": "本课在学习路线中的位置（从总纲推断）",
+  "objectives": ["3-5 条可验证的学习目标"],
+  "sections": [
+    {{
+      "title": "章节标题",
+      "items": [
+        {{"name": "具体的知识项名称", "kind": "function 或 concept", "focus": "讲解重点（可选，可为空字符串）"}}
+      ]
+    }}
+  ]
+}}
+
+用户补充要求：{user_instructions}
+
+课程材料：
+{lesson_input}
+"""
+    _debug_dump("L" + str(lesson_number) + "-repo-planner-prompt.txt", planner_prompt)
+    plan_content = call_openai_compatible_chat(
+        settings["base_url"],
+        settings["api_key"],
+        settings["model"],
+        [
+            {
+                "role": "system",
+                "content": compose_system_prompt(load_prompt("prompt.system"), "json"),
+            },
+            {"role": "user", "content": planner_prompt},
+        ],
+        timeout=180,
+    )
+    plan = _parse_lesson_plan(plan_content)
+    _debug_dump("L" + str(lesson_number) + "-repo-plan-response.json", json.dumps(plan, ensure_ascii=False, indent=2))
+    sections: list[dict] = plan["sections"]
+    total_calls = 2 + len(sections)
+    update_generation_task(
+        task_id,
+        "running",
+        progress_current=1,
+        progress_total=total_calls,
+        stage_label="章节计划已完成",
+    )
+
+    staging_dir = project_course_dir(project_id) / ".tasks" / f"task-{task_id}"
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    generated_sections = [""] * len(sections)
+    completed_count = 0
+
+    def _gen_section(idx, sec):
+        ls = "\n".join("-" + it.get("name", "") + "（类型：" + it.get("kind", "") + "；重点：" + (it.get("focus") or "完整讲清") + "）" for it in sec.get("items", []))
+        sp = lesson_policy + "\n\n"
+        sp += "你正在编写一节课中的一个核心正文章节，而不是完整课件。\n\n"
+        sp += "本课：第 " + str(lesson_number) + " 课“" + lesson_title + "”\n"
+        sp += "章节标题：" + sec.get("title", "") + "\n"
+        sp += "本章知识项：\n" + ls + "\n\n"
+        sp += "输出要求：\n"
+        sp += "- 直接以 `## " + sec.get("title", "") + "` 开始，只输出本章 Markdown。\n"
+        sp += "- 每个知识项必须以包含其完整名称的 `###` 小节单独展开。\n"
+        sp += "- 依据下方课程材料中的真实路径、符号、配置和代码片段讲解，需要时标明 `路径:行号范围`；无法确认的内容明确标注证据不足，不得编造。\n"
+        sp += "- 不要输出本课定位、目标、阅读地图、综合案例、全课练习、自测、总结、教材参照或知识地图；这些由统一整合阶段生成。\n"
+        sp += "- 不要重复其他章节应负责的知识。\n\n"
+        sp += "用户补充要求：" + user_instructions + "\n\n"
+        sp += "课程材料：\n" + lesson_input + "\n"
+        if idx == 1:
+            _debug_dump("L" + str(lesson_number) + "-repo-section-1-prompt.txt", sp)
+        c = call_openai_compatible_chat(
+            settings["base_url"], settings["api_key"], settings["model"],
+            [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
+             {"role": "user", "content": sp}], timeout=240)
+        md = _require_markdown(c)
+        if not md.lstrip().startswith("##"):
+            md = "## " + sec.get("title", "") + "\n\n" + md
+        _atomic_write(staging_dir / ("section-" + str(idx).zfill(2) + ".part"), md)
+        return idx, md.strip()
+
+    try:
+        update_generation_task(task_id, "running",
+            progress_current=1, progress_total=total_calls,
+            stage_label="并发生成 " + str(len(sections)) + " 个章节中…")
+        max_workers = min(len(sections), 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_gen_section, i + 1, sec): i for i, sec in enumerate(sections)}
+            for future in as_completed(futures):
+                idx, md = future.result()
+                generated_sections[idx - 1] = md
+                completed_count += 1
+                st = sections[idx - 1].get("title", "")
+                update_generation_task(task_id, "running",
+                    progress_current=1 + completed_count, progress_total=total_calls,
+                    stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
+
+        joined_sections = "\n\n".join(generated_sections)
+        missing = _missing_lesson_items(joined_sections, sections)
+        update_generation_task(
+            task_id,
+            "running",
+            progress_current=total_calls - 1,
+            progress_total=total_calls,
+            stage_label="正在统一整合课件",
+        )
+        plan_lines = "\n".join(
+            f"- {section['title']}：{'、'.join(item['name'] for item in section['items'])}"
+            for section in sections
+        )
+        missing_lines = (
+            "\n".join(
+                f"- {item['name']}（{item['kind']}）：{item['focus']}"
+                for item in missing
+            )
+            if missing
+            else "- 无"
+        )
+        section_excerpts = "\n\n".join(
+            f"### {sections[index]['title']} 摘要\n{markdown[:1600]}"
+            for index, markdown in enumerate(generated_sections)
+        )
+        synthesis_prompt = f"""{lesson_policy}
+
+你是本课的责任编辑。核心章节已经分别生成，请只补充一次全课公共部分，不要重写章节正文。
+
+本课：第 {lesson_number} 课“{lesson_title}”
+章节与知识项：
+{plan_lines}
+
+章节正文摘要：
+{section_excerpts}
+
+尚未被正文明确覆盖的知识项：
+{missing_lines}
+
+只输出以下适用的 Markdown 二级章节：
+- `## 综合串联`：用一个连贯流程或案例把章节连接起来，不重复各节定义和完整代码。
+- `## 易错点与调试`：仅列能够由当前代码、类型、生命周期、边界条件或测试证实的问题，并给出定位与验证方法。
+- `## 动手检查`：给出少量能够用当前材料完成的定位、追踪、比较或修改任务；每项写明完成标准。
+- `## 待确认事项`：集中列出会影响本课结论的证据缺口；没有则写“无”。
+- `## 本课小结`：简短总结目标之间的关系，不逐节复述。
+
+禁止输出教材参照、前置知识总表、课程目标、阅读地图或知识地图。不要为了凑齐标题输出空泛内容。
+用户补充要求：{user_instructions}
+"""
+        synthesis = _require_markdown(
+            call_openai_compatible_chat(
+                settings["base_url"],
+                settings["api_key"],
+                settings["model"],
+                [
+                    {
+                        "role": "system",
+                        "content": compose_system_prompt(
+                            load_prompt("prompt.system"), "markdown"
+                        ),
+                    },
+                    {"role": "user", "content": synthesis_prompt},
+                ],
+                timeout=240,
+            )
+        ).strip()
+        _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
+        joined_sections = _dedupe_lesson_markdown(
+            "\n\n".join([*generated_sections, synthesis])
+        )
+        if _missing_lesson_items(joined_sections, sections):
+            raise RuntimeError("统一整合后仍有规划知识项未覆盖，旧课件已保留。")
+
+        resolved_title = str(plan.get("lesson_title", "")).strip() or lesson_title
+        position = str(plan.get("position", "")).strip() or "本课承接学习总纲中的对应阶段。"
+        objectives = plan.get("objectives") if isinstance(plan.get("objectives"), list) else []
+        objective_lines = [f"- {str(item).strip()}" for item in objectives if str(item).strip()]
+        lesson = "\n\n".join(
+            [
+                f"# 第 {lesson_number} 课：{resolved_title}",
+                f"> 本课定位：{position}",
+                f"> 生成方式：AI 分章节生成并统一整合",
+                "## 本课目标\n\n" + ("\n".join(objective_lines) if objective_lines else "- 完成本课知识地图中的全部项目。"),
+                joined_sections,
+            ]
+        ).strip() + "\n"
+        return resolved_title, lesson
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+
 def run_outline_lesson_task(
     project_id: int,
     task_id: int,
@@ -1009,33 +1293,20 @@ def run_outline_lesson_task(
                 stage_label="生成完成",
             )
             return
-        prompt = load_prompt("prompt.outline_lesson").format(
-            lesson_number=lesson_number,
-            lesson_title=lesson_title,
-            user_instructions=_clean_instructions(instructions) or "无",
-            lesson_input=lesson_input,
-        ) + term_metadata_instruction()
-        content = call_openai_compatible_chat(
-            settings["base_url"],
-            settings["api_key"],
-            settings["model"],
-            [
-                {
-                    "role": "system",
-                    "content": compose_system_prompt(load_prompt("prompt.system"), "markdown"),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            timeout=180,
+        lesson_title, lesson = _run_repository_lesson_task(
+            project_id,
+            task_id,
+            lesson_number,
+            lesson_title,
+            lesson_input,
+            instructions,
+            settings,
         )
-        content, model_terms = parse_term_metadata(content)
-        lesson = _require_markdown(content)
-        if not lesson.lstrip().startswith("#"):
-            lesson = f"# 第 {lesson_number} 课：{lesson_title}\n\n{lesson}"
+        content, model_terms = parse_term_metadata(lesson)
         relative_path = _outline_lesson_filename(lesson_number)
         output_path = project_course_dir(project_id) / relative_path
-        _atomic_write(output_path, lesson)
-        register_document_terms(project_id, "course", relative_path, lesson, model_terms)
+        _atomic_write(output_path, content)
+        register_document_terms(project_id, "course", relative_path, content, model_terms)
         node_title = f"第{lesson_number}课"
         existing = find_knowledge_node(
             project_id,
@@ -1053,7 +1324,14 @@ def run_outline_lesson_task(
                 ref_path=relative_path,
                 summary=lesson_title,
             )
-        update_generation_task(task_id, "completed", output_path=output_path)
+        current_task = get_generation_task(task_id)
+        update_generation_task(
+            task_id,
+            "completed",
+            output_path=output_path,
+            progress_current=current_task.progress_total if current_task else 0,
+            stage_label="生成完成",
+        )
     except Exception as exc:  # noqa: BLE001
         update_generation_task(task_id, "failed", error_message=str(exc), stage_label="生成失败")
 

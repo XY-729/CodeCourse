@@ -51,8 +51,10 @@ html:not(.platform-android) .apple-field select { height: 34px; padding: 0 9px; 
 html:not(.platform-android) .apple-field textarea { min-height: 126px; padding: 9px 10px; resize: vertical; line-height: 1.55; }
 html:not(.platform-android) .apple-field small { color: var(--apple-text-secondary); font-size: 11px; font-weight: 400; line-height: 1.45; }
 html:not(.platform-android) .apple-text-button { align-self: flex-start; padding: 0; color: var(--apple-blue); font-size: 12px; }
-html:not(.platform-android) .generation-sheet-status { padding: 9px 10px; border-radius: var(--apple-radius-sm); display: flex; justify-content: space-between; gap: 8px; color: var(--apple-text-secondary); background: var(--apple-fill); font-size: 12px; }
+html:not(.platform-android) .generation-sheet-status { padding: 9px 10px; border-radius: var(--apple-radius-sm); display: flex; flex-direction: column; gap: 6px; color: var(--apple-text-secondary); background: var(--apple-fill); font-size: 12px; }
 html:not(.platform-android) .generation-sheet-status.failed { color: var(--apple-red); }
+html:not(.platform-android) .generation-sheet-progress { height: 4px; border-radius: 999px; background: var(--apple-fill-strong, rgba(127, 127, 127, 0.16)); overflow: hidden; }
+html:not(.platform-android) .generation-sheet-progress i { display: block; height: 100%; border-radius: 999px; background: var(--apple-blue); transition: width 0.35s ease; }
 html:not(.platform-android) .apple-sheet-footer { min-height: 58px; padding: 10px 14px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; border-top: 1px solid var(--apple-separator); }
 
 html:not(.platform-android) .apple-feedback-stack {
