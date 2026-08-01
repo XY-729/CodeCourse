@@ -35,5 +35,5 @@
 ## 6. 打包与推送
 
 - [x] 6.1 提交推送（d87009b，含 openspec 变更）
-- [ ] 6.2 重新打包桌面端（kill → rm dist → clean pycache → pack → 拷贝 → 验证 shortcut/exe）
-- [ ] 6.3 重新构建 APK 交付
+- [x] 6.2 重新打包桌面端（kill → rm dist → clean pycache → pack → 拷贝 → 验证 shortcut/exe 13:25:23）
+- [x] 6.3 重新构建 APK 交付（app-debug.apk 13:26:04）
