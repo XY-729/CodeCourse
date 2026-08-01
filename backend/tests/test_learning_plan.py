@@ -123,7 +123,7 @@ class LearningPlanProjectTests(unittest.TestCase):
                 {"title": "调度机制", "items": [{"name": "事件循环", "kind": "concept", "focus": "任务调度"}]},
             ],
             "textbooks": [
-                {"title": "Fluent Python", "author": "Luciano Ramalho", "topics": "协程与并发"}
+                {"id": "fluent-python-2", "topics": ["concurrency"]}
             ],
         }
         responses = [json.dumps(plan, ensure_ascii=False)] + [
@@ -131,6 +131,8 @@ class LearningPlanProjectTests(unittest.TestCase):
             "## 异步函数\n\n### async\n\n用途、形式、执行步骤、教学示例、错误与练习。",
             "## 等待结果\n\n### await\n\n用途、形式、执行步骤、教学示例、错误与练习。",
             "## 调度机制\n\n### 事件循环\n\n定义、直觉、过程、例子、误区与练习。",
+            "## 综合串联\n\n协程通过 async 声明，在 await 处让出控制权，由事件循环继续调度。\n\n"
+            "## 练习与自测\n\n解释一次暂停与恢复过程，并检查四个知识项之间的关系。",
         ]
 
         with patch("app.services.generation_service.call_openai_compatible_chat", side_effect=responses) as mocked:
@@ -143,15 +145,18 @@ class LearningPlanProjectTests(unittest.TestCase):
         task_id = created.json()["id"]
         task = self.client.get(f"/api/projects/{project['id']}/tasks/{task_id}").json()
         self.assertEqual(task["status"], "completed")
-        self.assertEqual(task["progress_current"], 5)
-        self.assertEqual(task["progress_total"], 5)
+        self.assertEqual(task["progress_current"], 6)
+        self.assertEqual(task["progress_total"], 6)
         self.assertEqual(task["stage_label"], "生成完成")
-        self.assertEqual(mocked.call_count, 5)
+        self.assertLessEqual(mocked.call_count, 12)
+        self.assertEqual(mocked.call_count, 6)
         lesson = (course_dir / "lessons" / "lesson_01.md").read_text(encoding="utf-8")
         for item in ("协程", "async", "await", "事件循环"):
             self.assertIn(item, lesson)
         self.assertIn("《Fluent Python》", lesson)
-        self.assertIn("未直接读取教材原文", lesson)
+        self.assertIn("未读取教材原文", lesson)
+        self.assertEqual(lesson.count("## 练习与自测"), 1)
+        self.assertEqual(lesson.count("## 教材参照"), 1)
         planner_prompt = mocked.call_args_list[0].args[3][1]["content"]
         self.assertNotIn("RAG 索引检索片段：", planner_prompt)
         self.assertNotIn("## 阅读地图", planner_prompt)

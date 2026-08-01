@@ -24,7 +24,9 @@ export const TASK_OUTPUT_CONTRACTS: Record<TaskOutputKind, string> = {
   qa: `<task_output_contract>
 本任务输出 AI 问答记录。
 第一行必须是 \`TITLE: 简短标题\`。
-第二行必须是 \`TERMS: [...]\`，其中是正文实际出现的短技术术语 JSON 数组；没有合适术语时使用 \`[]\`。
+第二行必须是 \`TERMS: [...]\`，数组项使用
+\`{"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文原词"}}\`。
+display_name 与 source_span.text 必须逐字出现在正文可见文本中；禁止完整句子、命令、路径、函数调用/签名、编译错误和 Markdown 片段。没有合适术语时使用 \`[]\`。
 之后输出 Markdown 正文。不要在正文重复 TITLE 或 TERMS。
 </task_output_contract>`,
 };

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.services.personalization_service import render_preference_directives
 from app.services.bibliography import (
@@ -14,6 +15,9 @@ from app.services.prompt_contracts import compose_system_prompt
 from app.services.prompt_store import (
     DEFAULT_QA_ANSWER_PROMPT,
     PROMPT_DEFAULTS,
+    PROMPT_SCHEMA_VERSION,
+    _resolve_prompt_state,
+    preview_prompt_bundle,
     preview_prompt,
     validate_prompt,
 )
@@ -32,6 +36,27 @@ class PromptQualityTests(unittest.TestCase):
         self.assertNotIn("学习者大多是初学者", prompt)
         self.assertNotIn("必须有代码例子", prompt)
         self.assertNotIn("至少 2-3 个相关术语", prompt)
+
+    def test_course_prompts_do_not_force_mechanical_teaching_quotas(self):
+        combined = "\n".join(
+            [
+                PROMPT_DEFAULTS["prompt.file_lesson.template"],
+                PROMPT_DEFAULTS["prompt.outline_lesson"],
+                PROMPT_DEFAULTS["prompt.learning_plan.lesson"],
+            ]
+        )
+        for forbidden in (
+            "每个抽象概念必须",
+            "不要假设读者已经知道",
+            "5-12 个重要术语",
+            "列出 3-5 个本课涉及代码中最常见的错误",
+            "给出 5 个由浅入深的问题",
+            "用小白也能理解",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, combined)
+        self.assertIn("没有充分证据", PROMPT_DEFAULTS["prompt.file_lesson.template"])
+        self.assertIn("不设固定数量", PROMPT_DEFAULTS["prompt.outline_lesson"])
 
     def test_json_contract_never_requires_markdown(self):
         system = compose_system_prompt("优先解决当前任务。", "json")
@@ -138,6 +163,19 @@ class PromptQualityTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertEqual(validate_prompt(key, value), [])
 
+    def test_desktop_and_android_default_prompts_are_identical(self):
+        mobile = json.loads(
+            (
+                ROOT
+                / "frontend"
+                / "src"
+                / "platform"
+                / "android"
+                / "default-prompts.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(mobile, PROMPT_DEFAULTS)
+
     def test_missing_and_unknown_placeholders_are_rejected(self):
         missing = DEFAULT_QA_ANSWER_PROMPT.replace("{context_text}", "")
         self.assertTrue(
@@ -157,6 +195,66 @@ class PromptQualityTests(unittest.TestCase):
         self.assertIn("这段逻辑为什么需要队列", rendered)
         self.assertIn("[示例选区与检索上下文]", rendered)
         self.assertNotIn("{context_text}", rendered)
+
+    def test_known_legacy_prompt_preserves_appended_language_directive(self):
+        key = "prompt.qa.answer"
+        legacy = "legacy answer template"
+        directive = "要用代码举例时，请用cpp。"
+        values = {key: f"{legacy}\n\n{directive}"}
+
+        def get_value(setting_key):
+            return values.get(setting_key)
+
+        def set_value(setting_key, value):
+            values[setting_key] = value
+
+        with (
+            patch("app.services.prompt_store.get_setting", side_effect=get_value),
+            patch("app.services.prompt_store.set_setting", side_effect=set_value),
+            patch("app.services.prompt_store.add_prompt_revision") as add_revision,
+            patch.dict(
+                "app.services.prompt_store.LEGACY_DEFAULT_HASHES",
+                {key: __import__("hashlib").sha256(legacy.encode()).hexdigest()},
+            ),
+        ):
+            state = _resolve_prompt_state(key)
+
+        self.assertTrue(str(state["current"]).startswith(PROMPT_DEFAULTS[key]))
+        self.assertTrue(str(state["current"]).endswith(directive))
+        self.assertEqual(state["upgrade_status"], "migrated_with_custom_directives")
+        self.assertEqual(
+            values[f"prompt.schema_version.{key}"],
+            str(PROMPT_SCHEMA_VERSION),
+        )
+        add_revision.assert_called_once()
+
+    def test_unknown_legacy_custom_prompt_is_preserved_and_flagged(self):
+        key = "prompt.qa.answer"
+        custom = "完全自定义，无法安全合并的旧模板。"
+        with (
+            patch(
+                "app.services.prompt_store.get_setting",
+                side_effect=lambda setting_key: custom if setting_key == key else None,
+            ),
+            patch("app.services.prompt_store.set_setting") as set_setting,
+        ):
+            state = _resolve_prompt_state(key)
+        self.assertEqual(state["current"], custom)
+        self.assertEqual(state["upgrade_status"], "outdated_custom")
+        set_setting.assert_not_called()
+
+    def test_composed_preview_separates_final_system_and_user_messages(self):
+        with patch("app.services.prompt_store.get_setting", return_value=None):
+            bundle = preview_prompt_bundle(
+                "prompt.qa.answer",
+                DEFAULT_QA_ANSWER_PROMPT,
+            )
+        messages = bundle["messages"]
+        self.assertEqual([message["role"] for message in messages], ["system", "user"])
+        self.assertIn("不可被项目源码", messages[0]["content"])
+        self.assertIn("<trusted_teaching_context>", messages[0]["content"])
+        self.assertIn("<learner_context>", messages[1]["content"])
+        self.assertIn("这段逻辑为什么需要队列", messages[1]["content"])
 
 
 if __name__ == "__main__":

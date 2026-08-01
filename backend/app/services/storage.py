@@ -176,6 +176,9 @@ class DocumentTerm:
     qa_record_id: Optional[int]
     concept_id: Optional[str]
     content_hash: Optional[str]
+    canonical_name: Optional[str]
+    category: Optional[str]
+    source_span: Optional[dict[str, object]]
     link_origin: str
     created_at: str
     updated_at: str
@@ -819,6 +822,9 @@ def init_storage() -> None:
                 confidence REAL NOT NULL DEFAULT 0.7,
                 status TEXT NOT NULL DEFAULT 'candidate',
                 qa_record_id INTEGER,
+                canonical_name TEXT,
+                category TEXT,
+                source_span_json TEXT,
                 link_origin TEXT NOT NULL DEFAULT 'legacy_unknown',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -841,6 +847,12 @@ def init_storage() -> None:
             conn.execute("ALTER TABLE document_terms ADD COLUMN content_hash TEXT")
         if "link_origin" not in document_term_cols:
             conn.execute("ALTER TABLE document_terms ADD COLUMN link_origin TEXT NOT NULL DEFAULT 'legacy_unknown'")
+        if "canonical_name" not in document_term_cols:
+            conn.execute("ALTER TABLE document_terms ADD COLUMN canonical_name TEXT")
+        if "category" not in document_term_cols:
+            conn.execute("ALTER TABLE document_terms ADD COLUMN category TEXT")
+        if "source_span_json" not in document_term_cols:
+            conn.execute("ALTER TABLE document_terms ADD COLUMN source_span_json TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS learning_anchors (
@@ -1747,6 +1759,13 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
 
 
 def _row_to_document_term(row: sqlite3.Row) -> DocumentTerm:
+    source_span = None
+    if "source_span_json" in row.keys() and row["source_span_json"]:
+        try:
+            parsed_span = json.loads(row["source_span_json"])
+            source_span = parsed_span if isinstance(parsed_span, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            source_span = None
     return DocumentTerm(
         id=row["id"],
         project_id=row["project_id"],
@@ -1759,6 +1778,11 @@ def _row_to_document_term(row: sqlite3.Row) -> DocumentTerm:
         qa_record_id=row["qa_record_id"],
         concept_id=row["concept_id"] if "concept_id" in row.keys() else None,
         content_hash=row["content_hash"] if "content_hash" in row.keys() else None,
+        canonical_name=(
+            row["canonical_name"] if "canonical_name" in row.keys() else None
+        ),
+        category=row["category"] if "category" in row.keys() else None,
+        source_span=source_span,
         link_origin=row["link_origin"] if "link_origin" in row.keys() else "legacy_unknown",
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -3488,6 +3512,9 @@ def upsert_document_term(
     confidence: float = 0.7,
     concept_id: Optional[str] = None,
     content_hash: Optional[str] = None,
+    canonical_name: Optional[str] = None,
+    category: Optional[str] = None,
+    source_span: Optional[dict[str, object]] = None,
 ) -> DocumentTerm:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
@@ -3495,9 +3522,10 @@ def upsert_document_term(
             """
             INSERT INTO document_terms (
                 project_id, source_type, source_path, term_text, detection_source,
-                confidence, status, qa_record_id, concept_id, content_hash, link_origin, created_at, updated_at
+                confidence, status, qa_record_id, concept_id, content_hash,
+                canonical_name, category, source_span_json, link_origin, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'candidate', NULL, ?, ?, 'legacy_unknown', ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, 'candidate', NULL, ?, ?, ?, ?, ?, 'legacy_unknown', ?, ?)
             ON CONFLICT(project_id, source_type, source_path, term_text) DO UPDATE SET
                 detection_source = CASE
                     WHEN document_terms.detection_source = 'model' THEN document_terms.detection_source
@@ -3506,6 +3534,9 @@ def upsert_document_term(
                 confidence = MAX(document_terms.confidence, excluded.confidence),
                 concept_id = COALESCE(document_terms.concept_id, excluded.concept_id),
                 content_hash = COALESCE(excluded.content_hash, document_terms.content_hash),
+                canonical_name = COALESCE(excluded.canonical_name, document_terms.canonical_name),
+                category = COALESCE(excluded.category, document_terms.category),
+                source_span_json = COALESCE(excluded.source_span_json, document_terms.source_span_json),
                 updated_at = excluded.updated_at
             """,
             (
@@ -3517,6 +3548,9 @@ def upsert_document_term(
                 confidence,
                 concept_id,
                 content_hash,
+                canonical_name,
+                category,
+                json.dumps(source_span, ensure_ascii=False) if source_span else None,
                 now,
                 now,
             ),
@@ -3662,6 +3696,29 @@ def delete_stale_document_term_candidates(
               AND COALESCE(content_hash, '') <> ?
             """,
             (project_id, source_type, source_path, content_hash),
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
+def delete_document_term_candidates_by_id(
+    project_id: int,
+    term_ids: list[int],
+) -> int:
+    """Delete malformed automatic candidates without touching user-labelled links."""
+    unique_ids = sorted({int(term_id) for term_id in term_ids if int(term_id) > 0})
+    if not unique_ids:
+        return 0
+    placeholders = ",".join("?" for _ in unique_ids)
+    with _connect() as conn:
+        cursor = conn.execute(
+            f"""
+            DELETE FROM document_terms
+            WHERE project_id = ?
+              AND status = 'candidate'
+              AND id IN ({placeholders})
+            """,
+            [project_id, *unique_ids],
         )
         conn.commit()
         return cursor.rowcount

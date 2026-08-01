@@ -128,12 +128,12 @@ def read_prompt_history(key: str = Query(...)):
 
 @router.post("/prompts/preview")
 def preview_prompt_template(payload: dict[str, str]):
-    from app.services.prompt_store import preview_prompt
+    from app.services.prompt_store import preview_prompt_bundle
 
     key = payload.get("key", "")
     value = payload.get("value", "")
     try:
-        return {"key": key, "rendered": preview_prompt(key, value)}
+        return {"key": key, **preview_prompt_bundle(key, value)}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc).splitlines()) from exc
 

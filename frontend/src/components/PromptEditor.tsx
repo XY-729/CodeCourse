@@ -5,6 +5,7 @@ import {
   getPromptMetadata,
   previewPrompt,
   savePrompts,
+  type PromptPreview,
   type PromptRevision,
   type PromptTemplateMetadata,
 } from "../api/client";
@@ -34,7 +35,7 @@ export default function PromptEditor({
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("prompt.system");
   const [error, setError] = useState("");
-  const [preview, setPreview] = useState("");
+  const [preview, setPreview] = useState<PromptPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [history, setHistory] = useState<PromptRevision[] | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -134,7 +135,7 @@ export default function PromptEditor({
       ...previous,
       [activeTab]: activeMetadata.default,
     }));
-    setPreview("");
+    setPreview(null);
     setHistory(null);
   }
 
@@ -143,7 +144,7 @@ export default function PromptEditor({
     setError("");
     try {
       const result = await previewPrompt(activeTab, activeValue);
-      setPreview(result.rendered);
+      setPreview(result);
       setHistory(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "预览失败");
@@ -158,7 +159,7 @@ export default function PromptEditor({
     try {
       const result = await getPromptHistory(activeTab);
       setHistory(result.revisions);
-      setPreview("");
+      setPreview(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "历史加载失败");
     } finally {
@@ -193,7 +194,7 @@ export default function PromptEditor({
                     className={`prompt-tab ${activeTab === item.key ? "active" : ""}`}
                     onClick={() => {
                       setActiveTab(item.key);
-                      setPreview("");
+                      setPreview(null);
                       setHistory(null);
                     }}
                   >
@@ -226,6 +227,13 @@ export default function PromptEditor({
                 </div>
               </div>
 
+              {activeMetadata?.upgrade_status === "outdated_custom" ? (
+                <div className="prompt-validation" role="status">
+                  这个自定义模板来自旧版提示词协议。为避免覆盖你的内容，CodeCourse 没有自动改写它。
+                  请与“默认值”比较后再保存；保存后会升级到当前协议。
+                </div>
+              ) : null}
+
               {activeMetadata?.required_placeholders.length ? (
                 <div className="prompt-placeholders">
                   <span>必要变量</span>
@@ -243,7 +251,7 @@ export default function PromptEditor({
                     ...previous,
                     [activeTab]: event.target.value,
                   }));
-                  setPreview("");
+                  setPreview(null);
                 }}
                 aria-label={activeMetadata?.label || "提示词"}
                 spellCheck={false}
@@ -257,8 +265,16 @@ export default function PromptEditor({
 
               {preview ? (
                 <div className="prompt-preview">
-                  <div className="prompt-preview-title">安全示例预览</div>
-                  <pre>{preview}</pre>
+                  <div className="prompt-preview-title">模板变量替换结果</div>
+                  <pre>{preview.template_rendered}</pre>
+                  <div className="prompt-preview-title">最终模型消息</div>
+                  {preview.messages.map((message, index) => (
+                    <div className="prompt-preview-message" key={`${message.role}-${index}`}>
+                      <strong>{message.role.toUpperCase()}</strong>
+                      <pre>{message.content}</pre>
+                    </div>
+                  ))}
+                  {preview.notes.map((note) => <small key={note}>{note}</small>)}
                 </div>
               ) : null}
 

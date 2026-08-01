@@ -10,6 +10,7 @@ from app.services.generation_service import (
     hash_inputs,
 )
 from app.services.prompt_store import PROMPT_INJECTION_SYSTEM_PROMPT
+from app.services.prompt_contracts import compose_system_prompt
 
 
 class CourseGeneratorTests(unittest.TestCase):
@@ -58,8 +59,10 @@ class Runner {}
         self.assertNotEqual(hash_inputs("a", "b"), hash_inputs("b", "a"))
 
     def test_prompt_injection_guard_is_in_system_prompt(self):
-        self.assertIn("待分析材料", PROMPT_INJECTION_SYSTEM_PROMPT)
-        self.assertIn("不泄露", PROMPT_INJECTION_SYSTEM_PROMPT)
+        composed = compose_system_prompt(PROMPT_INJECTION_SYSTEM_PROMPT, "markdown")
+        self.assertIn("待分析数据", composed)
+        self.assertIn("不泄露", composed)
+        self.assertIn("<task_output_contract>", composed)
 
 
 if __name__ == "__main__":

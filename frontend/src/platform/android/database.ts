@@ -183,6 +183,9 @@ export class MobileDatabase {
           qa_record_id INTEGER,
           concept_id TEXT,
           content_hash TEXT,
+          canonical_name TEXT,
+          category TEXT,
+          source_span_json TEXT,
           link_origin TEXT NOT NULL DEFAULT 'legacy_unknown',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -249,6 +252,9 @@ export class MobileDatabase {
       "ALTER TABLE document_terms ADD COLUMN concept_id TEXT",
       "ALTER TABLE document_terms ADD COLUMN content_hash TEXT",
       "ALTER TABLE document_terms ADD COLUMN link_origin TEXT NOT NULL DEFAULT 'legacy_unknown'",
+      "ALTER TABLE document_terms ADD COLUMN canonical_name TEXT",
+      "ALTER TABLE document_terms ADD COLUMN category TEXT",
+      "ALTER TABLE document_terms ADD COLUMN source_span_json TEXT",
     ]) {
       try {
         await CapacitorSQLite.execute({

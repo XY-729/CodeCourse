@@ -7,11 +7,12 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, Optional
 from app.core.config import GENERATED_ROOT
 from app.services.personalization_service import resolve_concept
 from app.services.storage import (
     DocumentTerm,
+    delete_document_term_candidates_by_id,
     delete_stale_document_term_candidates,
     get_qa_record,
     get_qa_record_by_output_path,
@@ -32,6 +33,42 @@ CHINESE_TECH_RE = re.compile(
 IDENTIFIER_RE = re.compile(
     r"\b(?:[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|[A-Z]{2,}[A-Z0-9_-]*|[A-Za-z]+\.[A-Za-z0-9_.-]+)\b"
 )
+MARKDOWN_LINK_RE = re.compile(r"!?\[[^\]\n]+\]\([^)]+\)")
+COMMAND_RE = re.compile(
+    r"^(?:sudo\s+|(?:apt|apt-get|npm|pnpm|yarn|pip|pip3|git|cmake|gradle|"
+    r"mvn|cargo|docker|kubectl|adb)\s+)",
+    re.IGNORECASE,
+)
+FILE_PATH_RE = re.compile(
+    r"(?:[A-Za-z]:[\\/]|(?:^|[\s`])(?:\.\.?[\\/]|[/\\])|"
+    r"\.(?:py|pyi|ts|tsx|js|jsx|java|kt|cpp|cc|cxx|c|h|hpp|cs|go|rs|"
+    r"json|ya?ml|toml|md|txt|sh|bat|ps1)(?:$|[\s`]))",
+    re.IGNORECASE,
+)
+ERROR_MESSAGE_RE = re.compile(
+    r"(?:\b(?:fatal\s+)?error\s*:|\bwarning\s*:|traceback|exception\s*:|"
+    r"unrecognized command line option|undefined reference)",
+    re.IGNORECASE,
+)
+MARKDOWN_FRAGMENT_RE = re.compile(
+    r"(?:```|^\s{0,3}(?:#{1,6}|[-+*>])\s|\[[^\]]*\]\([^)]*\)|!\[[^\]]*\])",
+    re.MULTILINE,
+)
+SENTENCE_PUNCTUATION_RE = re.compile(r"[。！？!?；;，,]\s*$|[。！？!?；;]")
+ALLOWED_TERM_CATEGORIES = {
+    "concept",
+    "api",
+    "library",
+    "framework",
+    "protocol",
+    "type",
+    "symbol",
+    "tool",
+    "configuration",
+    "algorithm",
+    "data_structure",
+    "other",
+}
 
 KNOWN_TECH_TERMS = (
     "FastAPI",
@@ -92,18 +129,147 @@ _SCAN_LOCK = threading.Lock()
 _QUEUED_SCANS: set[str] = set()
 
 
+def _balanced_delimiters(value: str) -> bool:
+    pairs = {")": "(", "]": "[", "}": "{", ">": "<"}
+    stack: list[str] = []
+    for char in value:
+        if char in "([{<":
+            stack.append(char)
+        elif char in pairs:
+            if not stack or stack.pop() != pairs[char]:
+                return False
+    return not stack
+
+
 def _clean_term(term: str) -> str:
-    cleaned = re.sub(r"\s+", " ", term.strip().strip("`*_#[](){}<>，。；：、"))
-    if len(cleaned) < 2 or len(cleaned) > 80 or cleaned.isdigit():
+    cleaned = re.sub(r"\s+", " ", str(term).strip().strip("`*_#，。；：、"))
+    if len(cleaned) < 2 or len(cleaned) > 64 or cleaned.isdigit():
         return ""
     if cleaned.casefold() in STOP_TERMS_NORMALIZED:
+        return ""
+    if "\n" in term or "\r" in term:
+        return ""
+    if not _balanced_delimiters(cleaned):
+        return ""
+    if SENTENCE_PUNCTUATION_RE.search(cleaned):
+        return ""
+    if COMMAND_RE.search(cleaned) or FILE_PATH_RE.search(cleaned):
+        return ""
+    if "/" in cleaned or "\\" in cleaned:
+        return ""
+    if ERROR_MESSAGE_RE.search(cleaned) or MARKDOWN_FRAGMENT_RE.search(cleaned):
+        return ""
+    if any(char in cleaned for char in ("=", "|", "$")):
+        return ""
+    if "(" in cleaned or ")" in cleaned:
+        return ""
+    if cleaned.casefold().startswith(("template ", "class ", "struct ", "def ")):
+        return ""
+    latin_words = re.findall(r"[A-Za-z][A-Za-z0-9_.:+#-]*", cleaned)
+    if len(latin_words) > 5:
+        return ""
+    chinese_count = len(re.findall(r"[\u4e00-\u9fff]", cleaned))
+    if chinese_count > 16:
         return ""
     return cleaned
 
 
-def parse_term_metadata(raw_content: str) -> tuple[str, list[str]]:
-    """Remove TERMS metadata from model output and return normalized candidates."""
-    terms: list[str] = []
+def _excluded_ranges(content: str) -> list[tuple[int, int]]:
+    ranges = [(match.start(), match.end()) for match in CODE_FENCE_RE.finditer(content)]
+    ranges.extend(
+        (match.start(), match.end()) for match in MARKDOWN_LINK_RE.finditer(content)
+    )
+    return sorted(ranges)
+
+
+def _range_is_visible(
+    start: int,
+    end: int,
+    excluded: list[tuple[int, int]],
+) -> bool:
+    return all(end <= left or start >= right for left, right in excluded)
+
+
+def _visible_source_span(
+    content: str,
+    text: str,
+    requested: Mapping[str, object] | None = None,
+) -> dict[str, object] | None:
+    excluded = _excluded_ranges(content)
+    if requested and ("start" in requested or "end" in requested):
+        try:
+            start = int(requested.get("start", -1))
+            end = int(requested.get("end", -1))
+        except (TypeError, ValueError):
+            return None
+        if (
+            start < 0
+            or end != start + len(text)
+            or content[start:end] != text
+            or not _range_is_visible(start, end, excluded)
+        ):
+            return None
+        return {"text": text, "start": start, "end": end}
+
+    for match in re.finditer(re.escape(text), content):
+        if _range_is_visible(match.start(), match.end(), excluded):
+            return {"text": text, "start": match.start(), "end": match.end()}
+    return None
+
+
+def normalize_term_candidate(
+    value: object,
+    content: str,
+    *,
+    default_source: str = "model",
+    default_confidence: float = 0.7,
+) -> dict[str, object] | None:
+    """Validate a legacy string or structured term against exact visible source text."""
+    if isinstance(value, str):
+        display_name = value
+        canonical_name = value
+        category = "other"
+        confidence = default_confidence
+        requested_span = None
+    elif isinstance(value, Mapping):
+        display_name = str(value.get("display_name") or value.get("text") or "")
+        canonical_name = str(value.get("canonical_name") or display_name)
+        category = str(value.get("category") or "other").strip().casefold()
+        try:
+            confidence = float(value.get("confidence", default_confidence))
+        except (TypeError, ValueError):
+            return None
+        raw_span = value.get("source_span")
+        requested_span = raw_span if isinstance(raw_span, Mapping) else None
+        if requested_span is not None:
+            span_text = str(requested_span.get("text") or "")
+            if span_text != display_name.strip():
+                return None
+    else:
+        return None
+
+    display_name = _clean_term(display_name)
+    canonical_name = _clean_term(canonical_name)
+    if not display_name or not canonical_name:
+        return None
+    if category not in ALLOWED_TERM_CATEGORIES:
+        category = "other"
+    source_span = _visible_source_span(content, display_name, requested_span)
+    if source_span is None:
+        return None
+    return {
+        "display_name": display_name,
+        "canonical_name": canonical_name,
+        "category": category,
+        "confidence": max(0.0, min(1.0, confidence)),
+        "source_span": source_span,
+        "source": default_source,
+    }
+
+
+def parse_term_metadata(raw_content: str) -> tuple[str, list[dict[str, object]]]:
+    """Remove TERMS metadata and validate candidates against the remaining body."""
+    raw_terms: list[object] = []
     kept: list[str] = []
     for line in raw_content.splitlines():
         match = TERMS_LINE_RE.match(line)
@@ -115,48 +281,78 @@ def parse_term_metadata(raw_content: str) -> tuple[str, list[str]]:
         except json.JSONDecodeError:
             values = []
         if isinstance(values, list):
-            for value in values:
-                if isinstance(value, str):
-                    term = _clean_term(value)
-                    if term and term not in terms:
-                        terms.append(term)
-    return "\n".join(kept).strip(), terms[:20]
+            raw_terms.extend(values)
+    content = "\n".join(kept).strip()
+    terms: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for value in raw_terms:
+        candidate = normalize_term_candidate(
+            value,
+            content,
+            default_source="model",
+            default_confidence=0.94,
+        )
+        if not candidate:
+            continue
+        key = str(candidate["canonical_name"]).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        terms.append(candidate)
+    return content, terms[:20]
 
 
 def term_metadata_instruction() -> str:
     return """
 
 术语元数据要求：
-- 在正文第一行之前输出一行：TERMS: ["术语1", "术语2"]。
+- 在正文第一行之前输出一行：
+  TERMS: [{"display_name":"正文中的原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文中的原词"}}]
 - 只列出初学者可能陌生、且值得继续解释的技术名词、架构概念、框架、协议或项目关键符号。
 - 最多 12 个，不要列普通词、文件名、标题中的泛词或完整句子。
-- 每个术语必须实际出现在正文中，便于阅读器建立精确链接。
+- display_name 与 source_span.text 必须完全相同，并且逐字实际出现在正文可见文本中。
+- 不要列命令、路径、函数调用、函数签名、编译错误、Markdown 片段或只在代码块中出现的文本。
+- category 只能使用 concept/api/library/framework/protocol/type/symbol/tool/configuration/algorithm/data_structure/other。
 - TERMS 行是机器元数据，不要在正文中解释这行。"""
 
 
-def _local_candidates(project_id: int, content: str) -> list[tuple[str, str, float]]:
+def _local_candidates(project_id: int, content: str) -> list[dict[str, object]]:
     without_fences = CODE_FENCE_RE.sub(" ", content)
-    candidates: list[tuple[str, str, float]] = []
+    candidates: list[dict[str, object]] = []
 
-    def add(term: str, source: str, confidence: float) -> None:
-        cleaned = _clean_term(term)
-        if cleaned and cleaned in content and all(existing[0].casefold() != cleaned.casefold() for existing in candidates):
-            candidates.append((cleaned, source, confidence))
+    def add(term: str, source: str, confidence: float, category: str = "other") -> None:
+        candidate = normalize_term_candidate(
+            {
+                "display_name": term,
+                "canonical_name": term,
+                "category": category,
+                "confidence": confidence,
+            },
+            content,
+            default_source=source,
+            default_confidence=confidence,
+        )
+        if candidate and all(
+            str(existing["canonical_name"]).casefold()
+            != str(candidate["canonical_name"]).casefold()
+            for existing in candidates
+        ):
+            candidates.append(candidate)
 
     for match in INLINE_CODE_RE.finditer(without_fences):
-        add(match.group(1), "rule", 0.76)
+        add(match.group(1), "rule", 0.76, "symbol")
     for match in EMPHASIS_TERM_RE.finditer(without_fences):
-        add(match.group(1), "rule", 0.78)
+        add(match.group(1), "rule", 0.78, "concept")
     for match in CHINESE_TECH_RE.finditer(without_fences):
-        add(match.group(1), "dictionary", 0.8)
+        add(match.group(1), "dictionary", 0.8, "concept")
     for term in KNOWN_TECH_TERMS:
         if term in without_fences:
-            add(term, "rule", 0.84)
+            add(term, "rule", 0.84, "library")
     for match in IDENTIFIER_RE.finditer(without_fences):
-        add(match.group(0), "rule", 0.72)
+        add(match.group(0), "rule", 0.72, "symbol")
     for chunk in list_code_chunks(project_id, limit=1000):
         if chunk.symbol_name and chunk.symbol_name in without_fences:
-            add(chunk.symbol_name, "index", 0.88)
+            add(chunk.symbol_name, "index", 0.88, "symbol")
         if len(candidates) >= 30:
             break
     return candidates
@@ -176,7 +372,7 @@ def register_document_terms(
     source_type: str,
     source_path: str,
     content: str,
-    model_terms: Optional[Iterable[str]] = None,
+    model_terms: Optional[Iterable[object]] = None,
     *,
     allow_model_scan: bool = True,
 ) -> list[DocumentTerm]:
@@ -187,19 +383,36 @@ def register_document_terms(
         source_path,
         content_hash,
     )
-    weighted: list[tuple[str, str, float]] = []
+    weighted: list[dict[str, object]] = []
     for value in model_terms or []:
-        term = _clean_term(value)
-        if term and term in content:
-            weighted.append((term, "model", 0.94))
+        candidate = normalize_term_candidate(
+            value,
+            content,
+            default_source="model",
+            default_confidence=0.94,
+        )
+        if candidate:
+            weighted.append(candidate)
     weighted.extend(_local_candidates(project_id, content))
     seen: set[str] = set()
-    for term, source, confidence in sorted(weighted, key=lambda item: (-len(item[0]), -item[2])):
-        normalized = term.casefold()
+    for candidate in sorted(
+        weighted,
+        key=lambda item: (
+            -len(str(item["display_name"])),
+            -float(item["confidence"]),
+        ),
+    ):
+        term = str(candidate["display_name"])
+        canonical_name = str(candidate["canonical_name"])
+        source = str(candidate["source"])
+        confidence = float(candidate["confidence"])
+        normalized = canonical_name.casefold()
         if normalized in seen:
             continue
         seen.add(normalized)
-        concept_id = _resolve_concept(project_id, term, source, confidence)
+        concept_id = _resolve_concept(
+            project_id, canonical_name, source, confidence
+        )
         upsert_document_term(
             project_id,
             source_type,
@@ -209,10 +422,17 @@ def register_document_terms(
             confidence,
             concept_id=concept_id,
             content_hash=content_hash,
+            canonical_name=canonical_name,
+            category=str(candidate["category"]),
+            source_span=dict(candidate["source_span"]),
         )
         if len(seen) >= 20:
             break
-    terms = list_document_terms(project_id, source_type, source_path)
+    terms = _clean_historical_candidates(
+        project_id,
+        list_document_terms(project_id, source_type, source_path),
+        content,
+    )
     if allow_model_scan:
         high_confidence = sum(1 for item in terms if item.confidence >= 0.8)
         if len(terms) < 4 or high_confidence < 3:
@@ -241,32 +461,75 @@ def _term_scan_messages(content: str) -> list[dict[str, str]]:
             "role": "system",
             "content": (
                 "你是技术教材术语分析器。只提取正文中实际出现、对当前学习者可能陌生且值得解释的技术术语。"
-                "不要提取普通词、完整句子、标题泛词或代码块中的局部变量。只输出 JSON。"
+                "不要提取普通词、完整句子、命令、路径、函数调用、函数签名、编译错误、Markdown 片段或代码块局部变量。只输出 JSON。"
             ),
         },
         {
             "role": "user",
             "content": (
-                "返回格式：{\"terms\":[{\"text\":\"术语\",\"confidence\":0.0,\"reason\":\"简短原因\"}]}。"
+                "返回格式：{\"terms\":[{\"display_name\":\"正文原词\",\"canonical_name\":\"规范名称\","
+                "\"category\":\"concept\",\"confidence\":0.0,"
+                "\"source_span\":{\"text\":\"正文原词\"}}]}。"
                 "最多 16 个，confidence 范围 0-1。\n\n正文：\n" + compact
             ),
         },
     ]
 
 
-def _parse_term_scan(raw: str, content: str) -> list[str]:
+def _parse_term_scan(raw: str, content: str) -> list[dict[str, object]]:
     fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw, re.IGNORECASE)
     candidate = fenced.group(1).strip() if fenced else raw[raw.find("{"):raw.rfind("}") + 1]
     data = json.loads(candidate)
     rows = data.get("terms", []) if isinstance(data, dict) else []
-    terms: list[str] = []
+    terms: list[dict[str, object]] = []
+    seen: set[str] = set()
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict) or float(row.get("confidence", 0)) < 0.62:
             continue
-        term = _clean_term(str(row.get("text", "")))
-        if term and term in content and term.casefold() not in {item.casefold() for item in terms}:
-            terms.append(term)
+        candidate = normalize_term_candidate(
+            row,
+            content,
+            default_source="model",
+            default_confidence=float(row.get("confidence", 0)),
+        )
+        if not candidate:
+            continue
+        key = str(candidate["canonical_name"]).casefold()
+        if key not in seen:
+            seen.add(key)
+            terms.append(candidate)
     return terms[:16]
+
+
+def _clean_historical_candidates(
+    project_id: int,
+    terms: list[DocumentTerm],
+    content: str,
+) -> list[DocumentTerm]:
+    invalid_ids: list[int] = []
+    valid: list[DocumentTerm] = []
+    for term in terms:
+        if term.status != "candidate":
+            valid.append(term)
+            continue
+        candidate = normalize_term_candidate(
+            {
+                "display_name": term.term_text,
+                "canonical_name": term.canonical_name or term.term_text,
+                "category": term.category or "other",
+                "confidence": term.confidence,
+                "source_span": term.source_span,
+            },
+            content,
+            default_source=term.detection_source,
+            default_confidence=term.confidence,
+        )
+        if candidate is None:
+            invalid_ids.append(term.id)
+        else:
+            valid.append(term)
+    delete_document_term_candidates_by_id(project_id, invalid_ids)
+    return valid
 
 
 def schedule_term_model_scan(

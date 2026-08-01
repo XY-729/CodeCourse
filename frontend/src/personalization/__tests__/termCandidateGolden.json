@@ -1,0 +1,96 @@
+{
+  "vectors": [
+    {
+      "name": "legacy short concept",
+      "content": "FastAPI 使用依赖注入组织请求参数。",
+      "input": "依赖注入",
+      "expected": "依赖注入"
+    },
+    {
+      "name": "structured exact span",
+      "content": "调用 bind 后，套接字才绑定到本地地址。",
+      "input": {
+        "display_name": "bind",
+        "canonical_name": "bind",
+        "category": "api",
+        "confidence": 0.91,
+        "source_span": {
+          "text": "bind",
+          "start": 3,
+          "end": 7
+        }
+      },
+      "expected": "bind"
+    },
+    {
+      "name": "reject function call",
+      "content": "示例调用 sendto(sock_fd, reply, strlen(reply), addr)。",
+      "input": "sendto(sock_fd, reply, strlen(reply), addr)",
+      "expected": null
+    },
+    {
+      "name": "reject signature",
+      "content": "标准库声明 template <class Fn, class... Args> explicit thread(Fn&&, Args&&...)。",
+      "input": "template <class Fn, class... Args> explicit thread(Fn&&, Args&&...)",
+      "expected": null
+    },
+    {
+      "name": "reject shell command",
+      "content": "可以执行 sudo apt install cmake g++ 完成安装。",
+      "input": "sudo apt install cmake g++",
+      "expected": null
+    },
+    {
+      "name": "reject compiler error",
+      "content": "日志为 cc1plus: error: unrecognized command line option '-std=c++20'。",
+      "input": "cc1plus: error: unrecognized command line option '-std=c++20'",
+      "expected": null
+    },
+    {
+      "name": "reject complete sentence",
+      "content": "主线程如何安全地等待子线程结束？如果不等待，子线程结束后其资源如何回收？",
+      "input": "主线程如何安全地等待子线程结束？如果不等待，子线程结束后其资源如何回收？",
+      "expected": null
+    },
+    {
+      "name": "reject path",
+      "content": "实现位于 backend/app/services/qa_service.py。",
+      "input": "backend/app/services/qa_service.py",
+      "expected": null
+    },
+    {
+      "name": "reject unmatched bracket",
+      "content": "这里介绍 std::vector<T。",
+      "input": "std::vector<T",
+      "expected": null
+    },
+    {
+      "name": "reject code fence only occurrence",
+      "content": "下面是代码：\n```cpp\nstd::thread worker;\n```",
+      "input": "std::thread",
+      "expected": null
+    },
+    {
+      "name": "reject existing markdown link",
+      "content": "参见 [事件循环](https://example.com/event-loop)。",
+      "input": "事件循环",
+      "expected": null
+    },
+    {
+      "name": "reject incorrect explicit span",
+      "content": "socket 与 bind 属于网络 API。",
+      "input": {
+        "display_name": "bind",
+        "canonical_name": "bind",
+        "category": "api",
+        "confidence": 0.9,
+        "source_span": {
+          "text": "bind",
+          "start": 0,
+          "end": 4
+        }
+      },
+      "expected": null
+    }
+  ]
+}

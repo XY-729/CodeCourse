@@ -168,6 +168,13 @@ export type DocumentTerm = {
   qa_record_id?: number | null;
   concept_id?: string | null;
   content_hash?: string | null;
+  canonical_name?: string | null;
+  category?: string | null;
+  source_span?: {
+    text: string;
+    start?: number;
+    end?: number;
+  } | null;
   created_at: string;
   updated_at: string;
 };
@@ -793,6 +800,17 @@ export type PromptTemplateMetadata = {
   required_placeholders: string[];
   default: string;
   current: string;
+  is_default: boolean;
+  schema_version: number;
+  stored_schema_version: number;
+  upgrade_status:
+    | "default"
+    | "current"
+    | "current_custom"
+    | "migrated"
+    | "migrated_with_custom_directives"
+    | "outdated_custom"
+    | string;
 };
 
 export type PromptRevision = {
@@ -816,12 +834,20 @@ export function getPromptHistory(key: string): Promise<{ key: string; revisions:
 export function previewPrompt(
   key: string,
   value: string,
-): Promise<{ key: string; rendered: string }> {
-  return request<{ key: string; rendered: string }>(`/settings/prompts/preview`, {
+): Promise<PromptPreview> {
+  return request<PromptPreview>(`/settings/prompts/preview`, {
     method: "POST",
     body: JSON.stringify({ key, value }),
   });
 }
+
+export type PromptPreview = {
+  key: string;
+  rendered: string;
+  template_rendered: string;
+  messages: Array<{ role: "system" | "user" | "assistant" | string; content: string }>;
+  notes: string[];
+};
 
 export function resetPrompt(key: string): Promise<{ key: string; value: string }> {
   return request<{ key: string; value: string }>(`/settings/prompts/reset`, {

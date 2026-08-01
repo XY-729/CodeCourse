@@ -33,14 +33,7 @@ html.platform-android .learner-profile-loading {
 }
 
 html.platform-android .app-shell:has(.workbench.mobile-panel-open) .apple-feedback-stack {
-  top: calc(120px + env(safe-area-inset-top));
-}
-
-html.platform-android
-  .app-shell:has(.workbench.mobile-panel-open):has(.apple-feedback-stack .apple-feedback)
-  .navigation-panel
-  .sidebar-scroll {
-  padding-top: 84px;
+  top: calc(58px + env(safe-area-inset-top));
 }
 
 html.platform-android button:disabled,
@@ -49,12 +42,44 @@ html.platform-android [aria-disabled="true"] {
   box-shadow: none;
 }
 
-html.platform-android .apple-feedback {
-  min-height: 50px;
-  transition: opacity 180ms ease, transform 240ms var(--mobile-ease-out);
+/* Compact, pinned task feedback: a small centered pill hugging the bottom
+   edge of the top bar. Busy/success toasts are pointer-transparent so the
+   file tab bar underneath stays fully clickable during generation. */
+html.platform-android .apple-feedback-stack {
+  top: calc(58px + env(safe-area-inset-top));
+  left: 12px;
+  right: 12px;
+  justify-items: center;
+  gap: 6px;
 }
 
-html.platform-android .apple-feedback > button,
+html.platform-android.android-reading-immersive .apple-feedback-stack {
+  top: calc(10px + env(safe-area-inset-top));
+}
+
+html.platform-android .apple-feedback {
+  min-height: 30px;
+  padding: 5px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+  box-shadow: var(--mobile-shadow-sm);
+  background: color-mix(in srgb, var(--mobile-material-regular) 94%, transparent);
+  transition: opacity 180ms ease, transform 240ms var(--mobile-ease-out);
+  pointer-events: none;
+}
+
+html.platform-android .apple-feedback.error {
+  pointer-events: auto;
+}
+
+html.platform-android .apple-feedback > button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  margin: -4px -5px -4px 3px;
+}
+
 html.platform-android .qa-panel-tabs .panel-close {
   width: 44px;
   min-width: 44px;
@@ -1172,6 +1197,7 @@ html.platform-android .apple-feedback-stack.is-inline:empty {
 
 html.platform-android .apple-feedback-stack.is-inline .apple-feedback {
   min-height: 48px;
+  pointer-events: auto;
   box-shadow: none;
   background: var(--mobile-surface-pressed);
 }

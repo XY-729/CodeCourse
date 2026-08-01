@@ -35,11 +35,17 @@ import {
 } from "../../personalization/preferenceEngine";
 import { composeSystemPrompt } from "../../personalization/promptContracts";
 import {
-  previewPromptTemplate,
+  previewPromptBundle,
+  PROMPT_SCHEMA_VERSION,
   promptTemplateMetadata,
   validatePromptTemplate,
 } from "../../personalization/promptTemplateContract";
 import { normalizeTerm } from "../../personalization/conceptResolver";
+import {
+  validateTermCandidate,
+  type StructuredTermCandidate,
+  type TermCandidateInput,
+} from "../../personalization/termCandidate";
 import {
   buildObserverPrompt,
   conservativeDomainState,
@@ -90,6 +96,7 @@ const LEGACY_PROMPT_HASHES: Record<string, string> = {
   "prompt.learning_plan.lesson": "8b080e0b",
   "prompt.qa.answer": "cfa78f24",
 };
+const PROMPT_SCHEMA_SETTING_PREFIX = "prompt_schema_version.";
 
 function addOutlineLessonLinks(outline: string): string {
   const START = "<!-- CODECOURSE_LESSON_LINKS_START -->";
@@ -133,7 +140,6 @@ const teachingOutcomes = new AndroidTeachingOutcomeService(db);
 const DEFAULT_MODEL = { provider: "deepseek", base_url: "https://api.deepseek.com", model: "deepseek-chat", enabled: false };
 const MOBILE_LESSON_CONCURRENCY = 4;
 const KNOWN_TECH_TERMS = ["FastAPI", "Pydantic", "Uvicorn", "React", "TypeScript", "JavaScript", "Electron", "SQLite", "FTS5", "Cytoscape", "Monaco", "Tree-sitter", "Docker", "CMake", "Cargo", "WebSocket", "REST", "RAG", "LLM", "API", "Git", "依赖注入", "异步任务", "全文检索", "知识图谱", "调用关系", "路由", "中间件"];
-const STOP_TERMS = new Set(["markdown", "github", "codecourse", "readme", "todo", "true", "false", "null", "项目", "文件", "代码", "课件", "回答", "问题", "学习", "用户", "模型", "内容"]);
 
 function now(): string { return new Date().toISOString(); }
 function bool(value: unknown): boolean { return value === true || value === 1 || value === "1"; }
@@ -149,6 +155,18 @@ function hashText(value: string): string {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
   return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function legacyPromptSuffix(key: string, saved: string): string | null {
+  const legacyHash = LEGACY_PROMPT_HASHES[key];
+  if (!legacyHash) return null;
+  if (hashText(saved) === legacyHash) return "";
+  const boundaries = [...saved.matchAll(/\n/g)].map((match) => match.index ?? -1);
+  for (const boundary of boundaries.reverse()) {
+    const prefix = saved.slice(0, boundary).trimEnd();
+    if (hashText(prefix) === legacyHash) return saved.slice(boundary).trim();
+  }
+  return null;
 }
 function compactText(value: string, limit = 12_000): string {
   if (value.length <= limit) return value;
@@ -171,6 +189,18 @@ function extractJsonObject(raw: string): unknown {
   const candidate = fenced || raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
   if (!candidate) throw new Error("lesson plan did not return valid JSON");
   return JSON.parse(candidate);
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value) : value;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseLessonPlan(raw: string): LessonPlan {
@@ -236,23 +266,32 @@ function dedupeLessonMarkdown(markdown: string): string {
   return kept.join("\n\n").trim();
 }
 
-function cleanTerm(value: string): string {
-  const term = value.trim().replace(/^[`*_#\[\](){}<>，。；：、]+|[`*_#\[\](){}<>，。；：、]+$/g, "").replace(/\s+/g, " ");
-  if (term.length < 2 || term.length > 80 || /^\d+$/.test(term) || STOP_TERMS.has(term.toLocaleLowerCase())) return "";
-  return term;
-}
-
-function localTermCandidates(content: string): Array<{ term: string; source: "rule"; confidence: number }> {
+function localTermCandidates(content: string): StructuredTermCandidate[] {
   const visible = content.replace(/```[\s\S]*?```/g, " ");
-  const weighted: Array<{ term: string; source: "rule"; confidence: number }> = [];
-  const add = (raw: string, confidence: number) => {
-    const term = cleanTerm(raw);
-    if (term && visible.includes(term) && !weighted.some((item) => item.term.toLocaleLowerCase() === term.toLocaleLowerCase())) weighted.push({ term, source: "rule", confidence });
+  const weighted: StructuredTermCandidate[] = [];
+  const add = (raw: string, confidence: number, category = "other") => {
+    const candidate = validateTermCandidate(
+      {
+        display_name: raw,
+        canonical_name: raw,
+        category,
+        confidence,
+      },
+      content,
+      { source: "rule", confidence },
+    );
+    if (
+      candidate
+      && visible.includes(candidate.display_name)
+      && !weighted.some(
+        (item) => item.canonical_name.toLocaleLowerCase() === candidate.canonical_name.toLocaleLowerCase(),
+      )
+    ) weighted.push(candidate);
   };
-  for (const match of visible.matchAll(/`([^`\n]{2,80})`/g)) add(match[1], 0.76);
-  for (const term of KNOWN_TECH_TERMS) if (visible.includes(term)) add(term, 0.84);
-  for (const match of visible.matchAll(/\b(?:[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|[A-Z]{2,}[A-Z0-9_-]*|[A-Za-z]+\.[A-Za-z0-9_.-]+)\b/g)) add(match[0], 0.72);
-  return weighted.sort((a, b) => b.term.length - a.term.length).slice(0, 20);
+  for (const match of visible.matchAll(/`([^`\n]{2,80})`/g)) add(match[1], 0.76, "symbol");
+  for (const term of KNOWN_TECH_TERMS) if (visible.includes(term)) add(term, 0.84, "library");
+  for (const match of visible.matchAll(/\b(?:[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|[A-Z]{2,}[A-Z0-9_-]*|[A-Za-z]+\.[A-Za-z0-9_.-]+)\b/g)) add(match[0], 0.72, "symbol");
+  return weighted.sort((a, b) => b.display_name.length - a.display_name.length).slice(0, 20);
 }
 function projectFromRow(row: Row, courseFiles: string[] = []): Project {
   return {
@@ -296,6 +335,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   // ---- task lifecycle ----
   private runningTasks = new Set<number>();
   private runningIndexes = new Set<number>();
+  private promptStates: Record<string, Record<string, unknown>> = {};
 
   // The coordinator is the only owner of foreground Service state.
   private readonly serviceCoordinator = new GenerationServiceCoordinator(CodeCourseNative);
@@ -933,22 +973,71 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
   private async getPrompts(): Promise<Record<string, string>> {
     const prompts = { ...(promptDefaults as Record<string, string>) };
-    const rows = await db.query<Row>("SELECT key,value FROM settings WHERE key LIKE 'prompt.%'");
-    for (const row of rows) {
-      const key = String(row.key);
-      const saved = String(row.value);
-      const currentDefault = prompts[key];
-      if (
-        currentDefault
-        && currentDefault !== saved
-        && hashText(saved) === LEGACY_PROMPT_HASHES[key]
-      ) {
-        prompts[key] = currentDefault;
-        await this.setSetting(key, currentDefault);
+    const rows = await db.query<Row>(
+      "SELECT key,value FROM settings WHERE key LIKE 'prompt.%' OR key LIKE 'prompt_schema_version.%'",
+    );
+    const stored = new Map(rows.map((row) => [String(row.key), String(row.value)]));
+    const states: Record<string, Record<string, unknown>> = {};
+    for (const [key, currentDefault] of Object.entries(prompts)) {
+      const saved = stored.get(key);
+      const rawVersion = Number(stored.get(`${PROMPT_SCHEMA_SETTING_PREFIX}${key}`) || 1);
+      const storedVersion = Number.isFinite(rawVersion) ? Math.max(1, rawVersion) : 1;
+      if (!saved) {
+        states[key] = {
+          is_default: true,
+          schema_version: PROMPT_SCHEMA_VERSION,
+          stored_schema_version: PROMPT_SCHEMA_VERSION,
+          upgrade_status: "default",
+        };
+        continue;
+      }
+      if (saved === currentDefault) {
+        prompts[key] = saved;
+        states[key] = {
+          is_default: true,
+          schema_version: PROMPT_SCHEMA_VERSION,
+          stored_schema_version: PROMPT_SCHEMA_VERSION,
+          upgrade_status: "current",
+        };
+        if (storedVersion !== PROMPT_SCHEMA_VERSION) {
+          await this.setSetting(`${PROMPT_SCHEMA_SETTING_PREFIX}${key}`, String(PROMPT_SCHEMA_VERSION));
+        }
+        continue;
+      }
+      if (storedVersion >= PROMPT_SCHEMA_VERSION) {
+        prompts[key] = saved;
+        states[key] = {
+          is_default: false,
+          schema_version: PROMPT_SCHEMA_VERSION,
+          stored_schema_version: storedVersion,
+          upgrade_status: "current_custom",
+        };
+        continue;
+      }
+      const customSuffix = legacyPromptSuffix(key, saved);
+      if (customSuffix !== null) {
+        const migrated = customSuffix ? `${currentDefault.trimEnd()}\n\n${customSuffix}` : currentDefault;
+        prompts[key] = migrated;
+        await this.setSetting(key, migrated);
+        await this.setSetting(`${PROMPT_SCHEMA_SETTING_PREFIX}${key}`, String(PROMPT_SCHEMA_VERSION));
+        await this.addPromptRevision(key, migrated, "migration");
+        states[key] = {
+          is_default: !customSuffix,
+          schema_version: PROMPT_SCHEMA_VERSION,
+          stored_schema_version: PROMPT_SCHEMA_VERSION,
+          upgrade_status: customSuffix ? "migrated_with_custom_directives" : "migrated",
+        };
       } else {
         prompts[key] = saved;
+        states[key] = {
+          is_default: false,
+          schema_version: PROMPT_SCHEMA_VERSION,
+          stored_schema_version: storedVersion,
+          upgrade_status: "outdated_custom",
+        };
       }
     }
+    this.promptStates = states;
     return prompts;
   }
   private async savePrompts(payload: Record<string, string>): Promise<{ ok: boolean }> {
@@ -965,6 +1054,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     for (const [key, value] of Object.entries(payload)) {
       if (!key.startsWith("prompt.") || current[key] === value) continue;
       await this.setSetting(key, value);
+      await this.setSetting(`${PROMPT_SCHEMA_SETTING_PREFIX}${key}`, String(PROMPT_SCHEMA_VERSION));
       await this.addPromptRevision(key, value, "user");
     }
     return { ok: true };
@@ -994,6 +1084,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       prompts: promptTemplateMetadata(
         promptDefaults as Record<string, string>,
         current,
+        this.promptStates,
       ),
     };
   }
@@ -1014,13 +1105,23 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
 
   private async previewPrompt(key: string, value: string) {
-    return { key, rendered: previewPromptTemplate(key, value) };
+    const current = await this.getPrompts();
+    return {
+      key,
+      ...previewPromptBundle(
+        key,
+        value,
+        promptDefaults as Record<string, string>,
+        current,
+      ),
+    };
   }
 
   private async resetPrompt(key: string) {
     const value = (promptDefaults as Record<string, string>)[key];
     if (value === undefined) throw new Error("未知提示词模板。");
     await this.setSetting(key, value);
+    await this.setSetting(`${PROMPT_SCHEMA_SETTING_PREFIX}${key}`, String(PROMPT_SCHEMA_VERSION));
     await this.addPromptRevision(key, value, "reset");
     return { key, value };
   }
@@ -1585,7 +1686,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const anchors = anchorRows.map((row) => `- ${row.term_text || "个人总结"}：${row.summary}`).join("\n");
     return `来源：${payload.source_type} ${payload.source_path || "项目"}\n\n${selected ? `用户附带上下文：\n${selected}` : `当前文档摘要：\n${compactText(source, 8000)}`}\n\n${anchoredContext}\n\n相关项目证据：\n${evidence || "暂无索引命中"}\n\n学习者已确认的理解：\n${anchors || "暂无"}`;
   }
-  private parseAnswer(raw: string, payload: QAAskPayload): { title: string; answer: string; terms: string[] } {
+  private parseAnswer(raw: string, payload: QAAskPayload): { title: string; answer: string; terms: StructuredTermCandidate[] } {
     const titleLine = raw.match(/^TITLE:\s*(.+)$/mi)?.[1]?.trim();
     const termsLine = raw.match(/^TERMS:\s*(.+)$/mi)?.[1] || "";
     const answer = raw.replace(/^TITLE:.*$/mi, "").replace(/^TERMS:.*$/mi, "").trim();
@@ -1593,7 +1694,19 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const title = (titleLine || selected || payload.question || "AI 回答").slice(0, 48);
     let parsedTerms: unknown = [];
     try { parsedTerms = JSON.parse(termsLine); } catch { parsedTerms = termsLine.split(/[,，、]/); }
-    const terms = (Array.isArray(parsedTerms) ? parsedTerms : []).map((term) => cleanTerm(String(term))).filter(Boolean).slice(0, 20);
+    const terms = (Array.isArray(parsedTerms) ? parsedTerms : [])
+      .map((term) => validateTermCandidate(
+        term as TermCandidateInput,
+        answer,
+        { source: "model", confidence: 0.94 },
+      ))
+      .filter((term): term is StructuredTermCandidate => term !== null)
+      .filter((term, index, values) =>
+        values.findIndex(
+          (candidate) => candidate.canonical_name.toLocaleLowerCase() === term.canonical_name.toLocaleLowerCase(),
+        ) === index
+      )
+      .slice(0, 20);
     return { title, answer, terms };
   }
   private formatQA(record: QARecord): string {
@@ -2016,13 +2129,17 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     sourceType: "course" | "qa",
     sourcePath: string,
     content: string,
-    modelTerms: string[] = [],
+    modelTerms: TermCandidateInput[] = [],
     allowModelScan = true,
   ): Promise<void> {
-    const weighted = [
-      ...modelTerms.map((term) => ({ term: cleanTerm(term), source: "model", confidence: 0.94 })),
+    const weighted: StructuredTermCandidate[] = [
+      ...modelTerms.map((term) => validateTermCandidate(
+        term,
+        content,
+        { source: "model", confidence: 0.94 },
+      )).filter((term): term is StructuredTermCandidate => term !== null),
       ...localTermCandidates(content),
-    ].filter((item) => item.term && content.includes(item.term));
+    ];
     const seen = new Set<string>();
     const contentHash = hashText(content);
     await db.run(
@@ -2032,7 +2149,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const resolved = await this.resolvePersonalizationTerms(
       projectId,
       weighted.slice(0, 30).map((item) => ({
-        text: item.term,
+        text: item.canonical_name,
         source: item.source,
         confidence: item.confidence,
       })),
@@ -2040,18 +2157,28 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const conceptByTerm = new Map(
       resolved.terms.map((item) => [String(item.text).toLocaleLowerCase(), String((item.concept as PersonalizationConcept).id)]),
     );
-    for (const item of weighted.sort((a, b) => b.term.length - a.term.length)) {
-      const key = item.term.toLocaleLowerCase(); if (seen.has(key)) continue; seen.add(key);
+    for (const item of weighted.sort((a, b) => b.display_name.length - a.display_name.length)) {
+      const key = item.canonical_name.toLocaleLowerCase(); if (seen.has(key)) continue; seen.add(key);
       await db.run(
-        `INSERT INTO document_terms(project_id,source_type,source_path,term_text,detection_source,confidence,status,concept_id,content_hash,created_at,updated_at)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO document_terms(
+           project_id,source_type,source_path,term_text,detection_source,confidence,status,
+           concept_id,content_hash,canonical_name,category,source_span_json,created_at,updated_at
+         )
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(project_id,source_type,source_path,term_text) DO UPDATE SET
            detection_source=CASE WHEN excluded.confidence>document_terms.confidence THEN excluded.detection_source ELSE document_terms.detection_source END,
            confidence=MAX(document_terms.confidence,excluded.confidence),
            concept_id=COALESCE(document_terms.concept_id,excluded.concept_id),
            content_hash=excluded.content_hash,
+           canonical_name=COALESCE(excluded.canonical_name,document_terms.canonical_name),
+           category=COALESCE(excluded.category,document_terms.category),
+           source_span_json=COALESCE(excluded.source_span_json,document_terms.source_span_json),
            updated_at=excluded.updated_at`,
-        [projectId, sourceType, sourcePath, item.term, item.source, item.confidence, "candidate", conceptByTerm.get(key) || null, contentHash, now(), now()],
+        [
+          projectId, sourceType, sourcePath, item.display_name, item.source, item.confidence,
+          "candidate", conceptByTerm.get(key) || null, contentHash, item.canonical_name,
+          item.category, JSON.stringify(item.source_span), now(), now(),
+        ],
       );
       if (seen.size >= 24) break;
     }
@@ -2093,15 +2220,19 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         },
         {
           role: "user",
-          content: `返回 {"terms":[{"text":"术语","confidence":0.0}]}，最多 16 个。跳过普通词、完整句子、已有链接和代码块局部变量。\n\n${compact}`,
+          content: `返回 {"terms":[{"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.0,"source_span":{"text":"正文原词"}}]}，最多 16 个。display_name 与 source_span.text 必须逐字出现在正文可见文本中。跳过普通词、完整句子、命令、路径、函数调用或签名、编译错误、已有链接和代码块局部变量。\n\n${compact}`,
         },
       ]);
       const parsed = extractJsonObject(raw) as Record<string, unknown>;
       const terms = (Array.isArray(parsed.terms) ? parsed.terms : [])
         .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
         .filter((item) => Number(item.confidence || 0) >= 0.62)
-        .map((item) => cleanTerm(String(item.text || "")))
-        .filter((term) => term && content.includes(term))
+        .map((item) => validateTermCandidate(
+          item,
+          content,
+          { source: "model", confidence: Number(item.confidence || 0) },
+        ))
+        .filter((term): term is StructuredTermCandidate => term !== null)
         .slice(0, 16);
       await this.registerTerms(projectId, sourceType, sourcePath, content, terms, false);
       await db.run(
@@ -2139,7 +2270,36 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       } catch { /* Missing source documents simply have no term candidates. */ }
     }
     rows = await db.query<Row>("SELECT * FROM document_terms WHERE project_id=? AND source_type=? AND source_path=? ORDER BY length(term_text) DESC", [projectId, sourceType, sourcePath]);
-    return rows;
+    const content = sourcePath
+      ? sourceType === "qa"
+        ? String((await db.query<Row>("SELECT answer_md FROM qa_records WHERE project_id=? AND (output_path=? OR CAST(id AS TEXT)=?)", [projectId, sourcePath, sourcePath]))[0]?.answer_md || "")
+        : await readGeneratedFile(projectId, sourcePath).catch(() => "")
+      : "";
+    const invalidCandidateIds = rows
+      .filter((row) => String(row.status) === "candidate")
+      .filter((row) => !validateTermCandidate(
+        {
+          display_name: row.term_text,
+          canonical_name: row.canonical_name || row.term_text,
+          category: row.category || "other",
+          confidence: row.confidence,
+          source_span: parseJsonRecord(row.source_span_json),
+        },
+        content,
+        { source: String(row.detection_source || "rule"), confidence: Number(row.confidence || 0.7) },
+      ))
+      .map((row) => Number(row.id));
+    if (invalidCandidateIds.length) {
+      await db.run(
+        `DELETE FROM document_terms WHERE project_id=? AND status='candidate' AND id IN (${invalidCandidateIds.map(() => "?").join(",")})`,
+        [projectId, ...invalidCandidateIds],
+      );
+      rows = rows.filter((row) => !invalidCandidateIds.includes(Number(row.id)));
+    }
+    return rows.map((row) => ({
+      ...row,
+      source_span: parseJsonRecord(row.source_span_json) ?? null,
+    }));
   }
   private async setTermStatus(termId: number, status: string): Promise<Row> { await db.run("UPDATE document_terms SET status=?,updated_at=? WHERE id=?", [status, now(), termId]); return (await db.query<Row>("SELECT * FROM document_terms WHERE id=?", [termId]))[0]; }
 

@@ -199,6 +199,9 @@ class DocumentTermResponse(BaseModel):
     qa_record_id: Optional[int] = None
     concept_id: Optional[str] = None
     content_hash: Optional[str] = None
+    canonical_name: Optional[str] = None
+    category: Optional[str] = None
+    source_span: Optional[dict[str, object]] = None
     link_origin: str = "legacy_unknown"
     created_at: str
     updated_at: str
