@@ -104,6 +104,47 @@ class LearningPlanProjectTests(unittest.TestCase):
         self.assertNotIn("RAG 索引检索片段：", prompt)
         self.assertEqual(mocked.call_args.kwargs["timeout"], 180)
 
+    def test_survey_answers_invalidate_cached_outline_reuse(self):
+        project = self.client.post("/api/projects/learning-plan", json={"name": "DP 强化"}).json()
+        generated_outline = "# 学习计划总纲\n\n生成方式：AI 生成\n\n## 学习目标\n\n围绕动态规划建立学习路径。"
+
+        with patch("app.services.generation_service.call_openai_compatible_chat", return_value=generated_outline) as mocked:
+            first = self.client.post(
+                f"/api/projects/{project['id']}/outline/generate",
+                json={"scope": {"type": "learning_plan", "paths": []}, "instructions": ""},
+            ).json()
+
+        self.assertEqual(first["status"], "queued")
+
+        # Same input again reuses the cached task (no new generation).
+        with patch("app.services.generation_service.call_openai_compatible_chat", return_value=generated_outline) as mocked:
+            second = self.client.post(
+                f"/api/projects/{project['id']}/outline/generate",
+                json={"scope": {"type": "learning_plan", "paths": []}, "instructions": ""},
+            ).json()
+            self.assertEqual(mocked.call_count, 0)
+
+        # Same input WITH survey answers must NOT reuse the cached task.
+        with patch("app.services.generation_service.call_openai_compatible_chat", return_value=generated_outline) as mocked:
+            third = self.client.post(
+                f"/api/projects/{project['id']}/outline/generate",
+                json={
+                    "scope": {"type": "learning_plan", "paths": []},
+                    "instructions": "",
+                    "survey_answers": [
+                        {
+                            "question": "你对 DP 的了解程度？",
+                            "question_type": "single_choice",
+                            "dimension": "prerequisite_level",
+                            "selected": "none",
+                        }
+                    ],
+                },
+            ).json()
+            self.assertEqual(third["status"], "queued")
+            self.assertNotEqual(third["id"], first["id"])
+            self.assertEqual(mocked.call_count, 1)
+
     def test_learning_plan_lesson_is_generated_in_bounded_sections(self):
         project = self.client.post("/api/projects/learning-plan", json={"name": "Python 异步编程"}).json()
         course_dir = self.generated / str(project["id"])

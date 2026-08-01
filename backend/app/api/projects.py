@@ -242,7 +242,14 @@ def regenerate_course(project_id: int) -> ProjectActionResponse:
 def generate_outline(project_id: int, payload: GenerateOutlineRequest, background_tasks: BackgroundTasks) -> GenerationTaskResponse:
     repo_root = _project_root(project_id)
     settings = get_llm_settings()
-    task, reused = create_or_reuse_outline_task(project_id, repo_root, payload.scope, settings.get("model"), payload.instructions)
+    task, reused = create_or_reuse_outline_task(
+        project_id,
+        repo_root,
+        payload.scope,
+        settings.get("model"),
+        payload.instructions,
+        payload.survey_answers,
+    )
     if not reused:
         background_tasks.add_task(
             run_outline_generation_task,
@@ -292,6 +299,7 @@ def confirm_outline_generation(project_id: int, payload: OutlineConfirmRequest, 
         payload.scope,
         settings.get("model"),
         payload.instructions,
+        payload.answers,
     )
     if not reused:
         background_tasks.add_task(

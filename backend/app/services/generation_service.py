@@ -1088,14 +1088,29 @@ def create_or_reuse_outline_lesson_task(
     return task, False
 
 
+def _serialize_survey_intent(survey_answers: Optional[list]) -> str:
+    if not survey_answers:
+        return ""
+    try:
+        from app.services.outline_questionnaire import serialize_learning_intent
+
+        return serialize_learning_intent(survey_answers)
+    except Exception:
+        return ""
+
+
 def create_or_reuse_outline_task(
     project_id: int,
     repo_root: Path,
     scope: LearningScopeRequest,
     model: Optional[str],
     instructions: str = "",
+    survey_answers: Optional[list] = None,
 ) -> tuple[GenerationTask, bool]:
     _, input_hash = build_outline_input(repo_root, scope, instructions)
+    intent = _serialize_survey_intent(survey_answers)
+    if intent:
+        input_hash = hash_inputs(input_hash, intent)
     prompt_key = "prompt.learning_plan.outline" if scope.type == "learning_plan" else "prompt.outline"
     prompt_hash = hash_inputs(input_hash, load_prompt(prompt_key), load_prompt("prompt.system"))
     cached = find_completed_task(project_id, "outline", prompt_hash, PROMPT_VERSION, mode=scope.type)
