@@ -75,6 +75,10 @@ beforeEach(() => {
 
         current:
           "当前内容",
+        is_default: true,
+        schema_version: 2,
+        stored_schema_version: 2,
+        upgrade_status: "current",
       },
     ],
   });
