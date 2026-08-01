@@ -382,10 +382,13 @@ export default function MarkdownViewer({
 
   // Restore once per opened document. Live learning-state updates must not be
   // fed back into scrollTop or they create a save -> restore jump loop.
+  // Android previously returned early here, silently dropping the saved reading
+  // position for every reopened lesson. Now it restores too, but defers while a
+  // native selection is active so drag handles are not disturbed.
   useEffect(() => {
-    if (androidRuntime) return;
     const article = articleRef.current;
     if (!article) return;
+    if (hasActiveAndroidSelection()) return;
     const restoreKey = `${sourceType}:${sourcePath ?? title}`;
     if (restoredSourceRef.current === restoreKey) return;
     const ratio = Math.min(1, Math.max(0, initialScrollRatio ?? 0));
@@ -395,6 +398,10 @@ export default function MarkdownViewer({
       return;
     }
     const frame = window.requestAnimationFrame(() => {
+      // Re-check: a native selection may have started between the effect
+      // running and the frame callback. Restoring under a live selection would
+      // jump the drag handles and collapse the ActionMode.
+      if (hasActiveAndroidSelection()) return;
       const maxScroll = Math.max(0, article.scrollHeight - article.clientHeight);
       if (maxScroll <= 0) return;
       scrollRangeRef.current = maxScroll;

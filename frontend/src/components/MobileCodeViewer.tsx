@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import hljs from "highlight.js";
+import { isAndroidRuntime } from "../platform/runtime";
 import type { CodeJumpRequest, ViewerRange, ViewerSelection } from "./CodeViewer";
 
 type Props = {
@@ -140,8 +141,10 @@ export default function MobileCodeViewer({
   const [activeMatch, setActiveMatch] = useState(-1);
   const [selectionAnchorLine, setSelectionAnchorLine] = useState<number | null>(null);
   const [selectionActive, setSelectionActive] = useState(false);
+  const pendingSelectionRef = useRef<ViewerSelection | null>(null);
   const searchTimerRef = useRef<number>(0);
   const prevSearchRequestRef = useRef<number | undefined>(mobileSearchRequestId);
+  const androidRuntime = isAndroidRuntime();
 
   const plainLines = useMemo(() => content.split("\n"), [content]);
   const totalLines = plainLines.length;
@@ -171,25 +174,63 @@ export default function MobileCodeViewer({
   // Keep the native selection anchor mounted while a learner drags Android's
   // handles across a virtualized file. Only that anchor row is pinned; the
   // remaining 50,000-line document stays virtual.
+  //
+  // On Android, however, the WebView's native ActionMode (selection toolbar)
+  // is destroyed by ANY React state update while a selection is in progress —
+  // re-rendering the line DOM clears the Range and the toolbar vanishes. So the
+  // Android branch only reads getSelection() into a ref, never calls setState
+  // and never notifies the parent. The selected text is flushed up once the
+  // selection is no longer active (user dismissed the toolbar), matching the
+  // desktop "report after mouseup" semantics.
   useEffect(() => {
     const handleSelectionChange = () => {
       const selection = window.getSelection();
       const viewer = viewerRef.current;
-      if (!selection || selection.isCollapsed || !viewer || !selection.anchorNode) {
-        setSelectionActive(false);
+      const active =
+        viewer !== null
+        && selection !== null
+        && selection.anchorNode !== null
+        && !selection.isCollapsed
+        && viewer.contains(selection.anchorNode);
+
+      if (!active) {
+        // Selection dismissed, cleared, or never started.
         setSelectionAnchorLine(null);
+        setSelectionActive(false);
+        if (androidRuntime) {
+          const pending = pendingSelectionRef.current;
+          pendingSelectionRef.current = null;
+          if (pending) {
+            onSelectionChangeRef.current?.(pending);
+          }
+        }
         return;
       }
+
       const anchorElement = (selection.anchorNode.nodeType === Node.ELEMENT_NODE
         ? selection.anchorNode as Element
         : selection.anchorNode.parentElement)?.closest<HTMLElement>(".mobile-code-line");
-      if (!anchorElement || !viewer.contains(anchorElement)) {
+      if (!anchorElement) {
         setSelectionActive(false);
         setSelectionAnchorLine(null);
         return;
       }
       const anchorLine = Number(anchorElement.dataset.line);
       if (!Number.isFinite(anchorLine)) return;
+
+      if (androidRuntime) {
+        // Read-only capture: do not setState, do not notify parent. Deferred
+        // until the selection collapses to keep the native ActionMode alive.
+        pendingSelectionRef.current = buildViewerSelection(
+          selection,
+          anchorLine,
+          plainLines,
+          language,
+          path,
+        );
+        return;
+      }
+
       setSelectionActive(true);
       setSelectionAnchorLine(shouldVirtualize ? anchorLine : null);
 
@@ -203,7 +244,7 @@ export default function MobileCodeViewer({
       const endLine = Math.max(anchorLine, focusLine);
       const selectedText = selection.toString().trim();
       if (selectedText) {
-        onSelectionChange?.({
+        onSelectionChangeRef.current?.({
           sourceType: "file",
           sourcePath: path,
           selectedText,
@@ -219,7 +260,44 @@ export default function MobileCodeViewer({
     };
     document.addEventListener("selectionchange", handleSelectionChange);
     return () => document.removeEventListener("selectionchange", handleSelectionChange);
-  }, [language, onSelectionChange, path, plainLines, shouldVirtualize]);
+  }, [androidRuntime, language, path, plainLines, shouldVirtualize]);
+
+  // Helper shared by the desktop immediate-report and Android deferred paths.
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  useEffect(() => {
+    onSelectionChangeRef.current = onSelectionChange;
+  }, [onSelectionChange]);
+
+  function buildViewerSelection(
+    selection: Selection,
+    anchorLine: number,
+    lines: string[],
+    lang: string | undefined,
+    sourcePath: string | null,
+  ): ViewerSelection | null {
+    const focusElement = selection.focusNode
+      ? (selection.focusNode.nodeType === Node.ELEMENT_NODE
+          ? selection.focusNode as Element
+          : selection.focusNode.parentElement)?.closest<HTMLElement>(".mobile-code-line")
+      : null;
+    const focusLine = Number(focusElement?.dataset.line || anchorLine);
+    const startLine = Math.min(anchorLine, focusLine);
+    const endLine = Math.max(anchorLine, focusLine);
+    const selectedText = selection.toString().trim();
+    if (!selectedText) return null;
+    return {
+      sourceType: "file",
+      sourcePath,
+      selectedText,
+      language: lang,
+      range: {
+        startLineNumber: startLine,
+        startColumn: 1,
+        endLineNumber: endLine,
+        endColumn: Math.max(1, lines[endLine - 1]?.length ?? 1),
+      },
+    };
+  }
 
   // highlighting
   const highlightedLines = useMemo(() => {
@@ -280,8 +358,15 @@ export default function MobileCodeViewer({
     line: number,
     requestId?: string,
   ): boolean => {
-    if (selectionActive && reason !== "search-result") return false;
-    if (reason === "search-result" && selectionActive) {
+    // A live native selection must not be disturbed: programmatic scrolling
+    // while Android's drag handles are active would collapse the Range.
+    // Android never sets selectionActive state (would re-render and kill the
+    // ActionMode), so check the live DOM selection there.
+    const nativeSelectionActive = androidRuntime
+      ? Boolean(window.getSelection() && !window.getSelection()?.isCollapsed)
+      : selectionActive;
+    if (nativeSelectionActive && reason !== "search-result") return false;
+    if (reason === "search-result" && nativeSelectionActive) {
       window.getSelection()?.removeAllRanges();
       setSelectionActive(false);
       setSelectionAnchorLine(null);
@@ -300,7 +385,7 @@ export default function MobileCodeViewer({
       });
     }
     return true;
-  }, [path, scheduleVisibleLine, scrollToLine, selectionActive]);
+  }, [androidRuntime, path, scheduleVisibleLine, scrollToLine, selectionActive]);
 
   const performProgrammaticScrollRef = useRef(performProgrammaticScroll);
   performProgrammaticScrollRef.current = performProgrammaticScroll;
