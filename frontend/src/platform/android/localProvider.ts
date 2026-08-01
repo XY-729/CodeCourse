@@ -1178,6 +1178,70 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return blocks.join("\n\n");
   }
 
+  private async selectLessonFiles(projectId: number, outline: string): Promise<void> {
+    const lessons: [number, string][] = [];
+    for (const m of outline.matchAll(/^###\s*第\s*(\d+)\s*课\s*[：:]\s*(.+?)\s*$/gm)) {
+      lessons.push([Number(m[1]), m[2].trim()]);
+    }
+    if (!lessons.length) return;
+    const nowStr = now();
+    for (const [number, title] of lessons) {
+      const hits = await this.search(projectId, title, undefined, 8).catch(() => []);
+      const files: string[] = [];
+      for (const hit of hits) {
+        if (!files.includes(hit.path)) files.push(hit.path);
+        if (files.length >= 8) break;
+      }
+      if (files.length < 2) {
+        const keyRows = await db.query<Row>(
+          "SELECT path FROM project_files WHERE project_id=? AND is_key_file=1 ORDER BY path LIMIT 8",
+          [projectId],
+        );
+        for (const row of keyRows) {
+          const path = String(row.path);
+          if (!files.includes(path)) files.push(path);
+          if (files.length >= 2) break;
+        }
+      }
+      if (!files.length) continue;
+      await db.run(
+        "DELETE FROM lesson_files WHERE project_id=? AND lesson_number=?",
+        [projectId, number],
+      );
+      for (const path of files) {
+        await db.run(
+          "INSERT INTO lesson_files(project_id,lesson_number,file_path,source,updated_at) VALUES(?,?,?,?,?)",
+          [projectId, number, path, "index", nowStr],
+        );
+      }
+    }
+  }
+
+  private async buildFileCodeBlocks(projectId: number, files: string[], budget = 24000): Promise<string> {
+    const HEAD_CHARS = 4000;
+    const TAIL_CHARS = 4000;
+    const blocks: string[] = [];
+    let remaining = budget;
+    for (const relative of files) {
+      if (remaining <= 0) break;
+      try {
+        const content = await readRepoFile(projectId, relative);
+        const cap = Math.min(12000, remaining - relative.length - 10);
+        let excerpt = content;
+        if (excerpt.length > cap) {
+          const head = excerpt.slice(0, HEAD_CHARS);
+          const tail = excerpt.length > TAIL_CHARS ? excerpt.slice(-TAIL_CHARS) : "";
+          excerpt = `${head}\n# ... (省略 ${Math.max(0, excerpt.length - head.length - tail.length)} 字符) ...\n${tail}`.slice(0, cap);
+        }
+        blocks.push(`### ${relative}\n\`\`\`\n${excerpt}\n\`\`\``);
+        remaining -= blocks[blocks.length - 1].length + 2;
+      } catch {
+        // missing/unreadable file: skip, other files still contribute
+      }
+    }
+    return blocks.join("\n\n");
+  }
+
   private async generateOutline(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
     const project = await this.getProject(projectId); const prompts = await this.getPrompts();
     const key = project.project_type === "learning_plan" ? "prompt.learning_plan.outline" : "prompt.outline";
@@ -1233,6 +1297,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
 
     content = addOutlineLessonLinks(content);
+    if (project.project_type === "repository") {
+      void this.selectLessonFiles(projectId, content).catch(() => undefined);
+    }
     await this.reportProgress(taskId, "总纲生成完成", 1, 1, false);
     return { filename: "outline.md", content };
   }
@@ -1290,9 +1357,17 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const settings = await this.getLLMSettings();
     let lessonInput = `项目学习总纲：\n${compactText(outline, 16000)}`;
     if (project.project_type === "repository") {
+      const lessonNumber = Number(payload.lesson_number || 0);
+      const lessonFiles = lessonNumber > 0
+        ? (await db.query<Row>("SELECT file_path FROM lesson_files WHERE project_id=? AND lesson_number=? ORDER BY file_path", [projectId, lessonNumber])).map((row) => String(row.file_path))
+        : [];
+      const fileBlocks = await this.buildFileCodeBlocks(projectId, lessonFiles);
+      if (fileBlocks) {
+        lessonInput += `\n\n涉及文件代码：\n${fileBlocks}`;
+      }
       const hits = await this.search(projectId, `${payload.title} ${payload.instructions || ""}`, undefined, 8).catch(() => []);
       const evidence = hits.map((item) => `### ${item.path}:${item.start_line}-${item.end_line}\n${item.content}`).join("\n\n");
-      lessonInput += `\n\nRAG 索引检索片段：\n${evidence || await this.projectContext(projectId)}`;
+      lessonInput += `\n\nRAG 索引检索片段：\n${evidence || (fileBlocks ? "" : await this.projectContext(projectId))}`;
     }
     const base = project.project_type === "learning_plan"
       ? `${prompts[key] || "生成完整课件"}\n\n第 ${payload.lesson_number} 课：${payload.title}\n用户要求：${payload.instructions || "无"}\n\n总纲：\n${compactText(outline, 18000)}`

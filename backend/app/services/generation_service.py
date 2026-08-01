@@ -39,6 +39,7 @@ from app.services.course_generator import (
     list_course_files_from_dir,
     read_course_file,
 )
+from app.services.lesson_files import build_file_code_blocks, select_lesson_files
 from app.services.llm_client import call_openai_compatible_chat
 from app.services.term_service import parse_term_metadata, register_document_terms, term_metadata_instruction
 from app.services.scanner import list_key_files, read_text_file, safe_join, scan_tree
@@ -50,9 +51,11 @@ from app.services.storage import (
     find_knowledge_node,
     find_completed_task,
     get_generation_task,
+    get_lesson_files,
     get_llm_settings,
     get_project,
     update_generation_task,
+    upsert_lesson_files,
     update_project_status,
 )
 
@@ -372,10 +375,15 @@ def build_outline_lesson_input(
             )
     except Exception:
         pass
+    file_blocks = build_file_code_blocks(
+        repo_root,
+        get_lesson_files(project_id, lesson_number),
+    )
     lesson_input = "\n\n".join(
         [
             "项目总纲摘要：\n```markdown\n" + outline[:7000] + "\n```",
             "本课计划：\n```markdown\n" + lesson_section + "\n```",
+            "涉及文件代码：\n" + (file_blocks or "（无涉及文件清单，请以总纲与 RAG 片段为准。）"),
             "RAG 索引检索片段：\n" + rag_context,
         ]
     )
@@ -386,9 +394,21 @@ def build_outline_lesson_input(
         lesson_title,
         user_instructions,
         outline,
+        file_blocks,
         rag_context,
     )
     return lesson_title, lesson_input, input_hash
+
+
+def _select_and_persist_lesson_files(project_id: int, repo_root: Path, outline: str) -> None:
+    """Select involved files per lesson after the outline lands. Failure must
+    not fail the outline task - lesson input falls back to key files."""
+    try:
+        selected = select_lesson_files(project_id, repo_root, outline)
+        for lesson_number, files in selected.items():
+            upsert_lesson_files(project_id, lesson_number, [(rel, "index") for rel in files])
+    except Exception:
+        pass
 
 
 def run_outline_generation_task(project_id: int, task_id: int, scope: LearningScopeRequest, instructions: str = "", survey_answers: Optional[list] = None) -> None:
@@ -467,6 +487,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
         _atomic_write(output_dir / "outline.md", add_outline_lesson_links(outline))
         register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
         register_document_terms(project_id, "course", "outline.md", outline, model_terms)
+        _select_and_persist_lesson_files(project_id, repo_root, outline)
         update_generation_task(task_id, "completed", output_path=output_dir)
         update_project_status(project_id, "outline_ready")
     except Exception as exc:  # noqa: BLE001

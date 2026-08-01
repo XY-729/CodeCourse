@@ -244,6 +244,17 @@ export class MobileDatabase {
           UNIQUE(project_id, relative_path) ON CONFLICT REPLACE,
           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS lesson_files (
+          project_id INTEGER NOT NULL,
+          lesson_number INTEGER NOT NULL,
+          file_path TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'index',
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(project_id, lesson_number, file_path),
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_lesson_files_project
+          ON lesson_files(project_id, lesson_number);
       `,
       transaction: true,
       readonly: false,

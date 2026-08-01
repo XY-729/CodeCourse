@@ -1713,6 +1713,22 @@ def init_storage() -> None:
                     row["updated_at"] or now_v2,
                 ),
             )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lesson_files (
+                project_id INTEGER NOT NULL,
+                lesson_number INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'index',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (project_id, lesson_number, file_path)
+            )
+            """
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_lesson_files_project
+               ON lesson_files(project_id, lesson_number)"""
+        )
         conn.commit()
 
 
@@ -2196,6 +2212,41 @@ def get_generation_task(task_id: int) -> Optional[GenerationTask]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM generation_tasks WHERE id = ?", (task_id,)).fetchone()
         return _row_to_task(row) if row else None
+
+
+def upsert_lesson_files(
+    project_id: int,
+    lesson_number: int,
+    files: list[tuple[str, str]],
+) -> None:
+    """Persist the per-lesson involved-file list. `files` is a list of
+    (file_path, source) pairs; source is one of 'index' | 'key_files' | 'llm'."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        conn.execute("DELETE FROM lesson_files WHERE project_id = ? AND lesson_number = ?", (project_id, lesson_number))
+        conn.executemany(
+            """
+            INSERT INTO lesson_files (project_id, lesson_number, file_path, source, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            [(project_id, lesson_number, path, source, now) for path, source in files],
+        )
+        conn.commit()
+
+
+def get_lesson_files(project_id: int, lesson_number: int) -> list[str]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT file_path FROM lesson_files WHERE project_id = ? AND lesson_number = ? ORDER BY file_path",
+            (project_id, lesson_number),
+        ).fetchall()
+        return [str(row["file_path"]) for row in rows]
+
+
+def delete_lesson_files(project_id: int, lesson_number: int) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM lesson_files WHERE project_id = ? AND lesson_number = ?", (project_id, lesson_number))
+        conn.commit()
 
 
 def list_generation_tasks(project_id: int) -> list[GenerationTask]:
