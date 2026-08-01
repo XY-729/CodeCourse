@@ -102,6 +102,7 @@ class LearningPlanProjectTests(unittest.TestCase):
         self.assertNotIn("## 三、推荐代码阅读顺序", prompt)
         self.assertNotIn("**涉及文件**", prompt)
         self.assertNotIn("RAG 索引检索片段：", prompt)
+        self.assertEqual(mocked.call_args.kwargs["timeout"], 180)
 
     def test_learning_plan_lesson_is_generated_in_bounded_sections(self):
         project = self.client.post("/api/projects/learning-plan", json={"name": "Python 异步编程"}).json()

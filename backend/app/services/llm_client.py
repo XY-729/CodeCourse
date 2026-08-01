@@ -49,10 +49,6 @@ def _message_content(data: dict[str, Any]) -> str:
     message = choices[0].get("message") or {}
     content = message.get("content")
     if not content:
-        # Reasoning models (e.g. DeepSeek R1 lineage) put the visible answer
-        # in reasoning_content and often leave content empty.
-        content = message.get("reasoning_content")
-    if not content:
         raise RuntimeError("LLM response has no message content")
     return str(content)
 
@@ -69,7 +65,7 @@ def call_openai_compatible_chat_result(
         "model": model,
         "messages": messages,
         "stream": False,
-        "max_tokens": 16384,
+        "max_tokens": 65536,
     }
     started = perf_counter()
     try:
@@ -130,7 +126,7 @@ async def stream_openai_compatible_chat(
         "model": model,
         "messages": messages,
         "stream": True,
-        "max_tokens": 16384,
+        "max_tokens": 65536,
     }
     client = _async_client()
     try:

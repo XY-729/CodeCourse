@@ -912,7 +912,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if (!settings.enabled || !apiKey) throw new Error("请先在模型 API 中配置并启用模型。");
 
     const url = `${settings.base_url.replace(/\/$/, "")}/chat/completions`;
-    const body = JSON.stringify({ model: settings.model, messages, temperature: 0.25 });
+    const body = JSON.stringify({ model: settings.model, messages, temperature: 0.25, max_tokens: 65536 });
 
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -928,11 +928,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         if (response.status < 200 || response.status >= 300) {
           throw new Error(`模型调用失败（${response.status}）：${JSON.stringify(response.data)}`);
         }
-        const data = response.data as { choices?: Array<{ message?: { content?: string; reasoning_content?: string } }> };
+        const data = response.data as { choices?: Array<{ message?: { content?: string } }> };
         const message = data?.choices?.[0]?.message ?? {};
-        // Reasoning models (DeepSeek R1 lineage) put the visible answer in
-        // reasoning_content and often leave content empty.
-        const content = String(message.content || message.reasoning_content || "").trim();
+        const content = String(message.content || "").trim();
         if (!content) throw new Error("模型返回了空内容。");
         return content;
       } catch (error) {
