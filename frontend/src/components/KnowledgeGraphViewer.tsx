@@ -15,9 +15,11 @@ import {
   getKnowledgeNeighborhood,
 } from "./knowledgeGraphModel";
 import {
+  measureLabelElements,
   positionLabelOverlay,
   reconcileLabelElements,
   updateLabelVisibility,
+  type LabelMetrics,
 } from "./knowledgeGraphLabels";
 
 type Props = {
@@ -410,6 +412,7 @@ function applyGraphView(
 ) {
   const animate = options.animate ?? true;
   const fitViewport = options.fitViewport ?? true;
+  cy.startBatch();
   cy.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge hover-dim hover-related");
   const overview = nodeVisuals(graph, cy.container(), currentDarkMode());
   cy.nodes().forEach((node) => {
@@ -458,6 +461,7 @@ function applyGraphView(
         edge.addClass("graph-hidden");
       }
     });
+    cy.endBatch();
     const focusRadius = arrangeFocusNeighborhood(cy, graph, focusedNodeId, depth, animate);
     if (fitViewport && focusRadius != null) {
       const updateViewport = () => {
@@ -470,6 +474,7 @@ function applyGraphView(
     return;
   }
 
+  cy.endBatch();
   if (fitViewport) fitVisible(cy, graph, mode, focusedNodeId, depth, animate);
   cy.emit("render");
 }
@@ -775,10 +780,14 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const containerRef = useRef<HTMLDivElement | null>(null);
   const labelLayerRef = useRef<HTMLDivElement | null>(null);
   const labelElementsRef = useRef(new Map<number, HTMLDivElement>());
+  const labelMetricsRef = useRef<LabelMetrics>(new Map());
+  const pendingLabelMeasurementsRef = useRef(new Set<number>());
   const labelPositionFrameRef = useRef<number | null>(null);
   const labelVisibilityFrameRef = useRef<number | null>(null);
+  const labelMeasurementFrameRef = useRef<number | null>(null);
   const scheduleLabelPositionRef = useRef<() => void>(() => undefined);
   const scheduleLabelVisibilityRef = useRef<() => void>(() => undefined);
+  const scheduleLabelMeasurementRef = useRef<(ids?: Iterable<number>) => void>(() => undefined);
   const viewportTimeoutRef = useRef<number | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const resizeSettleTimeoutRef = useRef<number | null>(null);
@@ -1130,11 +1139,24 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
           selectedNodeId: selectedNodeIdRef.current,
           hoveredNodeId: hoveredNodeIdRef.current,
           searchQuery: searchQueryRef.current,
-        });
+        }, labelMetricsRef.current);
+      });
+    };
+    const scheduleLabelMeasurements = (ids?: Iterable<number>) => {
+      for (const id of ids ?? labelElementsRef.current.keys()) pendingLabelMeasurementsRef.current.add(id);
+      if (!labelLayer || labelMeasurementFrameRef.current != null) return;
+      labelMeasurementFrameRef.current = window.requestAnimationFrame(() => {
+        labelMeasurementFrameRef.current = null;
+        if (cy.destroyed()) return;
+        const pending = new Set(pendingLabelMeasurementsRef.current);
+        pendingLabelMeasurementsRef.current.clear();
+        measureLabelElements(labelElementsRef.current, labelMetricsRef.current, pending);
+        scheduleLabelVisibility();
       });
     };
     scheduleLabelPositionRef.current = scheduleLabelPositions;
     scheduleLabelVisibilityRef.current = scheduleLabelVisibility;
+    scheduleLabelMeasurementRef.current = scheduleLabelMeasurements;
     cy.on("render", scheduleLabelPositions);
     cy.on("panend zoomend resize", scheduleLabelVisibility);
     cy.on("mouseover", "node", (event) => {
@@ -1172,8 +1194,11 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         if (cy.destroyed()) return;
         cy.resize();
         scheduleLabelPositions();
-        scheduleLabelVisibility();
+        if (!document.body.classList.contains("resizing-x") && !document.body.classList.contains("resizing-y")) {
+          scheduleLabelVisibility();
+        }
       });
+      if (document.body.classList.contains("resizing-x") || document.body.classList.contains("resizing-y")) return;
       if (resizeSettleTimeoutRef.current != null) window.clearTimeout(resizeSettleTimeoutRef.current);
       resizeSettleTimeoutRef.current = window.setTimeout(() => {
         resizeSettleTimeoutRef.current = null;
@@ -1190,6 +1215,13 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       }, 160);
     });
     resizeObserver?.observe(container);
+    const settleWorkbenchResize = () => {
+      if (cy.destroyed()) return;
+      cy.resize();
+      scheduleLabelPositions();
+      scheduleLabelVisibility();
+    };
+    window.addEventListener("codecourse:resize-end", settleWorkbenchResize);
 
     cy.on("tap", "node", async (event) => {
       const node = event.target as NodeSingular;
@@ -1265,6 +1297,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
 
     return () => {
       resizeObserver?.disconnect();
+      window.removeEventListener("codecourse:resize-end", settleWorkbenchResize);
       layoutRunningRef.current = false;
       if (labelPositionFrameRef.current != null) {
         window.cancelAnimationFrame(labelPositionFrameRef.current);
@@ -1273,6 +1306,10 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       if (labelVisibilityFrameRef.current != null) {
         window.cancelAnimationFrame(labelVisibilityFrameRef.current);
         labelVisibilityFrameRef.current = null;
+      }
+      if (labelMeasurementFrameRef.current != null) {
+        window.cancelAnimationFrame(labelMeasurementFrameRef.current);
+        labelMeasurementFrameRef.current = null;
       }
       if (resizeFrameRef.current != null) {
         window.cancelAnimationFrame(resizeFrameRef.current);
@@ -1288,6 +1325,9 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       }
       scheduleLabelPositionRef.current = () => undefined;
       scheduleLabelVisibilityRef.current = () => undefined;
+      scheduleLabelMeasurementRef.current = () => undefined;
+      pendingLabelMeasurementsRef.current.clear();
+      labelMetricsRef.current.clear();
       labelLayer?.replaceChildren();
       labelElementsRef.current.clear();
       cy.destroy();
@@ -1306,9 +1346,13 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     const firstPopulation = previous.nodes.length === 0 && graph.nodes.length > 0;
     const delta = reconcileGraphElements(cy, previous, graph, containerRef.current, darkMode);
     renderedGraphRef.current = graph;
-    reconcileLabelElements(graph, labelLayer, labelElementsRef.current);
+    const changedLabelIds = reconcileLabelElements(graph, labelLayer, labelElementsRef.current);
 
-    for (const removedId of delta.removedNodeIds) overviewPositionsRef.current.delete(removedId);
+    for (const removedId of delta.removedNodeIds) {
+      overviewPositionsRef.current.delete(removedId);
+      labelMetricsRef.current.delete(removedId);
+    }
+    scheduleLabelMeasurementRef.current(changedLabelIds);
     for (const addedId of delta.addedNodeIds) {
       const node = cy.getElementById(`n${addedId}`);
       if (!node.empty()) overviewPositionsRef.current.set(addedId, { ...node.position() });

@@ -46,6 +46,9 @@ html:not(.platform-android) {
   --apple-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --apple-ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --apple-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --apple-duration-press: 100ms;
+  --apple-duration-state: 180ms;
+  --apple-duration-surface: 240ms;
   --apple-radius-sm: 6px;
   --apple-radius: 8px;
   --cc-text: var(--apple-text);

@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, Bot, Edit3, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
+import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
 
 export type SelectionSummary = {
   sourceType: SourceType;
@@ -115,8 +116,10 @@ export default function ExplainPanel(props: Props) {
         {!embeddedMobileSheet ? <div className="qa-panel-tabs">
           {mobileMode ? <strong className="mobile-panel-title">{mobileKnowledge ? "知识网络" : "AI 助手"}</strong> : (
             <div className="qa-panel-mode-tabs">
-              <button className={upperTab === "history" ? "active" : ""} onClick={() => onUpperTabChange("history")}>历史</button>
+              <SlidingSelectionIndicator activeKey={upperTab} />
+              <button data-selection-key="history" className={upperTab === "history" ? "active" : ""} onClick={() => onUpperTabChange("history")}>历史</button>
               <button
+                data-selection-key="knowledge"
                 className={upperTab === "knowledge" ? "active" : ""}
                 onClick={() => onUpperTabChange("knowledge")}
                 disabled={knowledgeDisabled}

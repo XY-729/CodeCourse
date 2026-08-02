@@ -45,7 +45,9 @@ html.platform-android .mobile-app-bar {
     color-mix(in srgb, var(--mobile-line) 78%, transparent);
 
   background: var(--mobile-surface);
-  box-shadow: none;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 55%, transparent),
+    0 5px 18px color-mix(in srgb, var(--mobile-text) 8%, transparent);
 
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -158,6 +160,16 @@ html.platform-android .mobile-shell-icon-button:active {
   background: var(--mobile-surface-pressed);
 }
 
+html.platform-android .mobile-shell-icon-button > svg,
+html.platform-android .mobile-project-control > svg {
+  transition: transform var(--mobile-duration-fast) var(--mobile-ease-out), color var(--mobile-duration-fast) ease;
+}
+
+html.platform-android .mobile-shell-icon-button:active > svg,
+html.platform-android .mobile-project-control:active > svg {
+  transform: scale(.9) !important;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Bottom navigation                                                          */
 /* -------------------------------------------------------------------------- */
@@ -187,7 +199,9 @@ html.platform-android .mobile-bottom-navigation {
     color-mix(in srgb, var(--mobile-line) 78%, transparent);
 
   background: var(--mobile-surface);
-  box-shadow: none;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 48%, transparent),
+    0 -8px 24px color-mix(in srgb, var(--mobile-text) 9%, transparent);
 
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -222,6 +236,32 @@ html.platform-android .mobile-bottom-navigation > button {
   -webkit-appearance: none;
 
   transform: none !important;
+  position: relative;
+  z-index: 1;
+}
+
+html.platform-android .mobile-bottom-navigation > .mobile-navigation-indicator {
+  --selection-x: 0px;
+  --selection-width: 1;
+  position: absolute;
+  z-index: 0;
+  top: 5px;
+  left: 0;
+  width: 1px;
+  height: 51px;
+  border: 1px solid color-mix(in srgb, var(--mobile-accent) 18%, var(--mobile-line));
+  border-radius: 15px;
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: left center;
+  transform: translate3d(var(--selection-x), 0, 0) scaleX(var(--selection-width));
+  background: color-mix(in srgb, var(--mobile-accent-soft) 74%, var(--mobile-surface));
+  box-shadow: var(--mobile-shadow-sm), inset 0 1px 0 color-mix(in srgb, white 45%, transparent);
+}
+
+html.platform-android .mobile-bottom-navigation > .mobile-navigation-indicator[data-visible="true"] { opacity: 1; }
+html.platform-android .mobile-bottom-navigation > .mobile-navigation-indicator[data-ready="true"] {
+  transition: transform var(--mobile-duration) var(--mobile-ease-out), opacity var(--mobile-duration-fast) ease;
 }
 
 html.platform-android .mobile-bottom-navigation-icon {
@@ -249,7 +289,7 @@ html.platform-android
   .mobile-bottom-navigation
   > button.active
   .mobile-bottom-navigation-icon {
-  background: var(--mobile-accent-soft);
+  background: transparent;
 }
 
 html.platform-android
@@ -261,7 +301,15 @@ html.platform-android
 
 html.platform-android .mobile-bottom-navigation svg {
   transform: none !important;
-  transition: none !important;
+  transition: transform var(--mobile-duration-fast) var(--mobile-ease-out), color var(--mobile-duration-fast) ease !important;
+}
+
+html.platform-android .mobile-bottom-navigation > button.active svg {
+  transform: translate3d(0, -1px, 0) scale(1.06) !important;
+}
+
+html.platform-android .mobile-bottom-navigation > button:active svg {
+  transform: scale(.9) !important;
 }
 
 /*
@@ -346,4 +394,5 @@ html.platform-android[data-theme="dark"] .mobile-bottom-navigation {
     transition: none !important;
     animation: none !important;
   }
+  html.platform-android .mobile-navigation-indicator { transition: none !important; }
 }

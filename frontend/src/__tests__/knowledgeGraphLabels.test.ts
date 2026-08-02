@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Core } from "cytoscape";
 import type { KnowledgeGraph } from "../api/client";
 import {
+  measureLabelElements,
   positionLabelOverlay,
   reconcileLabelElements,
   updateLabelVisibility,
@@ -77,9 +78,35 @@ describe("knowledge graph labels", () => {
       searchQuery: "",
     });
 
-    expect(labels.get(1)?.hidden).toBe(false);
-    expect(labels.get(2)?.hidden).toBe(false);
-    expect(labels.get(3)?.hidden).toBe(true);
+    expect(labels.get(1)?.dataset.visible).toBe("true");
+    expect(labels.get(2)?.dataset.visible).toBe("true");
+    expect(labels.get(3)?.dataset.visible).toBe("false");
+    layer.remove();
+  });
+
+  it("uses cached label metrics during visibility updates", () => {
+    const layer = document.createElement("div");
+    document.body.appendChild(layer);
+    const labels = new Map<number, HTMLDivElement>();
+    const metrics = new Map<number, { width: number; height: number }>();
+    const value = graph();
+    reconcileLabelElements(value, layer, labels);
+    const rectSpy = vi.spyOn(labels.get(1)!, "getBoundingClientRect").mockReturnValue({
+      width: 90, height: 24, left: 0, top: 0, right: 90, bottom: 24, x: 0, y: 0, toJSON: () => ({}),
+    });
+    measureLabelElements(labels, metrics, [1]);
+    rectSpy.mockClear();
+
+    updateLabelVisibility(fakeCore(), value, labels, {
+      viewMode: "overview",
+      focusedNodeId: null,
+      focusDepth: 1,
+      selectedNodeId: null,
+      hoveredNodeId: null,
+      searchQuery: "",
+    }, metrics);
+
+    expect(rectSpy).not.toHaveBeenCalled();
     layer.remove();
   });
 

@@ -36,6 +36,8 @@ html.platform-android .mobile-assistant-tabs {
   align-items: stretch; gap: 4px;
   border-bottom: 1px solid var(--mobile-line);
   background: var(--mobile-surface);
+  position: relative;
+  isolation: isolate;
 }
 
 html.platform-android .mobile-assistant-tabs > button {
@@ -44,10 +46,35 @@ html.platform-android .mobile-assistant-tabs > button {
   color: var(--mobile-text-secondary); border: 0; border-radius: 11px;
   background: transparent; font-size: 0.8125rem; font-weight: 620;
   appearance: none; -webkit-appearance: none; transform: none !important;
+  position: relative; z-index: 1;
 }
 
 html.platform-android .mobile-assistant-tabs > button.active {
-  color: var(--mobile-accent-strong); background: var(--mobile-accent-soft);
+  color: var(--mobile-accent-strong); background: transparent;
+}
+
+html.platform-android .mobile-assistant-tab-indicator {
+  --selection-x: 0px;
+  --selection-width: 1;
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  bottom: 4px;
+  left: 0;
+  width: 1px;
+  border: 1px solid color-mix(in srgb, var(--mobile-accent) 16%, var(--mobile-line));
+  border-radius: 11px;
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: left center;
+  transform: translate3d(var(--selection-x), 0, 0) scaleX(var(--selection-width));
+  background: color-mix(in srgb, var(--mobile-accent-soft) 78%, var(--mobile-surface));
+  box-shadow: var(--mobile-shadow-sm), inset 0 1px 0 color-mix(in srgb, white 42%, transparent);
+}
+
+html.platform-android .mobile-assistant-tab-indicator[data-visible="true"] { opacity: 1; }
+html.platform-android .mobile-assistant-tab-indicator[data-ready="true"] {
+  transition: transform var(--mobile-duration) var(--mobile-ease-out), opacity var(--mobile-duration-fast) ease;
 }
 
 html.platform-android .mobile-assistant-tabs > button:disabled { opacity: 0.36; }
@@ -61,7 +88,15 @@ html.platform-android .mobile-assistant-history-actions button:disabled {
   pointer-events: none;
 }
 
-html.platform-android .mobile-assistant-view { min-width: 0; min-height: 0; flex: 1 1 auto; overflow: hidden; }
+html.platform-android .mobile-assistant-view {
+  min-width: 0; min-height: 0; flex: 1 1 auto; overflow: hidden;
+  animation: mobile-assistant-view-in var(--mobile-duration) var(--mobile-ease-out) both;
+}
+
+@keyframes mobile-assistant-view-in {
+  from { opacity: .55; transform: translate3d(0, 4px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
 
 html.platform-android .mobile-assistant-ask-view { display: flex; flex-direction: column; }
 

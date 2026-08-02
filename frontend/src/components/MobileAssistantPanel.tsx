@@ -6,6 +6,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
 import type { AssistantContextSummary, SelectionSummary } from "./ExplainPanel";
+import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
 
 export type MobileAssistantView = "ask" | "history" | "knowledge";
 
@@ -139,13 +140,14 @@ export default function MobileAssistantPanel({
   return (
     <section className="mobile-assistant-panel">
       <div className="mobile-assistant-tabs" role="tablist" aria-label="AI 助手页面">
-        <button type="button" role="tab" id="mobile-assistant-tab-ask" aria-controls="mobile-assistant-view-ask" aria-selected={view === "ask"} className={view === "ask" ? "active" : ""} onClick={() => onViewChange("ask")}>
+        <SlidingSelectionIndicator activeKey={view} className="mobile-assistant-tab-indicator" />
+        <button data-selection-key="ask" type="button" role="tab" id="mobile-assistant-tab-ask" aria-controls="mobile-assistant-view-ask" aria-selected={view === "ask"} className={view === "ask" ? "active" : ""} onClick={() => onViewChange("ask")}>
           <MessageCircle size={18} aria-hidden="true" /><span>提问</span>
         </button>
-        <button type="button" role="tab" id="mobile-assistant-tab-history" aria-controls="mobile-assistant-view-history" aria-selected={view === "history"} className={view === "history" ? "active" : ""} onClick={() => onViewChange("history")} disabled={loading}>
+        <button data-selection-key="history" type="button" role="tab" id="mobile-assistant-tab-history" aria-controls="mobile-assistant-view-history" aria-selected={view === "history"} className={view === "history" ? "active" : ""} onClick={() => onViewChange("history")} disabled={loading}>
           <HistoryIcon size={18} aria-hidden="true" /><span>历史</span>
         </button>
-        <button type="button" role="tab" id="mobile-assistant-tab-knowledge" aria-controls="mobile-assistant-view-knowledge" aria-selected={view === "knowledge"} className={view === "knowledge" ? "active" : ""} onClick={() => onViewChange("knowledge")} disabled={loading || knowledgeDisabled}>
+        <button data-selection-key="knowledge" type="button" role="tab" id="mobile-assistant-tab-knowledge" aria-controls="mobile-assistant-view-knowledge" aria-selected={view === "knowledge"} className={view === "knowledge" ? "active" : ""} onClick={() => onViewChange("knowledge")} disabled={loading || knowledgeDisabled}>
           <BrainCircuit size={18} aria-hidden="true" /><span>知识</span>
         </button>
       </div>

@@ -96,6 +96,19 @@ html.platform-android .icon-button:not(:disabled):active {
   transition-duration: 70ms;
 }
 
+html.platform-android .knowledge-node-label {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--mobile-duration-fast) ease, visibility 0s linear;
+}
+
+html.platform-android .knowledge-node-label[data-visible="false"],
+html.platform-android .knowledge-node-label[data-in-viewport="false"] {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 100ms ease, visibility 0s linear 100ms;
+}
+
 html.platform-android button:focus-visible,
 html.platform-android [role="button"]:focus-visible,
 html.platform-android input:focus-visible,

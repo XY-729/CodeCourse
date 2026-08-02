@@ -87,6 +87,7 @@ import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
 import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
 import SelectionQuickBar from "./components/SelectionQuickBar";
+import SlidingSelectionIndicator from "./components/SlidingSelectionIndicator";
 import MobileTopBar from "./components/MobileTopBar";
 import MobileAssistantPanel, { type MobileAssistantView } from "./components/MobileAssistantPanel";
 import MobileMePanel from "./components/MobileMePanel";
@@ -116,6 +117,7 @@ import { setCodeCourseDragImage } from "./utils/dragImage";
 import { useAppDialog } from "./hooks/useAppDialog";
 import { useQAGenerationController } from "./hooks/useQAGenerationController";
 import { useLearningStateController } from "./learning/useLearningStateController";
+import { useDesktopInteractionLight } from "./hooks/useDesktopInteractionLight";
 import {
   MAX_GROUPS,
   MIN_SPLIT_TRACK_SIZE,
@@ -556,6 +558,7 @@ export default function App() {
   const closedItemsRef = useRef<Array<{ groupId: string; item: OpenItem }>>([]);
   const activeOpenItemRef = useRef<OpenItem | null>(null);
   const mobileRuntime = isAndroidRuntime();
+  useDesktopInteractionLight(!mobileRuntime);
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
   const isTaskRunning = generationTasks.some(isGenerationTaskRunning);
@@ -624,6 +627,21 @@ export default function App() {
     element.className = `drop-preview ${zone} visible`;
     dropPreviewRef.current = { groupId, zone, element };
   }, []);
+
+  useEffect(() => {
+    if (mobileRuntime) return;
+    const clearTransientDrag = () => clearDropPreview();
+    window.addEventListener("dragend", clearTransientDrag, true);
+    window.addEventListener("drop", clearTransientDrag, true);
+    window.addEventListener("pointercancel", clearTransientDrag, true);
+    window.addEventListener("blur", clearTransientDrag);
+    return () => {
+      window.removeEventListener("dragend", clearTransientDrag, true);
+      window.removeEventListener("drop", clearTransientDrag, true);
+      window.removeEventListener("pointercancel", clearTransientDrag, true);
+      window.removeEventListener("blur", clearTransientDrag);
+    };
+  }, [clearDropPreview, mobileRuntime]);
 
 
   useEffect(() => {
@@ -1366,6 +1384,7 @@ export default function App() {
         }
       }
       setDragState(null);
+      window.dispatchEvent(new Event("codecourse:resize-end"));
     }
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
@@ -4497,11 +4516,13 @@ export default function App() {
           ) : null
         ) : (
           <div className="pane-tabs">
+            <SlidingSelectionIndicator activeKey={group.activeItemId} className="pane-tab-indicator" />
             <span className="pane-name">工作区</span>
             {group.items.map((item) => (
               <div
                 key={item.id}
                 className={`pane-tab ${item.id === group.activeItemId ? "active" : ""}`}
+                data-selection-key={item.id}
                 role="tab"
                 aria-selected={item.id === group.activeItemId}
                 title={item.path}
@@ -5696,7 +5717,7 @@ export default function App() {
         </div>
       ) : null}
       <main
-        className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen && !mobileRuntime ? "assistant-open" : ""} ${mobileRuntime && (navigationOpen || mobileWorkspaceTab) ? "mobile-panel-open" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
+        className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen && !mobileRuntime ? "assistant-open" : ""} ${mobileRuntime && (navigationOpen || mobileWorkspaceTab) ? "mobile-panel-open" : ""} ${dragState?.kind === "sidebar-width" ? "navigation-resizing" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
         style={{
           gridTemplateColumns: [
             ...(navigationOpen && !mobileRuntime ? [`var(--nav-width, ${sidebarWidth}px)`, "5px"] : []),

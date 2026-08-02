@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { Bot, Copy, Eraser, Highlighter, Sparkles, X } from "lucide-react";
 import type { ViewerAnchorRect } from "./CodeViewer";
 
@@ -24,12 +24,10 @@ export default function SelectionQuickBar({
   onClose,
 }: Props) {
   const barRef = useRef<HTMLDivElement | null>(null);
-  const [position, setPosition] = useState<{ left: number; top: number; placement: "top" | "bottom" } | null>(null);
 
   useLayoutEffect(() => {
     const bar = barRef.current;
     if (!bar || !anchorRect) {
-      setPosition(null);
       return;
     }
     const margin = 12;
@@ -57,30 +55,36 @@ export default function SelectionQuickBar({
       const top = placement === "top"
         ? roomAbove
         : Math.min(window.innerHeight - barRect.height - margin, currentAnchor.bottom + gap);
-      setPosition({ left, top, placement });
+      bar.style.setProperty("--selection-bar-left", `${left}px`);
+      bar.style.setProperty("--selection-bar-top", `${top}px`);
+      bar.dataset.placement = placement;
+      bar.dataset.anchored = "true";
+    };
+    let frame = 0;
+    const scheduleMeasure = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
     };
     measure();
-    const startedAt = performance.now();
-    let frame = 0;
-    const followLayout = () => {
-      measure();
-      if (performance.now() - startedAt < 320) frame = window.requestAnimationFrame(followLayout);
-    };
-    frame = window.requestAnimationFrame(followLayout);
-    window.addEventListener("resize", measure);
-    document.addEventListener("scroll", measure, true);
+    const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleMeasure);
+    resizeObserver?.observe(bar);
+    window.addEventListener("resize", scheduleMeasure);
+    document.addEventListener("scroll", scheduleMeasure, true);
     return () => {
       window.cancelAnimationFrame(frame);
-      window.removeEventListener("resize", measure);
-      document.removeEventListener("scroll", measure, true);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+      document.removeEventListener("scroll", scheduleMeasure, true);
     };
   }, [anchorRect]);
 
   return (
     <div
       ref={barRef}
-      className={`selection-quick-bar ${position ? `anchored ${position.placement}` : "fallback"}`}
-      style={position ? { left: position.left, top: position.top } : undefined}
+      className="selection-quick-bar"
       role="toolbar"
       aria-label="选区操作"
     >

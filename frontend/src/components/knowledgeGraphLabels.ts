@@ -11,11 +11,14 @@ export type LabelOverlayState = {
   searchQuery: string;
 };
 
+export type LabelMetrics = Map<number, { width: number; height: number }>;
+
 export function reconcileLabelElements(
   graph: KnowledgeGraph,
   layer: HTMLDivElement,
   labels: Map<number, HTMLDivElement>,
 ) {
+  const changedIds = new Set<number>();
   const activeIds = new Set(graph.nodes.map((node) => node.id));
   for (const [id, label] of labels) {
     if (activeIds.has(id)) continue;
@@ -28,10 +31,36 @@ export function reconcileLabelElements(
       label = document.createElement("div");
       label.className = "knowledge-node-label";
       label.dataset.visible = "true";
+      label.dataset.inViewport = "true";
       layer.appendChild(label);
       labels.set(node.id, label);
+      changedIds.add(node.id);
     }
-    if (label.textContent !== node.title) label.textContent = node.title;
+    if (label.textContent !== node.title) {
+      label.textContent = node.title;
+      changedIds.add(node.id);
+    }
+  }
+  return changedIds;
+}
+
+export function measureLabelElements(
+  labels: Map<number, HTMLDivElement>,
+  metrics: LabelMetrics,
+  ids?: Iterable<number>,
+) {
+  const targets = ids ? [...ids] : [...labels.keys()];
+  for (const id of targets) {
+    const label = labels.get(id);
+    if (!label) {
+      metrics.delete(id);
+      continue;
+    }
+    const rect = label.getBoundingClientRect();
+    metrics.set(id, {
+      width: rect.width || Math.min(176, Math.max(48, (label.textContent?.length ?? 0) * 7.2)),
+      height: rect.height || ((label.textContent?.length ?? 0) > 20 ? 38 : 22),
+    });
   }
 }
 
@@ -44,12 +73,14 @@ export function positionLabelOverlay(
   const viewportHeight = cy.height();
   for (const [nodeId, label] of labels) {
     if (label.dataset.visible === "false") {
-      label.hidden = true;
       continue;
     }
     const node = cy.getElementById(`n${nodeId}`);
     const graphHidden = node.empty() || node.hasClass("graph-hidden") || node.hasClass("hover-dim");
-    label.hidden = graphHidden;
+    if (graphHidden) {
+      label.dataset.visible = "false";
+      continue;
+    }
     if (node.empty()) continue;
     const rendered = node.renderedPosition();
     const y = rendered.y + node.renderedOuterHeight() / 2 + 7;
@@ -57,7 +88,7 @@ export function positionLabelOverlay(
       || rendered.x > viewportWidth + 190
       || y < -48
       || y > viewportHeight + 48;
-    label.hidden = graphHidden || outsideViewport;
+    label.dataset.inViewport = outsideViewport ? "false" : "true";
     label.style.transform = `translate3d(${rendered.x}px, ${y}px, 0) translateX(-50%)`;
   }
 }
@@ -67,6 +98,7 @@ export function updateLabelVisibility(
   graph: KnowledgeGraph,
   labels: Map<number, HTMLDivElement>,
   state: LabelOverlayState,
+  metrics: LabelMetrics = new Map(),
 ) {
   const { degreeById } = getKnowledgeGraphIndex(graph);
   const query = state.searchQuery.trim().toLocaleLowerCase();
@@ -94,6 +126,7 @@ export function updateLabelVisibility(
       || (node.hasClass("hover-dim") && graphNode.id !== state.focusedNodeId)
     ) {
       label.dataset.visible = "false";
+      label.classList.remove("important", "matched");
       continue;
     }
     const rendered = node.renderedPosition();
@@ -105,9 +138,9 @@ export function updateLabelVisibility(
     label.dataset.visible = "true";
     label.classList.toggle("important", important);
     label.classList.toggle("matched", matched);
-    const rect = label.getBoundingClientRect();
-    const width = rect.width || Math.min(176, Math.max(48, graphNode.title.length * 7.2));
-    const height = rect.height || (graphNode.title.length > 20 ? 38 : 22);
+    const measured = metrics.get(graphNode.id);
+    const width = measured?.width ?? Math.min(176, Math.max(48, graphNode.title.length * 7.2));
+    const height = measured?.height ?? (graphNode.title.length > 20 ? 38 : 22);
     candidates.push({
       id: graphNode.id,
       element: label,

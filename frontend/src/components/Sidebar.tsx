@@ -2,6 +2,7 @@ import { ArrowRight, BookOpen, CheckCircle2, Code2, Plus, RefreshCw, Trash2 } fr
 import type { CourseFile, LearningState, Project, TreeNode } from "../api/client";
 import CourseList from "./CourseList";
 import FileTree from "./FileTree";
+import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
 
 export type NavigationView = "projects" | "courses" | "files";
 
@@ -103,8 +104,9 @@ export default function Sidebar({
         {!embedded ? <header className="navigation-panel-header">
           {onViewChange ? (
             <div className="navigation-segmented" aria-label="导航内容">
-              <button onClick={() => onViewChange("courses")}><BookOpen size={14} />课程</button>
-              <button className="active" onClick={() => onViewChange("files")}><Code2 size={14} />源码</button>
+              <SlidingSelectionIndicator activeKey="files" />
+              <button data-selection-key="courses" onClick={() => onViewChange("courses")}><BookOpen size={14} />课程</button>
+              <button data-selection-key="files" className="active" onClick={() => onViewChange("files")}><Code2 size={14} />源码</button>
             </div>
           ) : <span>源码</span>}
           {fileSelectionMode ? <small>选择生成范围</small> : null}
@@ -131,8 +133,9 @@ export default function Sidebar({
       {!embedded ? <header className="navigation-panel-header">
         {onViewChange ? (
           <div className="navigation-segmented" aria-label="导航内容">
-            <button className="active" onClick={() => onViewChange("courses")}><BookOpen size={14} />课程</button>
-            <button onClick={() => onViewChange("files")}><Code2 size={14} />源码</button>
+            <SlidingSelectionIndicator activeKey="courses" />
+            <button data-selection-key="courses" className="active" onClick={() => onViewChange("courses")}><BookOpen size={14} />课程</button>
+            <button data-selection-key="files" onClick={() => onViewChange("files")}><Code2 size={14} />源码</button>
           </div>
         ) : <span>课程</span>}
         {onCreateCourse && courses.length ? (

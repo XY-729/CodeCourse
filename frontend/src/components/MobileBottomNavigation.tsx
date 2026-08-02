@@ -1,4 +1,5 @@
 import { BookOpen, Bot, FolderTree, UserRound } from "lucide-react";
+import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
 
 export type MobilePrimaryDestination = "learn" | "source" | "ask" | "me";
 
@@ -19,9 +20,11 @@ export default function MobileBottomNavigation({
 }: Props) {
   return (
     <nav className="mobile-bottom-navigation" aria-label="主要导航">
+      <SlidingSelectionIndicator activeKey={active} className="mobile-navigation-indicator" />
       <button
         type="button"
         className={active === "learn" ? "active" : ""}
+        data-selection-key="learn"
         aria-current={active === "learn" ? "page" : undefined}
         onClick={onLearn}
       >
@@ -34,6 +37,7 @@ export default function MobileBottomNavigation({
       <button
         type="button"
         className={active === "source" ? "active" : ""}
+        data-selection-key="source"
         aria-current={active === "source" ? "page" : undefined}
         onClick={onSource}
       >
@@ -46,6 +50,7 @@ export default function MobileBottomNavigation({
       <button
         type="button"
         className={active === "ask" ? "active" : ""}
+        data-selection-key="ask"
         aria-current={active === "ask" ? "page" : undefined}
         onClick={onAsk}
       >
@@ -58,6 +63,7 @@ export default function MobileBottomNavigation({
       <button
         type="button"
         className={active === "me" ? "active" : ""}
+        data-selection-key="me"
         aria-current={active === "me" ? "page" : undefined}
         onClick={onMe}
       >
