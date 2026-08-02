@@ -487,12 +487,21 @@ def structural_retrieve(
     *,
     source_path: Optional[str] = None,
     selected_text: str = "",
+    context_files: Optional[list[str]] = None,
     limit: int = 8,
 ) -> list[RetrievalSource]:
     status = get_project_index_status(project_id)
     project_name = str(status.get("structural_project_name") or "").strip()
     if status.get("structural_status") != "completed" or not project_name or not structural_available():
         return []
+
+    def file_pattern_union() -> Optional[str]:
+        """Restrict structural search to source_path plus user-selected context files."""
+        candidates = [path for path in ([source_path] + list(context_files or [])) if path]
+        if not candidates:
+            return None
+        escaped = [re.escape(path.replace("\\", "/")) for path in candidates]
+        return f".*({'|'.join(escaped)}).*"
 
     results: list[RetrievalSource] = []
     symbols = _candidate_symbols(query, selected_text)
@@ -504,9 +513,9 @@ def structural_retrieve(
         "format": "json",
         "fields": ["signature", "docstring", "return_type"],
     }
-    if source_path:
-        normalized_source_path = source_path.replace("\\", "/")
-        search_payload["file_pattern"] = f".*{re.escape(normalized_source_path)}.*"
+    file_pattern = file_pattern_union()
+    if file_pattern:
+        search_payload["file_pattern"] = file_pattern
     try:
         semantic = _run_tool("search_graph", search_payload)
         results.extend(_sources_from_result(project_id, semantic, "semantic"))
@@ -519,9 +528,8 @@ def structural_retrieve(
             "name_pattern": f".*{re.escape(symbol)}.*",
             "limit": 8,
         }
-        if source_path:
-            normalized_source_path = source_path.replace("\\", "/")
-            payload["file_pattern"] = f".*{re.escape(normalized_source_path)}.*"
+        if file_pattern:
+            payload["file_pattern"] = file_pattern
         payload["format"] = "json"
         try:
             graph_result = _run_tool("search_graph", payload)
@@ -566,6 +574,7 @@ class CodeIntelligenceProvider(Protocol):
         *,
         source_path: Optional[str] = None,
         selected_text: str = "",
+        context_files: Optional[list[str]] = None,
         limit: int = 8,
     ) -> list[RetrievalSource]: ...
 
@@ -578,6 +587,7 @@ class StructuralGraphProvider:
         *,
         source_path: Optional[str] = None,
         selected_text: str = "",
+        context_files: Optional[list[str]] = None,
         limit: int = 8,
     ) -> list[RetrievalSource]:
         return structural_retrieve(
@@ -585,6 +595,7 @@ class StructuralGraphProvider:
             query,
             source_path=source_path,
             selected_text=selected_text,
+            context_files=context_files,
             limit=limit,
         )
 
@@ -597,9 +608,10 @@ class FtsProvider:
         *,
         source_path: Optional[str] = None,
         selected_text: str = "",
+        context_files: Optional[list[str]] = None,
         limit: int = 8,
     ) -> list[RetrievalSource]:
-        del selected_text
+        del selected_text, context_files
         chunks = search_code_chunks(project_id, query, source_path=source_path, limit=limit)
         return [
             RetrievalSource(
@@ -629,6 +641,7 @@ class HybridProvider:
         *,
         source_path: Optional[str] = None,
         selected_text: str = "",
+        context_files: Optional[list[str]] = None,
         limit: int = 8,
     ) -> list[RetrievalSource]:
         structural = self.structural.retrieve(
@@ -636,6 +649,7 @@ class HybridProvider:
             query,
             source_path=source_path,
             selected_text=selected_text,
+            context_files=context_files,
             limit=limit,
         )
         text_sources = self.fallback.retrieve(
@@ -669,6 +683,7 @@ def hybrid_retrieve(
     *,
     source_path: Optional[str] = None,
     selected_text: str = "",
+    context_files: Optional[list[str]] = None,
     limit: int = 8,
 ) -> list[RetrievalSource]:
     return _HYBRID_PROVIDER.retrieve(
@@ -676,5 +691,6 @@ def hybrid_retrieve(
         query,
         source_path=source_path,
         selected_text=selected_text,
+        context_files=context_files,
         limit=limit,
     )

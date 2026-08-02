@@ -2040,3 +2040,92 @@ html.platform-android .outline-questionnaire-nav .primary-button,
 html.platform-android .outline-questionnaire-nav .secondary-button {
   min-height: 44px;
 }
+
+html.platform-android .context-file-picker-dialog {
+  border-radius: var(--mobile-radius-lg);
+}
+
+html.platform-android .context-file-picker-hint,
+html.platform-android .context-file-picker-count {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .context-file-picker-search {
+  border-color: var(--mobile-line-strong);
+  background: var(--mobile-surface-raised);
+  color: var(--mobile-text-tertiary);
+  border-radius: var(--mobile-radius-sm);
+}
+
+html.platform-android .context-file-picker-search input {
+  min-height: 44px;
+  color: var(--mobile-text);
+}
+
+html.platform-android .context-file-picker-list {
+  border-color: var(--mobile-line);
+  border-radius: var(--mobile-radius-sm);
+  background: var(--mobile-surface);
+}
+
+html.platform-android .context-file-picker-item {
+  min-height: 52px;
+  border-bottom-color: var(--mobile-line);
+}
+
+html.platform-android .context-file-picker-item:hover {
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .context-file-picker-item.selected {
+  background: var(--mobile-accent-soft);
+}
+
+html.platform-android .picker-checkbox {
+  width: 22px;
+  height: 22px;
+  border-color: var(--mobile-line-strong);
+  border-radius: 6px;
+  background: var(--mobile-surface-raised);
+}
+
+html.platform-android .picker-checkbox.checked {
+  border-color: var(--mobile-accent);
+  background: var(--mobile-accent);
+}
+
+html.platform-android .picker-file-name {
+  color: var(--mobile-text);
+}
+
+html.platform-android .picker-file-path,
+html.platform-android .context-file-picker-empty {
+  color: var(--mobile-text-secondary);
+}
+
+html.platform-android .picker-current-badge {
+  color: var(--mobile-accent);
+  border-color: var(--mobile-accent);
+}
+
+html.platform-android .context-file-picker-actions .primary-button,
+html.platform-android .context-file-picker-actions .secondary-button {
+  min-height: 44px;
+}
+
+html.platform-android .context-file-chip {
+  min-height: 32px;
+  color: var(--mobile-accent);
+  background: var(--mobile-accent-soft);
+  border-color: color-mix(in srgb, var(--mobile-accent) 25%, transparent);
+  border-radius: 8px;
+}
+
+html.platform-android .context-file-chip button {
+  width: 20px;
+  height: 20px;
+}
+
+html.platform-android .context-file-chip button:hover {
+  background: color-mix(in srgb, var(--mobile-accent) 18%, transparent);
+}

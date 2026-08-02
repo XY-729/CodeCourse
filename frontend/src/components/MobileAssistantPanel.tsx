@@ -1,7 +1,7 @@
 import {
-  ArrowDown, ArrowUp, Bot, BrainCircuit, Edit3, ExternalLink,
+  ArrowDown, ArrowUp, Bot, BrainCircuit, Edit3, ExternalLink, FileText,
   History as HistoryIcon, Loader2, MessageCircle, Search, Send,
-  Settings as SettingsIcon, Sparkles, Star, Trash2,
+  Settings as SettingsIcon, Sparkles, Star, Trash2, X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
@@ -15,6 +15,9 @@ type Props = {
   onViewChange: (view: MobileAssistantView) => void;
   selection: SelectionSummary | null;
   contextSummary: AssistantContextSummary | null;
+  contextFiles: string[];
+  onOpenFilePicker: () => void;
+  onRemoveContextFile: (path: string) => void;
   question: string;
   loading: boolean;
   loadingLabel?: string;
@@ -63,6 +66,10 @@ function recordTitle(record: QARecord) {
   return record.display_title?.trim() || record.question;
 }
 
+function fileLabel(path: string) {
+  return path.split("/").pop() ?? path;
+}
+
 function summarizeMarkdown(content: string) {
   return content.replace(/[#>*`_\-]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
 }
@@ -95,7 +102,7 @@ function buildSuggestions(selection: SelectionSummary | null, context: Assistant
 }
 
 export default function MobileAssistantPanel({
-  view, onViewChange, selection, contextSummary, question, loading, loadingLabel, streamContent,
+  view, onViewChange, selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, loading, loadingLabel, streamContent,
   history, historyQuery, favoriteOnly, selectedRecord, selectedRecordReadOnly = false,
   surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError,
   knowledgeContent, knowledgeDisabled = false,
@@ -203,6 +210,18 @@ export default function MobileAssistantPanel({
               ) : (
                 <p>将使用当前项目的结构和学习内容作为上下文。</p>
               )}
+              {contextFiles.length > 0 ? (
+                <div className="mobile-context-file-chips">
+                  {contextFiles.map((path) => (
+                    <span key={path} className="context-file-chip" title={path}>
+                      <FileText size={12} />
+                      <span>{fileLabel(path)}</span>
+                      <button type="button" aria-label={`移除 ${fileLabel(path)}`} disabled={loading} onClick={() => onRemoveContextFile(path)}><X size={11} /></button>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <button type="button" className="mobile-assistant-text-action" onClick={onOpenFilePicker} disabled={loading}><FileText size={15} />选择参考文件</button>
             </section>
 
             <section className="mobile-assistant-suggestions">

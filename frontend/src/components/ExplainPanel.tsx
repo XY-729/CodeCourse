@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Bot, Edit3, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, Edit3, FileText, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
 import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
@@ -22,6 +22,9 @@ type AssistantTab = "history" | "knowledge";
 type Props = {
   selection: SelectionSummary | null;
   contextSummary: AssistantContextSummary | null;
+  contextFiles: string[];
+  onOpenFilePicker: () => void;
+  onRemoveContextFile: (path: string) => void;
   question: string;
   questionInput?: string;
   loading: boolean;
@@ -77,13 +80,17 @@ function configuredModelLabel(settings: LLMSettings | null) {
   return `${settings.provider} / ${settings.model}`;
 }
 
+function fileLabel(path: string) {
+  return path.split("/").pop() ?? path;
+}
+
 function recordTitle(record: QARecord) {
   return record.display_title?.trim() || record.question;
 }
 
 export default function ExplainPanel(props: Props) {
   const {
-    selection, contextSummary, question, questionInput, loading, loadingLabel, streamContent, history, historyQuery, favoriteOnly,
+    selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, questionInput, loading, loadingLabel, streamContent, history, historyQuery, favoriteOnly,
     selectedRecord, selectedRecordReadOnly = false, surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError, upperTab, mobileMode = false, embeddedMobileSheet = false, onUpperTabChange, knowledgeContent,
     knowledgeDisabled, onQuestionChange, onSelectionTextChange, onClearSelection,
     onAsk, onNewConversation, onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord,
@@ -213,6 +220,18 @@ export default function ExplainPanel(props: Props) {
             ) : contextSummary ? (
               <><div className="selection-meta"><span>{contextSummary.label}</span></div><div className="selection-path">{contextSummary.sourcePath ?? "项目上下文"}</div></>
             ) : <div className="selection-meta"><span>项目上下文</span></div>}
+            {contextFiles.length > 0 ? (
+              <div className="context-file-chips">
+                {contextFiles.map((path) => (
+                  <span key={path} className="context-file-chip" title={path}>
+                    <FileText size={12} />
+                    <span>{fileLabel(path)}</span>
+                    <button type="button" aria-label={`移除 ${fileLabel(path)}`} disabled={loading} onClick={() => onRemoveContextFile(path)}><X size={11} /></button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <button type="button" className="secondary-button compact" onClick={onOpenFilePicker} disabled={loading}><FileText size={14} />选择参考文件</button>
           </div>
 
         </div>

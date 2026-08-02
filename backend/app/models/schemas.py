@@ -170,6 +170,7 @@ class QAAskRequest(BaseModel):
     relation_type: Literal["follow_up", "term_explanation", "alternate"] = "follow_up"
     term_candidate_id: Optional[int] = None
     selection_range: Optional[SelectionRange] = None
+    context_files: list[str] = Field(default_factory=list, max_length=50)
 
 
 class RetrievalSourceResponse(BaseModel):

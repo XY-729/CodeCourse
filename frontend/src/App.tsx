@@ -83,6 +83,7 @@ import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./compo
 import LLMSettingsDialog from "./components/LLMSettingsDialog";
 import LearnerProfileDialog from "./components/LearnerProfileDialog";
 import OutlineQuestionnaireDialog from "./components/OutlineQuestionnaireDialog";
+import ContextFilePickerDialog from "./components/ContextFilePickerDialog";
 import MarkdownViewer from "./components/MarkdownViewer";
 import PromptEditor from "./components/PromptEditor";
 import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
@@ -350,6 +351,8 @@ export default function App() {
   const navigationRender = navigationOpen || navigationClosing;
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
   const [assistantOpen, setAssistantOpen] = useState(false);
+  const [contextFiles, setContextFiles] = useState<string[]>([]);
+  const [contextFilePickerOpen, setContextFilePickerOpen] = useState(false);
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab | null>(null);
   const [mobileCodeSearchRequestId, setMobileCodeSearchRequestId] = useState(0);
   const [generationOpen, setGenerationOpen] = useState(false);
@@ -1749,7 +1752,12 @@ export default function App() {
     };
   }
 
-  function buildAskPayloadContext(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text"> {
+  function buildAskPayloadContext(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text" | "context_files"> {
+    const base = buildAskPayloadContextBase();
+    return { ...base, context_files: contextFiles.length > 0 ? contextFiles : undefined };
+  }
+
+  function buildAskPayloadContextBase(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text"> {
     if (selection) {
       return {
         source_type: selection.sourceType,
@@ -2256,6 +2264,8 @@ export default function App() {
       setSelectedCourse(null);
       setSelection(null);
       setSelectionAnchor(null);
+      setContextFiles([]);
+      setContextFilePickerOpen(false);
       clearQAQuestionInput();
       setSelectedQA(null);
       setQASessionId(null);
@@ -3267,6 +3277,9 @@ export default function App() {
 
             selected_text:
               context.selected_text,
+
+            context_files:
+              context.context_files,
 
             question,
 
@@ -5372,6 +5385,9 @@ export default function App() {
       <ExplainPanel
         selection={selection}
         contextSummary={assistantContextSummary}
+        contextFiles={contextFiles}
+        onOpenFilePicker={() => setContextFilePickerOpen(true)}
+        onRemoveContextFile={(path) => setContextFiles((current) => current.filter((item) => item !== path))}
         question={qaQuestionInput}
         questionInput={qaQuestionInput}
         loading={qaInteractionBusy}
@@ -5422,6 +5438,9 @@ export default function App() {
         onViewChange={setMobileAssistantView}
         selection={selection}
         contextSummary={assistantContextSummary}
+        contextFiles={contextFiles}
+        onOpenFilePicker={() => setContextFilePickerOpen(true)}
+        onRemoveContextFile={(path) => setContextFiles((current) => current.filter((item) => item !== path))}
         question={qaQuestionInput}
         loading={qaInteractionBusy}
         loadingLabel={qaBusyLabel}
@@ -5991,6 +6010,14 @@ export default function App() {
         error={outlinePreflightError}
         onAnswers={handleOutlineQuestionnaireAnswers}
         onClose={() => handleOutlineQuestionnaireAnswers(null)}
+      />
+      <ContextFilePickerDialog
+        open={contextFilePickerOpen}
+        files={flattenTree(tree).filter((entry) => entry.type === "file").map((entry) => entry.path)}
+        selected={contextFiles}
+        currentPath={getActiveOpenItem()?.type === "file" ? getActiveOpenItem()?.path ?? null : null}
+        onConfirm={(files) => { setContextFiles(files); setContextFilePickerOpen(false); }}
+        onClose={() => setContextFilePickerOpen(false)}
       />
     </div>
   );

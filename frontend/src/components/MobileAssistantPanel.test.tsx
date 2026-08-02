@@ -18,6 +18,7 @@ function createProps() {
     view: "ask" as const, onViewChange: vi.fn(),
     selection: null,
     contextSummary: { label: "当前文件", sourceType: "file" as const, sourcePath: "src/App.tsx", preview: "当前正在阅读 App.tsx。" },
+    contextFiles: [], onOpenFilePicker: vi.fn(), onRemoveContextFile: vi.fn(),
     question: "", loading: false, loadingLabel: "", streamContent: "",
     history: [RECORD], historyQuery: "", favoriteOnly: false,
     selectedRecord: null, selectedRecordReadOnly: false,

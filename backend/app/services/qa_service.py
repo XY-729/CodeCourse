@@ -319,6 +319,7 @@ def _retrieval_context(
         query,
         source_path=payload.source_path,
         selected_text=selected_text,
+        context_files=payload.context_files or None,
         limit=8,
     )
     anchors = search_learning_anchors(project_id, query, limit=3)

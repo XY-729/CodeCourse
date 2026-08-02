@@ -13,6 +13,9 @@ function renderAssistant(selectedRecord: QARecord | null = null) {
     <ExplainPanel
       selection={null}
       contextSummary={null}
+      contextFiles={[]}
+      onOpenFilePicker={noop}
+      onRemoveContextFile={noop}
       question=""
       loading={false}
       history={[]}

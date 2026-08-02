@@ -144,6 +144,7 @@ export type QAAskPayload = {
     end_line: number;
     end_column: number;
   } | null;
+  context_files?: string[];
 };
 
 export type QAStreamStage = "queued" | "retrieving" | "waiting_model" | "answering" | "saving";

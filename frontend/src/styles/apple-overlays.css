@@ -163,6 +163,77 @@ html:not(.platform-android) .prompt-editor-footer {
   background: var(--apple-surface-muted);
 }
 
+html:not(.platform-android) .context-file-picker-hint,
+html:not(.platform-android) .context-file-picker-count {
+  color: var(--apple-text-secondary);
+}
+
+html:not(.platform-android) .context-file-picker-search {
+  border-color: var(--apple-separator-strong);
+  color: var(--apple-text-secondary);
+  background: var(--apple-surface);
+  box-shadow: var(--apple-inner-highlight);
+}
+
+html:not(.platform-android) .context-file-picker-search:focus-within {
+  border-color: var(--apple-blue);
+  box-shadow: var(--apple-focus-ring);
+}
+
+html:not(.platform-android) .context-file-picker-search input {
+  color: var(--apple-text);
+}
+
+html:not(.platform-android) .context-file-picker-list {
+  border-color: var(--apple-separator);
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .context-file-picker-item {
+  border-bottom-color: var(--apple-separator-soft);
+}
+
+html:not(.platform-android) .context-file-picker-item:hover {
+  background: var(--apple-fill);
+}
+
+html:not(.platform-android) .context-file-picker-item.selected {
+  background: color-mix(in srgb, var(--apple-blue-soft) 55%, var(--apple-surface));
+}
+
+html:not(.platform-android) .picker-checkbox {
+  border-color: var(--apple-separator-strong);
+  background: var(--apple-surface);
+}
+
+html:not(.platform-android) .picker-checkbox.checked {
+  border-color: var(--apple-blue);
+  background: var(--apple-blue);
+}
+
+html:not(.platform-android) .picker-file-name {
+  color: var(--apple-text);
+}
+
+html:not(.platform-android) .picker-file-path,
+html:not(.platform-android) .context-file-picker-empty {
+  color: var(--apple-text-secondary);
+}
+
+html:not(.platform-android) .picker-current-badge {
+  color: var(--apple-blue);
+}
+
+html:not(.platform-android) .context-file-chip {
+  color: var(--apple-blue);
+  background: color-mix(in srgb, var(--apple-blue-soft) 45%, var(--apple-surface));
+  border-color: color-mix(in srgb, var(--apple-blue) 22%, transparent);
+}
+
+html:not(.platform-android) .context-file-chip button:hover {
+  background: color-mix(in srgb, var(--apple-blue) 18%, transparent);
+}
+
 html:not(.platform-android) .settings-message { background: var(--apple-fill); }
 
 html:not(.platform-android) .settings-toggle-card {
