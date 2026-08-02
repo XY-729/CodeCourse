@@ -177,7 +177,7 @@ html:not(.platform-android) .context-file-picker-search {
 
 html:not(.platform-android) .context-file-picker-search:focus-within {
   border-color: var(--apple-blue);
-  box-shadow: var(--apple-focus-ring);
+  box-shadow: 0 0 0 3px var(--apple-blue-soft);
 }
 
 html:not(.platform-android) .context-file-picker-search input {

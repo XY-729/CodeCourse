@@ -62,10 +62,12 @@ export default function ContextFilePickerDialog({ open, files, selected, current
   return (
     <div className="modal-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="app-dialog context-file-picker-dialog" role="dialog" aria-label="选择参考文件">
-        <div className="app-dialog-header">
-          <span className="app-dialog-title"><FolderOpen size={15} />选择参考文件</span>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="关闭" title="关闭"><X size={16} /></button>
-        </div>
+        <header className="context-file-picker-header">
+          <div className="modal-title">
+            <span><FolderOpen size={15} />选择参考文件</span>
+            <button type="button" className="icon-button" onClick={onClose} aria-label="关闭" title="关闭"><X size={16} /></button>
+          </div>
+        </header>
         <p className="context-file-picker-hint">提问时会一并检索这些文件中的代码，实现跨文件问答。当前打开的文件已包含在内。</p>
         <div className="context-file-picker-search">
           <Search size={14} />

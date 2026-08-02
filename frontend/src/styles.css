@@ -1468,6 +1468,14 @@ button:disabled,
   max-height: 78vh;
 }
 
+.context-file-picker-header {
+  padding: 14px 18px 10px;
+}
+
+.context-file-picker-header .modal-title {
+  margin: -14px -18px 0;
+}
+
 .context-file-picker-hint {
   margin: 12px 18px 0;
   color: var(--cc-muted, #607086);

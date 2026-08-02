@@ -2043,6 +2043,27 @@ html.platform-android .outline-questionnaire-nav .secondary-button {
 
 html.platform-android .context-file-picker-dialog {
   border-radius: var(--mobile-radius-lg);
+  max-height: 82vh;
+}
+
+html.platform-android .context-file-picker-header {
+  border-bottom: 1px solid var(--mobile-line);
+  padding-bottom: 12px;
+}
+
+html.platform-android .context-file-picker-header .icon-button {
+  min-width: 44px;
+  min-height: 44px;
+  color: var(--mobile-text-secondary);
+  background: transparent;
+}
+
+html.platform-android .context-file-picker-list {
+  min-height: 120px;
+  max-height: 48vh;
+  border-color: var(--mobile-line);
+  border-radius: var(--mobile-radius-sm);
+  background: var(--mobile-surface);
 }
 
 html.platform-android .context-file-picker-hint,
@@ -2057,15 +2078,14 @@ html.platform-android .context-file-picker-search {
   border-radius: var(--mobile-radius-sm);
 }
 
+html.platform-android .context-file-picker-search:focus-within {
+  border-color: var(--mobile-accent);
+  box-shadow: 0 0 0 3px var(--mobile-accent-glow);
+}
+
 html.platform-android .context-file-picker-search input {
   min-height: 44px;
   color: var(--mobile-text);
-}
-
-html.platform-android .context-file-picker-list {
-  border-color: var(--mobile-line);
-  border-radius: var(--mobile-radius-sm);
-  background: var(--mobile-surface);
 }
 
 html.platform-android .context-file-picker-item {
