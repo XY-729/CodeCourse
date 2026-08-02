@@ -85,6 +85,31 @@ export function stripLayoutContent(node: LayoutNode): LayoutNode {
   return { ...node, first: stripLayoutContent(node.first), second: stripLayoutContent(node.second) };
 }
 
+// A persisted layout keeps its group ids ("group-2", …) across restarts, but
+// the runtime id counter starts from 1 again on every mount. Restored layouts
+// must therefore be re-keyed: duplicate group ids are renamed through
+// nextId() and the counter is advanced past the largest restored id, so a new
+// split never reuses an id that already exists (which would make
+// updateGroup/findGroup match two workspaces at once — menus, drops and
+// closes would all fire together).
+export function normalizeGroupIds(node: LayoutNode, nextId: (prefix: string) => string): LayoutNode {
+  const seen = new Set<string>();
+  const walk = (current: LayoutNode): LayoutNode => {
+    if (current.type === "group") {
+      const match = /^group-(\d+)$/.exec(current.group.id);
+      if (match) nextId("group");
+      let id = current.group.id;
+      if (seen.has(id)) {
+        id = nextId("group");
+      }
+      seen.add(id);
+      return id === current.group.id ? current : { ...current, group: { ...current.group, id } };
+    }
+    return { ...current, first: walk(current.first), second: walk(current.second) };
+  };
+  return walk(node);
+}
+
 export function normalizeToSingleGroup(node: LayoutNode, preferredActiveItemId?: string | null): GroupNode {
   const items: OpenItem[] = [];
   const seen = new Set<string>();

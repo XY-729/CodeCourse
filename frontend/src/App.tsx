@@ -149,6 +149,7 @@ import {
   removeGroupFromLayout,
   splitChildBounds,
   splitGroup,
+  normalizeGroupIds,
   splitMeta,
   stripLayoutContent,
   updateEveryGroup,
@@ -1942,6 +1943,10 @@ export default function App() {
     return { ...node, first, second };
   }
 
+  function syncLayoutIdCounter(node: LayoutNode): LayoutNode {
+    return normalizeGroupIds(node, nextId);
+  }
+
   async function buildOpenItem(payload: DropPayload): Promise<OpenItem | null> {
     if (!project) {
       return null;
@@ -2303,7 +2308,7 @@ export default function App() {
           }
           if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
             // Always hydrate — stored layout is stripped of content
-            let restoredLayout = await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses);
+            let restoredLayout = syncLayoutIdCounter(await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses));
             if (restoredLayout.type === "split") {
               restoredLayout = normalizeToSingleGroup(restoredLayout, stored.activeGroupId ? findGroup(stored.layout, stored.activeGroupId)?.activeItemId : null);
             }
@@ -2321,7 +2326,7 @@ export default function App() {
           const rawWorkbench = window.localStorage.getItem(wbKey);
           const stored = rawWorkbench ? JSON.parse(rawWorkbench) as StoredWorkbench : null;
           if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
-            const restoredLayout = await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses);
+            const restoredLayout = syncLayoutIdCounter(await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses));
             if (countLayoutItems(restoredLayout) > 0) {
               const restoredGroupId = hasGroup(restoredLayout, stored.activeGroupId) ? stored.activeGroupId : firstGroupId(restoredLayout);
               const restoredGroup = findGroup(restoredLayout, restoredGroupId);

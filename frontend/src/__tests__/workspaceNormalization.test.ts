@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeToSingleGroup, stripLayoutContent, resolvePreferredActiveItem } from "../workbench/layout";
+import { normalizeGroupIds, normalizeToSingleGroup, stripLayoutContent, resolvePreferredActiveItem } from "../workbench/layout";
 import type { LayoutNode, OpenItem } from "../workbench/layout";
 
 function createItem(id: string): OpenItem {
@@ -104,5 +104,77 @@ describe("resolvePreferredActiveItem (production import)", () => {
 
   it("returns null when empty", () => {
     expect(resolvePreferredActiveItem([], "x")).toBeNull();
+  });
+});
+
+describe("normalizeGroupIds (production import)", () => {
+  // Mirrors App.tsx nextId: pre-increments the shared counter, returns
+  // `${prefix}-${counter}`.
+  function counter() {
+    let current = 1;
+    return {
+      next: (prefix: string) => { current += 1; return `${prefix}-${current}`; },
+      value: () => current,
+    };
+  }
+
+  function collectGroupIds(node: LayoutNode): string[] {
+    if (node.type === "group") return [node.group.id];
+    return [...collectGroupIds(node.first), ...collectGroupIds(node.second)];
+  }
+
+  it("advances the counter past restored group ids", () => {
+    // Restored layout holds "group-2", but a fresh runtime counter starts at 1.
+    // Without the sync, the next split would create a duplicate "group-2".
+    const node = makeSplit(makeGroup("group-1", []), makeGroup("group-2", []));
+    const c = counter();
+    normalizeGroupIds(node, c.next);
+    // The next generated id must not collide with any restored id.
+    const nextSplitId = c.next("group");
+    expect(nextSplitId).not.toBe("group-1");
+    expect(nextSplitId).not.toBe("group-2");
+  });
+
+  it("renames duplicate group ids to fresh ones", () => {
+    // Layouts corrupted by the pre-fix bug can contain the same id twice.
+    const node = makeSplit(makeGroup("group-1", []), makeGroup("group-1", []));
+    const c = counter();
+    const fixed = normalizeGroupIds(node, c.next);
+    const ids = collectGroupIds(fixed);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("renames duplicates even with non-numeric group ids", () => {
+    const node = makeSplit(makeGroup("stale", []), makeGroup("stale", []));
+    const c = counter();
+    const fixed = normalizeGroupIds(node, c.next);
+    const ids = collectGroupIds(fixed);
+    expect(ids[0]).toBe("stale");
+    expect(ids[1]).toMatch(/^group-\d+$/);
+    expect(ids[1]).not.toBe("stale");
+  });
+
+  it("deeply nested splits are walked and deduplicated", () => {
+    const node = makeSplit(
+      makeSplit(makeGroup("group-1", []), makeGroup("group-3", [])),
+      makeSplit(makeGroup("group-3", []), makeGroup("group-1", [])),
+    );
+    const c = counter();
+    const fixed = normalizeGroupIds(node, c.next);
+    expect(new Set(collectGroupIds(fixed)).size).toBe(4);
+  });
+
+  it("keeps the layout shape and item data intact", () => {
+    const a = createItem("a");
+    const node = makeSplit(makeGroup("group-2", [a], "a"), makeGroup("group-1", []));
+    const c = counter();
+    const fixed = normalizeGroupIds(node, c.next);
+    const aGroup = fixed.type === "split" ? fixed.first : fixed;
+    if (aGroup.type === "group") {
+      expect(aGroup.group.items).toHaveLength(1);
+      expect(aGroup.group.items[0].id).toBe("a");
+      expect(aGroup.group.activeItemId).toBe("a");
+    }
   });
 });
