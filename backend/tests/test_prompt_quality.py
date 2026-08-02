@@ -64,6 +64,11 @@ class PromptQualityTests(unittest.TestCase):
         self.assertIn("不要输出 Markdown", system)
         self.assertNotIn("输出必须使用 Markdown", system)
 
+    def test_questionnaire_uses_array_output_contract(self):
+        system = compose_system_prompt("优先解决当前任务。", "json_array")
+        self.assertIn("只输出一个有效 JSON 数组", system)
+        self.assertNotIn("只输出一个有效 JSON 对象", system)
+
     def test_markdown_and_qa_contracts_are_task_specific(self):
         markdown = compose_system_prompt("", "markdown")
         qa = compose_system_prompt("", "qa")
@@ -255,6 +260,15 @@ class PromptQualityTests(unittest.TestCase):
         self.assertIn("<trusted_teaching_context>", messages[0]["content"])
         self.assertIn("<learner_context>", messages[1]["content"])
         self.assertIn("这段逻辑为什么需要队列", messages[1]["content"])
+
+    def test_questionnaire_preview_uses_array_contract(self):
+        with patch("app.services.prompt_store.get_setting", return_value=None):
+            bundle = preview_prompt_bundle(
+                "prompt.outline.questionnaire",
+                PROMPT_DEFAULTS["prompt.outline.questionnaire"],
+            )
+        self.assertIn("只输出一个有效 JSON 数组", bundle["messages"][0]["content"])
+        self.assertNotIn("只输出一个有效 JSON 对象", bundle["messages"][0]["content"])
 
 
 if __name__ == "__main__":

@@ -68,6 +68,13 @@ const DEFINITIONS: Record<string, Omit<PromptTemplateMetadata, "key">> = {
       "source_type", "source_path", "question", "session_context", "context_text",
     ],
   },
+  "prompt.outline.questionnaire": {
+    label: "总纲前置问卷",
+    description: "生成总纲前向用户收集学习意图的动态问卷。",
+    required_placeholders: [
+      "scope_text", "user_instructions", "preferences_summary", "prompt_input",
+    ],
+  },
 };
 
 export const PROMPT_TEMPLATE_KEYS = Object.keys(DEFINITIONS);
@@ -88,6 +95,7 @@ export const PROMPT_PREVIEW_VALUES: Record<string, string> = {
   question: "这段逻辑为什么需要队列？",
   session_context: "[示例会话记忆]",
   context_text: "[示例选区与检索上下文]",
+  preferences_summary: "术语密度：标准；前置知识：适中",
 };
 
 export function promptTemplateMetadata(
@@ -169,7 +177,9 @@ export function previewPromptBundle(
   const rendered = previewPromptTemplate(key, value);
   const outputKind = key === "prompt.system" || key === "prompt.qa.answer"
     ? "qa"
-    : "markdown";
+    : key === "prompt.outline.questionnaire"
+      ? "json_array"
+      : "markdown";
   const editableSystem = key === "prompt.system"
     ? value
     : current["prompt.system"] ?? defaults["prompt.system"] ?? "";

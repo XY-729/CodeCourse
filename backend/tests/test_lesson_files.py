@@ -3,6 +3,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 # Ensure backend package is importable when running this file directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -10,6 +12,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from app.core.config import IGNORED_DIRS, KEY_FILES  # noqa: E402
 from app.services import lesson_files  # noqa: E402
 from app.services.lesson_files import (  # noqa: E402
+    EvidenceRange,
+    assemble_file_code_blocks,
     build_file_code_blocks,
     _compact_code,
 )
@@ -102,6 +106,81 @@ class BuildBlocksTest(unittest.TestCase):
     def test_budget_truncates_later_files(self):
         small = build_file_code_blocks(self.repo, ["a.py", "b.py"], budget=60)
         self.assertLessEqual(len(small), 60)
+
+    def test_budget_is_shared_before_ranked_files_get_extra_space(self):
+        for name in ("a.py", "b.py", "c.py"):
+            (self.repo / name).write_text((f"# {name}\n" + "value = 1\n" * 600), encoding="utf-8")
+        assembly = assemble_file_code_blocks(
+            self.repo,
+            ["a.py", "b.py", "c.py"],
+            budget=1800,
+        )
+        self.assertEqual(assembly.included, ["a.py", "b.py", "c.py"])
+        self.assertEqual(set(assembly.truncated), {"a.py", "b.py", "c.py"})
+
+    def test_status_reports_unreadable_files_without_hiding_good_evidence(self):
+        assembly = assemble_file_code_blocks(self.repo, ["missing.py", "a.py"])
+        self.assertEqual(assembly.read_failed, ["missing.py"])
+        self.assertEqual(assembly.included, ["a.py"])
+
+    def test_relevant_line_range_is_preferred_over_file_head(self):
+        content = "\n".join([f"line_{index}" for index in range(1, 401)])
+        (self.repo / "large.py").write_text(content, encoding="utf-8")
+        assembly = assemble_file_code_blocks(
+            self.repo,
+            ["large.py"],
+            relevant_ranges=[EvidenceRange("large.py", 250, 252)],
+            budget=240,
+        )
+        self.assertIn("# lines 250-252", assembly.content)
+        self.assertIn("line_250", assembly.content)
+        self.assertNotIn("line_1\n", assembly.content)
+
+
+class LessonFileRefreshTest(unittest.TestCase):
+    def test_index_fingerprint_change_reselects_with_full_lesson_plan(self):
+        from app.services.generation_service import _ensure_lesson_files
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "new.py").write_text("def new(): pass\n", encoding="utf-8")
+            with (
+                patch(
+                    "app.services.generation_service.get_lesson_file_records",
+                    return_value=[{"file_path": "old.py", "indexed_fingerprint": "old"}],
+                ),
+                patch("app.services.generation_service._current_index_fingerprint", return_value="new"),
+                patch(
+                    "app.services.generation_service.select_lesson_file_paths",
+                    return_value=["new.py"],
+                ) as select,
+                patch("app.services.generation_service.upsert_lesson_files") as upsert,
+            ):
+                result = _ensure_lesson_files(3, repo, 2, "路由", "讲解注册和分发流程")
+
+        self.assertEqual(result, ["new.py"])
+        select.assert_called_once_with(3, repo, "路由", "讲解注册和分发流程")
+        upsert.assert_called_once_with(3, 2, [("new.py", "index")], "new")
+
+    def test_stale_index_text_cannot_replace_missing_repository_code(self):
+        from app.services.generation_service import _repository_lesson_evidence
+
+        stale_hit = SimpleNamespace(
+            path="deleted.py",
+            start_line=1,
+            end_line=2,
+            content="def deleted(): pass",
+            language="python",
+        )
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "app.services.index_service.search_project",
+            return_value=[stale_hit],
+        ), patch(
+            "app.services.generation_service._ensure_lesson_files",
+            return_value=["deleted.py"],
+        ):
+            with self.assertRaisesRegex(RuntimeError, "重新构建索引"):
+                _repository_lesson_evidence(7, Path(temp), 1, "删除文件", "讲解 deleted")
 
 
 if __name__ == "__main__":

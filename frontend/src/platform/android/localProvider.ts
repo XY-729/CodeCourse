@@ -35,6 +35,13 @@ import {
 } from "../../personalization/preferenceEngine";
 import { composeSystemPrompt } from "../../personalization/promptContracts";
 import {
+  buildTeacherPlannerUserPrompt,
+  effectiveTeachingPlan,
+  parseTeachingPlan,
+  TEACHER_PLANNER_SYSTEM_PROMPT,
+  type EffectiveTeachingPlan,
+} from "../../personalization/teacherPlan";
+import {
   previewPromptBundle,
   PROMPT_SCHEMA_VERSION,
   promptTemplateMetadata,
@@ -62,6 +69,11 @@ import {
   type LearningEvidenceV2,
   type KnowledgeDimension,
 } from "../../personalization/knowledgeState";
+import {
+  assembleLessonFileEvidence,
+  type LessonEvidenceRange,
+  type ReadableEvidenceFile,
+} from "../../generation/lessonEvidence";
 
 type ScopeTypeStr = "global" | "project" | "session";
 import promptDefaults from "./default-prompts.json";
@@ -690,6 +702,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if ((match = path.match(/^\/projects\/(\d+)\/regenerate$/))) return this.regenerate(Number(match[1])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/outline\/generate$/))) return this.queueTask(Number(match[1]), "outline", body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/lessons\/file$/))) return this.queueTask(Number(match[1]), "file_lesson", body) as Promise<T>;
+    if ((match = path.match(/^\/projects\/(\d+)\/lessons\/outline\/evidence$/))) {
+      return this.previewOutlineLessonEvidence(Number(match[1]), body) as Promise<T>;
+    }
     if ((match = path.match(/^\/projects\/(\d+)\/lessons\/outline$/))) return this.queueTask(Number(match[1]), "outline_lesson", body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/tasks$/))) return this.listTasks(Number(match[1])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/tasks\/(\d+)$/))) return this.getTask(Number(match[1]), Number(match[2])) as Promise<T>;
@@ -1179,68 +1194,155 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return blocks.join("\n\n");
   }
 
-  private async selectLessonFiles(projectId: number, outline: string): Promise<void> {
-    const lessons: [number, string][] = [];
-    for (const m of outline.matchAll(/^###\s*第\s*(\d+)\s*课\s*[：:]\s*(.+?)\s*$/gm)) {
-      lessons.push([Number(m[1]), m[2].trim()]);
+  private async currentIndexFingerprint(projectId: number): Promise<string | null> {
+    const status = await this.indexStatus(projectId);
+    const value = status.indexed_fingerprint ?? status.active_generation;
+    return value == null || value === "" ? null : String(value);
+  }
+
+  private async selectLessonFilePaths(projectId: number, query: string): Promise<string[]> {
+    const existingRows = await db.query<Row>("SELECT path FROM project_files WHERE project_id=?", [projectId]);
+    const existing = new Set(existingRows.map((row) => String(row.path)));
+    const hits = await this.search(projectId, query, undefined, 8).catch(() => []);
+    const files: string[] = [];
+    for (const hit of hits) {
+      if (existing.has(hit.path) && !files.includes(hit.path)) files.push(hit.path);
+      if (files.length >= 8) break;
     }
-    if (!lessons.length) return;
-    const nowStr = now();
-    for (const [number, title] of lessons) {
-      const hits = await this.search(projectId, title, undefined, 8).catch(() => []);
-      const files: string[] = [];
-      for (const hit of hits) {
-        if (!files.includes(hit.path)) files.push(hit.path);
-        if (files.length >= 8) break;
-      }
-      if (files.length < 2) {
-        const keyRows = await db.query<Row>(
-          "SELECT path FROM project_files WHERE project_id=? AND is_key_file=1 ORDER BY path LIMIT 8",
-          [projectId],
-        );
-        for (const row of keyRows) {
-          const path = String(row.path);
-          if (!files.includes(path)) files.push(path);
-          if (files.length >= 2) break;
-        }
-      }
-      if (!files.length) continue;
-      await db.run(
-        "DELETE FROM lesson_files WHERE project_id=? AND lesson_number=?",
-        [projectId, number],
+    if (files.length < 2) {
+      const keyRows = await db.query<Row>(
+        "SELECT path FROM project_files WHERE project_id=? AND is_key_file=1 ORDER BY CASE WHEN lower(path)='readme.md' THEN 0 ELSE 1 END,path LIMIT 8",
+        [projectId],
       );
-      for (const path of files) {
-        await db.run(
-          "INSERT INTO lesson_files(project_id,lesson_number,file_path,source,updated_at) VALUES(?,?,?,?,?)",
-          [projectId, number, path, "index", nowStr],
-        );
+      for (const row of keyRows) {
+        const path = String(row.path);
+        if (!files.includes(path)) files.push(path);
+        if (files.length >= 2) break;
       }
+    }
+    return files.slice(0, 10);
+  }
+
+  private async persistLessonFiles(projectId: number, lessonNumber: number, files: string[]): Promise<void> {
+    const fingerprint = await this.currentIndexFingerprint(projectId);
+    await db.run("DELETE FROM lesson_files WHERE project_id=? AND lesson_number=?", [projectId, lessonNumber]);
+    for (let rank = 0; rank < files.length; rank += 1) {
+      await db.run(
+        `INSERT INTO lesson_files(
+          project_id,lesson_number,file_path,source,relevance_rank,indexed_fingerprint,updated_at
+        ) VALUES(?,?,?,?,?,?,?)`,
+        [projectId, lessonNumber, files[rank], "index", rank, fingerprint, now()],
+      );
     }
   }
 
-  private async buildFileCodeBlocks(projectId: number, files: string[], budget = 24000): Promise<string> {
-    const HEAD_CHARS = 4000;
-    const TAIL_CHARS = 4000;
-    const blocks: string[] = [];
-    let remaining = budget;
-    for (const relative of files) {
-      if (remaining <= 0) break;
+  private async selectLessonFiles(projectId: number, outline: string): Promise<void> {
+    const pattern = /^###\s*第\s*(\d+)\s*课\s*[：:]\s*(.+?)\s*$/gm;
+    const matches = [...outline.matchAll(pattern)];
+    for (let index = 0; index < matches.length; index += 1) {
+      const match = matches[index];
+      const lessonNumber = Number(match[1]);
+      const title = match[2].trim();
+      const start = match.index ?? 0;
+      const end = matches[index + 1]?.index ?? outline.length;
+      const section = outline.slice(start, end);
+      const files = await this.selectLessonFilePaths(projectId, `${title} ${section.slice(0, 2000)}`);
+      await this.persistLessonFiles(projectId, lessonNumber, files);
+    }
+  }
+
+  private async ensureLessonFiles(
+    projectId: number,
+    lessonNumber: number,
+    title: string,
+    lessonSection: string,
+  ): Promise<string[]> {
+    const rows = await db.query<Row>(
+      `SELECT file_path,indexed_fingerprint FROM lesson_files
+       WHERE project_id=? AND lesson_number=? ORDER BY relevance_rank,file_path`,
+      [projectId, lessonNumber],
+    );
+    const fingerprint = await this.currentIndexFingerprint(projectId);
+    const existingRows = await db.query<Row>("SELECT path FROM project_files WHERE project_id=?", [projectId]);
+    const existing = new Set(existingRows.map((row) => String(row.path)));
+    const stale = !rows.length
+      || (fingerprint != null && rows.some((row) => String(row.indexed_fingerprint ?? "") !== fingerprint))
+      || rows.some((row) => !existing.has(String(row.file_path)));
+    if (!stale) return rows.map((row) => String(row.file_path));
+    const files = await this.selectLessonFilePaths(projectId, `${title} ${lessonSection.slice(0, 2000)}`);
+    await this.persistLessonFiles(projectId, lessonNumber, files);
+    return files;
+  }
+
+  private async prepareLessonEvidence(
+    projectId: number,
+    lessonNumber: number,
+    title: string,
+    lessonSection: string,
+  ) {
+    const query = `${title} ${lessonSection.slice(0, 2000)}`.trim();
+    const hits = (await this.search(projectId, query, undefined, 10).catch(() => []))
+      .filter((item) => item.content.trim());
+    const lessonFiles = await this.ensureLessonFiles(projectId, lessonNumber, title, lessonSection);
+    const readable: ReadableEvidenceFile[] = [];
+    const readFailed: string[] = [];
+    for (const path of lessonFiles) {
       try {
-        const content = await readRepoFile(projectId, relative);
-        const cap = Math.min(12000, remaining - relative.length - 10);
-        let excerpt = content;
-        if (excerpt.length > cap) {
-          const head = excerpt.slice(0, HEAD_CHARS);
-          const tail = excerpt.length > TAIL_CHARS ? excerpt.slice(-TAIL_CHARS) : "";
-          excerpt = `${head}\n# ... (省略 ${Math.max(0, excerpt.length - head.length - tail.length)} 字符) ...\n${tail}`.slice(0, cap);
-        }
-        blocks.push(`### ${relative}\n\`\`\`\n${excerpt}\n\`\`\``);
-        remaining -= blocks[blocks.length - 1].length + 2;
+        const content = await readRepoFile(projectId, path);
+        if (!content.trim()) readFailed.push(path);
+        else readable.push({ path, content, language: inferLanguage(path) });
       } catch {
-        // missing/unreadable file: skip, other files still contribute
+        readFailed.push(path);
       }
     }
-    return blocks.join("\n\n");
+    const ranges: LessonEvidenceRange[] = hits
+      .filter((item) => lessonFiles.includes(item.path))
+      .map((item) => ({ path: item.path, startLine: item.start_line, endLine: item.end_line }));
+    const assembly = assembleLessonFileEvidence(readable, ranges, readFailed);
+    const seen = new Set<string>();
+    const ragBlocks: string[] = [];
+    const validHits = hits.filter((item) => assembly.included.includes(item.path));
+    for (const item of validHits) {
+      const key = `${item.path}:${item.start_line}:${item.end_line}:${item.content}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      ragBlocks.push(`### ${item.path}:${item.start_line}-${item.end_line}\n\`\`\`${item.language}\n${item.content.slice(0, 3600)}\n\`\`\``);
+    }
+    const ragContext = ragBlocks.join("\n\n");
+    if (!assembly.content.trim() && !ragContext.trim()) {
+      throw new Error("本课没有可用的真实代码内容。请刷新仓库文件并重新构建索引后再生成课件。");
+    }
+    const ragPaths = new Set(validHits.map((item) => item.path));
+    const { content: _content, ...diagnostics } = assembly;
+    return {
+      fileBlocks: assembly.content,
+      ragContext,
+      preview: {
+        ...diagnostics,
+        file_count: assembly.included.length,
+        snippet_count: ragBlocks.length + assembly.included.filter((path) => !ragPaths.has(path)).length,
+        ready: true,
+      },
+    };
+  }
+
+  private async previewOutlineLessonEvidence(projectId: number, body: Record<string, unknown>) {
+    const project = await this.getProject(projectId);
+    if (project.project_type === "learning_plan") {
+      return {
+        file_count: 0, snippet_count: 0, included: [], truncated: [],
+        read_failed: [], budget_skipped: [], ready: true,
+      };
+    }
+    const outline = await readGeneratedFile(projectId, "outline.md");
+    const lessonNumber = Number(body.lesson_number || 0);
+    const title = String(body.title || "");
+    const matches = [...outline.matchAll(/^###\s*第\s*(\d+)\s*课\s*[：:]\s*(.+?)\s*$/gm)];
+    const index = matches.findIndex((match) => Number(match[1]) === lessonNumber);
+    const start = index >= 0 ? (matches[index].index ?? 0) : 0;
+    const end = index >= 0 ? (matches[index + 1]?.index ?? outline.length) : outline.length;
+    const section = index >= 0 ? outline.slice(start, end) : title;
+    return (await this.prepareLessonEvidence(projectId, lessonNumber, title, section)).preview;
   }
 
   private async generateOutline(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
@@ -1299,7 +1401,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
     content = addOutlineLessonLinks(content);
     if (project.project_type === "repository") {
-      void this.selectLessonFiles(projectId, content).catch(() => undefined);
+      await this.selectLessonFiles(projectId, content);
     }
     await this.reportProgress(taskId, "总纲生成完成", 1, 1, false);
     return { filename: "outline.md", content };
@@ -1359,16 +1461,19 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     let lessonInput = `项目学习总纲：\n${compactText(outline, 16000)}`;
     if (project.project_type === "repository") {
       const lessonNumber = Number(payload.lesson_number || 0);
-      const lessonFiles = lessonNumber > 0
-        ? (await db.query<Row>("SELECT file_path FROM lesson_files WHERE project_id=? AND lesson_number=? ORDER BY file_path", [projectId, lessonNumber])).map((row) => String(row.file_path))
-        : [];
-      const fileBlocks = await this.buildFileCodeBlocks(projectId, lessonFiles);
-      if (fileBlocks) {
-        lessonInput += `\n\n涉及文件代码：\n${fileBlocks}`;
-      }
-      const hits = await this.search(projectId, `${payload.title} ${payload.instructions || ""}`, undefined, 8).catch(() => []);
-      const evidence = hits.map((item) => `### ${item.path}:${item.start_line}-${item.end_line}\n${item.content}`).join("\n\n");
-      lessonInput += `\n\nRAG 索引检索片段：\n${evidence || (fileBlocks ? "" : await this.projectContext(projectId))}`;
+      const matches = [...outline.matchAll(/^###\s*第\s*(\d+)\s*课\s*[：:]\s*(.+?)\s*$/gm)];
+      const index = matches.findIndex((match) => Number(match[1]) === lessonNumber);
+      const sectionStart = index >= 0 ? (matches[index].index ?? 0) : 0;
+      const sectionEnd = index >= 0 ? (matches[index + 1]?.index ?? outline.length) : outline.length;
+      const lessonSection = index >= 0 ? outline.slice(sectionStart, sectionEnd) : String(payload.title || "");
+      const evidence = await this.prepareLessonEvidence(
+        projectId,
+        lessonNumber,
+        String(payload.title || ""),
+        lessonSection,
+      );
+      lessonInput += `\n\n涉及文件代码：\n${evidence.fileBlocks}`;
+      lessonInput += `\n\nRAG 索引检索片段：\n${evidence.ragContext || "（相关文件正文已加载，索引没有额外命中片段。）"}`;
     }
     const base = project.project_type === "learning_plan"
       ? `${prompts[key] || "生成完整课件"}\n\n第 ${payload.lesson_number} 课：${payload.title}\n用户要求：${payload.instructions || "无"}\n\n总纲：\n${compactText(outline, 18000)}`
@@ -2008,7 +2113,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       context_text: context,
     });
     const learnerContext = await this.learnerContextForQuestion(projectId, payload);
-    const teacherPlan = await this.teacherStrategyForQuestion(projectId, payload);
+    const teacherPlanResult = await this.teacherStrategyForQuestion(projectId, payload);
+    const teacherPlan = teacherPlanResult?.rendered ?? "";
     const raw = await this.callLLM([
       {
         role: "system",
@@ -2049,12 +2155,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       }
     }
     record = await this.getQA(projectId, id);
-    const strategyText = teacherPlan.replace(/<\/?teacher_plan>/g, "").trim();
-    const strategies = strategyText
-      .split(/\r?\n/)
-      .map((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim())
-      .filter(Boolean)
-      .slice(0, 5);
+    const strategies = teacherPlanResult?.strategies ?? [];
     const trialConcepts = await this.relevantConcepts(
       projectId,
       record.question,
@@ -2067,23 +2168,25 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       trialConcepts.map((concept) => concept.id),
     )).states;
     const stateByConceptId = new Map(preState.map((state) => [state.conceptId, state]));
-    const assumedKnown: string[] = [];
-    const explainInDetail: string[] = [];
-    const explainBriefly: string[] = [];
-    for (const concept of trialConcepts) {
-      const dimensions = stateByConceptId.get(concept.id)?.dimensions;
-      if (
-        dimensions?.familiarity.status === "confirmed"
-        || dimensions?.conceptual.status === "confirmed"
-      ) {
-        assumedKnown.push(concept.displayName);
-      } else if (
-        dimensions?.familiarity.status === "learning"
-        || dimensions?.conceptual.status === "learning"
-      ) {
-        explainInDetail.push(concept.displayName);
-      } else {
-        explainBriefly.push(concept.displayName);
+    const assumedKnown: string[] = [...(teacherPlanResult?.assumedKnown ?? [])];
+    const explainInDetail: string[] = [...(teacherPlanResult?.explainInDetail ?? [])];
+    const explainBriefly: string[] = [...(teacherPlanResult?.explainBriefly ?? [])];
+    if (!teacherPlanResult) {
+      for (const concept of trialConcepts) {
+        const dimensions = stateByConceptId.get(concept.id)?.dimensions;
+        if (
+          dimensions?.familiarity.status === "confirmed"
+          || dimensions?.conceptual.status === "confirmed"
+        ) {
+          assumedKnown.push(concept.displayName);
+        } else if (
+          dimensions?.familiarity.status === "learning"
+          || dimensions?.conceptual.status === "learning"
+        ) {
+          explainInDetail.push(concept.displayName);
+        } else {
+          explainBriefly.push(concept.displayName);
+        }
       }
     }
     await teachingOutcomes.saveTrial({
@@ -2091,13 +2194,13 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       sessionId,
       qaRecordId: id,
       answerModel: settings.model,
-      mode: teacherPlan ? "assist" : "default",
+      mode: teacherPlanResult ? "assist" : "default",
       context: {
         schemaVersion: 1,
-        mode: teacherPlan ? "planned" : "default",
-        userGoal: "unknown",
-        teachingGoal: teacherPlan
-          ? "Apply the planned explanation strategy to the current question."
+        mode: teacherPlanResult ? "planned" : "default",
+        userGoal: teacherPlanResult?.plan.user_goal ?? "unknown",
+        teachingGoal: teacherPlanResult
+          ? teacherPlanResult.plan.teaching_goal
           : "Answer the current question using the relevant learner context.",
         strategies: strategies.length ? strategies : ["direct_answer"],
         assumedKnown,
@@ -2109,8 +2212,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       targetDimensions: payload.source_type === "file"
         ? ["familiarity", "conceptual", "code_reading"]
         : ["familiarity", "conceptual"],
-      strategyRationale: teacherPlan
-        ? strategyText.slice(0, 1200)
+      strategyRationale: teacherPlanResult
+        ? JSON.stringify({
+          blocker: teacherPlanResult.plan.blocker_summary,
+          confidence: teacherPlanResult.plan.plan_confidence,
+          uncertainty: teacherPlanResult.plan.uncertainty_notes,
+        }).slice(0, 1200)
         : "The answer used the current learner context without a separate Planner call.",
     });
     await this.recordSuccessfulAnswerLearning(projectId, record);
@@ -3836,28 +3943,35 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async teacherStrategyForQuestion(
     projectId: number,
     payload: QAAskPayload,
-  ): Promise<string> {
+  ): Promise<EffectiveTeachingPlan | null> {
     const runtime = await this.getPersonalizationRuntimeSettings();
     const complex = await this.shouldUseTeacherPlanner(projectId, payload);
-    if (!runtime.teacher_planner_enabled || !complex) return "";
+    if (!runtime.teacher_planner_enabled || !complex) return null;
     const start = performance.now();
     try {
       const learnerContext = await this.learnerContextForQuestion(projectId, payload);
-      const strategy = await this.callLLM([
+      const rawPlan = await this.callLLM([
         {
           role: "system",
-          content: "你是教学策略规划器。当前课程、题目要求、用户代码和选区是第一上下文。先判断完成当前目标真正需要哪些先修概念；证据不足时安排简短铺垫，不把相邻概念当作已掌握。已有直接证据的基础概念可简述并链接旧解释，正在学习的必要概念首次出现时讲清。给出最多 5 条简短策略，不回答问题本身，不给用户贴等级标签。",
+          content: composeSystemPrompt(TEACHER_PLANNER_SYSTEM_PROMPT, "json"),
         },
         {
           role: "user",
-          content: `${learnerContext}\n\n当前问题：${payload.question}\n当前选区：${payload.selected_text || "无"}`,
+          content: buildTeacherPlannerUserPrompt(
+            learnerContext,
+            payload.question,
+            payload.selected_text || "",
+            payload.source_type,
+            payload.source_path || "",
+          ),
         },
       ]);
+      const result = effectiveTeachingPlan(parseTeachingPlan(rawPlan), payload.question);
       await this.recordModelCall(projectId, "teacher_planner", "completed", start);
-      return `<teacher_plan>\n${strategy.slice(0, 1800)}\n</teacher_plan>`;
+      return result;
     } catch (error) {
       await this.recordModelCall(projectId, "teacher_planner", "failed", start, error).catch(() => undefined);
-      return "";
+      return null;
     }
   }
 

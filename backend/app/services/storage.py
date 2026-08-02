@@ -1720,11 +1720,18 @@ def init_storage() -> None:
                 lesson_number INTEGER NOT NULL,
                 file_path TEXT NOT NULL,
                 source TEXT NOT NULL DEFAULT 'index',
+                relevance_rank INTEGER NOT NULL DEFAULT 0,
+                indexed_fingerprint TEXT,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (project_id, lesson_number, file_path)
             )
             """
         )
+        lesson_file_cols = [row[1] for row in conn.execute("PRAGMA table_info(lesson_files)").fetchall()]
+        if "relevance_rank" not in lesson_file_cols:
+            conn.execute("ALTER TABLE lesson_files ADD COLUMN relevance_rank INTEGER NOT NULL DEFAULT 0")
+        if "indexed_fingerprint" not in lesson_file_cols:
+            conn.execute("ALTER TABLE lesson_files ADD COLUMN indexed_fingerprint TEXT")
         conn.execute(
             """CREATE INDEX IF NOT EXISTS idx_lesson_files_project
                ON lesson_files(project_id, lesson_number)"""
@@ -2218,6 +2225,7 @@ def upsert_lesson_files(
     project_id: int,
     lesson_number: int,
     files: list[tuple[str, str]],
+    indexed_fingerprint: Optional[str] = None,
 ) -> None:
     """Persist the per-lesson involved-file list. `files` is a list of
     (file_path, source) pairs; source is one of 'index' | 'key_files' | 'llm'."""
@@ -2226,10 +2234,16 @@ def upsert_lesson_files(
         conn.execute("DELETE FROM lesson_files WHERE project_id = ? AND lesson_number = ?", (project_id, lesson_number))
         conn.executemany(
             """
-            INSERT INTO lesson_files (project_id, lesson_number, file_path, source, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO lesson_files (
+                project_id, lesson_number, file_path, source,
+                relevance_rank, indexed_fingerprint, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            [(project_id, lesson_number, path, source, now) for path, source in files],
+            [
+                (project_id, lesson_number, path, source, rank, indexed_fingerprint, now)
+                for rank, (path, source) in enumerate(files)
+            ],
         )
         conn.commit()
 
@@ -2237,10 +2251,24 @@ def upsert_lesson_files(
 def get_lesson_files(project_id: int, lesson_number: int) -> list[str]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT file_path FROM lesson_files WHERE project_id = ? AND lesson_number = ? ORDER BY file_path",
+            """SELECT file_path FROM lesson_files
+               WHERE project_id = ? AND lesson_number = ?
+               ORDER BY relevance_rank, file_path""",
             (project_id, lesson_number),
         ).fetchall()
         return [str(row["file_path"]) for row in rows]
+
+
+def get_lesson_file_records(project_id: int, lesson_number: int) -> list[dict[str, object]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT file_path, source, relevance_rank, indexed_fingerprint, updated_at
+               FROM lesson_files
+               WHERE project_id = ? AND lesson_number = ?
+               ORDER BY relevance_rank, file_path""",
+            (project_id, lesson_number),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
 
 def delete_lesson_files(project_id: int, lesson_number: int) -> None:

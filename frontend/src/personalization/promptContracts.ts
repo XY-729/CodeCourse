@@ -1,4 +1,4 @@
-export type TaskOutputKind = "markdown" | "json" | "qa";
+export type TaskOutputKind = "markdown" | "json" | "json_array" | "qa";
 
 export const IMMUTABLE_SAFETY_RULES = `你在 CodeCourse 中处理学习材料和用户问题。
 
@@ -20,6 +20,10 @@ export const TASK_OUTPUT_CONTRACTS: Record<TaskOutputKind, string> = {
   json: `<task_output_contract>
 本任务只输出一个有效 JSON 对象，必须符合用户消息给出的结构。
 不要输出 Markdown、代码围栏、前后说明、注释或额外键。
+</task_output_contract>`,
+  json_array: `<task_output_contract>
+本任务只输出一个有效 JSON 数组，必须符合用户消息给出的结构。
+不要输出 Markdown、代码围栏、前后说明或注释；数组元素不得包含结构之外的额外键。
 </task_output_contract>`,
   qa: `<task_output_contract>
 本任务输出 AI 问答记录。

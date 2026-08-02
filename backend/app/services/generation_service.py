@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -39,7 +40,12 @@ from app.services.course_generator import (
     list_course_files_from_dir,
     read_course_file,
 )
-from app.services.lesson_files import build_file_code_blocks, select_lesson_files
+from app.services.lesson_files import (
+    EvidenceRange,
+    assemble_file_code_blocks,
+    select_lesson_file_paths,
+    select_lesson_files,
+)
 from app.services.llm_client import call_openai_compatible_chat
 from app.services.term_service import parse_term_metadata, register_document_terms, term_metadata_instruction
 from app.services.scanner import list_key_files, read_text_file, safe_join, scan_tree
@@ -51,14 +57,17 @@ from app.services.storage import (
     find_knowledge_node,
     find_completed_task,
     get_generation_task,
-    get_lesson_files,
+    get_lesson_file_records,
     get_llm_settings,
     get_project,
+    get_project_index_status,
     update_generation_task,
     upsert_lesson_files,
     update_project_status,
 )
 
+
+LOGGER = logging.getLogger(__name__)
 
 
 
@@ -330,6 +339,142 @@ def _outline_lesson_filename(lesson_number: int) -> str:
     return f"lessons/lesson_{lesson_number:02d}.md"
 
 
+def _current_index_fingerprint(project_id: int) -> Optional[str]:
+    status = get_project_index_status(project_id)
+    value = status.get("indexed_fingerprint") or status.get("active_generation")
+    return str(value) if value not in (None, "") else None
+
+
+def _ensure_lesson_files(
+    project_id: int,
+    repo_root: Path,
+    lesson_number: int,
+    lesson_title: str,
+    lesson_section: str,
+) -> list[str]:
+    """Refresh missing, stale, or invalid lesson-file references before use."""
+    records = get_lesson_file_records(project_id, lesson_number)
+    fingerprint = _current_index_fingerprint(project_id)
+    stale = not records
+    if not stale and fingerprint is not None:
+        stale = any(row.get("indexed_fingerprint") != fingerprint for row in records)
+    if not stale:
+        stale = any(not (repo_root / str(row["file_path"])).is_file() for row in records)
+
+    if stale:
+        selected = select_lesson_file_paths(
+            project_id,
+            repo_root,
+            lesson_title,
+            lesson_section,
+        )
+        upsert_lesson_files(
+            project_id,
+            lesson_number,
+            [(path, "index") for path in selected],
+            fingerprint,
+        )
+        return selected
+    return [str(row["file_path"]) for row in records]
+
+
+def _repository_lesson_evidence(
+    project_id: int,
+    repo_root: Path,
+    lesson_number: int,
+    lesson_title: str,
+    lesson_section: str,
+) -> tuple[str, str, dict[str, Any]]:
+    """Resolve fresh file samples and ranked RAG snippets for one lesson."""
+    search_query = f"{lesson_title} {lesson_section[:2000]}".strip()
+    results: list[Any] = []
+    try:
+        from app.services.index_service import search_project
+
+        results = [item for item in search_project(project_id, search_query, limit=10) if item.content.strip()]
+    except Exception as exc:
+        LOGGER.warning("Lesson evidence search failed for project %s lesson %s: %s", project_id, lesson_number, exc)
+
+    lesson_files = _ensure_lesson_files(
+        project_id,
+        repo_root,
+        lesson_number,
+        lesson_title,
+        lesson_section,
+    )
+    ranges = [
+        EvidenceRange(item.path, item.start_line, item.end_line)
+        for item in results
+        if item.path in lesson_files
+    ]
+    assembly = assemble_file_code_blocks(repo_root, lesson_files, relevant_ranges=ranges)
+
+    seen: set[tuple[str, int, int, str]] = set()
+    rag_blocks: list[str] = []
+    valid_results = [item for item in results if item.path in assembly.included]
+    for item in valid_results:
+        key = (
+            item.path,
+            item.start_line,
+            item.end_line,
+            hashlib.sha256(item.content.encode("utf-8")).hexdigest(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        rag_blocks.append(
+            f"### {item.path}:{item.start_line}-{item.end_line}\n"
+            f"```{item.language}\n{item.content[:3600]}\n```"
+        )
+    rag_context = "\n\n".join(rag_blocks)
+    if not assembly.content.strip() and not rag_context.strip():
+        raise RuntimeError(
+            "本课没有可用的真实代码内容。请刷新仓库文件并重新构建索引后再生成课件。"
+        )
+
+    rag_paths = {item.path for item in valid_results}
+    preview = {
+        **assembly.as_dict(),
+        "file_count": len(assembly.included),
+        "snippet_count": len(rag_blocks) + sum(path not in rag_paths for path in assembly.included),
+        "ready": True,
+    }
+    return assembly.content, rag_context, preview
+
+
+def preview_outline_lesson_evidence(
+    project_id: int,
+    lesson_number: int,
+    requested_title: str,
+) -> dict[str, Any]:
+    project = get_project(project_id)
+    if project is None:
+        raise RuntimeError("Project not found")
+    if project.project_type == "learning_plan":
+        return {
+            "file_count": 0,
+            "snippet_count": 0,
+            "included": [],
+            "truncated": [],
+            "read_failed": [],
+            "budget_skipped": [],
+            "ready": True,
+        }
+    outline_path = project_course_dir(project_id) / "outline.md"
+    if not outline_path.is_file():
+        raise RuntimeError("请先生成项目学习总纲，再生成课件。")
+    outline = outline_path.read_text(encoding="utf-8")
+    lesson_title, lesson_section = _lesson_outline_section(outline, lesson_number, requested_title)
+    _, _, preview = _repository_lesson_evidence(
+        project_id,
+        Path(project.local_path).resolve(),
+        lesson_number,
+        lesson_title,
+        lesson_section,
+    )
+    return preview
+
+
 def build_outline_lesson_input(
     project_id: int,
     repo_root: Path,
@@ -361,30 +506,19 @@ def build_outline_lesson_input(
         )
         return lesson_title, lesson_input, input_hash
 
-    search_query = f"{lesson_title} {lesson_section[:1200]}".strip()
-    rag_context = "索引中没有匹配片段。"
-    try:
-        # 延迟导入以避开 index_service 与本模块之间的循环依赖。
-        from app.services.index_service import search_project
-
-        results = search_project(project_id, search_query, limit=10)
-        if results:
-            rag_context = "\n\n".join(
-                f"### {item.path}:{item.start_line}-{item.end_line}\n```{item.language}\n{item.content[:3600]}\n```"
-                for item in results
-            )
-    except Exception:
-        pass
-    file_blocks = build_file_code_blocks(
+    file_blocks, rag_context, _preview = _repository_lesson_evidence(
+        project_id,
         repo_root,
-        get_lesson_files(project_id, lesson_number),
+        lesson_number,
+        lesson_title,
+        lesson_section,
     )
     lesson_input = "\n\n".join(
         [
             "项目总纲摘要：\n```markdown\n" + outline[:7000] + "\n```",
             "本课计划：\n```markdown\n" + lesson_section + "\n```",
-            "涉及文件代码：\n" + (file_blocks or "（无涉及文件清单，请以总纲与 RAG 片段为准。）"),
-            "RAG 索引检索片段：\n" + rag_context,
+            "涉及文件代码：\n" + file_blocks,
+            "RAG 索引检索片段：\n" + (rag_context or "（相关文件正文已加载，索引没有额外命中片段。）"),
         ]
     )
     input_hash = hash_inputs(
@@ -405,10 +539,16 @@ def _select_and_persist_lesson_files(project_id: int, repo_root: Path, outline: 
     not fail the outline task - lesson input falls back to key files."""
     try:
         selected = select_lesson_files(project_id, repo_root, outline)
+        fingerprint = _current_index_fingerprint(project_id)
         for lesson_number, files in selected.items():
-            upsert_lesson_files(project_id, lesson_number, [(rel, "index") for rel in files])
-    except Exception:
-        pass
+            upsert_lesson_files(
+                project_id,
+                lesson_number,
+                [(rel, "index") for rel in files],
+                fingerprint,
+            )
+    except Exception as exc:
+        LOGGER.warning("Failed to persist lesson files for project %s: %s", project_id, exc)
 
 
 def run_outline_generation_task(project_id: int, task_id: int, scope: LearningScopeRequest, instructions: str = "", survey_answers: Optional[list] = None) -> None:
@@ -1613,6 +1753,7 @@ async def stream_outline_generation(
             _atomic_write(output_path, add_outline_lesson_links(outline))
             register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
             register_document_terms(project_id, "course", filename, outline, model_terms)
+            _select_and_persist_lesson_files(project_id, repo_root, outline)
             yield _sse_event("file_created", {"filename": "project_map.md"})
 
         update_generation_task(task.id, "completed", output_path=output_dir)

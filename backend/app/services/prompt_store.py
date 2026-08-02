@@ -858,6 +858,10 @@ def preview_prompt_bundle(key: str, value: str) -> dict[str, object]:
         editable_system = load_prompt("prompt.system")
         user_content = f"{PREVIEW_LEARNER_CONTEXT}\n\n{rendered}"
         output_kind = "qa"
+    elif key == "prompt.outline.questionnaire":
+        editable_system = load_prompt("prompt.system")
+        user_content = rendered
+        output_kind = "json_array"
     else:
         editable_system = load_prompt("prompt.system")
         user_content = rendered

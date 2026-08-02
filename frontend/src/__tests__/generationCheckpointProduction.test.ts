@@ -84,6 +84,13 @@ import { AndroidLocalProvider } from "../platform/android/localProvider";
 type ProviderInternals = {
   runTask(taskId: number): Promise<void>;
   retryTask(projectId: number, taskId: number): Promise<unknown>;
+  generateOutline(
+    projectId: number,
+    payload: Record<string, unknown>,
+    taskId: number,
+    inputHash: string,
+  ): Promise<{ filename: string; content: string }>;
+  selectLessonFiles(projectId: number, outline: string): Promise<void>;
   callLLM: ReturnType<typeof vi.fn>;
   getProject(projectId: number): Promise<Record<string, unknown>>;
   getPrompts(): Promise<Record<string, string>>;
@@ -152,6 +159,40 @@ beforeEach(() => {
 });
 
 describe("Android generation checkpoint production runTask", () => {
+  it("does not complete a repository outline before lesson files are persisted", async () => {
+    const provider = createProvider();
+    provider.getProject = vi.fn(async () => ({
+      id: 1,
+      name: "Atlas",
+      project_type: "repository",
+    }));
+    provider.getPrompts = vi.fn(async () => ({
+      "prompt.system": "system",
+      "prompt.outline": "outline {model} {scope_text} {user_instructions} {prompt_input}",
+    }));
+    provider.callLLM.mockResolvedValue("# Outline\n\n### 第 1 课：Start\n\nRead the entry point.");
+    let releaseSelection: (() => void) | undefined;
+    provider.selectLessonFiles = vi.fn(() => new Promise<void>((resolve) => {
+      releaseSelection = resolve;
+    }));
+
+    let completed = false;
+    const pending = provider.generateOutline(
+      1,
+      { scope: { type: "full_project", paths: [] }, instructions: "" },
+      9,
+      "outline-hash",
+    ).then((value) => {
+      completed = true;
+      return value;
+    });
+    await vi.waitFor(() => expect(provider.selectLessonFiles).toHaveBeenCalledTimes(1));
+    expect(completed).toBe(false);
+    releaseSelection?.();
+    await pending;
+    expect(completed).toBe(true);
+  });
+
   it("completes outline from checkpoint with zero LLM calls and slims payload", async () => {
     const checkpoint = {
       version: 1,

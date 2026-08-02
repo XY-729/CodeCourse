@@ -85,8 +85,10 @@ jobs:
           mkdir -p dist-mobile
           if [[ "${GITHUB_REF}" == refs/tags/v* && "${{ steps.signing.outputs.available }}" == "true" ]]; then
             cp android/app/build/outputs/apk/release/app-release.apk "dist-mobile/CodeCourse-${VERSION}-android.apk"
+            printf '### Android APK\n\nPublished a signed release APK.\n' >> "$GITHUB_STEP_SUMMARY"
           else
             cp android/app/build/outputs/apk/debug/app-debug.apk "dist-mobile/CodeCourse-${VERSION}-android-debug.apk"
+            printf '### Android APK\n\nSigning secrets were unavailable. Published an explicitly named Debug APK for testing; it is not a production-signed build.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Scan APK for private data
@@ -98,11 +100,12 @@ jobs:
           name: CodeCourse-android
           path: dist-mobile/*.apk
 
-      - name: Publish Android APK to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') && steps.signing.outputs.available == 'true'
+      - name: Publish Android APK asset to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: dist-mobile/*.apk
 
       - name: Publish debug APK prerelease

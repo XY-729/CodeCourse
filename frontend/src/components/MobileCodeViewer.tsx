@@ -135,6 +135,8 @@ export default function MobileCodeViewer({
 }: Props) {
   const viewerRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const progressFillRef = useRef<HTMLDivElement | null>(null);
+  const progressRafRef = useRef(0);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
@@ -331,6 +333,28 @@ export default function MobileCodeViewer({
   const lastReportedRef = useRef(0);
   const visLineRafRef = useRef(0);
 
+  // Reading-position progress bar: one rAF-throttled DOM write per frame,
+  // never a React state update (Android ActionMode would be destroyed).
+  const refreshScrollProgress = useCallback(() => {
+    if (progressRafRef.current) return;
+    progressRafRef.current = window.requestAnimationFrame(() => {
+      progressRafRef.current = 0;
+      const el = scrollRef.current;
+      const fill = progressFillRef.current;
+      if (!el || !fill) return;
+      const range = el.scrollHeight - el.clientHeight;
+      const p = range > 0 ? Math.min(1, Math.max(0, el.scrollTop / range)) : 0;
+      fill.style.transform = `scaleX(${p})`;
+      fill.style.opacity = range <= 0 ? "0" : "1";
+    });
+  }, []);
+
+  // Initial progress refresh: content may not have laid out yet at mount,
+  // so re-run whenever content/path changes and on mount.
+  useEffect(() => {
+    refreshScrollProgress();
+  }, [content, path, refreshScrollProgress]);
+
   const scheduleVisibleLine = useCallback(() => {
     if (visLineRafRef.current) return;
     visLineRafRef.current = window.requestAnimationFrame(() => {
@@ -346,7 +370,8 @@ export default function MobileCodeViewer({
     const el = scrollRef.current; if (!el) return;
     if (shouldVirtualize) updateRange(el.scrollTop, el.clientHeight);
     scheduleVisibleLine();
-  }, [shouldVirtualize, updateRange, scheduleVisibleLine]);
+    refreshScrollProgress();
+  }, [shouldVirtualize, updateRange, scheduleVisibleLine, refreshScrollProgress]);
 
   type ScrollReason = "initial-restore" | "explicit-jump" | "search-result";
   const restoreLineAtMountRef = useRef(restoreLine);
@@ -416,6 +441,7 @@ export default function MobileCodeViewer({
 
   useEffect(() => () => {
     window.cancelAnimationFrame(visLineRafRef.current);
+    window.cancelAnimationFrame(progressRafRef.current);
   }, []);
 
   // moveMatch
@@ -452,6 +478,9 @@ export default function MobileCodeViewer({
 
   return (
     <div ref={viewerRef} className="viewer mobile-code-viewer">
+      <div className="mobile-code-progress" aria-hidden="true">
+        <div ref={progressFillRef} className="mobile-code-progress-fill" />
+      </div>
       {shouldVirtualize && <div className="mobile-code-notice">大文件：虚拟列表仅渲染可见行</div>}
       {searchOpen && (
         <div className="mobile-code-search">

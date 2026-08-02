@@ -787,6 +787,28 @@ html.platform-android .mobile-code-notice {
   text-align: center;
 }
 
+/* Reading-position progress bar, same look as .reader-progress-bar */
+html.platform-android .mobile-code-progress {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 2px;
+  background: var(--mobile-surface-pressed);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+html.platform-android .mobile-code-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transform-origin: left;
+  transform: scaleX(0);
+  opacity: 0;
+  background: var(--mobile-progress, #218967);
+  transition: opacity 0.15s ease;
+}
+
 
 html.platform-android .mobile-code-viewer .hljs-keyword,
 html.platform-android .mobile-code-viewer .hljs-selector-tag { color: #7b3fc2; }

@@ -249,6 +249,8 @@ export class MobileDatabase {
           lesson_number INTEGER NOT NULL,
           file_path TEXT NOT NULL,
           source TEXT NOT NULL DEFAULT 'index',
+          relevance_rank INTEGER NOT NULL DEFAULT 0,
+          indexed_fingerprint TEXT,
           updated_at TEXT NOT NULL,
           PRIMARY KEY(project_id, lesson_number, file_path),
           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -266,6 +268,8 @@ export class MobileDatabase {
       "ALTER TABLE document_terms ADD COLUMN canonical_name TEXT",
       "ALTER TABLE document_terms ADD COLUMN category TEXT",
       "ALTER TABLE document_terms ADD COLUMN source_span_json TEXT",
+      "ALTER TABLE lesson_files ADD COLUMN relevance_rank INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE lesson_files ADD COLUMN indexed_fingerprint TEXT",
     ]) {
       try {
         await CapacitorSQLite.execute({

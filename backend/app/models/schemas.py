@@ -121,6 +121,16 @@ class GenerateOutlineLessonRequest(BaseModel):
     instructions: str = Field(default="", max_length=4000)
 
 
+class LessonEvidencePreviewResponse(BaseModel):
+    file_count: int = 0
+    snippet_count: int = 0
+    included: list[str] = Field(default_factory=list)
+    truncated: list[str] = Field(default_factory=list)
+    read_failed: list[str] = Field(default_factory=list)
+    budget_skipped: list[str] = Field(default_factory=list)
+    ready: bool = False
+
+
 class GenerationTaskResponse(BaseModel):
     id: int
     project_id: int

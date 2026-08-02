@@ -19,6 +19,7 @@ from app.models.schemas import (
     OutlineConfirmRequest,
     OutlinePreflightRequest,
     OutlinePreflightResponse,
+    LessonEvidencePreviewResponse,
     ProjectActionResponse,
     ProjectResponse,
     TreeNode,
@@ -29,6 +30,7 @@ from app.services.generation_service import (
     create_or_reuse_outline_task,
     generate_rule_course,
     list_project_course_files,
+    preview_outline_lesson_evidence,
     run_file_lesson_task,
     run_outline_lesson_task,
     run_outline_generation_task,
@@ -327,14 +329,17 @@ def generate_file_lesson(project_id: int, payload: GenerateFileLessonRequest, ba
 def generate_outline_lesson(project_id: int, payload: GenerateOutlineLessonRequest, background_tasks: BackgroundTasks) -> GenerationTaskResponse:
     repo_root = _project_root(project_id)
     settings = get_llm_settings()
-    task, reused = create_or_reuse_outline_lesson_task(
-        project_id,
-        repo_root,
-        payload.lesson_number,
-        payload.title,
-        settings.get("model"),
-        payload.instructions,
-    )
+    try:
+        task, reused = create_or_reuse_outline_lesson_task(
+            project_id,
+            repo_root,
+            payload.lesson_number,
+            payload.title,
+            settings.get("model"),
+            payload.instructions,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not reused:
         background_tasks.add_task(
             run_outline_lesson_task,
@@ -345,6 +350,25 @@ def generate_outline_lesson(project_id: int, payload: GenerateOutlineLessonReque
             payload.instructions,
         )
     return _to_task_response(task)
+
+
+@router.post(
+    "/projects/{project_id}/lessons/outline/evidence",
+    response_model=LessonEvidencePreviewResponse,
+)
+def preview_outline_lesson(
+    project_id: int,
+    payload: GenerateOutlineLessonRequest,
+) -> LessonEvidencePreviewResponse:
+    _project_root(project_id)
+    try:
+        return LessonEvidencePreviewResponse(**preview_outline_lesson_evidence(
+            project_id,
+            payload.lesson_number,
+            payload.title,
+        ))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

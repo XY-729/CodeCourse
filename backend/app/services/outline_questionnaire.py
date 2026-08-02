@@ -76,7 +76,9 @@ def _build_questionnaire_messages(
     return [
         {
             "role": "system",
-            "content": compose_system_prompt(load_prompt("prompt.system"), "json"),
+            "content": compose_system_prompt(
+                load_prompt("prompt.system"), "json_array"
+            ),
         },
         {"role": "user", "content": prompt},
     ]

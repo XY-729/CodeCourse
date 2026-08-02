@@ -105,3 +105,63 @@ describe("Android code selection (native ActionMode preservation)", () => {
     expect(onSelectionChange).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Android code reading progress bar", () => {
+  beforeEach(() => {
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function makeScrollable(container: HTMLElement) {
+    const scroll = container.querySelector(".mobile-code-scroll") as HTMLElement;
+    Object.defineProperty(scroll, "scrollHeight", { configurable: true, value: 1000 });
+    Object.defineProperty(scroll, "clientHeight", { configurable: true, value: 500 });
+    return scroll;
+  }
+
+  it("renders the progress bar element", () => {
+    const { container } = render(
+      <MobileCodeViewer path="/a.ts" language="typescript" content={sampleCode} />,
+    );
+    const bar = container.querySelector(".mobile-code-progress");
+    expect(bar).not.toBeNull();
+    const fill = container.querySelector(".mobile-code-progress-fill");
+    expect(fill).not.toBeNull();
+  });
+
+  it("updates fill scaleX on scroll", () => {
+    const { container } = render(
+      <MobileCodeViewer path="/a.ts" language="typescript" content={sampleCode} />,
+    );
+    const scroll = makeScrollable(container);
+    Object.defineProperty(scroll, "scrollTop", { configurable: true, value: 250, writable: true });
+
+    act(() => {
+      fireEvent.scroll(scroll);
+    });
+
+    const fill = container.querySelector(".mobile-code-progress-fill") as HTMLElement;
+    expect(fill.style.transform).toBe("scaleX(0.5)");
+  });
+
+  it("hides the fill when the document is not scrollable", () => {
+    const { container } = render(
+      <MobileCodeViewer path="/a.ts" language="typescript" content={sampleCode} />,
+    );
+    const scroll = container.querySelector(".mobile-code-scroll") as HTMLElement;
+    Object.defineProperty(scroll, "scrollHeight", { configurable: true, value: 300 });
+    Object.defineProperty(scroll, "clientHeight", { configurable: true, value: 500 });
+
+    act(() => {
+      fireEvent.scroll(scroll);
+    });
+
+    const fill = container.querySelector(".mobile-code-progress-fill") as HTMLElement;
+    expect(fill.style.opacity).toBe("0");
+  });
+});

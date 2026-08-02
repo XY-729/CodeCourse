@@ -15,6 +15,7 @@ import {
   deleteProject,
   generateFileLesson,
   generateOutlineLesson,
+  previewOutlineLessonEvidence,
   generateOutline,
   generateOutlineStream,
   generateOutlinePreflight,
@@ -2963,11 +2964,20 @@ export default function App() {
     handleDismissSelection();
 
     try {
+      let evidenceSummary = "";
+      if (!isLearningPlanProject) {
+        setTaskMessage("正在检查课程代码证据");
+        const preview = await previewOutlineLessonEvidence(projectId, lessonNumber, title);
+        const warningCount = preview.read_failed.length + preview.budget_skipped.length;
+        evidenceSummary = `将使用 ${preview.file_count} 个文件、${preview.snippet_count} 个代码片段。${
+          warningCount > 0 ? `另有 ${warningCount} 个文件无法读取或因预算被跳过。` : ""
+        }`;
+      }
       const ok = await confirmAction(
         `生成第 ${lessonNumber} 课`,
         isLearningPlanProject
-          ? `将分章节生成"${title}"的详细课件。本次操作最多调用 12 次模型 API，可能消耗较多 token；一次确认将授权完成整节课。是否继续？`
-          : `将调用模型 API 生成"${title}"的详细课件，并使用项目索引作为代码上下文。是否继续？`,
+          ? `将分章节生成“${title}”的详细课件。本次操作最多调用 12 次模型 API，可能消耗较多 token；一次确认将授权完成整节课。是否继续？`
+          : `${evidenceSummary}\n\n将调用模型 API 生成“${title}”的详细课件。是否继续？`,
         { confirmText: "生成", skipKey: "confirm.outline_lesson" },
       );
 

@@ -327,6 +327,16 @@ export type OutlineSurveyAnswer = {
   _key: string;
 };
 
+export type LessonEvidencePreview = {
+  file_count: number;
+  snippet_count: number;
+  included: string[];
+  truncated: string[];
+  read_failed: string[];
+  budget_skipped: string[];
+  ready: boolean;
+};
+
 export type GenerateOutlineRequestPayload = {
   scope: LearningScope;
   instructions: string;
@@ -506,6 +516,17 @@ export function generateOutlineLesson(projectId: number, lessonNumber: number, t
   return request<GenerationTask>(`/projects/${projectId}/lessons/outline`, {
     method: "POST",
     body: JSON.stringify({ lesson_number: lessonNumber, title, instructions }),
+  });
+}
+
+export function previewOutlineLessonEvidence(
+  projectId: number,
+  lessonNumber: number,
+  title: string,
+): Promise<LessonEvidencePreview> {
+  return request<LessonEvidencePreview>(`/projects/${projectId}/lessons/outline/evidence`, {
+    method: "POST",
+    body: JSON.stringify({ lesson_number: lessonNumber, title, instructions: "" }),
   });
 }
 

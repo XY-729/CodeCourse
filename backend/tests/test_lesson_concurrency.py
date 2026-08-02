@@ -1,5 +1,6 @@
 """Tests for concurrent lesson generation and task progress reporting."""
 
+import asyncio
 import json
 import tempfile
 import unittest
@@ -171,6 +172,30 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
         self.assertEqual(task["stage_label"], "生成失败")
         self.assertEqual(output_path.read_text(encoding="utf-8"), "# 旧课件\n\n保留我。\n")
 
+    def test_evidence_preview_self_heals_empty_lesson_file_list(self):
+        preview = self.client.post(
+            f"/api/projects/{self.project.id}/lessons/outline/evidence",
+            json={"lesson_number": 1, "title": "入口与启动", "instructions": ""},
+        )
+        self.assertEqual(preview.status_code, 200)
+        payload = preview.json()
+        self.assertTrue(payload["ready"])
+        self.assertGreaterEqual(payload["file_count"], 1)
+        self.assertGreaterEqual(payload["snippet_count"], 1)
+        self.assertIn("README.md", payload["included"])
+
+    def test_zero_code_evidence_blocks_generation_before_model_call(self):
+        (Path(self.project.local_path) / "README.md").unlink()
+        (Path(self.project.local_path) / "src" / "main.py").unlink()
+        with patch("app.services.generation_service.call_openai_compatible_chat") as mocked:
+            response = self.client.post(
+                f"/api/projects/{self.project.id}/lessons/outline",
+                json={"lesson_number": 1, "title": "入口与启动", "instructions": ""},
+            )
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("重新构建索引", response.json()["detail"])
+        mocked.assert_not_called()
+
 
 class OutlineProgressTests(unittest.TestCase):
     def setUp(self):
@@ -212,6 +237,35 @@ class OutlineProgressTests(unittest.TestCase):
         self.assertEqual(task_detail["progress_total"], 4)
         self.assertEqual(task_detail["stage_label"], "生成完成")
         self.assertTrue((self.generated / str(self.project.id) / "outline.md").is_file())
+
+        from app.services.storage import get_lesson_files
+
+        self.assertTrue(get_lesson_files(self.project.id, 1))
+
+    def test_streaming_outline_also_persists_ranked_lesson_files(self):
+        from app.models.schemas import LearningScopeRequest
+        from app.services.generation_service import stream_outline_generation
+        from app.services.storage import get_lesson_file_records
+
+        generated = "# 项目学习总纲\n\n## FILE: project_map.md\n\n# 项目结构说明\n\n## FILE: outline.md\n\n# 学习路线\n\n### 第 1 课：启动\n\n讲解启动流程。"
+
+        async def fake_stream(*_args, **_kwargs):
+            yield {"event": "accumulated", "data": {"text": generated}}
+
+        async def collect():
+            with patch("app.services.generation_service._stream_and_accumulate", fake_stream):
+                return [
+                    event async for event in stream_outline_generation(
+                        self.project.id,
+                        LearningScopeRequest(type="full_project", paths=[]),
+                    )
+                ]
+
+        events = asyncio.run(collect())
+        self.assertTrue(any(event["event"] == "completed" for event in events))
+        records = get_lesson_file_records(self.project.id, 1)
+        self.assertTrue(records)
+        self.assertEqual([row["relevance_rank"] for row in records], list(range(len(records))))
 
 
 class FileLessonProgressTests(unittest.TestCase):
