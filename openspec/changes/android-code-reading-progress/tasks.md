@@ -26,3 +26,12 @@
 
 - [x] 5.1 提交推送
 - [x] 5.2 重建 APK 交付绝对路径
+
+## 6. 首次打开进度条失效修复（0.4.2 回归）
+
+- [x] 6.1 定位根因：MarkdownViewer scroll effect cleanup 取消挂起 rAF 后 `progressRafRef` 未归零，`onScrollRatioChange` 内联引用变化导致 effect 重跑时永久短路
+- [x] 6.2 cleanup 取消 rAF 后归零 ref；effect 重跑时补 `scheduleProgressRefresh()`
+- [x] 6.3 回归测试：rAF 挂起时 effect 重跑（rerender 新 onScrollRatioChange）→ 滚动后进度条仍更新
+- [x] 6.4 真实验证：首次打开即 `scaleX(0)`，滚动实时更新，切换文档恢复正确，re-render 后不死锁
+- [x] 6.5 tsc 零错 + 全量测试 391 绿 + build 通过
+- [ ] 6.6 提交推送并重新打包桌面端，验证快捷方式指向最新

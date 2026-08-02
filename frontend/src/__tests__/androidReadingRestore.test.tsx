@@ -144,4 +144,55 @@ describe("Android reading position restore", () => {
     const article = container.querySelector<HTMLElement>(".markdown-scroll-viewport")!;
     expect(article.scrollTop).toBe(0);
   });
+
+  it("progress bar survives a cancelled rAF when the scroll effect re-runs", () => {
+    const onScrollRatioChange = vi.fn();
+    const { container, rerender } = render(
+      <MarkdownViewer
+        title="第一课"
+        sourcePath="lesson-1.md"
+        sourceType="course"
+        content={markdown}
+        onScrollRatioChange={onScrollRatioChange}
+      />,
+    );
+
+    // The parent passes an inline arrow, so any App re-render changes the
+    // onScrollRatioChange reference and re-runs the scroll effect. If a
+    // progress rAF is still pending, the cleanup cancels it — and the ref must
+    // reset to 0, otherwise every later scroll short-circuits and the progress
+    // bar never updates again for this document ("first open is broken").
+    const article = container.querySelector<HTMLElement>(".markdown-scroll-viewport")!;
+    const fill = container.querySelector<HTMLElement>(".reader-progress-fill")!;
+    const flushWhilePending = () => {
+      for (let pass = 0; pass < 10 && rafQueue.size > 0; pass += 1) {
+        const current = [...rafQueue.entries()];
+        rafQueue = new Map();
+        current.forEach(([, callback]) => callback(performance.now()));
+      }
+    };
+    act(() => {
+      rerender(
+        <MarkdownViewer
+          title="第一课"
+          sourcePath="lesson-1.md"
+          sourceType="course"
+          content={markdown}
+          onScrollRatioChange={vi.fn()}
+        />,
+      );
+    });
+    flushWhilePending();
+
+    // Scroll afterwards — the fill must update even though the earlier
+    // rAF was cancelled mid-flight.
+    act(() => {
+      article.scrollTop = 300;
+      article.dispatchEvent(new Event("scroll"));
+    });
+    flushWhilePending();
+
+    expect(fill.style.opacity).toBe("1");
+    expect(fill.style.transform).toBe("scaleX(0.5)");
+  });
 });

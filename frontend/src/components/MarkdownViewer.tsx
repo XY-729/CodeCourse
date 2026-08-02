@@ -599,18 +599,25 @@ export default function MarkdownViewer({
     if (supportsScrollEnd) {
       article.addEventListener("scroll", onScroll, { passive: true });
       article.addEventListener("scrollend", settleScroll);
+      scheduleProgressRefresh();
       return () => {
         article.removeEventListener("scroll", onScroll);
         article.removeEventListener("scrollend", settleScroll);
+        // The ref must reset after cancelling, otherwise the in-flight frame
+        // marker sticks and every later scroll short-circuits: the progress
+        // bar never updates again for this document.
         window.cancelAnimationFrame(progressRafRef.current);
+        progressRafRef.current = 0;
       };
     }
 
     article.addEventListener("scroll", onScroll, { passive: true });
+    scheduleProgressRefresh();
     return () => {
       article.removeEventListener("scroll", onScroll);
       window.clearTimeout(positionSaveTimerRef.current);
       window.cancelAnimationFrame(progressRafRef.current);
+      progressRafRef.current = 0;
     };
   }, [androidRuntime, immersiveReading, onScrollRatioChange, sourcePath, sourceType, title]);
 
