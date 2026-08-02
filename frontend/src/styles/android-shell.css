@@ -45,9 +45,7 @@ html.platform-android .mobile-app-bar {
     color-mix(in srgb, var(--mobile-line) 78%, transparent);
 
   background: var(--mobile-surface);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 55%, transparent),
-    0 5px 18px color-mix(in srgb, var(--mobile-text) 8%, transparent);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--mobile-line) 72%, transparent);
 
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -199,9 +197,7 @@ html.platform-android .mobile-bottom-navigation {
     color-mix(in srgb, var(--mobile-line) 78%, transparent);
 
   background: var(--mobile-surface);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 48%, transparent),
-    0 -8px 24px color-mix(in srgb, var(--mobile-text) 9%, transparent);
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--mobile-line) 72%, transparent);
 
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -242,26 +238,25 @@ html.platform-android .mobile-bottom-navigation > button {
 
 html.platform-android .mobile-bottom-navigation > .mobile-navigation-indicator {
   --selection-x: 0px;
-  --selection-width: 1;
+  --selection-width-px: 1px;
   position: absolute;
   z-index: 0;
   top: 5px;
   left: 0;
-  width: 1px;
+  width: var(--selection-width-px);
   height: 51px;
-  border: 1px solid color-mix(in srgb, var(--mobile-accent) 18%, var(--mobile-line));
+  border: 0;
   border-radius: 15px;
   opacity: 0;
   pointer-events: none;
-  transform-origin: left center;
-  transform: translate3d(var(--selection-x), 0, 0) scaleX(var(--selection-width));
-  background: color-mix(in srgb, var(--mobile-accent-soft) 74%, var(--mobile-surface));
-  box-shadow: var(--mobile-shadow-sm), inset 0 1px 0 color-mix(in srgb, white 45%, transparent);
+  transform: translate3d(var(--selection-x), 0, 0);
+  background: color-mix(in srgb, var(--mobile-accent-soft) 62%, var(--mobile-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mobile-accent) 12%, transparent);
 }
 
 html.platform-android .mobile-bottom-navigation > .mobile-navigation-indicator[data-visible="true"] { opacity: 1; }
 html.platform-android .mobile-bottom-navigation > .mobile-navigation-indicator[data-ready="true"] {
-  transition: transform var(--mobile-duration) var(--mobile-ease-out), opacity var(--mobile-duration-fast) ease;
+  transition: transform var(--mobile-duration) var(--mobile-ease-out), width var(--mobile-duration) var(--mobile-ease-out), opacity var(--mobile-duration-fast) ease;
 }
 
 html.platform-android .mobile-bottom-navigation-icon {
@@ -332,6 +327,12 @@ html.platform-android .workbench.navigation-open {
 
 html.platform-android .activity-rail {
   display: none !important;
+}
+
+html.platform-android .reader-pane,
+html.platform-android .reader-pane.active {
+  outline: 0 !important;
+  box-shadow: none !important;
 }
 
 html.platform-android .mobile-workspace-sheet-layer {

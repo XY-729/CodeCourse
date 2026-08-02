@@ -8,8 +8,10 @@ from unittest.mock import patch
 
 from app.services.term_service import (
     _clean_historical_candidates,
+    get_document_term_status,
     normalize_term_candidate,
     parse_term_metadata,
+    rescan_document_terms,
 )
 
 
@@ -97,6 +99,30 @@ bind 会把套接字绑定到本地地址。"""
             )
         self.assertEqual([term.id for term in kept], [2])
         delete_candidates.assert_called_once_with(7, [1])
+
+    def test_status_does_not_poll_when_local_candidates_are_sufficient(self):
+        terms = [SimpleNamespace(confidence=0.9) for _ in range(4)]
+        with (
+            patch("app.services.term_service._load_document_content", return_value="FastAPI SQLite React Electron"),
+            patch("app.services.term_service.register_document_terms", return_value=terms),
+            patch("app.services.term_service.get_term_scan_state", return_value=None),
+            patch("app.services.term_service._term_scan_enabled", return_value=True),
+        ):
+            status = get_document_term_status(1, "course", "outline.md")
+        self.assertEqual(status["scan_status"], "completed")
+        self.assertEqual(status["candidate_count"], 4)
+
+    def test_rescan_invalidates_current_content_hash(self):
+        content = "FastAPI 使用 SQLite"
+        with (
+            patch("app.services.term_service._load_document_content", return_value=content),
+            patch("app.services.term_service.delete_term_scan_state") as delete_state,
+            patch("app.services.term_service.register_document_terms", return_value=[]),
+            patch("app.services.term_service.get_document_term_status", return_value={"scan_status": "idle"}),
+        ):
+            status = rescan_document_terms(3, "course", "lesson.md")
+        self.assertEqual(status["scan_status"], "idle")
+        delete_state.assert_called_once()
 
 
 if __name__ == "__main__":

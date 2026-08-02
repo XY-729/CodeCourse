@@ -28,7 +28,9 @@ import {
   type LearnerPreferences,
   type LearningEvidenceV2,
   type PersonalizationProfile,
+  type TermScanStatus,
 } from "../api/client";
+import type { TermDisplayDiagnostics } from "../personalization/useDocumentTermsController";
 
 type Props = {
   open: boolean;
@@ -36,6 +38,9 @@ type Props = {
   onClose: () => void;
   onChanged?: () => void;
   onConfirm?: (title: string, message: string, options?: { confirmText?: string; danger?: boolean }) => Promise<boolean>;
+  termScanStatus?: TermScanStatus | null;
+  termDiagnostics?: TermDisplayDiagnostics | null;
+  onRescanTerms?: () => Promise<void>;
 };
 
 type View = "overview" | "concepts" | "evidence" | "calls" | "preferences";
@@ -126,6 +131,9 @@ export default function LearnerProfileDialog({
   onClose,
   onChanged,
   onConfirm,
+  termScanStatus,
+  termDiagnostics,
+  onRescanTerms,
 }: Props) {
   const [profile, setProfile] = useState<PersonalizationProfile | null>(null);
   const [view, setView] = useState<View>("overview");
@@ -663,6 +671,33 @@ export default function LearnerProfileDialog({
                 />
                 <output>{Math.round(preferences.terminologyDensity * 100)}%</output>
               </label>
+              <div className="learner-term-diagnostics" aria-label="当前文档术语提示状态">
+                <div>
+                  <strong>当前文档术语提示</strong>
+                  <small>
+                    {termScanStatus
+                      ? termScanStatus.scan_status === "local_only"
+                        ? "仅使用本地识别"
+                        : termScanStatus.scan_status === "failed"
+                          ? "智能补扫失败"
+                          : ["queued", "running", "idle"].includes(termScanStatus.scan_status)
+                            ? "正在分析"
+                            : "分析完成"
+                      : "打开课件或回答后可查看"}
+                  </small>
+                </div>
+                {termDiagnostics ? (
+                  <p>
+                    候选 {termDiagnostics.candidateCount} · 正文匹配 {termDiagnostics.occurrenceCount} · 显示 {termDiagnostics.visibleCount}
+                  </p>
+                ) : null}
+                {termScanStatus?.error_message ? <p className="error-text">{termScanStatus.error_message}</p> : null}
+                {onRescanTerms && termScanStatus ? (
+                  <button type="button" className="secondary-button compact" onClick={() => void onRescanTerms()}>
+                    <RotateCcw size={14} />重新分析
+                  </button>
+                ) : null}
+              </div>
               <div className="learner-preference-actions">
                 <button type="button" className="secondary-button" disabled={preferencesSaving} onClick={() => void resetPreferences()}>重置为默认</button>
               </div>

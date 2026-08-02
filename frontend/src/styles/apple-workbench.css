@@ -372,7 +372,7 @@ html:not(.platform-android) .qa-panel-mode-tabs {
   background: var(--apple-fill);
 }
 html:not(.platform-android) .qa-panel-mode-tabs > button { padding: 0 11px; font-size: 12px; }
-html:not(.platform-android) .qa-panel-mode-tabs > button.active { transform: translateY(-0.5px); }
+html:not(.platform-android) .qa-panel-mode-tabs > button.active { transform: none; }
 html:not(.platform-android) .ask-box-toolbar {
   min-width: 0;
   display: flex;

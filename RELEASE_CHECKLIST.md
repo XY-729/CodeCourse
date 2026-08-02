@@ -1,104 +1,50 @@
-# Android v0.4.0 Release Verification
+# CodeCourse v0.4.3 Release Verification
 
-## Baseline
+## Scope
 
-- **Branch:** `main`
-- **Parent:** `ac4ad6fcd691db229de5b2978c641d81c1b8ad5c`
-- **Verified implementation commit:** `28f6135e8596fb147175b339401e7557c490fff1`
-- **Version:** `0.4.0` (`versionCode 400`)
-- **Scope:** release closure plus Android code-reader scroll stability
+- Reliable unfamiliar-term discovery, diagnostics, and rescan controls.
+- Knowledge-network interaction and large-layout performance improvements.
+- Initial extraction of term routing, polling, and graph layout modules.
+- Windows Setup/Portable and permanently signed Android distribution.
 
 ## Automated Verification
 
-- [x] TypeScript: `pnpm --dir frontend exec tsc --noEmit`
-- [x] Vitest: 148 tests in 11 files
-- [x] Frontend production build
-- [x] Capacitor sync
-- [x] Android debug build: `gradlew.bat assembleDebug`
-- [x] Gradle unit-test task: `gradlew.bat test`
-- [x] Android lint: `gradlew.bat lint`
-- [x] GitHub Actions PR Validation for `28f6135`:
-  [run 30185587589](https://github.com/XY-729/CodeCourse/actions/runs/30185587589)
+- [x] TypeScript and frontend production build.
+- [x] Frontend Vitest: 55 files, 401 tests.
+- [x] Backend unittest: 235 tests.
+- [x] Android Gradle unit tests.
+- [x] Android Lint after API 26/27 resource separation.
+- [x] Signed Android release APK built with the permanent CodeCourse key.
+- [x] APK Signature Scheme v2 verification and certificate fingerprint check.
+- [x] APK privacy scan.
+- [x] PyInstaller backend build.
+- [x] Windows Portable and NSIS Setup builds.
+- [x] Windows file version and Electron update metadata are `0.4.3`.
 
-## Android Code Reader
+## Runtime Verification
 
-- [x] `restoreLine`, `visibleLine`, and `jumpRequest` are separate data flows.
-- [x] The saved learning position is captured only when a file tab is opened.
-- [x] A database write-back cannot become a new scroll input for the active tab.
-- [x] Every code tab uses its instance ID as the React component key.
-- [x] Activating a file tab no longer writes a synthetic reading position.
-- [x] Initial restore is consumed once per mounted file component.
-- [x] Explicit jumps are consumed once per request ID.
-- [x] Content, language, theme, search UI, and unrelated parent renders do not replay restore.
-- [x] Android code rows and the scroll algorithm use an exact 24px row height.
-- [x] Code-reader scroll anchoring is disabled locally.
-- [x] `content-visibility:auto` is not used for code rows.
-- [x] Files over 1,000 lines use the fixed-height virtual list.
-- [x] A 50,000-line file renders fewer than 300 code rows.
-- [x] Visible-line persistence uses an 800ms trailing save.
-- [x] Pending positions flush on tab close, project switch, and App backgrounding.
-- [x] Out-of-order save responses cannot replace a newer learning state.
-- [x] Vertical programmatic scrolling is audited as restore, explicit jump, or search result.
-- [x] Active Android text selections pin their anchor line in the virtual range.
+- [x] `win-unpacked` cold start keeps the packaged backend alive.
+- [x] Restored project, learning state, QA, knowledge, file, and term-status requests return successfully.
+- [x] Existing `0.3.0` installation upgraded to `0.4.3` without removing user data.
+- [x] Installed build cold start keeps the packaged backend alive.
+- [x] Desktop shortcut targets the installed `0.4.3` executable.
+- [ ] Android real-device smoke test was not available on this machine.
 
-### Production Regression Coverage
+## Distribution
 
-`frontend/src/__tests__/virtualList.test.tsx` contains 11 tests that render the
-real `MobileCodeViewer`, plus 3 pure geometry tests and 1 static CSS audit:
-
-- 50,000-line bounded DOM
-- real scroll to line 20,000
-- one-time restore
-- App-style 800ms persistence write-back without a second jump
-- unrelated parent rerender stability
-- same-line explicit request with a new ID
-- 200ms search and far-result navigation
-- requestAnimationFrame visible-line sampling
-- ordinary-file line 100 geometry
-- line 500 save/restore round trip
-- keyed A/B file isolation
-- selection-anchor pinning
-- stable CSS geometry
-
-`frontend/src/__tests__/trailingSaveScheduler.test.ts` additionally verifies
-that 100 scroll updates produce exactly one database callback containing the
-latest position.
-
-## Release Closure
-
-- [x] Foreground generation coordinator reconciles native state and switches tasks transactionally.
-- [x] Notification permission is rechecked when returning from system settings.
-- [x] Warm completion navigation is acknowledged and deduplicated.
-- [x] Checkpoint and coordinator tests use production implementations.
-- [x] Android workspace layout helpers are imported from production code.
-- [x] Debug APK exists at `android/app/build/outputs/apk/debug/app-debug.apk`.
-- [ ] Signed release APK (release keystore is not available in this environment).
-
-## Real Device Verification
-
-The following checks remain mandatory on a real Android device:
-
-- [ ] Open files containing 300, 2,000, 10,000, and 50,000 lines.
-- [ ] Scroll each file rapidly for 30 seconds, stop, and confirm no movement for 5 seconds.
-- [ ] Background the App for 10 seconds and confirm the reader does not jump on resume.
-- [ ] Open and close search without changing the reading position.
-- [ ] Select a search result and confirm this explicit action is the only resulting jump.
-- [ ] Change the theme without changing the reading position.
-- [ ] Long-press text and drag both selection handles without collapsing the selection.
-- [ ] Switch repeatedly between files A and B without sharing positions.
-- [ ] Observe a development build and confirm ordinary reading emits no `programmatic-scroll` log.
-- [ ] Verify foreground notification progress, completion navigation, permission recovery, and retry.
+- [x] Production tag workflow fails when Android signing secrets are absent.
+- [x] CI validates tag/package, Windows ProductVersion, and Android versionName consistency.
+- [x] CI creates `SHA256SUMS.txt` after all platform builds succeed.
+- [x] Release assets use fixed Setup, Portable, and Android names.
+- [x] Electron auto-update metadata is published with the Setup asset.
+- [x] Android debug tags are isolated from production release tags.
 
 ## Known Limitations
 
-1. The generated APK is a debug build and is not suitable for public distribution.
-2. Gradle's `test` task succeeds, but this repository still relies mainly on
-   TypeScript production-path tests for the Capacitor coordinator.
-3. Real-device verification has not been performed in this environment.
+1. Windows executables are not commercially code-signed and may trigger SmartScreen.
+2. `App.tsx`, `localProvider.ts`, and `KnowledgeGraphViewer.tsx` remain above the planned size targets. This release extracts bounded modules without a risky late-stage rewrite.
+3. `highlight.js` remains a large lazy vendor chunk; production build emits a size warning but succeeds.
 
 ## Release Conclusion
 
-**未达到正式发布条件。**
-
-Automated verification is green, but the real-device matrix and signed release
-APK are still required. Do not create the `v0.4.0` tag or GitHub Release yet.
+Automated and Windows runtime verification are green. The signed Android artifact is suitable for release, with real-device smoke testing recorded as the remaining manual follow-up.

@@ -179,6 +179,20 @@ export type DocumentTerm = {
   updated_at: string;
 };
 
+export type TermScanStatus = {
+  source_type: "course" | "qa";
+  source_path: string;
+  content_hash: string;
+  scan_status: "idle" | "queued" | "running" | "completed" | "failed" | "local_only" | "missing_source" | string;
+  model_scan_authorized: boolean;
+  candidate_count: number;
+  high_confidence_count: number;
+  local_candidate_count: number;
+  model_candidate_count: number;
+  error_message?: string | null;
+  updated_at?: string | null;
+};
+
 export type LearningAnchor = {
   id: number;
   project_id: number;
@@ -814,6 +828,16 @@ export function deleteLearningAnchor(projectId: number, qaId: number): Promise<{
 export function listDocumentTerms(projectId: number, sourceType: "course" | "qa", sourcePath: string): Promise<DocumentTerm[]> {
   const params = new URLSearchParams({ source_type: sourceType, source_path: sourcePath });
   return request<DocumentTerm[]>(`/projects/${projectId}/terms?${params.toString()}`);
+}
+
+export function getDocumentTermStatus(projectId: number, sourceType: "course" | "qa", sourcePath: string): Promise<TermScanStatus> {
+  const params = new URLSearchParams({ source_type: sourceType, source_path: sourcePath });
+  return request<TermScanStatus>(`/projects/${projectId}/terms/status?${params.toString()}`);
+}
+
+export function rescanDocumentTerms(projectId: number, sourceType: "course" | "qa", sourcePath: string): Promise<TermScanStatus> {
+  const params = new URLSearchParams({ source_type: sourceType, source_path: sourcePath });
+  return request<TermScanStatus>(`/projects/${projectId}/terms/rescan?${params.toString()}`, { method: "POST" });
 }
 
 export function markDocumentTermKnown(projectId: number, termId: number): Promise<DocumentTerm> {

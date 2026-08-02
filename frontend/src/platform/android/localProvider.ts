@@ -89,6 +89,7 @@ import { AndroidDiagnosticService } from "./diagnosticService";
 import { MobileDatabase } from "./database";
 import { createAndroidPersonalizationRoutes } from "./personalizationRoutes";
 import { dispatchAndroidRoutes } from "./routeRegistry";
+import { createAndroidTermRoutes } from "./termRoutes";
 import { AndroidTeachingOutcomeService } from "./teachingOutcomeService";
 import {
   buildTree, downloadGitHubSnapshot, inferLanguage, readGeneratedFile, readRepoFile, readZipFiles, removeGeneratedFile,
@@ -409,6 +410,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     voidEvent: (projectId, eventId, conceptId, key, reason) => (
       this.voidPersonalizationEvent(projectId, eventId, conceptId, key, reason)
     ),
+  });
+  private readonly termRoutes = createAndroidTermRoutes({
+    list: (projectId, params) => this.listTerms(projectId, params),
+    status: (projectId, params, force) => this.termStatus(projectId, params, force),
+    setStatus: (termId, status) => this.setTermStatus(termId, status),
   });
 
   // ---- permission ----
@@ -739,8 +745,13 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       if (method === "POST") return this.createHighlight(Number(match[1]), body) as Promise<T>;
     }
     if ((match = path.match(/^\/projects\/(\d+)\/highlights\/(\d+)$/)) && method === "DELETE") return this.deleteById("highlights", Number(match[2])) as Promise<T>;
-    if ((match = path.match(/^\/projects\/(\d+)\/terms$/))) return this.listTerms(Number(match[1]), url.searchParams) as Promise<T>;
-    if ((match = path.match(/^\/projects\/(\d+)\/terms\/(\d+)\/(known|dismiss)$/))) return this.setTermStatus(Number(match[2]), match[3] === "known" ? "known" : "dismissed") as Promise<T>;
+    const terms = await dispatchAndroidRoutes(this.termRoutes, {
+      path,
+      method,
+      searchParams: url.searchParams,
+      body,
+    });
+    if (terms.handled) return terms.value as T;
 
     if ((match = path.match(/^\/projects\/(\d+)\/knowledge\/graph$/))) return this.getGraph(Number(match[1])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/knowledge\/links$/))) return this.listLinks(Number(match[1]), url.searchParams) as Promise<T>;
@@ -2367,7 +2378,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
     const highConfidenceCount = weighted.filter((item) => item.confidence >= 0.8).length;
     if (allowModelScan && (seen.size < 4 || highConfidenceCount < 3)) {
-      void this.runAndroidTermScan(projectId, sourceType, sourcePath, content, contentHash);
+      void this.runAndroidTermScan(projectId, sourceType, sourcePath, content, contentHash, seen.size);
     }
   }
 
@@ -2377,6 +2388,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     sourcePath: string,
     content: string,
     contentHash: string,
+    localCandidateCount = 0,
   ): Promise<void> {
     const runtime = await this.getPersonalizationRuntimeSettings();
     if (!runtime.observer_enabled) return;
@@ -2389,9 +2401,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const stamp = now();
     await db.run(
       `INSERT INTO term_model_scans
-       (project_id,source_type,source_path,content_hash,status,terms_json,created_at,updated_at)
-       VALUES(?,?,?,?,?,'[]',?,?)`,
-      [projectId, sourceType, sourcePath, contentHash, "running", stamp, stamp],
+       (project_id,source_type,source_path,content_hash,status,terms_json,
+        local_candidate_count,model_candidate_count,created_at,updated_at)
+       VALUES(?,?,?,?,?,'[]',?,0,?,?)`,
+      [projectId, sourceType, sourcePath, contentHash, "running", localCandidateCount, stamp, stamp],
     );
     const started = performance.now();
     try {
@@ -2419,9 +2432,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         .slice(0, 16);
       await this.registerTerms(projectId, sourceType, sourcePath, content, terms, false);
       await db.run(
-        `UPDATE term_model_scans SET status='completed',terms_json=?,error_message=NULL,updated_at=?
+        `UPDATE term_model_scans SET status='completed',terms_json=?,model_candidate_count=?,error_message=NULL,updated_at=?
          WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?`,
-        [JSON.stringify(terms), now(), projectId, sourceType, sourcePath, contentHash],
+        [JSON.stringify(terms), terms.length, now(), projectId, sourceType, sourcePath, contentHash],
       );
       await this.recordModelCall(projectId, "term_scan", "completed", started);
     } catch (error) {
@@ -2483,6 +2496,64 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       ...row,
       source_span: parseJsonRecord(row.source_span_json) ?? null,
     }));
+  }
+
+  private async termStatus(projectId: number, params: URLSearchParams, force = false): Promise<Record<string, unknown>> {
+    const sourceType = params.get("source_type") as "course" | "qa";
+    const sourcePath = params.get("source_path") || "";
+    const content = sourcePath
+      ? sourceType === "qa"
+        ? String((await db.query<Row>(
+          "SELECT answer_md FROM qa_records WHERE project_id=? AND (output_path=? OR CAST(id AS TEXT)=?)",
+          [projectId, sourcePath, sourcePath],
+        ))[0]?.answer_md || "")
+        : await readGeneratedFile(projectId, sourcePath).catch(() => "")
+      : "";
+    if (!content) {
+      return {
+        source_type: sourceType,
+        source_path: sourcePath,
+        content_hash: "",
+        scan_status: "missing_source",
+        model_scan_authorized: false,
+        candidate_count: 0,
+        high_confidence_count: 0,
+        local_candidate_count: 0,
+        model_candidate_count: 0,
+        error_message: "Document content is unavailable",
+        updated_at: null,
+      };
+    }
+    const contentHash = hashText(content);
+    if (force) {
+      await db.run(
+        "DELETE FROM term_model_scans WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?",
+        [projectId, sourceType, sourcePath, contentHash],
+      );
+    }
+    const terms = await this.listTerms(projectId, params);
+    const runtime = await this.getPersonalizationRuntimeSettings();
+    const state = (await db.query<Row>(
+      `SELECT * FROM term_model_scans
+       WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?`,
+      [projectId, sourceType, sourcePath, contentHash],
+    ))[0];
+    const highConfidenceCount = terms.filter((term) => Number(term.confidence || 0) >= 0.8).length;
+    const needsModelScan = terms.length < 4 || highConfidenceCount < 3;
+    return {
+      source_type: sourceType,
+      source_path: sourcePath,
+      content_hash: contentHash,
+      scan_status: state?.status
+        || (!runtime.observer_enabled ? "local_only" : needsModelScan ? "idle" : "completed"),
+      model_scan_authorized: Boolean(runtime.observer_enabled),
+      candidate_count: terms.length,
+      high_confidence_count: highConfidenceCount,
+      local_candidate_count: Number(state?.local_candidate_count ?? terms.length),
+      model_candidate_count: Number(state?.model_candidate_count ?? 0),
+      error_message: state?.error_message ?? null,
+      updated_at: state?.updated_at ?? null,
+    };
   }
   private async setTermStatus(termId: number, status: string): Promise<Row> { await db.run("UPDATE document_terms SET status=?,updated_at=? WHERE id=?", [status, now(), termId]); return (await db.query<Row>("SELECT * FROM document_terms WHERE id=?", [termId]))[0]; }
 

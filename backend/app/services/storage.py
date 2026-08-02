@@ -185,6 +185,20 @@ class DocumentTerm:
 
 
 @dataclass
+class TermScanState:
+    project_id: int
+    source_type: str
+    source_path: str
+    content_hash: str
+    status: str
+    local_candidate_count: int
+    model_candidate_count: int
+    error_message: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class LearningAnchor:
     id: int
     project_id: int
@@ -1522,6 +1536,8 @@ def init_storage() -> None:
                 content_hash TEXT NOT NULL,
                 status TEXT NOT NULL,
                 terms_json TEXT NOT NULL DEFAULT '[]',
+                local_candidate_count INTEGER NOT NULL DEFAULT 0,
+                model_candidate_count INTEGER NOT NULL DEFAULT 0,
                 error_message TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -1529,6 +1545,11 @@ def init_storage() -> None:
             )
             """
         )
+        term_scan_cols = [row[1] for row in conn.execute("PRAGMA table_info(term_model_scans)").fetchall()]
+        if "local_candidate_count" not in term_scan_cols:
+            conn.execute("ALTER TABLE term_model_scans ADD COLUMN local_candidate_count INTEGER NOT NULL DEFAULT 0")
+        if "model_candidate_count" not in term_scan_cols:
+            conn.execute("ALTER TABLE term_model_scans ADD COLUMN model_candidate_count INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS outline_preflights (
@@ -3774,6 +3795,54 @@ def list_document_terms(
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
         return [_row_to_document_term(row) for row in rows]
+
+
+def get_term_scan_state(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    content_hash: str,
+) -> Optional[TermScanState]:
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM term_model_scans
+            WHERE project_id = ? AND source_type = ? AND source_path = ? AND content_hash = ?
+            """,
+            (project_id, source_type, source_path, content_hash),
+        ).fetchone()
+    if row is None:
+        return None
+    return TermScanState(
+        project_id=row["project_id"],
+        source_type=row["source_type"],
+        source_path=row["source_path"],
+        content_hash=row["content_hash"],
+        status=row["status"],
+        local_candidate_count=int(row["local_candidate_count"] or 0),
+        model_candidate_count=int(row["model_candidate_count"] or 0),
+        error_message=row["error_message"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def delete_term_scan_state(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+    content_hash: str,
+) -> bool:
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM term_model_scans
+            WHERE project_id = ? AND source_type = ? AND source_path = ? AND content_hash = ?
+            """,
+            (project_id, source_type, source_path, content_hash),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
 
 def delete_stale_document_term_candidates(

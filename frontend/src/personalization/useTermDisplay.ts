@@ -121,8 +121,17 @@ export interface UseTermDisplayResult {
   profilesByConceptKey: ReadonlyMap<string, TermPersonalizationProfile>;
   status: "idle" | "loading" | "ready" | "fallback";
   profileAvailable: boolean;
+  diagnostics: TermDisplayDiagnostics;
   patchProfile: (conceptKey: string, patch: Partial<TermPersonalizationProfile>) => void;
 }
+
+export type TermDisplayDiagnostics = {
+  candidateCount: number;
+  occurrenceCount: number;
+  visibleCount: number;
+  reasonCounts: Record<string, number>;
+  contentRevision: string;
+};
 
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 const EMPTY_TIERS: ReadonlyMap<string, TermDisplayTier> = new Map();
@@ -262,6 +271,20 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     });
   }, [markdownAnalysis, neutralProfiles, profiles, terminologyDensity, profileAvailable, status]);
 
+  const diagnostics = useMemo<TermDisplayDiagnostics>(() => {
+    const reasonCounts: Record<string, number> = {};
+    for (const decision of computed.decisions.values()) {
+      reasonCounts[decision.reason] = (reasonCounts[decision.reason] ?? 0) + 1;
+    }
+    return {
+      candidateCount: rawTerms.length,
+      occurrenceCount: markdownAnalysis.analysis.occurrences.length,
+      visibleCount: computed.visibleOccurrences.length,
+      reasonCounts,
+      contentRevision: revisionKey,
+    };
+  }, [computed, markdownAnalysis, rawTerms.length, revisionKey]);
+
   return {
     visibleCandidateIds: computed.visibleCandidateIds,
     tiersByCandidateId: computed.tiersById,
@@ -270,6 +293,7 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     profilesByConceptKey: profiles,
     status: markdownAnalysis.failed ? "fallback" : status,
     profileAvailable: !markdownAnalysis.failed && status !== "fallback" && profileAvailable,
+    diagnostics,
     patchProfile,
   };
 }

@@ -4,9 +4,13 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.models.schemas import DocumentTermResponse
+from app.models.schemas import DocumentTermResponse, TermScanStatusResponse
 from app.services.storage import DocumentTerm, get_project, update_document_term_status
-from app.services.term_service import ensure_document_terms
+from app.services.term_service import (
+    ensure_document_terms,
+    get_document_term_status,
+    rescan_document_terms,
+)
 
 
 router = APIRouter(prefix="/api/projects", tags=["terms"])
@@ -31,6 +35,33 @@ def list_terms(
     if source_type not in {"course", "qa"}:
         raise HTTPException(status_code=400, detail="Terms are only supported for course and qa documents")
     return [_response(term) for term in ensure_document_terms(project_id, source_type, source_path)]
+
+
+def _validate_source(source_type: str) -> None:
+    if source_type not in {"course", "qa"}:
+        raise HTTPException(status_code=400, detail="Terms are only supported for course and qa documents")
+
+
+@router.get("/{project_id}/terms/status", response_model=TermScanStatusResponse)
+def term_status(
+    project_id: int,
+    source_type: str = Query(min_length=1, max_length=20),
+    source_path: str = Query(min_length=1, max_length=1000),
+) -> TermScanStatusResponse:
+    _require_project(project_id)
+    _validate_source(source_type)
+    return TermScanStatusResponse(**get_document_term_status(project_id, source_type, source_path))
+
+
+@router.post("/{project_id}/terms/rescan", response_model=TermScanStatusResponse)
+def rescan_terms(
+    project_id: int,
+    source_type: str = Query(min_length=1, max_length=20),
+    source_path: str = Query(min_length=1, max_length=1000),
+) -> TermScanStatusResponse:
+    _require_project(project_id)
+    _validate_source(source_type)
+    return TermScanStatusResponse(**rescan_document_terms(project_id, source_type, source_path))
 
 
 def _set_status(project_id: int, term_id: int, status: str) -> DocumentTermResponse:

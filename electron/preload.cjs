@@ -3,6 +3,10 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 contextBridge.exposeInMainWorld("codecourseDesktop", {
   apiBase: process.env.CODECOURSE_API_BASE || "",
   openExternal: (url) => ipcRenderer.invoke("codecourse:open-external", url),
+  checkForUpdates: () => ipcRenderer.invoke("codecourse:check-for-updates"),
+  getVersion: () => ipcRenderer.invoke("codecourse:get-version"),
+  openLogs: () => ipcRenderer.invoke("codecourse:open-logs"),
+  reportDiagnostic: (payload) => ipcRenderer.invoke("codecourse:renderer-diagnostic", payload),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   notify: (payload) => ipcRenderer.invoke("codecourse:notify", payload),
   detachTab: (payload) => ipcRenderer.invoke("codecourse:detach-tab", payload),

@@ -503,6 +503,8 @@ export class MobileDatabase {
           content_hash TEXT NOT NULL,
           status TEXT NOT NULL,
           terms_json TEXT NOT NULL DEFAULT '[]',
+          local_candidate_count INTEGER NOT NULL DEFAULT 0,
+          model_candidate_count INTEGER NOT NULL DEFAULT 0,
           error_message TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -669,6 +671,8 @@ export class MobileDatabase {
       readonly: false,
     });
     for (const statement of [
+      "ALTER TABLE term_model_scans ADD COLUMN local_candidate_count INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE term_model_scans ADD COLUMN model_candidate_count INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE diagnostic_items ADD COLUMN teaching_trial_id TEXT",
       "ALTER TABLE diagnostic_attempts ADD COLUMN teaching_trial_id TEXT",
       "ALTER TABLE teaching_trials ADD COLUMN pre_state_json TEXT NOT NULL DEFAULT '{}'",

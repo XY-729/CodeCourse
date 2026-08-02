@@ -12,8 +12,10 @@ from app.core.config import GENERATED_ROOT
 from app.services.personalization_service import resolve_concept
 from app.services.storage import (
     DocumentTerm,
+    delete_term_scan_state,
     delete_document_term_candidates_by_id,
     delete_stale_document_term_candidates,
+    get_term_scan_state,
     get_qa_record,
     get_qa_record_by_output_path,
     list_code_chunks,
@@ -442,6 +444,7 @@ def register_document_terms(
                 source_path,
                 content,
                 content_hash,
+                local_candidate_count=len(terms),
             )
     return terms
 
@@ -538,6 +541,8 @@ def schedule_term_model_scan(
     source_path: str,
     content: str,
     content_hash: str,
+    *,
+    local_candidate_count: int = 0,
 ) -> None:
     if not _term_scan_enabled():
         return
@@ -554,9 +559,13 @@ def schedule_term_model_scan(
         stamp = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
         conn.execute(
             """INSERT INTO term_model_scans
-               (project_id,source_type,source_path,content_hash,status,terms_json,created_at,updated_at)
-               VALUES(?,?,?,?,?,'[]',?,?)""",
-            (project_id, source_type, source_path, content_hash, "queued", stamp, stamp),
+               (project_id,source_type,source_path,content_hash,status,terms_json,
+                local_candidate_count,model_candidate_count,created_at,updated_at)
+               VALUES(?,?,?,?,?,'[]',?,0,?,?)""",
+            (
+                project_id, source_type, source_path, content_hash, "queued",
+                max(0, int(local_candidate_count)), stamp, stamp,
+            ),
         )
         conn.commit()
     with _SCAN_LOCK:
@@ -604,10 +613,11 @@ def schedule_term_model_scan(
             with _connect() as conn:
                 conn.execute(
                     """UPDATE term_model_scans
-                       SET status='completed',terms_json=?,error_message=NULL,updated_at=?
+                       SET status='completed',terms_json=?,model_candidate_count=?,
+                           error_message=NULL,updated_at=?
                        WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?""",
                     (
-                        json.dumps(model_terms, ensure_ascii=False), stamp,
+                        json.dumps(model_terms, ensure_ascii=False), len(model_terms), stamp,
                         project_id, source_type, source_path, content_hash,
                     ),
                 )
@@ -656,7 +666,7 @@ def schedule_term_model_scan(
     _SCAN_EXECUTOR.submit(run)
 
 
-def ensure_document_terms(project_id: int, source_type: str, source_path: str) -> list[DocumentTerm]:
+def _load_document_content(project_id: int, source_type: str, source_path: str) -> str:
     content = ""
     if source_type == "course":
         target = (GENERATED_ROOT / str(project_id) / source_path).resolve()
@@ -671,6 +681,68 @@ def ensure_document_terms(project_id: int, source_type: str, source_path: str) -
         record = get_qa_record(project_id, qa_id) if qa_id else get_qa_record_by_output_path(project_id, source_path)
         if record:
             content = record.answer_md
+    return content
+
+
+def get_document_term_status(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+) -> dict[str, object]:
+    content = _load_document_content(project_id, source_type, source_path)
+    if not content:
+        return {
+            "source_type": source_type,
+            "source_path": source_path,
+            "content_hash": "",
+            "scan_status": "missing_source",
+            "model_scan_authorized": _term_scan_enabled(),
+            "candidate_count": 0,
+            "high_confidence_count": 0,
+            "local_candidate_count": 0,
+            "model_candidate_count": 0,
+            "error_message": "Document content is unavailable",
+            "updated_at": None,
+        }
+
+    terms = register_document_terms(project_id, source_type, source_path, content)
+    content_hash = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
+    state = get_term_scan_state(project_id, source_type, source_path, content_hash)
+    authorized = _term_scan_enabled()
+    high_confidence_count = sum(1 for term in terms if term.confidence >= 0.8)
+    needs_model_scan = len(terms) < 4 or high_confidence_count < 3
+    return {
+        "source_type": source_type,
+        "source_path": source_path,
+        "content_hash": content_hash,
+        "scan_status": state.status if state else (
+            "local_only" if not authorized else "idle" if needs_model_scan else "completed"
+        ),
+        "model_scan_authorized": authorized,
+        "candidate_count": len(terms),
+        "high_confidence_count": high_confidence_count,
+        "local_candidate_count": state.local_candidate_count if state else len(terms),
+        "model_candidate_count": state.model_candidate_count if state else 0,
+        "error_message": state.error_message if state else None,
+        "updated_at": state.updated_at if state else None,
+    }
+
+
+def rescan_document_terms(
+    project_id: int,
+    source_type: str,
+    source_path: str,
+) -> dict[str, object]:
+    content = _load_document_content(project_id, source_type, source_path)
+    if content:
+        content_hash = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
+        delete_term_scan_state(project_id, source_type, source_path, content_hash)
+        register_document_terms(project_id, source_type, source_path, content)
+    return get_document_term_status(project_id, source_type, source_path)
+
+
+def ensure_document_terms(project_id: int, source_type: str, source_path: str) -> list[DocumentTerm]:
+    content = _load_document_content(project_id, source_type, source_path)
     if content:
         return register_document_terms(project_id, source_type, source_path, content)
     return list_document_terms(project_id, source_type, source_path)

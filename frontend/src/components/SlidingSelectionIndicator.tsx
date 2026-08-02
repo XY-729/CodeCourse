@@ -31,7 +31,9 @@ export default function SlidingSelectionIndicator({ activeKey, className = "" }:
       const containerRect = container.getBoundingClientRect();
       const itemRect = item.getBoundingClientRect();
       indicator.style.setProperty("--selection-x", `${itemRect.left - containerRect.left}px`);
-      indicator.style.setProperty("--selection-width", String(Math.max(1, itemRect.width)));
+      const width = Math.max(1, itemRect.width);
+      indicator.style.setProperty("--selection-width", String(width));
+      indicator.style.setProperty("--selection-width-px", `${width}px`);
       indicator.dataset.visible = "true";
       if (!readyRef.current) {
         indicator.dataset.ready = "false";

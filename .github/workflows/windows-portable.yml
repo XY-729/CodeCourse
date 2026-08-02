@@ -1,4 +1,4 @@
-name: Windows Release Build
+name: Production Release Build
 
 on:
   workflow_dispatch:
@@ -10,49 +10,123 @@ permissions:
   contents: write
 
 jobs:
-  build-windows-release:
+  build-windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-
+          node-version: "22"
       - uses: pnpm/action-setup@v4
         with:
           version: "10.16.1"
           run_install: false
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install Node dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install backend build dependencies
-        run: python -m pip install -r backend/requirements-build.txt
-
+      - run: pnpm install --frozen-lockfile
+      - run: python -m pip install -r backend/requirements-build.txt
       - name: Build installer and portable executable
-        shell: pwsh
         run: pnpm run desktop:release
-
-      - name: Upload Windows release executables
+      - name: Verify Windows version metadata
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $productVersion = (Get-Item dist-desktop/win-unpacked/CodeCourse.exe).VersionInfo.ProductVersion
+          if ($productVersion -ne $version) {
+            throw "Windows ProductVersion $productVersion does not match package version $version"
+          }
+      - name: Upload Windows assets
         uses: actions/upload-artifact@v4
         with:
-          name: CodeCourse-windows
+          name: release-windows
           path: |
-            dist-desktop/*.exe
+            dist-desktop/CodeCourse-*-setup.exe
+            dist-desktop/CodeCourse-*-portable.exe
             dist-desktop/*.blockmap
             dist-desktop/latest.yml
 
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "10.16.1"
+          run_install: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - run: pnpm install --frozen-lockfile
+      - name: Require Android signing secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CODECOURSE_ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.CODECOURSE_ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.CODECOURSE_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.CODECOURSE_ANDROID_KEY_PASSWORD }}
+        run: test -n "$KEYSTORE_BASE64" && test -n "$STORE_PASSWORD" && test -n "$KEY_ALIAS" && test -n "$KEY_PASSWORD"
+      - name: Restore release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CODECOURSE_ANDROID_KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/codecourse-release.jks"
+      - run: pnpm run mobile:sync
+      - name: Build signed Android APK
+        working-directory: android
+        env:
+          CODECOURSE_ANDROID_KEYSTORE: ${{ runner.temp }}/codecourse-release.jks
+          CODECOURSE_ANDROID_STORE_PASSWORD: ${{ secrets.CODECOURSE_ANDROID_STORE_PASSWORD }}
+          CODECOURSE_ANDROID_KEY_ALIAS: ${{ secrets.CODECOURSE_ANDROID_KEY_ALIAS }}
+          CODECOURSE_ANDROID_KEY_PASSWORD: ${{ secrets.CODECOURSE_ANDROID_KEY_PASSWORD }}
+        run: chmod +x gradlew && ./gradlew assembleRelease
+      - name: Verify and scan APK
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir -p dist-mobile
+          cp android/app/build/outputs/apk/release/app-release.apk "dist-mobile/CodeCourse-${VERSION}-android.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "dist-mobile/CodeCourse-${VERSION}-android.apk" | grep -F "versionName='${VERSION}'"
+          apksigner verify --verbose --print-certs "dist-mobile/CodeCourse-${VERSION}-android.apk"
+          python scripts/scan_mobile_artifact.py "dist-mobile/CodeCourse-${VERSION}-android.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: dist-mobile/CodeCourse-*-android.apk
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+      - name: Verify release version and create checksums
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          test "v${VERSION}" = "${GITHUB_REF_NAME}"
+          test -f "release-assets/CodeCourse-${VERSION}-setup.exe"
+          test -f "release-assets/CodeCourse-${VERSION}-portable.exe"
+          test -f "release-assets/CodeCourse-${VERSION}-android.apk"
+          cd release-assets
+          sha256sum CodeCourse-${VERSION}-setup.exe CodeCourse-${VERSION}-portable.exe CodeCourse-${VERSION}-android.apk > SHA256SUMS.txt
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
-            dist-desktop/*.exe
-            dist-desktop/*.blockmap
-            dist-desktop/latest.yml
+            release-assets/CodeCourse-*-setup.exe
+            release-assets/CodeCourse-*-portable.exe
+            release-assets/CodeCourse-*-android.apk
+            release-assets/SHA256SUMS.txt
+            release-assets/latest.yml
+            release-assets/*.blockmap

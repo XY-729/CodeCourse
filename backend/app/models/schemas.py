@@ -237,6 +237,20 @@ class DocumentTermResponse(BaseModel):
     updated_at: str
 
 
+class TermScanStatusResponse(BaseModel):
+    source_type: str
+    source_path: str
+    content_hash: str
+    scan_status: str
+    model_scan_authorized: bool
+    candidate_count: int
+    high_confidence_count: int
+    local_candidate_count: int
+    model_candidate_count: int
+    error_message: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
 class PersonalizationResolveCandidate(BaseModel):
     text: str = Field(min_length=1, max_length=80)
     source: str = Field(default="rule", max_length=30)

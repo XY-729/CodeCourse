@@ -21,6 +21,11 @@ import {
   updateLabelVisibility,
   type LabelMetrics,
 } from "./knowledgeGraphLabels";
+import { knowledgeGraphSignature } from "./knowledgeGraphModel";
+import {
+  computeTreeForestPositions,
+  type KnowledgeGraphLayoutResult,
+} from "./knowledgeGraphLayout";
 
 type Props = {
   projectId: number;
@@ -792,7 +797,13 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const resizeFrameRef = useRef<number | null>(null);
   const resizeSettleTimeoutRef = useRef<number | null>(null);
   const layoutRunningRef = useRef(false);
+  const layoutRequestRef = useRef(0);
+  const layoutWorkerRef = useRef<Worker | null>(null);
   const hoveredNodeIdRef = useRef<number | null>(null);
+  const hoverClearTimerRef = useRef<number | null>(null);
+  const hoverRelatedNodeIdsRef = useRef(new Set<number>());
+  const hoverRelatedEdgeIdsRef = useRef(new Set<number>());
+  const hoverActiveRef = useRef(false);
   const selectedNodeIdRef = useRef<number | null>(null);
   const searchQueryRef = useRef("");
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -801,6 +812,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const cyRef = useRef<Core | null>(null);
   const lastTapRef = useRef<{ id: string; at: number } | null>(null);
   const graphRef = useRef<KnowledgeGraph>({ nodes: [], edges: [] });
+  const graphSignatureRef = useRef("");
   const renderedGraphRef = useRef<KnowledgeGraph>({ nodes: [], edges: [] });
   const graphProjectIdRef = useRef<number | null>(null);
   const projectIdRef = useRef(projectId);
@@ -841,6 +853,9 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     const next = await getKnowledgeGraph(requestedProjectId);
     if (requestId !== reloadRequestRef.current || projectIdRef.current !== requestedProjectId) return;
     graphProjectIdRef.current = requestedProjectId;
+    const signature = knowledgeGraphSignature(next);
+    if (signature === graphSignatureRef.current) return;
+    graphSignatureRef.current = signature;
     setGraph(next);
   }
 
@@ -864,6 +879,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   useEffect(() => {
     projectIdRef.current = projectId;
     graphProjectIdRef.current = null;
+    graphSignatureRef.current = "";
     reloadRequestRef.current += 1;
     setGraph({ nodes: [], edges: [] });
     setSelectedNode(null);
@@ -1062,7 +1078,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
             label: "",
             "z-index": 8,
             opacity: 0.92,
-            "transition-property": "opacity width line-color target-arrow-color font-size text-background-padding text-margin-y color",
+            "transition-property": "opacity line-color target-arrow-color",
             "transition-duration": 220,
             "transition-timing-function": "ease-in-out-cubic",
           },
@@ -1160,30 +1176,45 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     cy.on("render", scheduleLabelPositions);
     cy.on("panend zoomend resize", scheduleLabelVisibility);
     cy.on("mouseover", "node", (event) => {
+      if (hoverClearTimerRef.current != null) {
+        window.clearTimeout(hoverClearTimerRef.current);
+        hoverClearTimerRef.current = null;
+      }
       const nodeId = Number(event.target.data("nodeId"));
       hoveredNodeIdRef.current = nodeId;
       if (!connectModeRef.current) {
         const { nodeIds, edgeIds } = directNeighborhood(graphRef.current, nodeId, 1);
-        const relatedNodes = cy.collection();
-        const relatedEdges = cy.collection();
-        let nextRelatedNodes = relatedNodes;
-        let nextRelatedEdges = relatedEdges;
-        for (const id of nodeIds) nextRelatedNodes = nextRelatedNodes.union(cy.getElementById(`n${id}`));
-        for (const id of edgeIds) nextRelatedEdges = nextRelatedEdges.union(cy.getElementById(`e${id}`));
         cy.batch(() => {
-          cy.elements().removeClass("hover-dim hover-related");
-          cy.nodes().difference(nextRelatedNodes).addClass("hover-dim");
-          cy.edges().difference(nextRelatedEdges).addClass("hover-dim");
-          nextRelatedNodes.addClass("hover-related");
-          nextRelatedEdges.addClass("hover-related");
+          if (!hoverActiveRef.current) {
+            cy.elements().addClass("hover-dim");
+            hoverActiveRef.current = true;
+          }
+          for (const id of hoverRelatedNodeIdsRef.current) {
+            if (!nodeIds.has(id)) cy.getElementById(`n${id}`).removeClass("hover-related").addClass("hover-dim");
+          }
+          for (const id of hoverRelatedEdgeIdsRef.current) {
+            if (!edgeIds.has(id)) cy.getElementById(`e${id}`).removeClass("hover-related").addClass("hover-dim");
+          }
+          for (const id of nodeIds) cy.getElementById(`n${id}`).removeClass("hover-dim").addClass("hover-related");
+          for (const id of edgeIds) cy.getElementById(`e${id}`).removeClass("hover-dim").addClass("hover-related");
         });
+        hoverRelatedNodeIdsRef.current = nodeIds;
+        hoverRelatedEdgeIdsRef.current = edgeIds;
       }
       scheduleLabelVisibility();
     });
     cy.on("mouseout", "node", () => {
       hoveredNodeIdRef.current = null;
-      cy.elements().removeClass("hover-dim hover-related");
-      scheduleLabelVisibility();
+      if (hoverClearTimerRef.current != null) window.clearTimeout(hoverClearTimerRef.current);
+      hoverClearTimerRef.current = window.setTimeout(() => {
+        hoverClearTimerRef.current = null;
+        if (cy.destroyed() || hoveredNodeIdRef.current != null) return;
+        cy.elements().removeClass("hover-dim hover-related");
+        hoverRelatedNodeIdsRef.current.clear();
+        hoverRelatedEdgeIdsRef.current.clear();
+        hoverActiveRef.current = false;
+        scheduleLabelVisibility();
+      }, 36);
     });
     scheduleLabelPositions();
 
@@ -1323,6 +1354,16 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         window.clearTimeout(viewportTimeoutRef.current);
         viewportTimeoutRef.current = null;
       }
+      if (hoverClearTimerRef.current != null) {
+        window.clearTimeout(hoverClearTimerRef.current);
+        hoverClearTimerRef.current = null;
+      }
+      hoverRelatedNodeIdsRef.current.clear();
+      hoverRelatedEdgeIdsRef.current.clear();
+      hoverActiveRef.current = false;
+      layoutRequestRef.current += 1;
+      layoutWorkerRef.current?.terminate();
+      layoutWorkerRef.current = null;
       scheduleLabelPositionRef.current = () => undefined;
       scheduleLabelVisibilityRef.current = () => undefined;
       scheduleLabelMeasurementRef.current = () => undefined;
@@ -1518,7 +1559,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     setMessage("已切换到全览");
   }
 
-  function handleArrangeOverview() {
+  async function handleArrangeOverview() {
     const cy = cyRef.current;
     setViewMode("overview");
     setFocusedNodeId(null);
@@ -1535,9 +1576,12 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     cy.stop();
     layoutRunningRef.current = true;
     cy.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge");
-    const layout = createCompactOverviewLayout(cy, graphRef.current);
-    layout.one("layoutstop", () => {
-      if (cy.destroyed()) return;
+
+    layoutWorkerRef.current?.terminate();
+    layoutWorkerRef.current = null;
+    const requestId = ++layoutRequestRef.current;
+    const finishLayout = () => {
+      if (cy.destroyed() || requestId !== layoutRequestRef.current) return;
       layoutRunningRef.current = false;
       const updates: Promise<unknown>[] = [];
       cy.nodes().forEach((node) => {
@@ -1563,8 +1607,63 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         const failedCount = results.filter((result) => result.status === "rejected").length;
         setMessage(failedCount > 0 ? `树状布局已生成，但有 ${failedCount} 个节点的位置保存失败` : "已整理为树状布局并保存");
       });
-    });
-    layout.run();
+    };
+
+    if (graphRef.current.nodes.length <= 120 || typeof Worker === "undefined") {
+      const layout = createCompactOverviewLayout(cy, graphRef.current);
+      layout.one("layoutstop", finishLayout);
+      layout.run();
+      return;
+    }
+
+    setMessage("正在后台整理大型知识网络…");
+    try {
+      const positions = await new Promise<KnowledgeGraphLayoutResult["positions"]>((resolve, reject) => {
+        const worker = new Worker(new URL("./knowledgeGraphLayout.worker.ts", import.meta.url), { type: "module" });
+        layoutWorkerRef.current = worker;
+        const timeout = window.setTimeout(() => {
+          worker.terminate();
+          if (layoutWorkerRef.current === worker) layoutWorkerRef.current = null;
+          reject(new Error("知识网络整理超时"));
+        }, 12_000);
+        worker.onmessage = (event: MessageEvent<KnowledgeGraphLayoutResult>) => {
+          window.clearTimeout(timeout);
+          worker.terminate();
+          if (layoutWorkerRef.current === worker) layoutWorkerRef.current = null;
+          if (event.data.requestId !== requestId) return reject(new Error("布局任务已过期"));
+          resolve(event.data.positions);
+        };
+        worker.onerror = () => {
+          window.clearTimeout(timeout);
+          worker.terminate();
+          if (layoutWorkerRef.current === worker) layoutWorkerRef.current = null;
+          reject(new Error("知识网络后台布局失败"));
+        };
+        worker.postMessage({ requestId, graph: graphRef.current });
+      });
+      if (requestId !== layoutRequestRef.current || cy.destroyed()) return;
+      const byId = new Map(positions.map((position) => [position.id, position]));
+      cy.batch(() => {
+        cy.nodes().forEach((node) => {
+          const position = byId.get(Number(node.data("nodeId")));
+          if (position) node.position({ x: position.x, y: position.y });
+        });
+      });
+      finishLayout();
+    } catch (error) {
+      if (requestId !== layoutRequestRef.current) return;
+      layoutRunningRef.current = false;
+      const fallback = computeTreeForestPositions(graphRef.current);
+      const byId = new Map(fallback.map((position) => [position.id, position]));
+      cy.batch(() => {
+        cy.nodes().forEach((node) => {
+          const position = byId.get(Number(node.data("nodeId")));
+          if (position) node.position({ x: position.x, y: position.y });
+        });
+      });
+      setMessage(error instanceof Error ? `${error.message}，已使用本地布局` : "后台布局失败，已使用本地布局");
+      finishLayout();
+    }
   }
 
   return (

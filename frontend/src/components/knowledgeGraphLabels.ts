@@ -13,6 +13,24 @@ export type LabelOverlayState = {
 
 export type LabelMetrics = Map<number, { width: number; height: number }>;
 
+let labelMeasureContext: CanvasRenderingContext2D | null | undefined;
+
+function measureLabelText(text: string): { width: number; height: number } {
+  if (labelMeasureContext === undefined) {
+    const canMeasure = typeof document !== "undefined"
+      && !(typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent));
+    const canvas = canMeasure ? document.createElement("canvas") : null;
+    labelMeasureContext = canvas?.getContext("2d") ?? null;
+    if (labelMeasureContext) labelMeasureContext.font = "600 13px system-ui, sans-serif";
+  }
+  const measuredWidth = labelMeasureContext?.measureText(text).width ?? text.length * 7.2;
+  const width = Math.min(176, Math.max(48, Math.ceil(measuredWidth + 22)));
+  return {
+    width,
+    height: measuredWidth + 22 > 176 ? 38 : 22,
+  };
+}
+
 export function reconcileLabelElements(
   graph: KnowledgeGraph,
   layer: HTMLDivElement,
@@ -56,11 +74,7 @@ export function measureLabelElements(
       metrics.delete(id);
       continue;
     }
-    const rect = label.getBoundingClientRect();
-    metrics.set(id, {
-      width: rect.width || Math.min(176, Math.max(48, (label.textContent?.length ?? 0) * 7.2)),
-      height: rect.height || ((label.textContent?.length ?? 0) > 20 ? 38 : 22),
-    });
+    metrics.set(id, measureLabelText(label.textContent ?? ""));
   }
 }
 

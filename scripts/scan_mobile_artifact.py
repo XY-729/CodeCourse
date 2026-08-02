@@ -13,6 +13,10 @@ FORBIDDEN_TEXT = (
     b"/home/xiyuan729",
     b"DEEPSEEK_API_KEY=",
 )
+PUBLIC_TEXT_ALLOWLIST = (
+    b"https://api.github.com/repos/XY-729/CodeCourse/releases/latest",
+    b"https://github.com/XY-729/CodeCourse/releases/latest",
+)
 FORBIDDEN_NAMES = (
     re.compile(r"(^|/)app\.db$", re.IGNORECASE),
     re.compile(r"(^|/)workspace/(repos|generated)/", re.IGNORECASE),
@@ -32,8 +36,11 @@ def scan(apk: Path) -> list[str]:
             if member.file_size > 24 * 1024 * 1024:
                 continue
             payload = archive.read(member)
+            scan_payload = payload
+            for public_text in PUBLIC_TEXT_ALLOWLIST:
+                scan_payload = scan_payload.replace(public_text, b"")
             for marker in FORBIDDEN_TEXT:
-                if marker.lower() in payload.lower():
+                if marker.lower() in scan_payload.lower():
                     findings.append(
                         f"private marker {marker.decode('utf-8', errors='replace')!r} in {normalized}"
                     )

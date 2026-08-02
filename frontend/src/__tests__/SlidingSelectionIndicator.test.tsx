@@ -33,6 +33,7 @@ describe("SlidingSelectionIndicator", () => {
     const indicator = host.querySelector<HTMLElement>(".sliding-selection-indicator")!;
     expect(indicator.style.getPropertyValue("--selection-x")).toBe("82px");
     expect(indicator.style.getPropertyValue("--selection-width")).toBe("92");
+    expect(indicator.style.getPropertyValue("--selection-width-px")).toBe("92px");
     expect(indicator.dataset.visible).toBe("true");
   });
 });

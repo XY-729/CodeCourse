@@ -15,6 +15,7 @@ let splashWindow = null;
 let tray = null;
 let isQuitting = false;
 let windowStateSaveTimer = null;
+let manualUpdateCheck = false;
 const detachedPayloads = new Map();
 
 const DEFAULT_WINDOW_STATE = {
@@ -77,6 +78,26 @@ function appIconPath() {
 function windowStatePath() {
   return path.join(app.getPath("userData"), "window-state.json");
 }
+
+function diagnosticLogPath() {
+  return path.join(app.getPath("userData"), "codecourse.log");
+}
+
+function diagnosticLog(scope, value) {
+  try {
+    const raw = value instanceof Error ? `${value.name}: ${value.message}\n${value.stack || ""}` : String(value || "");
+    const safe = raw
+      .replace(/(api[_ -]?key|authorization)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+      .slice(0, 12_000);
+    fs.mkdirSync(app.getPath("userData"), { recursive: true });
+    fs.appendFileSync(diagnosticLogPath(), `${new Date().toISOString()} [${scope}] ${safe}\n`, "utf8");
+  } catch {
+    // Diagnostics must never interrupt startup or shutdown.
+  }
+}
+
+process.on("uncaughtException", (error) => diagnosticLog("main:uncaught", error));
+process.on("unhandledRejection", (error) => diagnosticLog("main:rejection", error));
 
 function loadWindowState() {
   try {
@@ -330,6 +351,7 @@ function setupAutoUpdater() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.on("update-available", async (info) => {
+    manualUpdateCheck = false;
     if (process.env.PORTABLE_EXECUTABLE_FILE) {
       const result = await dialog.showMessageBox(mainWindow, {
         type: "info",
@@ -354,6 +376,16 @@ function setupAutoUpdater() {
     });
     if (result.response === 0) void autoUpdater.downloadUpdate();
   });
+  autoUpdater.on("update-not-available", async () => {
+    if (!manualUpdateCheck) return;
+    manualUpdateCheck = false;
+    await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      title: "CodeCourse 更新",
+      message: `当前已是最新版本 ${app.getVersion()}`,
+      buttons: ["知道了"],
+    });
+  });
   autoUpdater.on("download-progress", (progress) => {
     tray?.setToolTip(`CodeCourse · 正在下载更新 ${Math.round(progress.percent)}%`);
   });
@@ -374,8 +406,20 @@ function setupAutoUpdater() {
     }
   });
   autoUpdater.on("error", (error) => {
+    const wasManual = manualUpdateCheck;
+    manualUpdateCheck = false;
     tray?.setToolTip("CodeCourse");
+    diagnosticLog("updater", error);
     console.warn("CodeCourse update check failed:", error?.message || error);
+    if (wasManual) {
+      void dialog.showMessageBox(mainWindow, {
+        type: "error",
+        title: "检查更新失败",
+        message: "暂时无法连接更新服务。",
+        detail: error?.message || String(error),
+        buttons: ["知道了"],
+      });
+    }
   });
   setTimeout(() => void autoUpdater.checkForUpdates().catch(() => undefined), 8000);
 }
@@ -575,6 +619,26 @@ ipcMain.handle("codecourse:toggle-devtools", (event) => {
 
 app.on("window-all-closed", () => {
   // The tray owns the app lifetime. Keeping the backend alive makes reopening instant.
+});
+
+ipcMain.handle("codecourse:check-for-updates", async () => {
+  if (!app.isPackaged) return { status: "development", version: app.getVersion() };
+  manualUpdateCheck = true;
+  const result = await autoUpdater.checkForUpdates();
+  return { status: "checking", version: app.getVersion(), latest: result?.updateInfo?.version || null };
+});
+
+ipcMain.handle("codecourse:get-version", () => app.getVersion());
+
+ipcMain.handle("codecourse:open-logs", async () => {
+  fs.mkdirSync(app.getPath("userData"), { recursive: true });
+  await shell.openPath(app.getPath("userData"));
+  return true;
+});
+
+ipcMain.handle("codecourse:renderer-diagnostic", (_event, payload) => {
+  diagnosticLog("renderer", typeof payload === "string" ? payload : JSON.stringify(payload));
+  return true;
 });
 
 ipcMain.handle("codecourse:notify", (_event, payload) => {

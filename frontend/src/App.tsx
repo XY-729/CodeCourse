@@ -38,7 +38,6 @@ import {
   listGenerationTasks,
   listHighlights,
   listKnowledgeLinks,
-  listDocumentTerms,
   listProjects,
   listQARecords,
   regenerateProject,
@@ -106,10 +105,9 @@ import TermActionPopover from "./components/TermActionPopover";
 import { GESTURE_COMPLETE_EVENT } from "./components/GestureLayer";
 import type { GesturePath } from "./gestures/GestureDrawer";
 import { recognizeGesture } from "./gestures/GestureRecognizer";
-import { useTermDisplay } from "./personalization";
 import type { UseTermDisplayParams } from "./personalization";
 import { usePersonalizationController } from "./personalization/usePersonalizationController";
-import { getTermDisplayProfiles } from "./api/client";
+import { useDocumentTermsController } from "./personalization/useDocumentTermsController";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
 import { getCodeCourseProvider } from "./platform/provider";
 import { canRetry, permissionNotice as buildPermissionNotice, type PermissionNotice } from "./platform/android/generationState";
@@ -392,8 +390,6 @@ export default function App() {
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
   const [qaSessionId, setQASessionId] = useState<number | null>(null);
   const [qaSessionTree, setQASessionTree] = useState<QARecord[]>([]);
-  const [rawDocumentTermsBySource, setRawDocumentTermsBySource] = useState<Record<string, DocumentTerm[]>>({});
-  const [activeDocumentTerms, setActiveDocumentTerms] = useState<DocumentTerm[]>([]);
   const [terminologyDensity, setTerminologyDensity] = useState(0.5);
   const [termAction, setTermAction] = useState<{ term: DocumentTerm; position?: { x: number; y: number } } | null>(null);
   const [learningAnchor, setLearningAnchor] = useState<LearningAnchor | null>(null);
@@ -476,29 +472,34 @@ export default function App() {
   const [permissionNotice, setPermissionNotice] = useState<PermissionNotice>(null);
   const dismissedPermissionStatusRef = useRef<string | null>(null);
 
-  const activeTermSourceKey = useMemo(() => {
+  const activeTermSource = useMemo(() => {
     const item = getActiveOpenItem();
-    if (!item) return "";
-    return `${item.qaRecordId ? "qa" : "course"}:${item.path}`;
+    if (!item || (item.type !== "course" && item.type !== "qa")) return null;
+    return {
+      sourceType: (item.qaRecordId ? "qa" : "course") as "course" | "qa",
+      sourcePath: item.path,
+    };
   }, [layout, activeGroupId]);
-
-  const activeTermRawTerms = useMemo(() => {
-    return rawDocumentTermsBySource[activeTermSourceKey] ?? [];
-  }, [rawDocumentTermsBySource, activeTermSourceKey]);
 
   const activeTermContent = useMemo(() => {
     const item = getActiveOpenItem();
     return item?.content ?? "";
   }, [layout, activeGroupId]);
 
-  const termDisplay = useTermDisplay({
-    projectId: project?.id ?? null,
-    sourceKey: activeTermSourceKey,
-    content: activeTermContent,
+  const {
     rawTerms: activeTermRawTerms,
+    scanStatus: activeTermScanStatus,
+    display: termDisplay,
+    refreshDocumentTerms,
+    rescanActiveDocumentTerms,
+  } = useDocumentTermsController({
+    projectId: project?.id ?? null,
+    sourceType: activeTermSource?.sourceType ?? null,
+    sourcePath: activeTermSource?.sourcePath ?? "",
+    content: activeTermContent,
     terminologyDensity,
     profileRevision: personalizationRevision,
-    loadProfiles: getTermDisplayProfiles,
+    onError: setQAPanelError,
   });
   const awaitingNotificationSettingsRef = useRef(false);
   const promptClosePendingRef = useRef(false);
@@ -542,11 +543,9 @@ export default function App() {
   const mobileWorkspaceSheetRef = useRef<MobileWorkspaceSheetHandle | null>(null);
   const desktopDragDepthRef = useRef(0);
   const recordedTermImpressionsRef = useRef<Set<string>>(new Set());
-  const termRefreshAttemptsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     recordedTermImpressionsRef.current.clear();
-    termRefreshAttemptsRef.current.clear();
   }, [project?.id]);
 
   generationTasksRef.current = generationTasks;
@@ -560,6 +559,29 @@ export default function App() {
   const activeOpenItemRef = useRef<OpenItem | null>(null);
   const mobileRuntime = isAndroidRuntime();
   useDesktopInteractionLight(!mobileRuntime);
+
+  useEffect(() => {
+    if (!window.codecourseDesktop?.reportDiagnostic) return;
+    const reportError = (event: ErrorEvent) => {
+      void window.codecourseDesktop?.reportDiagnostic?.({
+        type: "error",
+        message: event.message,
+        source: event.filename,
+        line: event.lineno,
+        column: event.colno,
+      });
+    };
+    const reportRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason instanceof Error ? `${event.reason.name}: ${event.reason.message}` : String(event.reason);
+      void window.codecourseDesktop?.reportDiagnostic?.({ type: "unhandledrejection", reason });
+    };
+    window.addEventListener("error", reportError);
+    window.addEventListener("unhandledrejection", reportRejection);
+    return () => {
+      window.removeEventListener("error", reportError);
+      window.removeEventListener("unhandledrejection", reportRejection);
+    };
+  }, []);
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
   const isTaskRunning = generationTasks.some(isGenerationTaskRunning);
@@ -1416,7 +1438,6 @@ export default function App() {
   useEffect(() => {
     if (!project || !selectedQA) {
       setQASessionTree([]);
-      setActiveDocumentTerms([]);
       setLearningAnchor(null);
       return;
     }
@@ -1424,14 +1445,12 @@ export default function App() {
     const sourcePath = selectedQA.output_path || String(selectedQA.id);
     Promise.all([
       selectedQA.session_id ? getQASessionTree(project.id, selectedQA.session_id) : Promise.resolve([selectedQA]),
-      listDocumentTerms(project.id, "qa", sourcePath),
       getLearningAnchor(project.id, selectedQA.id).catch(() => null),
-    ]).then(([tree, terms, anchor]) => {
+    ]).then(([tree, anchor]) => {
       if (cancelled) return;
       setQASessionTree(tree);
-      setActiveDocumentTerms(terms);
       setLearningAnchor(anchor);
-      setRawDocumentTermsBySource((current) => ({ ...current, [`qa:${sourcePath}`]: terms }));
+      void refreshDocumentTerms("qa", sourcePath, project.id);
     }).catch((caught) => {
       if (!cancelled) setQAPanelError(caught instanceof Error ? caught.message : "加载问答分支失败");
     });
@@ -1623,29 +1642,6 @@ export default function App() {
       setKnowledgeLinks(await listKnowledgeLinks(projectId));
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "加载知识链接失败");
-    }
-  }
-
-  async function refreshDocumentTerms(sourceType: "course" | "qa", sourcePath: string, projectId = project?.id) {
-    if (!projectId || !sourcePath) return;
-    const key = `${sourceType}:${sourcePath}`;
-    try {
-      const terms = await listDocumentTerms(projectId, sourceType, sourcePath);
-      setRawDocumentTermsBySource((current) => ({ ...current, [key]: terms }));
-      const refreshKey = `${projectId}:${key}`;
-      if (terms.length < 4) {
-        const attempt = termRefreshAttemptsRef.current.get(refreshKey) ?? 0;
-        if (attempt < 3) {
-          termRefreshAttemptsRef.current.set(refreshKey, attempt + 1);
-          window.setTimeout(() => {
-            void refreshDocumentTerms(sourceType, sourcePath, projectId);
-          }, 2200 + attempt * 1200);
-        }
-      } else {
-        termRefreshAttemptsRef.current.delete(refreshKey);
-      }
-    } catch (caught) {
-      setQAPanelError(caught instanceof Error ? caught.message : "加载陌生术语失败");
     }
   }
 
@@ -2263,8 +2259,6 @@ export default function App() {
       setSelectedQA(null);
       setQASessionId(null);
       setQASessionTree([]);
-      setActiveDocumentTerms([]);
-      setRawDocumentTermsBySource({});
       setLearningAnchor(null);
       setQAHistoryQuery("");
       setQAFavoriteOnly(false);
@@ -3378,7 +3372,6 @@ export default function App() {
     setSelectedQA(null);
     setQASessionId(null);
     setQASessionTree([]);
-    setActiveDocumentTerms([]);
     setLearningAnchor(null);
     clearQAQuestionInput();
     setQAUpperTab("history");
@@ -4168,7 +4161,6 @@ export default function App() {
         setSelectedQA(null);
         setQASessionId(null);
         setQASessionTree([]);
-        setActiveDocumentTerms([]);
         setLearningAnchor(null);
         clearQAQuestionInput();
         setMobileAssistantView("history");
@@ -4652,7 +4644,7 @@ export default function App() {
                 sourceType={activeItem.qaRecordId ? "qa" : "course"}
                 content={activeItem.content}
                 embedded={mobileRuntime}
-                termSourceKey={activeTermSourceKey}
+                termSourceKey={activeTermSource ? `${activeTermSource.sourceType}:${activeTermSource.sourcePath}` : ""}
                 highlights={highlights.filter((highlight) => highlight.source_type === (activeItem.qaRecordId ? "qa" : "course") && highlight.source_path === activeItem.path)}
                 knowledgeLinks={knowledgeLinks.filter((link) => link.source_type === "course" && link.source_path === activeItem.path)}
                 documentTerms={activeTermRawTerms}
@@ -4869,6 +4861,51 @@ export default function App() {
     setToast("学习进度已重置");
   }
 
+  async function handleCheckUpdates() {
+    try {
+      if (!mobileRuntime && window.codecourseDesktop?.checkForUpdates) {
+        const result = await window.codecourseDesktop.checkForUpdates();
+        if (result.status === "development") setToast(`开发版本 ${result.version}`);
+        else setToast("正在检查更新");
+        return;
+      }
+      const response = await fetch("https://api.github.com/repos/XY-729/CodeCourse/releases/latest", {
+        headers: { Accept: "application/vnd.github+json" },
+      });
+      if (!response.ok) throw new Error(`GitHub ${response.status}`);
+      const release = await response.json() as { tag_name?: string; html_url?: string };
+      const latest = String(release.tag_name || "").replace(/^v/i, "");
+      if (!latest || latest === __CODECOURSE_VERSION__) {
+        setToast(`当前已是最新版本 ${__CODECOURSE_VERSION__}`);
+        return;
+      }
+      setToast(`发现新版本 ${latest}`);
+      openExternal(release.html_url || "https://github.com/XY-729/CodeCourse/releases/latest");
+    } catch (caught) {
+      setError(caught instanceof Error ? `检查更新失败：${caught.message}` : "检查更新失败");
+    }
+  }
+
+  async function handleOpenDiagnostics() {
+    if (!mobileRuntime && window.codecourseDesktop?.openLogs) {
+      await window.codecourseDesktop.openLogs();
+      return;
+    }
+    const summary = {
+      app: "CodeCourse",
+      version: __CODECOURSE_VERSION__,
+      platform: mobileRuntime ? "android" : "web",
+      projectId: project?.id ?? null,
+      projectType: project?.project_type ?? null,
+      indexStatus: indexStatus?.status ?? null,
+      modelEnabled: Boolean(llmSettings?.enabled && llmSettings.has_api_key),
+      lastError: error || qaPanelError || null,
+      generatedAt: new Date().toISOString(),
+    };
+    await navigator.clipboard.writeText(JSON.stringify(summary, null, 2));
+    setToast("诊断摘要已复制，不包含 API Key");
+  }
+
   function commandPaletteItems(): CommandPaletteItem[] {
     const items: CommandPaletteItem[] = [
       { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => openAssistant("history") },
@@ -4879,6 +4916,8 @@ export default function App() {
       { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: openPrompts },
       { id: "command:index", label: "构建项目索引", section: "命令", keywords: "rag 搜索 索引", disabled: !project || isLearningPlanProject, disabledReason: !project ? "需要先打开项目" : isLearningPlanProject ? "学习计划项目无需构建索引" : undefined, run: () => void handleBuildIndex() },
       { id: "command:reset-progress", label: "重置学习进度", section: "命令", keywords: "清除 完成 阅读位置", disabled: !project || learningStates.length === 0, disabledReason: !project ? "需要先打开项目" : "没有学习进度可重置", run: () => void handleResetLearningProgress() },
+      { id: "command:check-updates", label: "检查更新", description: `当前版本 ${__CODECOURSE_VERSION__}`, section: "命令", keywords: "版本 release 升级", run: () => void handleCheckUpdates() },
+      { id: "command:diagnostics", label: mobileRuntime ? "复制诊断摘要" : "打开诊断日志", section: "命令", keywords: "日志 错误 排查", run: () => void handleOpenDiagnostics() },
     ];
     for (const course of courses) {
       items.push({ id: `course:${course.filename}`, label: course.title, description: course.filename, section: "课程", keywords: course.filename, disabled: !project, disabledReason: !project ? "需要先打开项目" : undefined, run: () => project && void openCourseInActiveGroup(project.id, course.filename) });
@@ -5883,6 +5922,9 @@ export default function App() {
         onClose={() => setLearnerProfileOpen(false)}
         onChanged={bumpPersonalizationRevision}
         onConfirm={confirmAction}
+        termScanStatus={activeTermScanStatus}
+        termDiagnostics={termDisplay.diagnostics}
+        onRescanTerms={rescanActiveDocumentTerms}
       />
       {promptEditorOpen ? (
         <PromptEditor

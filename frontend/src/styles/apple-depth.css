@@ -68,8 +68,7 @@ html:not(.platform-android) .qa-panel-tabs button {
 html:not(.platform-android) .pane-tab:hover,
 html:not(.platform-android) .navigation-segmented button:hover,
 html:not(.platform-android) .qa-panel-tabs button:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--apple-shadow-xs);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--apple-glass-border) 72%, transparent);
 }
 
 html:not(.platform-android) .pane-tab.active,
@@ -88,27 +87,31 @@ html:not(.platform-android) .qa-panel-tabs button.active::after {
 
 html:not(.platform-android) .sliding-selection-indicator {
   --selection-x: 0px;
-  --selection-width: 1;
+  --selection-width-px: 1px;
   position: absolute;
   z-index: 0;
   top: 2px;
   bottom: 2px;
   left: 0;
-  width: 1px;
+  width: var(--selection-width-px);
   border: 1px solid var(--apple-glass-border);
   border-radius: 5px;
   opacity: 0;
   pointer-events: none;
-  transform-origin: left center;
-  transform: translate3d(var(--selection-x), 0, 0) scaleX(var(--selection-width));
-  background: var(--apple-surface-raised);
-  box-shadow: var(--apple-inner-highlight), var(--apple-shadow-sm);
-  will-change: transform;
+  transform: translate3d(var(--selection-x), 0, 0);
+  background: color-mix(in srgb, var(--apple-surface-raised) 96%, var(--apple-blue) 4%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 82%, transparent), 0 1px 3px rgba(22, 48, 39, 0.12);
+  will-change: transform, width;
+}
+
+html:not(.platform-android)[data-theme="dark"] .sliding-selection-indicator {
+  background: color-mix(in srgb, var(--apple-surface-raised) 94%, var(--apple-blue) 6%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 
 html:not(.platform-android) .sliding-selection-indicator[data-visible="true"] { opacity: 1; }
 html:not(.platform-android) .sliding-selection-indicator[data-ready="true"] {
-  transition: transform var(--apple-duration-state) var(--apple-ease-drawer), opacity 120ms ease;
+  transition: transform var(--apple-duration-state) var(--apple-ease-drawer), width var(--apple-duration-state) var(--apple-ease-drawer), opacity 120ms ease;
 }
 html:not(.platform-android) .pane-tabs,
 html:not(.platform-android) .navigation-segmented,
@@ -378,22 +381,6 @@ html:not(.platform-android) .selection-quick-bar:not([data-anchored="true"]) {
   top: auto;
   bottom: 24px;
   transform: translateX(-50%);
-}
-
-html:not(.platform-android) .apple-toolbar,
-html:not(.platform-android) .navigation-panel,
-html:not(.platform-android) .assistant-drawer,
-html:not(.platform-android) .continue-learning-card,
-html:not(.platform-android) .assistant-answer-card,
-html:not(.platform-android) .assistant-stream-card,
-html:not(.platform-android) .qa-stream-card,
-html:not(.platform-android) .apple-popover,
-html:not(.platform-android) .apple-sheet,
-html:not(.platform-android) .app-dialog,
-html:not(.platform-android) .command-palette,
-html:not(.platform-android) .selection-quick-bar {
-  position: relative;
-  isolation: isolate;
 }
 
 html:not(.platform-android) [data-pointer-lit="true"] {
