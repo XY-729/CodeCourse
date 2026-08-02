@@ -91,7 +91,7 @@ jobs:
           mkdir -p dist-mobile
           cp android/app/build/outputs/apk/release/app-release.apk "dist-mobile/CodeCourse-${VERSION}-android.apk"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "dist-mobile/CodeCourse-${VERSION}-android.apk" | grep -F "versionName='${VERSION}'"
-          apksigner verify --verbose --print-certs "dist-mobile/CodeCourse-${VERSION}-android.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "dist-mobile/CodeCourse-${VERSION}-android.apk"
           python scripts/scan_mobile_artifact.py "dist-mobile/CodeCourse-${VERSION}-android.apk"
       - uses: actions/upload-artifact@v4
         with:
