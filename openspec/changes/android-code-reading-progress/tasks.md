@@ -34,4 +34,4 @@
 - [x] 6.3 回归测试：rAF 挂起时 effect 重跑（rerender 新 onScrollRatioChange）→ 滚动后进度条仍更新
 - [x] 6.4 真实验证：首次打开即 `scaleX(0)`，滚动实时更新，切换文档恢复正确，re-render 后不死锁
 - [x] 6.5 tsc 零错 + 全量测试 391 绿 + build 通过
-- [ ] 6.6 提交推送并重新打包桌面端，验证快捷方式指向最新
+- [x] 6.6 提交推送并重新打包桌面端，验证快捷方式指向最新（win-unpacked exe hash 一致）
