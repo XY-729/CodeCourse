@@ -1586,6 +1586,24 @@ def _incremental_open(path: Path) -> None:
     path.write_text("", encoding="utf-8")
 
 
+def _remove_outline_placeholders(output_dir: Path, filename: str) -> None:
+    """Clean up outline artifacts after a failed generation.
+
+    `_incremental_open` truncates `filename` at run start, so any leftover is
+    this run's partial output. `project_map.md` is only written atomically on
+    success, so only an empty leftover is garbage (stale valid files kept).
+    """
+    for name in (filename, "project_map.md"):
+        candidate = output_dir / name
+        if not candidate.exists():
+            continue
+        if name == filename or candidate.stat().st_size == 0:
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+
+
 def _incremental_append(path: Path, chunk: str) -> None:
     with open(path, "a", encoding="utf-8") as f:
         f.write(chunk)
@@ -1762,10 +1780,12 @@ async def stream_outline_generation(
 
     except asyncio.CancelledError:
         update_generation_task(task.id, "failed", error_message="生成已取消", stage_label="已取消")
+        _remove_outline_placeholders(output_dir, filename)
         raise
     except Exception as exc:
         update_generation_task(task.id, "failed", error_message=str(exc), stage_label="生成失败")
         update_project_status(project_id, "outline_failed")
+        _remove_outline_placeholders(output_dir, filename)
         yield _sse_event("error", {"message": str(exc)})
 
 
@@ -1860,9 +1880,13 @@ async def stream_file_lesson_generation(
 
     except asyncio.CancelledError:
         update_generation_task(task.id, "failed", error_message="生成已取消", stage_label="已取消")
+        if output_path.exists():
+            output_path.unlink()
         raise
     except Exception as exc:
         update_generation_task(task.id, "failed", error_message=str(exc), stage_label="生成失败")
+        if output_path.exists():
+            output_path.unlink()
         yield _sse_event("error", {"message": str(exc)})
 
 
@@ -1971,7 +1995,11 @@ async def stream_outline_lesson_generation(
 
     except asyncio.CancelledError:
         update_generation_task(task.id, "failed", error_message="生成已取消", stage_label="已取消")
+        if output_path.exists():
+            output_path.unlink()
         raise
     except Exception as exc:
         update_generation_task(task.id, "failed", error_message=str(exc), stage_label="生成失败")
+        if output_path.exists():
+            output_path.unlink()
         yield _sse_event("error", {"message": str(exc)})

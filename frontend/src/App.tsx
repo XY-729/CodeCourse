@@ -21,6 +21,7 @@ import {
   generateOutlinePreflight,
   confirmOutlineAnswers,
   generateFileLessonStream,
+  GenStreamError,
   generateOutlineLessonStream,
   getCourseContent,
   getCourseFiles,
@@ -2962,6 +2963,22 @@ export default function App() {
     } catch (caught) {
       if (caught instanceof Error && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "创建文件课件任务失败");
+      /*
+       * Generation failed: the backend deletes the placeholder file, so the
+       * optimistic tab we opened would become a ghost course. Close it and
+       * refresh the course list to drop it from the sidebar.
+       */
+      if (caught instanceof GenStreamError && caught.filename) {
+        const itemId = `course:${caught.filename.replace(/\\/g, "/")}`;
+        setLayout((previous) =>
+          updateEveryGroup(previous, (group) =>
+            group.items.some((item) => item.id === itemId)
+              ? closeItem(group, itemId)
+              : group,
+          ),
+        );
+        void refreshCourses(project.id);
+      }
     } finally {
       releaseGenerationStart();
     }

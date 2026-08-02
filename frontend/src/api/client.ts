@@ -548,6 +548,21 @@ export function previewOutlineLessonEvidence(
 // Streaming generation
 // ---------------------------------------------------------------------------
 
+/**
+ * Thrown when a generation stream ends with an SSE `error` event.
+ * `filename` identifies the course file whose generation failed (from the
+ * preceding `task_created` event), letting callers clean up ghost entries.
+ */
+export class GenStreamError extends Error {
+  filename: string | null;
+
+  constructor(message: string, filename: string | null) {
+    super(message);
+    this.name = "GenStreamError";
+    this.filename = filename;
+  }
+}
+
 export type GenStreamHandlers = {
   onTaskCreated?: (payload: { filename: string; task_id: number }) => void;
   onDelta?: (text: string) => void;
@@ -599,7 +614,7 @@ async function consumeGenStream(
         handlers.onCompleted?.({ filename: data.filename as string, task_id: data.task_id as number, cached: data.cached as boolean | undefined });
         break;
       case "error":
-        throw new Error(data.message as string || "生成失败");
+        throw new GenStreamError(data.message as string || "生成失败", lastFilename);
     }
   }
 
