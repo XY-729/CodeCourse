@@ -691,7 +691,7 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertIn("prompt.learning_plan.outline", prompts)
         self.assertIn("prompt.learning_plan.lesson", prompts)
         self.assertIn("TITLE:", prompts["prompt.qa.answer"])
-        self.assertIn("{model}", prompts["prompt.learning_plan.outline"])
+        self.assertIn("{user_instructions}", prompts["prompt.learning_plan.outline"])
         self.assertIn("4-10", prompts["prompt.learning_plan.outline"])
 
 

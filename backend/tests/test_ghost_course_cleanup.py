@@ -116,6 +116,33 @@ class GhostCourseCleanupTests(unittest.TestCase):
         streaming = list(self._course_dir().rglob("*.streaming"))
         self.assertEqual(streaming, [], f"streaming file survived success: {streaming}")
 
+    def test_file_lesson_success_strips_terms_metadata_line(self):
+        model_output = (
+            'TERMS: [{"display_name": "start", "canonical_name": "start", '
+            '"category": "function", "confidence": 0.9, '
+            '"source_span": {"text": "start"}}]\n'
+            "# 标题\n\n正文内容。\n"
+        )
+        with patch(
+            "app.services.generation_service.call_openai_compatible_chat",
+            return_value=model_output,
+        ):
+            response = self.client.post(
+                f"/api/projects/{self.project.id}/lessons/file",
+                json={"path": "src/main.py", "mode": "detailed", "instructions": ""},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        task = self.client.get(f"/api/projects/{self.project.id}/tasks/{response.json()['id']}").json()
+        self.assertEqual(task["status"], "completed")
+
+        final = self._course_dir() / "files" / "src_main.py_detailed.md"
+        published = final.read_text(encoding="utf-8")
+        self.assertNotIn("TERMS:", published, "TERMS metadata leaked into published course")
+        self.assertTrue(published.lstrip().startswith("# 标题"))
+        streaming = list(self._course_dir().rglob("*.streaming"))
+        self.assertEqual(streaming, [], f"streaming file survived success: {streaming}")
+
     def test_file_lesson_failure_keeps_previous_version(self):
         final = self._course_dir() / "files" / "src_main.py_detailed.md"
         final.parent.mkdir(parents=True, exist_ok=True)

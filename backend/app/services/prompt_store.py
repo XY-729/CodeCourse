@@ -41,14 +41,6 @@ DEFAULT_OUTLINE_PROMPT = """请根据提供的真实仓库材料，生成项目�
 
 # 项目结构说明
 
-> 生成方式：AI 生成
->
-> 模型/规则：{model}
->
-> 学习范围：{scope_text}
->
-> 用户要求：{user_instructions}
-
 ## 一、项目定位
 
 用 3—6 句话说明：
@@ -132,14 +124,6 @@ DEFAULT_OUTLINE_PROMPT = """请根据提供的真实仓库材料，生成项目�
 ## FILE: outline.md
 
 # 项目学习总纲
-
-> 生成方式：AI 生成
->
-> 模型/规则：{model}
->
-> 学习范围：{scope_text}
->
-> 用户要求：{user_instructions}
 
 ## 一、学习目标
 
@@ -291,14 +275,6 @@ DEFAULT_FILE_LESSON_TEMPLATE = """请为选定文件生成 {mode_label} 版 Mark
 文件：{relative_path}
 用户补充要求：{user_instructions}
 
-开头必须包含：
-> 生成方式：AI 生成
-> 模型/规则：{model}
-> 学习范围：files: {relative_path}
-> 课件类型：{mode_label}
-> 用户要求：{user_instructions}
-> 不确定项：...
-
 {expected}
 
 要求：
@@ -331,14 +307,6 @@ DEFAULT_LEARNING_PLAN_OUTLINE_PROMPT = """请根据用户的学习目标生成�
 输出结构：
 # 学习计划总纲
 
-> 生成方式：AI 生成
->
-> 模型/规则：{model}
->
-> 学习范围：学习计划
->
-> 用户要求：{user_instructions}
->
 > 教材说明：经过系统校验的书目会统一附加在总纲末尾，正文只描述相关知识主题。
 
 ## 适合谁学
@@ -564,9 +532,6 @@ PROMPT_METADATA = {
         "label": "总纲生成",
         "description": "根据真实仓库材料生成项目地图和课程总纲。",
         "required_placeholders": [
-            "model",
-            "scope_text",
-            "user_instructions",
             "prompt_input",
         ],
     },
@@ -577,7 +542,6 @@ PROMPT_METADATA = {
             "mode_label",
             "relative_path",
             "user_instructions",
-            "model",
             "expected",
             "prompt_input",
         ],
@@ -605,7 +569,7 @@ PROMPT_METADATA = {
     "prompt.learning_plan.outline": {
         "label": "学习计划总纲",
         "description": "生成不绑定仓库的学习路线和可验证目标。",
-        "required_placeholders": ["model", "user_instructions"],
+        "required_placeholders": ["user_instructions"],
     },
     "prompt.learning_plan.lesson": {
         "label": "学习计划课件",

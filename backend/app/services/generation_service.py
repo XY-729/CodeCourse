@@ -1746,11 +1746,15 @@ async def stream_outline_generation(
             outline = append_validated_bibliography(
                 _require_markdown(content), bibliography
             )
+            outline = add_outline_lesson_links(outline)
+            streaming_path.write_text(outline, encoding="utf-8")
             streaming_path.replace(output_path)
             register_document_terms(project_id, "course", filename, outline, model_terms)
         else:
             project_map, outline = _parse_outline_files(content)
             _atomic_write(output_dir / "project_map.md", project_map)
+            outline = add_outline_lesson_links(outline)
+            streaming_path.write_text(outline, encoding="utf-8")
             streaming_path.replace(output_path)
             register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
             register_document_terms(project_id, "course", filename, outline, model_terms)
@@ -1859,6 +1863,7 @@ async def stream_file_lesson_generation(
         if not lesson.lstrip().startswith("#"):
             title = "粗略介绍" if mode == "brief" else "详细分析"
             lesson = f"# {Path(relative_path).name} {title}\n\n{lesson}"
+        streaming_path.write_text(lesson, encoding="utf-8")
         streaming_path.replace(output_path)
         register_document_terms(project_id, "course", filename, lesson, model_terms)
         update_generation_task(task.id, "completed", output_path=output_path)
@@ -1964,6 +1969,7 @@ async def stream_outline_lesson_generation(
         lesson = _require_markdown(content)
         if not lesson.lstrip().startswith("#"):
             lesson = f"# 第 {lesson_number} 课：{lesson_title}\n\n{lesson}"
+        streaming_path.write_text(lesson, encoding="utf-8")
         streaming_path.replace(output_path)
         register_document_terms(project_id, "course", filename, lesson, model_terms)
 
