@@ -2919,7 +2919,10 @@ export default function App() {
       const baseFileName = pathParts[pathParts.length - 1] ?? fileContent.path;
       const modeSuffix = nextMode === "brief" ? "_brief" : "_detailed";
       const safeName = baseFileName.replace(/[^a-zA-Z0-9_\-.]/g, "_");
-      const filename = `lessons/${safeName}${modeSuffix}.md`;
+      // Backend `_safe_lesson_filename` publishes single-file lessons under
+      // `files/`; the optimistic tab must use the same path or the
+      // learning-state PUT fails with 404 "Learning source not found".
+      const filename = `files/${safeName}${modeSuffix}.md`;
 
       setCourses((prev) => {
         if (prev.some((c) => c.filename === filename)) return prev;

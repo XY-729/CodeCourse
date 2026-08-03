@@ -1586,24 +1586,6 @@ def _incremental_open(path: Path) -> None:
     path.write_text("", encoding="utf-8")
 
 
-def _remove_outline_placeholders(output_dir: Path, filename: str) -> None:
-    """Clean up outline artifacts after a failed generation.
-
-    `_incremental_open` truncates `filename` at run start, so any leftover is
-    this run's partial output. `project_map.md` is only written atomically on
-    success, so only an empty leftover is garbage (stale valid files kept).
-    """
-    for name in (filename, "project_map.md"):
-        candidate = output_dir / name
-        if not candidate.exists():
-            continue
-        if name == filename or candidate.stat().st_size == 0:
-            try:
-                candidate.unlink()
-            except OSError:
-                pass
-
-
 def _incremental_append(path: Path, chunk: str) -> None:
     with open(path, "a", encoding="utf-8") as f:
         f.write(chunk)
@@ -1741,7 +1723,8 @@ async def stream_outline_generation(
     )
 
     output_path = output_dir / filename
-    _incremental_open(output_path)
+    streaming_path = output_path.with_suffix(output_path.suffix + ".streaming")
+    _incremental_open(streaming_path)
     update_generation_task(task.id, "running", stage_label="生成总纲中")
     update_project_status(project_id, "generating_outline")
 
@@ -1750,7 +1733,7 @@ async def stream_outline_generation(
 
     try:
         full_text = ""
-        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=180):
+        async for event in _stream_and_accumulate(settings, messages, streaming_path, timeout=180):
             if event["event"] == "accumulated":
                 full_text = event["data"]["text"]
             else:
@@ -1763,12 +1746,12 @@ async def stream_outline_generation(
             outline = append_validated_bibliography(
                 _require_markdown(content), bibliography
             )
-            _atomic_write(output_path, add_outline_lesson_links(outline))
+            streaming_path.replace(output_path)
             register_document_terms(project_id, "course", filename, outline, model_terms)
         else:
             project_map, outline = _parse_outline_files(content)
             _atomic_write(output_dir / "project_map.md", project_map)
-            _atomic_write(output_path, add_outline_lesson_links(outline))
+            streaming_path.replace(output_path)
             register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
             register_document_terms(project_id, "course", filename, outline, model_terms)
             _select_and_persist_lesson_files(project_id, repo_root, outline)
@@ -1780,12 +1763,14 @@ async def stream_outline_generation(
 
     except asyncio.CancelledError:
         update_generation_task(task.id, "failed", error_message="生成已取消", stage_label="已取消")
-        _remove_outline_placeholders(output_dir, filename)
+        if streaming_path.exists():
+            streaming_path.unlink()
         raise
     except Exception as exc:
         update_generation_task(task.id, "failed", error_message=str(exc), stage_label="生成失败")
         update_project_status(project_id, "outline_failed")
-        _remove_outline_placeholders(output_dir, filename)
+        if streaming_path.exists():
+            streaming_path.unlink()
         yield _sse_event("error", {"message": str(exc)})
 
 
@@ -1843,7 +1828,8 @@ async def stream_file_lesson_generation(
 
     filename = _safe_lesson_filename(relative_path, mode)
     output_path = project_course_dir(project_id) / filename
-    _incremental_open(output_path)
+    streaming_path = output_path.with_suffix(output_path.suffix + ".streaming")
+    _incremental_open(streaming_path)
 
     task = create_generation_task(
         project_id=project_id,
@@ -1862,7 +1848,7 @@ async def stream_file_lesson_generation(
 
     try:
         full_text = ""
-        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=180):
+        async for event in _stream_and_accumulate(settings, messages, streaming_path, timeout=180):
             if event["event"] == "accumulated":
                 full_text = event["data"]["text"]
             else:
@@ -1873,20 +1859,20 @@ async def stream_file_lesson_generation(
         if not lesson.lstrip().startswith("#"):
             title = "粗略介绍" if mode == "brief" else "详细分析"
             lesson = f"# {Path(relative_path).name} {title}\n\n{lesson}"
-        _atomic_write(output_path, lesson)
+        streaming_path.replace(output_path)
         register_document_terms(project_id, "course", filename, lesson, model_terms)
         update_generation_task(task.id, "completed", output_path=output_path)
         yield _sse_event("completed", {"filename": filename, "task_id": task.id})
 
     except asyncio.CancelledError:
         update_generation_task(task.id, "failed", error_message="生成已取消", stage_label="已取消")
-        if output_path.exists():
-            output_path.unlink()
+        if streaming_path.exists():
+            streaming_path.unlink()
         raise
     except Exception as exc:
         update_generation_task(task.id, "failed", error_message=str(exc), stage_label="生成失败")
-        if output_path.exists():
-            output_path.unlink()
+        if streaming_path.exists():
+            streaming_path.unlink()
         yield _sse_event("error", {"message": str(exc)})
 
 
@@ -1923,7 +1909,8 @@ async def stream_outline_lesson_generation(
 
     filename = _outline_lesson_filename(lesson_number)
     output_path = project_course_dir(project_id) / filename
-    _incremental_open(output_path)
+    streaming_path = output_path.with_suffix(output_path.suffix + ".streaming")
+    _incremental_open(streaming_path)
 
     if project.project_type == "learning_plan":
         messages = _learning_plan_lesson_messages(settings, lesson_number, lesson_title, lesson_input, instructions)
@@ -1967,7 +1954,7 @@ async def stream_outline_lesson_generation(
 
     try:
         full_text = ""
-        async for event in _stream_and_accumulate(settings, messages, output_path, timeout=180):
+        async for event in _stream_and_accumulate(settings, messages, streaming_path, timeout=180):
             if event["event"] == "accumulated":
                 full_text = event["data"]["text"]
             else:
@@ -1977,7 +1964,7 @@ async def stream_outline_lesson_generation(
         lesson = _require_markdown(content)
         if not lesson.lstrip().startswith("#"):
             lesson = f"# 第 {lesson_number} 课：{lesson_title}\n\n{lesson}"
-        _atomic_write(output_path, lesson)
+        streaming_path.replace(output_path)
         register_document_terms(project_id, "course", filename, lesson, model_terms)
 
         node_title = f"第{lesson_number}课"
@@ -1995,11 +1982,11 @@ async def stream_outline_lesson_generation(
 
     except asyncio.CancelledError:
         update_generation_task(task.id, "failed", error_message="生成已取消", stage_label="已取消")
-        if output_path.exists():
-            output_path.unlink()
+        if streaming_path.exists():
+            streaming_path.unlink()
         raise
     except Exception as exc:
         update_generation_task(task.id, "failed", error_message=str(exc), stage_label="生成失败")
-        if output_path.exists():
-            output_path.unlink()
+        if streaming_path.exists():
+            streaming_path.unlink()
         yield _sse_event("error", {"message": str(exc)})

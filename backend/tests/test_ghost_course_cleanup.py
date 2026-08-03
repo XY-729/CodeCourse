@@ -1,4 +1,5 @@
-"""Tests for failed-generation cleanup: placeholder files must not survive as ghost courses."""
+"""Tests for failed-generation cleanup: streaming temp files must not survive,
+and successful regeneration must not truncate a previous course file."""
 
 import asyncio
 import json
@@ -45,7 +46,8 @@ def _setup_temp_workspace():
 
 
 class GhostCourseCleanupTests(unittest.TestCase):
-    """SSE error from a stream branch must leave no placeholder file behind."""
+    """SSE error from a stream branch must leave no ghost file behind, and a
+    successful rerun must publish the final path only after the model returns."""
 
     def setUp(self):
         self._tmpdir, self.workspace, self.generated = _setup_temp_workspace()
@@ -76,7 +78,7 @@ class GhostCourseCleanupTests(unittest.TestCase):
     def _course_dir(self):
         return self.generated / str(self.project.id)
 
-    def test_file_lesson_failure_removes_placeholder(self):
+    def test_file_lesson_failure_leaves_no_ghost_files(self):
         with patch(
             "app.services.generation_service.call_openai_compatible_chat",
             return_value="",
@@ -91,10 +93,53 @@ class GhostCourseCleanupTests(unittest.TestCase):
         self.assertEqual(task["status"], "failed")
         self.assertEqual(task["stage_label"], "生成失败")
 
-        leftovers = list(self._course_dir().glob("*main.py*detailed*.md"))
-        self.assertEqual(leftovers, [], f"placeholder survived failed file_lesson: {leftovers}")
+        leftovers = list(self._course_dir().glob("*main.py*detailed*"))
+        self.assertEqual(leftovers, [], f"ghost file survived failed file_lesson: {leftovers}")
 
-    def test_outline_lesson_failure_removes_placeholder(self):
+    def test_file_lesson_success_publishes_final_path_and_no_streaming_file(self):
+        with patch(
+            "app.services.generation_service.call_openai_compatible_chat",
+            return_value="# 标题\n\n正文内容。\n",
+        ):
+            response = self.client.post(
+                f"/api/projects/{self.project.id}/lessons/file",
+                json={"path": "src/main.py", "mode": "detailed", "instructions": ""},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        task = self.client.get(f"/api/projects/{self.project.id}/tasks/{response.json()['id']}").json()
+        self.assertEqual(task["status"], "completed")
+
+        final = self._course_dir() / "files" / "src_main.py_detailed.md"
+        self.assertTrue(final.exists(), "final file was not published")
+        self.assertEqual(final.read_text(encoding="utf-8").strip(), "# 标题\n\n正文内容。".strip())
+        streaming = list(self._course_dir().rglob("*.streaming"))
+        self.assertEqual(streaming, [], f"streaming file survived success: {streaming}")
+
+    def test_file_lesson_failure_keeps_previous_version(self):
+        final = self._course_dir() / "files" / "src_main.py_detailed.md"
+        final.parent.mkdir(parents=True, exist_ok=True)
+        final.write_text("# 旧课件\n\n保留内容。\n", encoding="utf-8")
+
+        with patch(
+            "app.services.generation_service.call_openai_compatible_chat",
+            return_value="",
+        ):
+            response = self.client.post(
+                f"/api/projects/{self.project.id}/lessons/file",
+                json={"path": "src/main.py", "mode": "detailed", "instructions": ""},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        task = self.client.get(f"/api/projects/{self.project.id}/tasks/{response.json()['id']}").json()
+        self.assertEqual(task["status"], "failed")
+
+        self.assertTrue(final.exists(), "previous course file was deleted on failed rerun")
+        self.assertEqual(final.read_text(encoding="utf-8").strip(), "# 旧课件\n\n保留内容。".strip())
+        streaming = list(self._course_dir().rglob("*.streaming"))
+        self.assertEqual(streaming, [], f"streaming file survived failed rerun: {streaming}")
+
+    def test_outline_lesson_failure_leaves_no_ghost_files(self):
         course_dir = self._course_dir()
         course_dir.mkdir(parents=True, exist_ok=True)
         (course_dir / "outline.md").write_text(
@@ -122,10 +167,10 @@ class GhostCourseCleanupTests(unittest.TestCase):
         task = self.client.get(f"/api/projects/{self.project.id}/tasks/{response.json()['id']}").json()
         self.assertEqual(task["status"], "failed")
 
-        leftovers = list(course_dir.glob("lesson_*.md"))
-        self.assertEqual(leftovers, [], f"placeholder survived failed outline_lesson: {leftovers}")
+        leftovers = list(course_dir.glob("lesson_*"))
+        self.assertEqual(leftovers, [], f"ghost file survived failed outline_lesson: {leftovers}")
 
-    def test_outline_failure_removes_placeholder_files(self):
+    def test_outline_failure_leaves_no_ghost_files(self):
         with patch(
             "app.services.generation_service.call_openai_compatible_chat",
             return_value="",
@@ -140,12 +185,14 @@ class GhostCourseCleanupTests(unittest.TestCase):
         self.assertEqual(task["status"], "failed")
 
         course_dir = self._course_dir()
-        self.assertFalse((course_dir / "outline.md").exists(), "outline.md placeholder survived")
+        self.assertFalse((course_dir / "outline.md").exists(), "outline.md survived")
         self.assertFalse(
-            (course_dir / "project_map.md").exists(), "project_map.md placeholder survived"
+            (course_dir / "project_map.md").exists(), "project_map.md survived"
         )
+        streaming = list(course_dir.rglob("*.streaming"))
+        self.assertEqual(streaming, [], f"streaming file survived failed outline: {streaming}")
 
-    def test_cancelled_file_lesson_removes_placeholder(self):
+    def test_cancelled_file_lesson_leaves_no_ghost_files(self):
         from app.services.generation_service import stream_file_lesson_generation
 
         async def cancel_stream(*_args, **_kwargs):
@@ -178,8 +225,8 @@ class GhostCourseCleanupTests(unittest.TestCase):
         self.assertEqual(row[1], "failed")
         self.assertEqual(row[2], "已取消")
 
-        leftovers = list(self._course_dir().glob("*main.py*detailed*.md"))
-        self.assertEqual(leftovers, [], f"placeholder survived cancelled file_lesson: {leftovers}")
+        leftovers = list(self._course_dir().glob("*main.py*detailed*"))
+        self.assertEqual(leftovers, [], f"ghost file survived cancelled file_lesson: {leftovers}")
 
 
 if __name__ == "__main__":
