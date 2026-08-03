@@ -366,6 +366,9 @@ function occurrenceNode(
   return {
     type: "termOccurrence",
     value: match.term.term_text,
+    // remark-rehype maps data.hName to an element whose children come from
+    // node.children; without a text child the term span renders empty.
+    children: [{ type: "text", value: match.term.term_text }],
     data: {
       hName: "span",
       hProperties: {

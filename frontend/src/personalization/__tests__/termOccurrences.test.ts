@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { unified } from "unified";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
 import type { DocumentTerm } from "../../api/client";
 import {
   analyzeMarkdownTermOccurrences,
   buildTermCandidateId,
   matchTermsInTextNode,
   prepareTermsForMatching,
+  remarkTermOccurrences,
 } from "../termOccurrences";
 
 function term(
@@ -113,5 +117,33 @@ describe("markdown term occurrences", () => {
       "bind",
       "socket",
     ]);
+  });
+
+  it("renders term text as a child of the occurrence node in hast", () => {
+    const processor = unified()
+      .use(remarkParse)
+      .use(remarkTermOccurrences, {
+        sourceKey: "course:lesson.md",
+        terms: [term(1, "socket")],
+      })
+      .use(remarkRehype);
+
+    const mdast = processor.parse("**socket bind**");
+    const hast = processor.runSync(mdast);
+
+    type HastNode = { tagName?: string; children?: unknown[] };
+    const spans: Array<{ children?: Array<{ type: string; value?: string }> }> = [];
+    const visit = (node: HastNode): void => {
+      if (node.tagName === "span") {
+        spans.push(node as (typeof spans)[number]);
+      }
+      node.children?.forEach((child) => visit(child as HastNode));
+    };
+    hast.children.forEach((child) => visit(child as HastNode));
+
+    expect(spans).toHaveLength(1);
+    expect(spans[0].children).toHaveLength(1);
+    expect(spans[0].children?.[0].type).toBe("text");
+    expect(spans[0].children?.[0].value).toBe("socket");
   });
 });
