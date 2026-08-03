@@ -22,7 +22,7 @@ type LessonPlanSection = GsLessonPlan["sections"][number];
 type LessonPlanItem = LessonPlanSection["items"][number];
 import type {
   CourseFile, GenerationTask, HighlightRecord, KnowledgeEdge, KnowledgeGraph, KnowledgeLink, KnowledgeNode,
-  LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, Project, ProjectIndexStatus, ProjectSearchResult,
+  LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, OutlinePreflight, OutlineQuestion, OutlineSurveyAnswer, Project, ProjectIndexStatus, ProjectSearchResult,
   QAAskPayload, QARecord, TreeNode,
   PersonalizationConcept, PersonalizationMastery, PersonalizationEvent,
   LearnerPreferences, PersonalizationProfile, LearnerInference,
@@ -188,6 +188,23 @@ function compactText(value: string, limit = 12_000): string {
 }
 function renderPrompt(template: string, values: Record<string, unknown>): string {
   return template.replace(/\{([a-z_]+)\}/gi, (match, key: string) => Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match);
+}
+
+function serializeLearningIntent(answers: OutlineSurveyAnswer[]): string {
+  if (!answers.length) return "";
+  const lines: string[] = ["<learning_intent>"];
+  for (const answer of answers) {
+    const question = String(answer.question ?? "").trim();
+    const dimension = String(answer.dimension ?? "other").trim();
+    const selected = answer.selected;
+    const selectedText = Array.isArray(selected)
+      ? (selected.length ? selected.join("、") : "（未选择）")
+      : String(selected || "（未选择）");
+    const line = `- ${question}` + (dimension && dimension !== "other" ? ` [${dimension}]` : "") + `：${selectedText}`;
+    lines.push(line);
+  }
+  lines.push("</learning_intent>");
+  return lines.join("\n");
 }
 function sourceNodeTitle(sourceType: string, sourcePath?: string | null): string {
   if (!sourcePath) return "project context";
@@ -706,6 +723,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       if (method === "DELETE") return this.deleteCourse(projectId, filename) as Promise<T>;
     }
     if ((match = path.match(/^\/projects\/(\d+)\/regenerate$/))) return this.regenerate(Number(match[1])) as Promise<T>;
+    if ((match = path.match(/^\/projects\/(\d+)\/outline\/generate\/preflight$/))) {
+      return this.outlinePreflight(Number(match[1]), body) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/outline\/generate\/confirm$/))) {
+      return this.outlineConfirm(Number(match[1]), body) as Promise<T>;
+    }
     if ((match = path.match(/^\/projects\/(\d+)\/outline\/generate$/))) return this.queueTask(Number(match[1]), "outline", body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/lessons\/file$/))) return this.queueTask(Number(match[1]), "file_lesson", body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/lessons\/outline\/evidence$/))) {
@@ -1354,6 +1377,83 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const end = index >= 0 ? (matches[index + 1]?.index ?? outline.length) : outline.length;
     const section = index >= 0 ? outline.slice(start, end) : title;
     return (await this.prepareLessonEvidence(projectId, lessonNumber, title, section)).preview;
+  }
+
+  private async outlinePreflight(projectId: number, body: Record<string, unknown>): Promise<OutlinePreflight> {
+    try {
+      const settings = await this.getLLMSettings();
+      const prompts = await this.getPrompts();
+      const template = prompts["prompt.outline.questionnaire"] || "";
+      if (!template) throw new Error("问卷提示词缺失，可跳过问卷直接生成总纲。");
+
+      const project = await this.getProject(projectId);
+      const scope = (body.scope ?? {}) as Record<string, unknown>;
+      const instructions = String(body.instructions ?? "");
+      const scopeText = String(scope.type || "full_project");
+      const context = await this.projectContext(projectId, (scope.paths as string[] | undefined) ?? undefined);
+      const promptInput = context || `学习范围：\n${scopeText}\n\n用户补充要求：\n${instructions || "无"}\n`;
+      const preferences = await this.getLearnerPreferences(projectId);
+      const prefsSummary = `前置知识：${preferences.prerequisiteDetail}；讲解深度：${preferences.answerDepth}；代码比例：${preferences.codeRatio}`;
+
+      const prompt = renderPrompt(template, {
+        scope_text: scopeText,
+        user_instructions: instructions || "无",
+        preferences_summary: prefsSummary,
+        prompt_input: promptInput,
+      });
+      const raw = await this.callLLM([
+        { role: "system", content: composeSystemPrompt(prompts["prompt.system"] || "你是课程规划助手。", "json_array") },
+        { role: "user", content: prompt },
+      ]);
+      const questions = this.parseQuestionnaire(raw);
+      const preflightId = `pf:${projectId}:${crypto.randomUUID().slice(0, 12)}`;
+      return { preflight_id: preflightId, questions };
+    } catch (error) {
+      return {
+        preflight_id: "",
+        questions: [],
+        status: "error",
+        message: error instanceof Error ? error.message : "问卷生成失败",
+      };
+    }
+  }
+
+  private parseQuestionnaire(raw: string): OutlineQuestion[] {
+    let text = raw.trim();
+    if (text.startsWith("```")) {
+      const lines = text.split("\n");
+      if (lines[0]?.startsWith("```")) lines.shift();
+      if (lines[lines.length - 1]?.trim() === "```") lines.pop();
+      text = lines.join("\n").trim();
+    }
+    const parsed: unknown = JSON.parse(text);
+    if (!Array.isArray(parsed)) throw new Error("问卷生成返回结构错误");
+    const questions: OutlineQuestion[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const record = item as Record<string, unknown>;
+      const question = String(record.question ?? "").trim();
+      if (!question) continue;
+      const options = Array.isArray(record.options) ? record.options.slice(0, 8) : [];
+      questions.push({
+        question,
+        question_type: String(record.question_type ?? "single_choice"),
+        dimension: String(record.dimension ?? "other"),
+        options,
+        rationale: String(record.rationale ?? ""),
+      });
+    }
+    if (!questions.length) throw new Error("问卷未生成任何有效问题");
+    return questions;
+  }
+
+  private async outlineConfirm(projectId: number, body: Record<string, unknown>): Promise<GenerationTask> {
+    const answers = Array.isArray(body.answers) ? body.answers as OutlineSurveyAnswer[] : [];
+    const scope = (body.scope ?? {}) as Record<string, unknown>;
+    const instructions = String(body.instructions ?? "");
+    const intent = serializeLearningIntent(answers);
+    const mergedInstructions = intent ? `${instructions}\n\n${intent}` : instructions;
+    return this.queueTask(projectId, "outline", { ...body, instructions: mergedInstructions });
   }
 
   private async generateOutline(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {

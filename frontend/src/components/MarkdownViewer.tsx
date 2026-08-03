@@ -780,6 +780,13 @@ export default function MarkdownViewer({
                 onGenerateTerm(term, { x: 0, y: 0 });
               }
             }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              if (term.status === "candidate") {
+                onTermAction?.(term, { x: event.clientX, y: event.clientY });
+              }
+            }}
           >
             {spanProps.children}
           </span>

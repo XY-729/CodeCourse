@@ -16,6 +16,7 @@ public class CodeCourseWebView extends CapacitorWebView {
     private static final int ASK_SELECTION_MENU_ID = 0xCC01;
     private static final int EXPLAIN_TERM_MENU_ID = 0xCC02;
     private static final int MARK_KNOWN_MENU_ID = 0xCC03;
+    private static final int TOGGLE_HIGHLIGHT_MENU_ID = 0xCC04;
     private static final String TAG = "CCSelection";
 
     public CodeCourseWebView(Context context, AttributeSet attrs) {
@@ -85,6 +86,9 @@ public class CodeCourseWebView extends CapacitorWebView {
             }
             if (item.getItemId() == MARK_KNOWN_MENU_ID) {
                 return handleSelectionAction(mode, "codecourse-native-selection-known");
+            }
+            if (item.getItemId() == TOGGLE_HIGHLIGHT_MENU_ID) {
+                return handleSelectionAction(mode, "codecourse-native-selection-highlight");
             }
             return delegate.onActionItemClicked(mode, item);
         }
@@ -164,6 +168,15 @@ public class CodeCourseWebView extends CapacitorWebView {
         knownItem.setVisible(showKnownAction);
         knownItem.setEnabled(showKnownAction);
         knownItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
+
+        MenuItem highlightItem = menu.findItem(TOGGLE_HIGHLIGHT_MENU_ID);
+        if (highlightItem == null) {
+            highlightItem = menu.add(Menu.NONE, TOGGLE_HIGHLIGHT_MENU_ID, 3, "高亮");
+            changed = true;
+        }
+        highlightItem.setVisible(true);
+        highlightItem.setEnabled(true);
+        highlightItem.setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM);
         return changed;
     }
 

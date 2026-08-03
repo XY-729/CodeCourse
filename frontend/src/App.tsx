@@ -399,6 +399,8 @@ export default function App() {
   const [learningAnchor, setLearningAnchor] = useState<LearningAnchor | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
   const [highlights, setHighlights] = useState<HighlightRecord[]>([]);
+  const highlightsRef = useRef<HighlightRecord[]>([]);
+  highlightsRef.current = highlights;
   const [knowledgeLinks, setKnowledgeLinks] = useState<KnowledgeLink[]>([]);
   const [knowledgeRefreshKey, setKnowledgeRefreshKey] = useState(0);
   const handleLearningStatus = useCallback((message: string) => {
@@ -924,13 +926,22 @@ export default function App() {
         language: item.language,
       });
     }
+    function handleNativeSelectionHighlight(event: Event) {
+      const text = String((event as CustomEvent<{ text?: string }>).detail?.text ?? "").trim().slice(0, 20000);
+      const item = activeOpenItemRef.current;
+      if (!text || !item || !["course", "qa"].includes(item.type)) return;
+      const sourceType = item.type === "qa" || item.qaRecordId ? "qa" : "course";
+      void handleToggleHighlight(sourceType, item.path, text);
+    }
     window.addEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
     window.addEventListener("codecourse-native-selection-explain", handleNativeSelectionExplain);
     window.addEventListener("codecourse-native-selection-known", handleNativeSelectionKnown);
+    window.addEventListener("codecourse-native-selection-highlight", handleNativeSelectionHighlight);
     return () => {
       window.removeEventListener("codecourse-native-selection-ask", handleNativeSelectionAsk);
       window.removeEventListener("codecourse-native-selection-explain", handleNativeSelectionExplain);
       window.removeEventListener("codecourse-native-selection-known", handleNativeSelectionKnown);
+      window.removeEventListener("codecourse-native-selection-highlight", handleNativeSelectionHighlight);
     };
   }, [mobileRuntime, project, llmSettings, qaSessionId, selectedQA, activeQAKey, activeTermRawTerms]);
 
@@ -3845,7 +3856,7 @@ export default function App() {
       return;
     }
     const normalizedText = selectedText.trim();
-    const matching = highlights.filter((highlight) =>
+    const matching = highlightsRef.current.filter((highlight) =>
       highlight.source_type === sourceType
       && highlight.source_path === sourcePath
       && highlight.selected_text.trim() === normalizedText,
