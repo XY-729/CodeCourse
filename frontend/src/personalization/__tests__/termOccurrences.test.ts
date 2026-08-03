@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
-import remarkRehype from "remark-rehype";
 import type { DocumentTerm } from "../../api/client";
 import {
   analyzeMarkdownTermOccurrences,
@@ -119,31 +118,29 @@ describe("markdown term occurrences", () => {
     ]);
   });
 
-  it("renders term text as a child of the occurrence node in hast", () => {
+  it("emits the term text as a text child of the occurrence node", () => {
     const processor = unified()
       .use(remarkParse)
       .use(remarkTermOccurrences, {
         sourceKey: "course:lesson.md",
         terms: [term(1, "socket")],
-      })
-      .use(remarkRehype);
+      });
 
-    const mdast = processor.parse("**socket bind**");
-    const hast = processor.runSync(mdast);
-
-    type HastNode = { tagName?: string; children?: unknown[] };
-    const spans: Array<{ children?: Array<{ type: string; value?: string }> }> = [];
-    const visit = (node: HastNode): void => {
-      if (node.tagName === "span") {
-        spans.push(node as (typeof spans)[number]);
+    type AstNode = { type: string; value?: string; children?: AstNode[] };
+    const mdast = processor.parse("**socket bind**") as AstNode;
+    const tree = processor.runSync(mdast) as { children?: AstNode[] };
+    const occurrences: Array<{ value?: string; children?: AstNode[] }> = [];
+    const visit = (node: AstNode): void => {
+      if (node.type === "termOccurrence") {
+        occurrences.push(node);
       }
-      node.children?.forEach((child) => visit(child as HastNode));
+      node.children?.forEach(visit);
     };
-    hast.children.forEach((child) => visit(child as HastNode));
+    tree.children?.forEach(visit);
 
-    expect(spans).toHaveLength(1);
-    expect(spans[0].children).toHaveLength(1);
-    expect(spans[0].children?.[0].type).toBe("text");
-    expect(spans[0].children?.[0].value).toBe("socket");
+    expect(occurrences).toHaveLength(1);
+    expect(occurrences[0].children).toHaveLength(1);
+    expect(occurrences[0].children?.[0].type).toBe("text");
+    expect(occurrences[0].children?.[0].value).toBe("socket");
   });
 });
