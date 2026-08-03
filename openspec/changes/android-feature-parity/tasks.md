@@ -21,5 +21,5 @@
 - [x] 4.1 新增/更新单测（localProvider preflight/confirm；MarkdownViewer onContextMenu）
 - [x] 4.2 前端 tsc / npm test / build 全绿
 - [x] 4.3 浏览器 `?preview=android` 手工验证三条路径
-- [ ] 4.4 提交推送（OpenSpec 流程收尾）
+- [x] 4.4 提交推送（OpenSpec 流程收尾）
 - [ ] 4.5 重打包桌面 + 重建 APK
