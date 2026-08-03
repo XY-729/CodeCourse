@@ -22,4 +22,4 @@
 - [x] 4.2 前端 tsc / npm test / build 全绿
 - [x] 4.3 浏览器 `?preview=android` 手工验证三条路径
 - [x] 4.4 提交推送（OpenSpec 流程收尾）
-- [ ] 4.5 重打包桌面 + 重建 APK
+- [x] 4.5 重打包桌面 + 重建 APK
