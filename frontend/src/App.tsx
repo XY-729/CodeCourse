@@ -419,6 +419,7 @@ export default function App() {
     projectId: project?.id ?? null,
     onError: setError,
     onStatus: handleLearningStatus,
+    streamingPaths: () => streamingPathsRef.current,
   });
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [toast, setToast] = useState("");
@@ -556,6 +557,10 @@ export default function App() {
   currentProjectIdRef.current = project?.id ?? null;
   mobileWorkspaceTabRef.current = mobileWorkspaceTab;
   const streamingContentRef = useRef<Map<string, string>>(new Map());
+  // Course paths with an in-flight streaming generation. While set, the
+  // backend has not published the file, so learning-state saves are skipped
+  // (they would 404 "Learning source not found").
+  const streamingPathsRef = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const dropPrefetchRef = useRef<Map<string, Promise<OpenItem | null>>>(new Map());
   const layoutHistoryRef = useRef<LayoutNode[]>([]);
@@ -2893,6 +2898,10 @@ export default function App() {
     }
     handleDismissSelection();
     const label = nextMode === "brief" ? "粗略介绍" : "详细分析";
+    // Backend `_safe_lesson_filename` publishes single-file lessons under
+    // `files/`; the optimistic tab must use the same path or the
+    // learning-state PUT fails with 404 "Learning source not found".
+    let filename = "";
     try {
       const ok = await confirmAction(`生成${label}`, `将调用模型 API 为 ${fileContent.path} 生成${label}，可能消耗 token。是否继续？`, {
         confirmText: "生成", skipKey: "confirm.file_lesson",
@@ -2919,16 +2928,14 @@ export default function App() {
       const baseFileName = pathParts[pathParts.length - 1] ?? fileContent.path;
       const modeSuffix = nextMode === "brief" ? "_brief" : "_detailed";
       const safeName = baseFileName.replace(/[^a-zA-Z0-9_\-.]/g, "_");
-      // Backend `_safe_lesson_filename` publishes single-file lessons under
-      // `files/`; the optimistic tab must use the same path or the
-      // learning-state PUT fails with 404 "Learning source not found".
-      const filename = `files/${safeName}${modeSuffix}.md`;
+      filename = `files/${safeName}${modeSuffix}.md`;
 
       setCourses((prev) => {
         if (prev.some((c) => c.filename === filename)) return prev;
         return [{ filename, title: "生成中…", group: "lessons" }, ...prev];
       });
       streamingContentRef.current.set(filename, "");
+      streamingPathsRef.current.add(filename);
 
       openItemInGroup(activeGroupId, {
         id: `course:${filename}`,
@@ -2964,6 +2971,7 @@ export default function App() {
             setToast("内容已生成");
             notifyTaskCompleted("CodeCourse 生成完成", `${baseFileName} ${label}已经可以阅读。`);
             streamingContentRef.current.delete(filename);
+            streamingPathsRef.current.delete(filename);
           },
           onError(message) { throw new Error(message); },
         },
@@ -2974,6 +2982,7 @@ export default function App() {
         await openCourseInActiveGroup(project.id, streamedFilename);
       }
     } catch (caught) {
+      streamingPathsRef.current.delete(filename);
       if (caught instanceof Error && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "创建文件课件任务失败");
       /*

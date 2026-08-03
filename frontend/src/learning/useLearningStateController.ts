@@ -14,6 +14,13 @@ type Options = {
   projectId: number | null;
   onError: (message: string) => void;
   onStatus: (message: string) => void;
+  /**
+   * Course paths currently being streamed. While a course is being generated
+   * the backend keeps the file unpublished (writes a `.streaming` temp file),
+   * so PUT learning-state would 404 "Learning source not found". Skip saves
+   * until generation finishes and the file is published.
+   */
+  streamingPaths?: () => ReadonlySet<string>;
 };
 
 function stateKey(
@@ -36,6 +43,7 @@ export function useLearningStateController({
   projectId,
   onError,
   onStatus,
+  streamingPaths,
 }: Options) {
   const [states, setStates] = useState<LearningState[]>([]);
   const statesRef = useRef<LearningState[]>([]);
@@ -119,6 +127,10 @@ export function useLearningStateController({
     immediate = false,
   ) => {
     if (!projectId || !sourcePath) return;
+    // A course that is still being streamed has no published file yet; the
+    // backend would reject the save with 404. Drop the update (schedule it
+    // again once the file exists).
+    if (sourceType === "course" && streamingPaths?.().has(sourcePath)) return;
     const key = stateKey(sourceType, sourcePath);
     const existing = findState(sourceType, sourcePath);
     const payload: LearningStateUpdate = {
@@ -144,7 +156,7 @@ export function useLearningStateController({
         void persist(projectId, key, latest, latestSequence);
       }
     });
-  }, [findState, persist, projectId]);
+  }, [findState, persist, projectId, streamingPaths]);
 
   const flushUpdate = useCallback((
     sourceType: LearningState["source_type"],
@@ -187,6 +199,7 @@ export function useLearningStateController({
 
   const toggleLessonComplete = useCallback(async (filename: string) => {
     if (!projectId) return;
+    if (streamingPaths?.().has(filename)) return;
     const existing = findState("course", filename);
     const nextStatus = existing?.status === "completed"
       ? "in_progress"
@@ -202,7 +215,7 @@ export function useLearningStateController({
       position_value: existing?.position_value ?? 0,
     }, sequence);
     onStatus(nextStatus === "completed" ? "本课已完成" : "已恢复为学习中");
-  }, [findState, onStatus, persist, projectId]);
+  }, [findState, onStatus, persist, projectId, streamingPaths]);
 
   const reset = useCallback(async () => {
     if (!projectId) return;
