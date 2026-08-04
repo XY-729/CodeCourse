@@ -250,6 +250,14 @@ function isLessonPath(path: string): boolean {
   return /^lessons\/lesson_\d+\.md$/i.test(path);
 }
 
+export function pickDefaultCourse(courses: CourseFile[], recentCourse: CourseFile | null | undefined): CourseFile | null {
+  return courses.find((file) => file.filename === "outline.md")
+    ?? recentCourse
+    ?? courses.find((file) => isLessonPath(file.filename))
+    ?? courses[0]
+    ?? null;
+}
+
 function flattenTree(node: TreeNode | null): TreeNode[] {
   if (!node) return [];
   return [node, ...node.children.flatMap((child) => flattenTree(child))];
@@ -2417,7 +2425,7 @@ export default function App() {
           if (restored) return;
           const recent = [...nextLearningStates].sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
           const recentCourse = recent?.source_type === "course" ? nextCourses.find((file) => file.filename === recent.source_path) : null;
-          const firstCourse = recentCourse ?? nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses.find((file) => isLessonPath(file.filename)) ?? nextCourses[0];
+          const firstCourse = pickDefaultCourse(nextCourses, recentCourse);
           if (recent?.source_type === "qa") {
             const record = nextQARecords.find((entry) => _normalizeOutputPath(entry.output_path, entry.id, freshProject.id) === recent.source_path);
             if (record) {

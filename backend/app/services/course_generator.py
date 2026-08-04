@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +12,8 @@ PREFERRED_COURSE_FILES = [
     "project_map.md",
     "outline.md",
 ]
+
+SUB_OUTLINE_RE = re.compile(r"^sub-outline-[0-9a-f]{8}\.md$")
 
 GROUP_LABELS = {
     "": "项目总纲",
@@ -40,7 +43,13 @@ def list_course_files_from_dir(course_dir: Path) -> list[CourseFile]:
     if not course_dir.exists():
         return []
     preferred = [course_dir / name for name in PREFERRED_COURSE_FILES if (course_dir / name).is_file()]
-    extras = sorted(path for path in course_dir.rglob("*.md") if path.name not in PREFERRED_COURSE_FILES)
+    sub_outlines = sorted(
+        path for path in course_dir.glob("sub-outline-*.md")
+        if SUB_OUTLINE_RE.match(path.name)
+    )
+    preferred.extend(sub_outlines)
+    preferred_names = {path.name for path in preferred}
+    extras = sorted(path for path in course_dir.rglob("*.md") if path.name not in preferred_names)
     return [
         CourseFile(
             filename=path.relative_to(course_dir).as_posix(),
