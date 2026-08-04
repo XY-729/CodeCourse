@@ -457,12 +457,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   static async create(): Promise<AndroidLocalProvider> {
     const provider = new AndroidLocalProvider();
     await db.init();
-    await provider.reconcileGenerationServiceState().catch((error) => {
+    // 恢复任务必须等待：生成中的任务需要立刻接续，避免状态错乱。
+    await provider.resumeTasks();
+    // 其余恢复不阻塞冷启动首帧：前台服务状态/索引/观察任务在后台完成。
+    void provider.reconcileGenerationServiceState().catch((error) => {
       console.warn("Initial generation Service reconcile failed", error);
     });
-    await provider.resumeTasks();
-    await provider.resumeIndexes();
-    await provider.resumeObserverJobs().catch((error) => {
+    void provider.resumeIndexes();
+    void provider.resumeObserverJobs().catch((error) => {
       console.warn("Observer job resume failed", error);
     });
     return provider;
@@ -843,13 +845,17 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return (await db.query<Row>("SELECT filename FROM course_files WHERE project_id = ? ORDER BY filename", [projectId])).map((row) => String(row.filename));
   }
   private async getProject(projectId: number): Promise<Project> {
-    const row = (await db.query<Row>("SELECT * FROM projects WHERE id = ?", [projectId]))[0];
+    const row = (await db.query<Row>("SELECT p.*, COALESCE(GROUP_CONCAT(cf.filename, '\n'), '') AS course_names FROM projects p LEFT JOIN course_files cf ON cf.project_id = p.id WHERE p.id = ? GROUP BY p.id", [projectId]))[0];
     if (!row) throw new Error("项目不存在。");
-    return projectFromRow(row, await this.courseNames(projectId));
+    return projectFromRow(row, this.courseNamesFromRow(row));
   }
   private async listProjects(): Promise<Project[]> {
-    const rows = await db.query<Row>("SELECT * FROM projects ORDER BY updated_at DESC");
-    return Promise.all(rows.map(async (row) => projectFromRow(row, await this.courseNames(Number(row.id)))));
+    const rows = await db.query<Row>("SELECT p.*, COALESCE(GROUP_CONCAT(cf.filename, '\n'), '') AS course_names FROM projects p LEFT JOIN course_files cf ON cf.project_id = p.id GROUP BY p.id ORDER BY p.updated_at DESC");
+    return rows.map((row) => projectFromRow(row, this.courseNamesFromRow(row)));
+  }
+  private courseNamesFromRow(row: Row): string[] {
+    const names = String(row.course_names ?? "").trim();
+    return names ? names.split("\n") : [];
   }
   private async createLearningPlan(name: string): Promise<Project> {
     const clean = String(name || "").trim(); if (!clean) throw new Error("请输入学习计划名称。");

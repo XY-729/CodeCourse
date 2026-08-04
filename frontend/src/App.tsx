@@ -2249,6 +2249,80 @@ export default function App() {
     await openQAById(selected.qa_record_id);
   }
 
+  /**
+   * 恢复上次工作区布局。返回 true 表示已恢复并完成打开。
+   * 在第二阶段异步执行，不阻塞骨架渲染。
+   */
+  async function restoreStoredWorkbench(projectId: number, courses: CourseFile[]): Promise<boolean> {
+    if (mobileRuntime) {
+      // Android: try Android key; if missing, one-time migrate from desktop key
+      let stored: StoredWorkbench | null = null;
+      const androidRaw = window.localStorage.getItem(androidWorkbenchStorageKey(projectId));
+      if (androidRaw) {
+        stored = JSON.parse(androidRaw) as StoredWorkbench;
+      } else {
+        const desktopRaw = window.localStorage.getItem(workbenchStorageKey(projectId));
+        if (desktopRaw) {
+          const desktop = JSON.parse(desktopRaw) as StoredWorkbench;
+          if (desktop?.version === WORKBENCH_STORAGE_VERSION && desktop.layout) {
+            // Hydrate once from desktop, normalize, then save stripped + use hydrated in-memory
+            const hydratedDesktop = await hydrateStoredLayout(desktop.layout, projectId, courses);
+            const merged = normalizeToSingleGroup(hydratedDesktop,
+              desktop.activeGroupId ? findGroup(desktop.layout, desktop.activeGroupId)?.activeItemId : null);
+            // Persist stripped layout to Android key
+            try { window.localStorage.setItem(androidWorkbenchStorageKey(projectId), JSON.stringify({
+              version: WORKBENCH_STORAGE_VERSION, layout: stripLayoutContent(merged),
+              activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView,
+              navigationOpen: false, sidebarWidth: 264,
+            })); } catch { /* storage full */ }
+            // Use hydrated layout directly (no re-hydrate)
+            stored = { version: WORKBENCH_STORAGE_VERSION, layout: merged, activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView, navigationOpen: false, sidebarWidth: 264 };
+          }
+        }
+      }
+      if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
+        // Always hydrate — stored layout is stripped of content
+        let restoredLayout = syncLayoutIdCounter(await hydrateStoredLayout(stored.layout, projectId, courses));
+        if (restoredLayout.type === "split") {
+          restoredLayout = normalizeToSingleGroup(restoredLayout, stored.activeGroupId ? findGroup(stored.layout, stored.activeGroupId)?.activeItemId : null);
+        }
+        if (countLayoutItems(restoredLayout) > 0) {
+          const rg = findGroup(restoredLayout, ROOT_GROUP_ID);
+          const ri = rg?.items.find((item) => item.id === rg.activeItemId) ?? null;
+          setLayout(restoredLayout); setActiveGroupId(ROOT_GROUP_ID); setNavigationView("courses"); setNavigationOpen(false); setSidebarWidth(264);
+          if (ri?.type === "file") setFileContent({ path: ri.path, content: ri.content, language: ri.language ?? "plaintext" });
+          else if (ri?.type === "course") { setSelectedCourse(ri.path); void refreshDocumentTerms(ri.qaRecordId ? "qa" : "course", ri.path, projectId); }
+          return true;
+        }
+      }
+      return false;
+    }
+    const wbKey = workbenchStorageKey(projectId);
+    const rawWorkbench = window.localStorage.getItem(wbKey);
+    const stored = rawWorkbench ? JSON.parse(rawWorkbench) as StoredWorkbench : null;
+    if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
+      const restoredLayout = syncLayoutIdCounter(await hydrateStoredLayout(stored.layout, projectId, courses));
+      if (countLayoutItems(restoredLayout) > 0) {
+        const restoredGroupId = hasGroup(restoredLayout, stored.activeGroupId) ? stored.activeGroupId : firstGroupId(restoredLayout);
+        const restoredGroup = findGroup(restoredLayout, restoredGroupId);
+        const restoredItem = restoredGroup?.items.find((item) => item.id === restoredGroup.activeItemId) ?? null;
+        setLayout(restoredLayout);
+        setActiveGroupId(restoredGroupId);
+        setNavigationView(stored.navigationView ?? "courses");
+        setNavigationOpen(Boolean(stored.navigationOpen));
+        setSidebarWidth(clamp(stored.sidebarWidth || 264, 240, 360));
+        if (restoredItem?.type === "file") {
+          setFileContent({ path: restoredItem.path, content: restoredItem.content, language: restoredItem.language ?? "plaintext" });
+        } else if (restoredItem?.type === "course") {
+          setSelectedCourse(restoredItem.path);
+          void refreshDocumentTerms(restoredItem.qaRecordId ? "qa" : "course", restoredItem.path, projectId);
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
   async function openProject(nextProject: Project): Promise<boolean> {
     if (project && project.id !== nextProject.id) {
       if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
@@ -2269,15 +2343,11 @@ export default function App() {
        */
       currentProjectIdRef.current = freshProject.id;
       window.localStorage.setItem(LAST_PROJECT_STORAGE_KEY, String(freshProject.id));
-      const [nextTree, nextCourses, tasks, settings, nextIndexStatus, nextLearningStates, nextQARecords, nextPreferences] = await Promise.all([
+      // 第一阶段：仅轻量元数据，尽快渲染骨架。
+      const [nextTree, nextCourses, tasks] = await Promise.all([
         getTree(freshProject.id),
         getCourseFiles(freshProject.id),
         listGenerationTasks(freshProject.id),
-        getLLMSettings().catch(() => null),
-        getProjectIndexStatus(freshProject.id).catch(() => null),
-        getLearningStates(freshProject.id).catch(() => []),
-        listQARecords(freshProject.id).catch(() => []),
-        getLearnerPreferences(freshProject.id).catch(() => null),
       ]);
       const initialLayout = createInitialLayout();
       const sortedTasks = replaceGenerationTasks(freshProject.id, tasks);
@@ -2292,13 +2362,13 @@ export default function App() {
       };
       setTree(nextTree);
       setCourses(nextCourses);
-      setLLMSettings(settings);
-      setTerminologyDensity(nextPreferences?.terminologyDensity ?? 0.5);
+      setLLMSettings(null);
+      setTerminologyDensity(0.5);
       bumpPersonalizationRevision();
-      setIndexStatus(nextIndexStatus);
-      setLearningStates(nextLearningStates);
-      setQAHistory(nextQARecords);
-      setIndexBuilding(nextIndexStatus?.status === "building");
+      setIndexStatus(null);
+      setLearningStates([]);
+      setQAHistory([]);
+      setIndexBuilding(false);
       setScopeType(freshProject.project_type === "learning_plan" ? "learning_plan" : "full_project");
       setSelectedScopeFiles([]);
       setScopePathsText("");
@@ -2323,143 +2393,95 @@ export default function App() {
       setSelectionAnchor(null);
       setLayout(initialLayout);
       setActiveGroupId(ROOT_GROUP_ID);
-      await refreshQAHistory(freshProject.id);
-      await refreshHighlights(freshProject.id);
-      await refreshKnowledgeLinks(freshProject.id);
-      try {
-        if (mobileRuntime) {
-          // Android: try Android key; if missing, one-time migrate from desktop key
-          let stored: StoredWorkbench | null = null;
-          const androidRaw = window.localStorage.getItem(androidWorkbenchStorageKey(freshProject.id));
-          if (androidRaw) {
-            stored = JSON.parse(androidRaw) as StoredWorkbench;
-          } else {
-            const desktopRaw = window.localStorage.getItem(workbenchStorageKey(freshProject.id));
-            if (desktopRaw) {
-              const desktop = JSON.parse(desktopRaw) as StoredWorkbench;
-              if (desktop?.version === WORKBENCH_STORAGE_VERSION && desktop.layout) {
-                // Hydrate once from desktop, normalize, then save stripped + use hydrated in-memory
-                const hydratedDesktop = await hydrateStoredLayout(desktop.layout, freshProject.id, nextCourses);
-                const merged = normalizeToSingleGroup(hydratedDesktop,
-                  desktop.activeGroupId ? findGroup(desktop.layout, desktop.activeGroupId)?.activeItemId : null);
-                // Persist stripped layout to Android key
-                try { window.localStorage.setItem(androidWorkbenchStorageKey(freshProject.id), JSON.stringify({
-                  version: WORKBENCH_STORAGE_VERSION, layout: stripLayoutContent(merged),
-                  activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView,
-                  navigationOpen: false, sidebarWidth: 264,
-                })); } catch { /* storage full */ }
-                // Use hydrated layout directly (no re-hydrate)
-                stored = { version: WORKBENCH_STORAGE_VERSION, layout: merged, activeGroupId: ROOT_GROUP_ID, navigationView: "courses" as NavigationView, navigationOpen: false, sidebarWidth: 264 };
-              }
+      // 第二阶段：重数据并行加载，不阻塞骨架渲染。
+      void Promise.all([
+        getLLMSettings().catch(() => null),
+        getProjectIndexStatus(freshProject.id).catch(() => null),
+        getLearningStates(freshProject.id).catch(() => []),
+        listQARecords(freshProject.id).catch(() => []),
+        getLearnerPreferences(freshProject.id).catch(() => null),
+      ]).then(([settings, nextIndexStatus, nextLearningStates, nextQARecords, nextPreferences]) => {
+        setLLMSettings(settings);
+        setTerminologyDensity(nextPreferences?.terminologyDensity ?? 0.5);
+        bumpPersonalizationRevision();
+        setIndexStatus(nextIndexStatus);
+        setIndexBuilding(nextIndexStatus?.status === "building");
+        setLearningStates(nextLearningStates);
+        setQAHistory(nextQARecords);
+        refreshQAHistory(freshProject.id);
+        refreshHighlights(freshProject.id);
+        refreshKnowledgeLinks(freshProject.id);
+        // 布局恢复依赖 nextCourses（已在第一阶段就绪），放到第二阶段执行。
+        void restoreStoredWorkbench(freshProject.id, nextCourses).then(async (restored) => {
+          if (restored) return;
+          const recent = [...nextLearningStates].sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
+          const recentCourse = recent?.source_type === "course" ? nextCourses.find((file) => file.filename === recent.source_path) : null;
+          const firstCourse = recentCourse ?? nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses.find((file) => isLessonPath(file.filename)) ?? nextCourses[0];
+          if (recent?.source_type === "qa") {
+            const record = nextQARecords.find((entry) => _normalizeOutputPath(entry.output_path, entry.id, freshProject.id) === recent.source_path);
+            if (record) {
+              const relPath = _normalizeOutputPath(record.output_path, record.id, freshProject.id);
+              const course = await getCourseContent(freshProject.id, relPath).catch(() => null);
+              setSelectedQA(record);
+              setQASessionId(record.session_id ?? null);
+              setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, course ? {
+                id: `course:${relPath}`,
+                type: "course",
+                path: relPath,
+                title: qaTitle(record),
+                content: course.content,
+                qaRecordId: record.id,
+                favorite: record.favorite,
+              } : {
+                id: `qa:${record.id}`,
+                type: "qa",
+                path: relPath,
+                title: qaTitle(record),
+                content: record.answer_md,
+                qaRecordId: record.id,
+                favorite: record.favorite,
+              })));
+              return;
             }
           }
-          if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
-            // Always hydrate — stored layout is stripped of content
-            let restoredLayout = syncLayoutIdCounter(await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses));
-            if (restoredLayout.type === "split") {
-              restoredLayout = normalizeToSingleGroup(restoredLayout, stored.activeGroupId ? findGroup(stored.layout, stored.activeGroupId)?.activeItemId : null);
-            }
-            if (countLayoutItems(restoredLayout) > 0) {
-              const rg = findGroup(restoredLayout, ROOT_GROUP_ID);
-              const ri = rg?.items.find((item) => item.id === rg.activeItemId) ?? null;
-              setLayout(restoredLayout); setActiveGroupId(ROOT_GROUP_ID); setNavigationView("courses"); setNavigationOpen(false); setSidebarWidth(264);
-              if (ri?.type === "file") setFileContent({ path: ri.path, content: ri.content, language: ri.language ?? "plaintext" });
-              else if (ri?.type === "course") { setSelectedCourse(ri.path); void refreshDocumentTerms(ri.qaRecordId ? "qa" : "course", ri.path, freshProject.id); }
-              return finishOpenProject();
-            }
-          }
-        } else {
-          const wbKey = workbenchStorageKey(freshProject.id);
-          const rawWorkbench = window.localStorage.getItem(wbKey);
-          const stored = rawWorkbench ? JSON.parse(rawWorkbench) as StoredWorkbench : null;
-          if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
-            const restoredLayout = syncLayoutIdCounter(await hydrateStoredLayout(stored.layout, freshProject.id, nextCourses));
-            if (countLayoutItems(restoredLayout) > 0) {
-              const restoredGroupId = hasGroup(restoredLayout, stored.activeGroupId) ? stored.activeGroupId : firstGroupId(restoredLayout);
-              const restoredGroup = findGroup(restoredLayout, restoredGroupId);
-              const restoredItem = restoredGroup?.items.find((item) => item.id === restoredGroup.activeItemId) ?? null;
-              setLayout(restoredLayout);
-              setActiveGroupId(restoredGroupId);
-              setNavigationView(stored.navigationView ?? "courses");
-              setNavigationOpen(Boolean(stored.navigationOpen));
-              setSidebarWidth(clamp(stored.sidebarWidth || 264, 240, 360));
-              if (restoredItem?.type === "file") {
-                setFileContent({ path: restoredItem.path, content: restoredItem.content, language: restoredItem.language ?? "plaintext" });
-              } else if (restoredItem?.type === "course") {
-                setSelectedCourse(restoredItem.path);
-                void refreshDocumentTerms(restoredItem.qaRecordId ? "qa" : "course", restoredItem.path, freshProject.id);
-              }
-              return finishOpenProject();
+          if (recent?.source_type === "file") {
+            try {
+              const content = await getProjectFile(freshProject.id, recent.source_path);
+              setFileContent(content);
+              setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, {
+                id: `file:${recent.source_path}`,
+                type: "file",
+                path: recent.source_path,
+                title: recent.source_path.split("/").pop() ?? recent.source_path,
+                content: content.content,
+                language: content.language,
+              })));
+              return;
+            } catch {
+              // A deleted recent file is ignored and the course fallback is opened below.
             }
           }
-        }
-      } catch {
+          if (firstCourse) {
+            const content = await getCourseContent(freshProject.id, firstCourse.filename);
+            void refreshDocumentTerms("course", firstCourse.filename, freshProject.id);
+            setSelectedCourse(firstCourse.filename);
+            setLayout(
+              updateGroup(initialLayout, ROOT_GROUP_ID, (group) =>
+                openItem(group, {
+                  id: `course:${firstCourse.filename}`,
+                  type: "course",
+                  path: firstCourse.filename,
+                  title: firstCourse.title,
+                  content: content.content,
+                }),
+              ),
+            );
+          }
+        });
+      }).catch(() => {
         // Only clean Android key — never touch desktop data from Android
         try { window.localStorage.removeItem(androidWorkbenchStorageKey(freshProject.id)); } catch { /* best-effort */ }
-      }
-      const recent = [...nextLearningStates].sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
-      const recentCourse = recent?.source_type === "course" ? nextCourses.find((file) => file.filename === recent.source_path) : null;
-      const firstCourse = recentCourse ?? nextCourses.find((file) => file.filename === "outline.md") ?? nextCourses.find((file) => isLessonPath(file.filename)) ?? nextCourses[0];
-      if (recent?.source_type === "qa") {
-        const record = nextQARecords.find((entry) => _normalizeOutputPath(entry.output_path, entry.id, freshProject.id) === recent.source_path);
-        if (record) {
-          const relPath = _normalizeOutputPath(record.output_path, record.id, freshProject.id);
-          const course = await getCourseContent(freshProject.id, relPath).catch(() => null);
-          setSelectedQA(record);
-          setQASessionId(record.session_id ?? null);
-          setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, course ? {
-            id: `course:${relPath}`,
-            type: "course",
-            path: relPath,
-            title: qaTitle(record),
-            content: course.content,
-            qaRecordId: record.id,
-            favorite: record.favorite,
-          } : {
-            id: `qa:${record.id}`,
-            type: "qa",
-            path: relPath,
-            title: qaTitle(record),
-            content: record.answer_md,
-            qaRecordId: record.id,
-            favorite: record.favorite,
-          })));
-          return finishOpenProject();
-        }
-      }
-      if (recent?.source_type === "file") {
-        try {
-          const content = await getProjectFile(freshProject.id, recent.source_path);
-          setFileContent(content);
-          setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, {
-            id: `file:${recent.source_path}`,
-            type: "file",
-            path: recent.source_path,
-            title: recent.source_path.split("/").pop() ?? recent.source_path,
-            content: content.content,
-            language: content.language,
-          })));
-          return finishOpenProject();
-        } catch {
-          // A deleted recent file is ignored and the course fallback is opened below.
-        }
-      }
-      if (firstCourse) {
-        const content = await getCourseContent(freshProject.id, firstCourse.filename);
-        void refreshDocumentTerms("course", firstCourse.filename, freshProject.id);
-        setSelectedCourse(firstCourse.filename);
-        setLayout(
-          updateGroup(initialLayout, ROOT_GROUP_ID, (group) =>
-            openItem(group, {
-              id: `course:${firstCourse.filename}`,
-              type: "course",
-              path: firstCourse.filename,
-              title: firstCourse.title,
-              content: content.content,
-            }),
-          ),
-        );
-      }
+      });
       return finishOpenProject();
     } catch (caught) {
       const msg = caught instanceof Error ? caught.message : "打开项目失败";
