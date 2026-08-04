@@ -1486,9 +1486,11 @@ html.platform-android.android-reading-immersive .activity-rail {
   pointer-events: none;
 }
 
+/* 沉浸模式只隐藏头部,保留底部导航占位,避免文档末行被遮挡、
+   也避免滚动容器高度突变引发 scrollTop 振荡(抽搐)。 */
 html.platform-android.android-reading-immersive .workbench,
 html.platform-android.android-reading-immersive .workbench.navigation-open {
-  padding-bottom: 0;
+  padding-bottom: var(--android-bottom-navigation-height);
 }
 
 @media (prefers-reduced-motion: reduce) {
