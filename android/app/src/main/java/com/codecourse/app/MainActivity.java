@@ -139,12 +139,9 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onResume() {
+        // Keep the renderer alive while backgrounded so generation tasks can
+        // continue; must be an instance call on the bridge's WebView.
         applyRendererPriority();
-        if (bridge != null && CodeCourseGenerationService.isServiceActive()) {
-            // Balanced against skipOnPause: an active generation must not stay
-            // in the paused state once the app is visible again.
-            bridge.onResume();
-        }
         super.onResume();
         applyFullscreen();
     }
@@ -158,20 +155,6 @@ public class MainActivity extends BridgeActivity {
         } catch (RuntimeException e) {
             Log.w(TAG, "setRendererPriorityPolicy failed: " + e.getMessage());
         }
-    }
-
-    @Override
-    public void onPause() {
-        if (bridge != null && CodeCourseGenerationService.isServiceActive()) {
-            // Default BridgeActivity.onPause → bridge.onPause() → webView.onPause()
-            // suspends the page/renderer, which stops background generation.
-            // While a generation task is active, keep the WebView running so
-            // JS timers and LLM calls continue in the background. The App
-            // plugin still fires appStateChange via the resume below.
-            Log.d(TAG, "Skipping WebView pause while generation is active");
-            return;
-        }
-        super.onPause();
     }
 
     @Override
