@@ -848,7 +848,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
   }
   private async deleteProject(projectId: number): Promise<{ id: number; status: string; message: string; course_files: string[] }> {
+    // 索引表在删除 projects 行前必须显式清理：code_chunks_fts 是 FTS 表，
+    // 其余表可依赖 FK 级联，但显式删除保证不依赖外键开关状态。
     await db.run("DELETE FROM code_chunks_fts WHERE project_id = ?", [projectId]).catch(() => undefined);
+    await db.run("DELETE FROM code_chunks WHERE project_id = ?", [projectId]).catch(() => undefined);
+    await db.run("DELETE FROM indexed_files WHERE project_id = ?", [projectId]).catch(() => undefined);
+    await db.run("DELETE FROM project_files WHERE project_id = ?", [projectId]).catch(() => undefined);
     for (const table of ["learning_events", "concept_mastery", "preference_events", "learner_preferences"]) {
       await db.run(
         `DELETE FROM ${table} WHERE scope_type='project' AND scope_id=?`,
