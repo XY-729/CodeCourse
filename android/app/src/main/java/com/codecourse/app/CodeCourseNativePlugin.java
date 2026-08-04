@@ -112,6 +112,16 @@ public class CodeCourseNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void updateGenerationHeartbeat(PluginCall call) {
+        CodeCourseGenerationService.updateHeartbeat(
+            getContext(),
+            call.getInt("sessionId", 0),
+            call.getInt("taskId", 0),
+            call.getString("stageLabel", ""));
+        call.resolve();
+    }
+
+    @PluginMethod
     public void notifyCompletion(PluginCall call) {
         CodeCourseGenerationService.showCompletion(
             getContext(),
@@ -228,6 +238,14 @@ public class CodeCourseNativePlugin extends Plugin {
         } catch (Exception e) {
             call.reject("Cannot query battery optimization state", e);
         }
+    }
+
+    /** True while the foreground generation Service has accepted no progress yet. */
+    @PluginMethod
+    public void hasGenerationPendingProgress(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("pending", CodeCourseGenerationService.hasPendingProgress());
+        call.resolve(result);
     }
 
     @PluginMethod

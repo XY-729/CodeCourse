@@ -68,6 +68,10 @@ export const CodeCourseNative = registerPlugin<{
     current: number; total: number; indeterminate?: boolean;
     stageLabel?: string; activeTaskCount?: number;
   }): Promise<void>;
+  updateGenerationHeartbeat(options: {
+    sessionId: number; taskId: number; stageLabel?: string;
+  }): Promise<void>;
+  hasGenerationPendingProgress(): Promise<{ pending: boolean }>;
   switchForegroundTask(options: { sessionId: number; taskId: number }): Promise<ForegroundTaskSwitchResult>;
   notifyCompletion(options: {
     taskId: number; projectId?: number; taskType?: string;

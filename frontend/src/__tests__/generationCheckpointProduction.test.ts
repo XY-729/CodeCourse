@@ -65,6 +65,8 @@ vi.mock("../platform/runtime", () => ({
       taskId,
     })),
     updateGenerationProgress: vi.fn(async () => undefined),
+    updateGenerationHeartbeat: vi.fn(async () => undefined),
+    hasGenerationPendingProgress: vi.fn(async () => ({ pending: false })),
     requestNotificationPermission: vi.fn(async () => ({
       granted: true,
       status: "granted",

@@ -49,6 +49,12 @@ export type GenerationNativeBridge = {
     stageLabel?: string;
     activeTaskCount?: number;
   }): Promise<void>;
+  updateGenerationHeartbeat(options: {
+    sessionId: number;
+    taskId: number;
+    stageLabel?: string;
+  }): Promise<void>;
+  hasGenerationPendingProgress(): Promise<{ pending: boolean }>;
 };
 
 type CoordinatorOptions = {
@@ -131,6 +137,53 @@ export class GenerationServiceCoordinator {
     task.latest = snapshot;
     if (taskId !== this.foregroundTaskId || this.state !== "running") return;
     await this.sendSnapshot(task, false, true);
+  }
+
+  /**
+   * Keep-alive tick while a task is mid-LLM-call. Refreshes the native
+   * notification text so it stays visibly alive even when the throttled
+   * progress path has nothing new to say.
+   */
+  async heartbeat(taskId: number, stageLabel: string): Promise<void> {
+    const task = this.tasks.get(taskId);
+    if (!task || taskId !== this.foregroundTaskId || this.state !== "running") return;
+    await this.native.updateGenerationHeartbeat({
+      sessionId: this.generationSessionId,
+      taskId,
+      stageLabel,
+    });
+  }
+
+  /** True while the native Service is active but accepted no progress yet. */
+  async hasPendingProgress(): Promise<boolean> {
+    try {
+      const state = await this.native.hasGenerationPendingProgress();
+      return Boolean(state?.pending);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Mark the notification as "paused" while the app was backgrounded and JS
+   * could not make progress (renderer suspended). Re-sends the same start
+   * payload with an honest label; the native side refreshes the text.
+   */
+  async heartbeatPaused(): Promise<void> {
+    if (this.state !== "running" || this.foregroundTaskId <= 0) return;
+    const task = this.tasks.get(this.foregroundTaskId);
+    if (!task) return;
+    try {
+      await this.native.setGenerationActive({
+        active: true,
+        label: "应用在后台挂起，回到应用后继续生成",
+        sessionId: this.generationSessionId,
+        taskId: this.foregroundTaskId,
+        activeTaskCount: this.tasks.size,
+      });
+    } catch (error) {
+      this.logger.warn("Generation paused heartbeat failed", error);
+    }
   }
 
   private async serialize(operation: () => Promise<void>): Promise<void> {

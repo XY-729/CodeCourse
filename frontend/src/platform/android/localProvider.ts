@@ -367,6 +367,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private runningTasks = new Set<number>();
   private runningIndexes = new Set<number>();
   private promptStates: Record<string, Record<string, unknown>> = {};
+  /** 1s keep-alive ticks per running task; cleared when the task ends. */
+  private heartbeatIntervals = new Map<number, number>();
 
   // The coordinator is the only owner of foreground Service state.
   private readonly serviceCoordinator = new GenerationServiceCoordinator(CodeCourseNative);
@@ -585,6 +587,16 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const rows = await db.query<Row>("SELECT id FROM generation_tasks WHERE status IN ('queued','running')");
     if (!rows.length) return;
 
+    // If a task was backgrounded before it ever made progress, tell the
+    // notification the truth: work resumes now that the app is visible.
+    try {
+      if (await this.serviceCoordinator.hasPendingProgress()) {
+        await this.serviceCoordinator.heartbeatPaused();
+      }
+    } catch {
+      // Best-effort; normal recovery below is unaffected.
+    }
+
     // Reset any lingering running tasks to queued
     for (const row of rows) {
       await db.run("UPDATE generation_tasks SET status='queued',stage_label='resuming' WHERE id=?", [row.id]);
@@ -647,6 +659,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await db.run("UPDATE generation_tasks SET status='running',progress_current=0,progress_total=1,stage_label='preparing',updated_at=? WHERE id=?", [now(), taskId]);
       await this.reportProgress(taskId, "preparing", 0, 1, true);
 
+      // Keep the native notification visibly alive while this task is busy
+      // (long LLM calls, retry backoff). Heartbeat only needs a live interval;
+      // the coordinator guards against non-foreground tasks.
+      const heartbeat = window.setInterval(() => {
+        void this.serviceCoordinator.heartbeat(taskId, String(taskRow?.stage_label ?? "正在后台生成学习内容")).catch(() => undefined);
+      }, 1000);
+      this.heartbeatIntervals.set(taskId, heartbeat);
+
       // 6. Execute with DB inputHash for checkpoint consistency
       let output: TaskOutput;
       if (taskType === "outline") {
@@ -703,6 +723,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
     } finally {
       // CRITICAL: always cleanup
+      const heartbeat = this.heartbeatIntervals.get(taskId);
+      if (heartbeat !== undefined) {
+        window.clearInterval(heartbeat);
+        this.heartbeatIntervals.delete(taskId);
+      }
       this.runningTasks.delete(taskId);
       this.serviceCoordinator.unregisterTask(taskId);
 

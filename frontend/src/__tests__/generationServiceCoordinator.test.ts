@@ -55,6 +55,17 @@ class NativeBridgeMock implements GenerationNativeBridge {
   async updateGenerationProgress(options: Record<string, unknown>): Promise<void> {
     this.progressCalls.push(options);
   }
+
+  heartbeatCalls: Array<Record<string, unknown>> = [];
+  pendingProgress = false;
+
+  async updateGenerationHeartbeat(options: Record<string, unknown>): Promise<void> {
+    this.heartbeatCalls.push(options);
+  }
+
+  async hasGenerationPendingProgress(): Promise<{ pending: boolean }> {
+    return { pending: this.pendingProgress };
+  }
 }
 
 function task(taskId: number, startedAt = taskId) {
@@ -210,5 +221,56 @@ describe("GenerationServiceCoordinator production lifecycle", () => {
     await service.sync();
     expect(service.snapshot().foregroundTaskId).toBe(1);
     expect(native.switchCalls).toHaveLength(0);
+  });
+});
+
+describe("GenerationServiceCoordinator heartbeat", () => {
+  it("sends heartbeat only for the foreground task while running", async () => {
+    const native = new NativeBridgeMock();
+    const service = coordinator(native);
+    service.registerTask(task(1, 1));
+    service.registerTask(task(2, 2));
+    await service.sync();
+
+    await service.heartbeat(2, "章节计划已完成");
+    expect(native.heartbeatCalls).toHaveLength(0);
+
+    await service.heartbeat(1, "生成学习总纲");
+    expect(native.heartbeatCalls).toEqual([
+      { sessionId: 1, taskId: 1, stageLabel: "生成学习总纲" },
+    ]);
+  });
+
+  it("reports pending progress only when the Service accepted nothing yet", async () => {
+    const native = new NativeBridgeMock();
+    const service = coordinator(native);
+    service.registerTask(task(1));
+    await service.sync();
+    native.pendingProgress = true;
+    await expect(service.hasPendingProgress()).resolves.toBe(true);
+    native.pendingProgress = false;
+    await expect(service.hasPendingProgress()).resolves.toBe(false);
+  });
+
+  it("heartbeatPaused resends an honest label while the task runs", async () => {
+    const native = new NativeBridgeMock();
+    const service = coordinator(native);
+    service.registerTask(task(1));
+    await service.sync();
+    await service.heartbeatPaused();
+    expect(native.startCalls.at(-1)).toMatchObject({
+      active: true,
+      sessionId: 1,
+      taskId: 1,
+      label: "应用在后台挂起，回到应用后继续生成",
+    });
+  });
+
+  it("heartbeatPaused is a no-op when the Service is not running", async () => {
+    const native = new NativeBridgeMock();
+    const service = coordinator(native);
+    service.registerTask(task(1));
+    await service.heartbeatPaused();
+    expect(native.startCalls).toHaveLength(0);
   });
 });

@@ -11,6 +11,7 @@ import android.view.ActionMode;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.webkit.WebView;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -138,8 +139,39 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onResume() {
+        applyRendererPriority();
+        if (bridge != null && CodeCourseGenerationService.isServiceActive()) {
+            // Balanced against skipOnPause: an active generation must not stay
+            // in the paused state once the app is visible again.
+            bridge.onResume();
+        }
         super.onResume();
         applyFullscreen();
+    }
+
+    /** Instance call (non-static): keep the renderer alive while backgrounded. */
+    private void applyRendererPriority() {
+        if (bridge == null || bridge.getWebView() == null) return;
+        try {
+            bridge.getWebView().setRendererPriorityPolicy(
+                WebView.RENDERER_PRIORITY_IMPORTANT, false);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "setRendererPriorityPolicy failed: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void onPause() {
+        if (bridge != null && CodeCourseGenerationService.isServiceActive()) {
+            // Default BridgeActivity.onPause → bridge.onPause() → webView.onPause()
+            // suspends the page/renderer, which stops background generation.
+            // While a generation task is active, keep the WebView running so
+            // JS timers and LLM calls continue in the background. The App
+            // plugin still fires appStateChange via the resume below.
+            Log.d(TAG, "Skipping WebView pause while generation is active");
+            return;
+        }
+        super.onPause();
     }
 
     @Override

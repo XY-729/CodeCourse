@@ -76,6 +76,48 @@ public class CodeCourseGenerationService extends Service {
         return b;
     }
 
+    /** True while the Service is active but no progress update was ever accepted. */
+    public static boolean hasPendingProgress() {
+        if (!SERVICE_ACTIVE.get()) return false;
+        synchronized (SESSION_LOCK) {
+            return sLastAcceptedSequence == 0;
+        }
+    }
+
+    /**
+     * Keep-alive tick from JS while a task is mid-LLM-call. Only refreshes the
+     * notification text; it never touches the progress bar, and it accepts any
+     * sequence (stale beats are harmless) so an over-throttled JS loop still
+     * keeps the notification visibly alive.
+     */
+    public static void updateHeartbeat(Context context, long sessionId, int taskId, String stageLabel) {
+        if (!SERVICE_ACTIVE.get()) return;
+        synchronized (SESSION_LOCK) {
+            if (sCurrentSessionId == 0 || sessionId != sCurrentSessionId || taskId != sCurrentTaskId) return;
+        }
+        NotificationManager mgr = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (mgr == null) return;
+        String label = (stageLabel == null || stageLabel.trim().isEmpty())
+            ? "正在后台生成学习内容" : stageLabel.trim();
+        try {
+            mgr.notify(PROGRESS_NOTIFICATION_ID,
+                new NotificationCompat.Builder(context, CHANNEL_PROGRESS)
+                    .setSmallIcon(R.drawable.ic_stat_codecourse)
+                    .setContentTitle("正在后台生成学习内容")
+                    .setContentText(label + " · 继续完成中")
+                    .setContentIntent(createLaunchIntent(context, 0, null))
+                    .setOngoing(true).setOnlyAlertOnce(true)
+                    .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setProgress(0, 0, true)
+                    .build());
+        } catch (SecurityException e) {
+            Log.w(TAG, "Heartbeat notify denied");
+        } catch (RuntimeException e) {
+            Log.w(TAG, "updateHeartbeat failed: " + e.getMessage());
+        }
+    }
+
     public static Intent createStartIntent(Context context, String label,
                                             long sessionId, int foregroundTaskId, int activeCount) {
         return new Intent(context, CodeCourseGenerationService.class)
