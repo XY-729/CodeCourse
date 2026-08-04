@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const dbMock = vi.hoisted(() => ({
   run: vi.fn(async () => 0),
-  query: vi.fn(async () => []),
+  query: vi.fn<() => Promise<unknown[]>>(async () => []),
 }));
 
 vi.mock("../database", () => ({
