@@ -112,7 +112,7 @@ import { usePersonalizationController } from "./personalization/usePersonalizati
 import { useDocumentTermsController } from "./personalization/useDocumentTermsController";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
 import { getCodeCourseProvider } from "./platform/provider";
-import { canRetry, permissionNotice as buildPermissionNotice, type PermissionNotice } from "./platform/android/generationState";
+import { canRetry, permissionNotice as buildPermissionNotice, batteryNotice as buildBatteryNotice, type PermissionNotice, type ProviderNotice } from "./platform/android/generationState";
 import { setCodeCourseDragImage } from "./utils/dragImage";
 import { useAppDialog } from "./hooks/useAppDialog";
 import { useQAGenerationController } from "./hooks/useQAGenerationController";
@@ -478,6 +478,8 @@ export default function App() {
   });
   const [permissionNotice, setPermissionNotice] = useState<PermissionNotice>(null);
   const dismissedPermissionStatusRef = useRef<string | null>(null);
+  const [batteryNotice, setBatteryNotice] = useState<ReturnType<typeof buildBatteryNotice>>(null);
+  const awaitingBatterySettingsRef = useRef(false);
 
   const activeTermSource = useMemo(() => {
     const item = getActiveOpenItem();
@@ -691,13 +693,15 @@ export default function App() {
       if (disposed) return;
       registeredProvider = provider;
       if (provider.setPermissionNoticeHandler) {
-        provider.setPermissionNoticeHandler((notice: PermissionNotice) => {
+        provider.setPermissionNoticeHandler((notice: ProviderNotice) => {
           if (disposed) return;
-          if (notice) {
-            setPermissionNotice(notice);
-          } else {
+          if (!notice) {
             setPermissionNotice(null);
+            setBatteryNotice(null);
+            return;
           }
+          if (notice.kind === "permission") setPermissionNotice(notice.notice);
+          else setBatteryNotice(notice.notice);
         });
       }
     });
@@ -732,6 +736,12 @@ export default function App() {
               console.warn("Generation task resume sync failed", error);
             });
           }
+          if (awaitingBatterySettingsRef.current) {
+            awaitingBatterySettingsRef.current = false;
+            provider.invalidateBatteryOptimization?.();
+            const state = await provider.getBatteryOptimizationStatus?.();
+            if (state) setBatteryNotice(buildBatteryNotice(state.ignoring));
+          }
           if (!awaitingNotificationSettingsRef.current) return;
           awaitingNotificationSettingsRef.current = false;
           provider.invalidatePermissionCache?.();
@@ -756,6 +766,22 @@ export default function App() {
     void CodeCourseNative.openNotificationSettings().catch(() => {
       awaitingNotificationSettingsRef.current = false;
       setToast("无法打开通知设置");
+    });
+  }, []);
+
+  const handleOpenBatterySettings = useCallback(() => {
+    awaitingBatterySettingsRef.current = true;
+    void CodeCourseNative.requestIgnoreBatteryOptimizations().then((result) => {
+      if (result.granted) {
+        awaitingBatterySettingsRef.current = false;
+        setBatteryNotice(null);
+        return;
+      }
+      if (!result.fallback) return;
+      // 原生侧已回退打开应用详情页，回到 app 时重查。
+    }).catch(() => {
+      awaitingBatterySettingsRef.current = false;
+      setToast("无法打开电池设置");
     });
   }, []);
 
@@ -5766,6 +5792,19 @@ export default function App() {
               </button>
             ) : null}
             <button className="icon-button" onClick={handleDismissPermissionNotice} title="关闭">
+              <X size={14} />
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {batteryNotice ? (
+        <div className="permission-notice-banner">
+          <span>{batteryNotice.message}</span>
+          <div className="permission-notice-actions">
+            <button className="secondary-button" onClick={handleOpenBatterySettings}>
+              前往电池设置
+            </button>
+            <button className="icon-button" onClick={() => setBatteryNotice(null)} title="关闭">
               <X size={14} />
             </button>
           </div>

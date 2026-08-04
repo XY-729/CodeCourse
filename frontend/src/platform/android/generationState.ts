@@ -234,6 +234,23 @@ export type PermissionNotice = {
   showSettingsAction: boolean;
 } | null;
 
+export type BatteryNotice = {
+  message: string;
+} | null;
+
+/** Notice channel emitted by the provider; `null` clears both banners. */
+export type ProviderNotice =
+  | { kind: "permission"; notice: Exclude<PermissionNotice, null> }
+  | { kind: "battery"; notice: Exclude<BatteryNotice, null> }
+  | null;
+
+export function batteryNotice(ignoring: boolean): BatteryNotice {
+  if (ignoring) return null;
+  return {
+    message: "后台生成可能被系统停止。建议在电池设置中允许 CodeCourse 后台运行。",
+  };
+}
+
 export function permissionNotice(result: NotificationPermissionResult): PermissionNotice {
   switch (result.status) {
     case "denied":

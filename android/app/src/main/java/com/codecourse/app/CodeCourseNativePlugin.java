@@ -219,6 +219,58 @@ public class CodeCourseNativePlugin extends Plugin {
         } catch (Exception e) { call.reject("Cannot open notification settings", e); }
     }
 
+    @PluginMethod
+    public void isIgnoringBatteryOptimizations(PluginCall call) {
+        try {
+            JSObject result = new JSObject();
+            result.put("ignoring", isBatteryOptimizationIgnored());
+            call.resolve(result);
+        } catch (Exception e) {
+            call.reject("Cannot query battery optimization state", e);
+        }
+    }
+
+    @PluginMethod
+    public void requestIgnoreBatteryOptimizations(PluginCall call) {
+        try {
+            if (isBatteryOptimizationIgnored()) {
+                JSObject ok = new JSObject();
+                ok.put("granted", true);
+                ok.put("fallback", false);
+                call.resolve(ok);
+                return;
+            }
+            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:" + getContext().getPackageName()));
+            if (getActivity() != null) getActivity().startActivity(intent);
+            else { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(intent); }
+            JSObject result = new JSObject();
+            result.put("granted", false);
+            result.put("fallback", false);
+            call.resolve(result);
+        } catch (Exception e) {
+            // 部分机型拒绝 ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS，回退到应用详情页由用户手动允许。
+            try {
+                Intent detail = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + getContext().getPackageName()));
+                detail.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                getContext().startActivity(detail);
+            } catch (Exception ignored) {
+            }
+            JSObject fallback = new JSObject();
+            fallback.put("granted", false);
+            fallback.put("fallback", true);
+            call.resolve(fallback);
+        }
+    }
+
+    private boolean isBatteryOptimizationIgnored() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+        android.os.PowerManager pm = (android.os.PowerManager) getContext()
+            .getSystemService(Context.POWER_SERVICE);
+        return pm != null && pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
+    }
+
     @Override
     protected void handleRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.handleRequestPermissionsResult(requestCode, permissions, grantResults);

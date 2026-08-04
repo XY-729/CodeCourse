@@ -28,6 +28,16 @@ export type ForegroundTaskSwitchResult = {
   taskId: number;
 };
 
+export type BatteryOptimizationState = {
+  ignoring: boolean;
+};
+
+export type BatteryOptimizationRequestResult = {
+  granted: boolean;
+  fallback: boolean;
+  packageName?: string;
+};
+
 export type CompletionNavigation = {
   projectId: number;
   taskId: number;
@@ -67,6 +77,8 @@ export const CodeCourseNative = registerPlugin<{
   requestNotificationPermission(): Promise<NotificationPermissionResult>;
   getNotificationPermissionStatus(): Promise<NotificationPermissionResult>;
   openNotificationSettings(): Promise<void>;
+  isIgnoringBatteryOptimizations(): Promise<BatteryOptimizationState>;
+  requestIgnoreBatteryOptimizations(): Promise<BatteryOptimizationRequestResult>;
   consumePendingCompletionNavigation(): Promise<CompletionNavigation | null>;
   ackCompletionNavigation(options: { navigationId: string }): Promise<void>;
 }>("CodeCourseNative");

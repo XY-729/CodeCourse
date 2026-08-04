@@ -1,13 +1,13 @@
 import { CapacitorHttp, HttpResponse } from "@capacitor/core";
 import { CodeCourseNative, CodeCourseSecureStore } from "../runtime";
-import type { NotificationPermissionResult, NotificationPermissionStatus } from "../runtime";
+import type { BatteryOptimizationState, NotificationPermissionResult, NotificationPermissionStatus } from "../runtime";
 import type { CodeCourseProvider } from "../provider";
 import {
   CHECKPOINT_VERSION as CP_VER,
   parseOutlineCheckpoint, parseDetailedLessonCheckpoint,
   courseGroupForTaskType, buildCompletionLabel,
-  canRetry, buildSlimCheckpoint, permissionNotice,
-  type PermissionNotice,
+  canRetry, buildSlimCheckpoint, permissionNotice, batteryNotice,
+  type ProviderNotice,
   type OutlineCheckpoint, type DetailedLessonCheckpoint,
   type LessonPlan as GsLessonPlan,
 } from "./generationState";
@@ -439,11 +439,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private permissionPromise: Promise<NotificationPermissionResult> | null = null;
   private lastPermissionNotice: NotificationPermissionStatus | null = null;
 
-  // ---- notification callbacks ----
-  private onPermissionNotice: ((notice: PermissionNotice) => void) | null = null;
+  // ---- notice channel ----
+  private onPermissionNotice: ((notice: ProviderNotice) => void) | null = null;
 
-  /** Register a callback for permission UI notices. */
-  setPermissionNoticeHandler(handler: ((notice: PermissionNotice) => void) | null) {
+  /** Register a callback for permission/battery UI notices. */
+  setPermissionNoticeHandler(handler: ((notice: ProviderNotice) => void) | null) {
     this.onPermissionNotice = handler;
   }
 
@@ -484,6 +484,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   //  Notification Permission
   // ==================================================================
 
+  private batteryState: boolean | null = null;
+
   private async ensureNotificationPermission(): Promise<void> {
     if (this.permissionResult) {
       this.emitPermissionNotice(this.permissionResult);
@@ -505,6 +507,35 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     this.permissionPromise = null;
   }
 
+  private async ensureBatteryOptimization(): Promise<void> {
+    if (this.batteryState !== null) {
+      this.emitBatteryNotice(this.batteryState);
+      return;
+    }
+    try {
+      const state = await CodeCourseNative.isIgnoringBatteryOptimizations();
+      this.batteryState = state.ignoring;
+      this.emitBatteryNotice(state.ignoring);
+    } catch {
+      // 查询失败时静默跳过，不阻塞生成。
+    }
+  }
+
+  /** Re-check battery exemption after returning from system settings. */
+  invalidateBatteryOptimization() {
+    this.batteryState = null;
+  }
+
+  async getBatteryOptimizationStatus(): Promise<BatteryOptimizationState> {
+    try {
+      const state = await CodeCourseNative.isIgnoringBatteryOptimizations();
+      this.batteryState = state.ignoring;
+      return state;
+    } catch {
+      return { ignoring: this.batteryState ?? false };
+    }
+  }
+
   async getNotificationPermissionStatus(): Promise<NotificationPermissionResult> {
     this.permissionResult = await CodeCourseNative.getNotificationPermissionStatus();
     this.permissionPromise = null;
@@ -520,8 +551,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
     if (result.status !== this.lastPermissionNotice) {
       this.lastPermissionNotice = result.status;
-      this.onPermissionNotice?.(permissionNotice(result));
+      const notice = permissionNotice(result);
+      if (notice) this.onPermissionNotice?.({ kind: "permission", notice });
     }
+  }
+
+  private emitBatteryNotice(ignoring: boolean) {
+    const notice = batteryNotice(ignoring);
+    if (notice) this.onPermissionNotice?.({ kind: "battery", notice });
   }
 
   // ==================================================================
@@ -600,6 +637,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
       // 5. Permission + service
       await this.ensureNotificationPermission();
+      await this.ensureBatteryOptimization();
       await this.syncGenerationServiceState();
 
       // Mark running
