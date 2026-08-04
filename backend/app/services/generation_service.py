@@ -50,6 +50,7 @@ from app.services.llm_client import call_openai_compatible_chat
 from app.services.term_service import parse_term_metadata, register_document_terms, term_metadata_instruction
 from app.services.scanner import list_key_files, read_text_file, safe_join, scan_tree
 from app.services.storage import (
+    create_knowledge_edge,
     create_knowledge_node,
     GenerationTask,
     cleanup_course_artifacts,
@@ -338,6 +339,36 @@ def _lesson_outline_section(outline: str, lesson_number: int, fallback_title: st
 
 def _outline_lesson_filename(lesson_number: int) -> str:
     return f"lessons/lesson_{lesson_number:02d}.md"
+
+
+def _link_lesson_to_outline(
+    project_id: int,
+    lesson_node_id: int,
+    outline_rel: str,
+) -> None:
+    """Connect a generated lesson to its outline node so it appears in the graph."""
+    outline = find_knowledge_node(
+        project_id,
+        node_type="course",
+        ref_type="course",
+        ref_path=outline_rel,
+    )
+    if outline is None:
+        outline = create_knowledge_node(
+            project_id=project_id,
+            node_type="course",
+            title="总纲" if outline_rel == "outline.md" else outline_rel,
+            ref_type="course",
+            ref_path=outline_rel,
+            summary="课程学习总纲",
+        )
+    create_knowledge_edge(
+        project_id,
+        outline.id,
+        lesson_node_id,
+        "parent_of",
+        "属于总纲",
+    )
 
 
 _SUB_OUTLINE_RE = re.compile(r"^sub-outline-[0-9a-f]{8}\.md$")
@@ -859,7 +890,24 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
             lesson = f"# {Path(relative_path).name} {title}\n\n{lesson}"
         output_path = project_course_dir(project_id) / _safe_lesson_filename(relative_path, mode)
         _atomic_write(output_path, lesson)
-        register_document_terms(project_id, "course", _safe_lesson_filename(relative_path, mode), lesson, model_terms)
+        filename = _safe_lesson_filename(relative_path, mode)
+        register_document_terms(project_id, "course", filename, lesson, model_terms)
+        existing = find_knowledge_node(
+            project_id,
+            node_type="course",
+            ref_type="course",
+            ref_path=filename,
+        )
+        if existing is None:
+            existing = create_knowledge_node(
+                project_id=project_id,
+                node_type="course",
+                title=Path(relative_path).name,
+                ref_type="course",
+                ref_path=filename,
+                summary=mode_label,
+            )
+        _link_lesson_to_outline(project_id, existing.id, "outline.md")
         update_generation_task(
             task_id,
             "completed",
@@ -1462,7 +1510,7 @@ def run_outline_lesson_task(
                 ref_path=relative_path,
             )
             if existing is None:
-                create_knowledge_node(
+                existing = create_knowledge_node(
                     project_id=project_id,
                     node_type="course",
                     title=node_title,
@@ -1470,6 +1518,11 @@ def run_outline_lesson_task(
                     ref_path=relative_path,
                     summary=lesson_title,
                 )
+            _link_lesson_to_outline(
+                project_id,
+                existing.id,
+                outline_path or "outline.md",
+            )
             current_task = get_generation_task(task_id)
             update_generation_task(
                 task_id,
@@ -1502,7 +1555,7 @@ def run_outline_lesson_task(
             ref_path=relative_path,
         )
         if existing is None:
-            create_knowledge_node(
+            existing = create_knowledge_node(
                 project_id=project_id,
                 node_type="course",
                 title=node_title,
@@ -1510,6 +1563,11 @@ def run_outline_lesson_task(
                 ref_path=relative_path,
                 summary=lesson_title,
             )
+        _link_lesson_to_outline(
+            project_id,
+            existing.id,
+            outline_path or "outline.md",
+        )
         current_task = get_generation_task(task_id)
         update_generation_task(
             task_id,
@@ -2047,10 +2105,15 @@ async def stream_outline_lesson_generation(
             project_id, node_type="course", title=node_title, ref_type="course", ref_path=filename,
         )
         if existing is None:
-            create_knowledge_node(
+            existing = create_knowledge_node(
                 project_id=project_id, node_type="course", title=node_title,
                 ref_type="course", ref_path=filename, summary=lesson_title,
             )
+        _link_lesson_to_outline(
+            project_id,
+            existing.id,
+            outline_path or "outline.md",
+        )
 
         update_generation_task(task.id, "completed", output_path=output_path)
         yield _sse_event("completed", {"filename": filename, "task_id": task.id})

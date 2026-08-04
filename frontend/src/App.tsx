@@ -57,6 +57,7 @@ import {
   deleteQARecord,
   deleteCourseFile,
 } from "./api/client";
+import { titleFromMarkdown } from "./utils/titleFromMarkdown";
 import type {
   CourseFile,
   FileContent,
@@ -1967,7 +1968,7 @@ export default function App() {
       }
       if (item.type === "course") {
         const course = await getCourseContent(projectId, item.path);
-        let title = availableCourses.find((entry) => entry.filename === item.path)?.title ?? item.title;
+        let title = availableCourses.find((entry) => entry.filename === item.path)?.title ?? titleFromMarkdown(item.path, course.content);
         if (item.qaRecordId) {
           const record = await getQARecord(projectId, item.qaRecordId).catch(() => null);
           if (record) title = qaTitle(record);
@@ -2027,7 +2028,7 @@ export default function App() {
         id: `course:${payload.filename}`,
         type: "course",
         path: payload.filename,
-        title: courses.find((file) => file.filename === payload.filename)?.title ?? payload.filename,
+        title: courses.find((file) => file.filename === payload.filename)?.title ?? titleFromMarkdown(payload.filename, content.content),
         content: content.content,
       };
     }
@@ -2141,7 +2142,7 @@ export default function App() {
       id: `course:${filename}`,
       type: "course",
       path: filename,
-      title: courses.find((file) => file.filename === filename)?.title ?? filename,
+      title: courses.find((file) => file.filename === filename)?.title ?? titleFromMarkdown(filename, content.content),
       content: content.content,
       qaRecordId: matchingQA?.id,
     });
@@ -5069,7 +5070,8 @@ export default function App() {
   const activeLessonMatch = activeOpenItem?.type === "course" ? activeOpenItem.path.match(/^lessons\/lesson_(\d+)\.md$/i) : null;
   const activeLessonNumber = activeLessonMatch ? Number(activeLessonMatch[1]) : null;
   const activeLessonTitle = activeOpenItem && activeLessonNumber
-    ? courses.find((item) => item.filename === activeOpenItem.path)?.title ?? activeOpenItem.title
+    ? courses.find((item) => item.filename === activeOpenItem.path)?.title
+      ?? titleFromMarkdown(activeOpenItem.path, activeOpenItem.content ?? "")
     : "";
   const { lessonFilesForProgress, completedLessonCount } = useMemo(() => {
     const lessonFiles = courses.filter((item) => isLessonPath(item.filename));

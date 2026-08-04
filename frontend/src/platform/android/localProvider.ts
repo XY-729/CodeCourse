@@ -684,7 +684,18 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       // Persist result — group by taskType, not filename
       const group = taskType === "outline" || taskType === "sub_outline" ? "总纲" : taskType === "file_lesson" ? "文件课件" : "课件";
       await this.upsertCourse(projectId, output.filename, output.content, group);
-      await this.ensureCourseNode(projectId, output.filename);
+      if (taskType !== "outline" && taskType !== "sub_outline") {
+        // Best-effort: link the lesson to its outline node. A graph-link failure
+        // must never fail the completed generation itself.
+        try {
+          const lessonNode = await this.ensureCourseNode(projectId, output.filename);
+          if (lessonNode?.id != null) {
+            await this.linkLessonToOutline(projectId, lessonNode.id, String(payload.outline_path || "outline.md"));
+          }
+        } catch (err) {
+          console.warn("Graph link failed for task", taskId, ":", safeErrorMessage(err));
+        }
+      }
       await db.run("UPDATE generation_tasks SET status='completed',progress_current=progress_total,stage_label='completed',output_path=?,updated_at=? WHERE id=?", [output.filename, now(), taskId]);
 
       // Slim checkpoint — always reduce payload after success
@@ -2839,6 +2850,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const stamp = now(); const id = await db.run("INSERT INTO knowledge_nodes(project_id,node_type,title,ref_type,ref_id,ref_path,summary,x,y,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)", [projectId, payload.node_type || "manual", payload.title, payload.ref_type || null, payload.ref_id ?? null, payload.ref_path || null, payload.summary || null, payload.x ?? null, payload.y ?? null, stamp, stamp]); return this.nodeFromRow((await db.query<Row>("SELECT * FROM knowledge_nodes WHERE id=?", [id]))[0]);
   }
   private async ensureCourseNode(projectId: number, filename: string): Promise<KnowledgeNode> { return this.createNode(projectId, { node_type: "course", title: sourceNodeTitle("course", filename), ref_type: "course", ref_path: filename }); }
+  private async linkLessonToOutline(projectId: number, lessonNodeId: number, outlinePath: string): Promise<void> {
+    const outlineRel = outlinePath || "outline.md";
+    const outlineNode = await this.createNode(projectId, { node_type: "course", title: "总纲", ref_type: "course", ref_path: outlineRel });
+    await this.createEdge(projectId, { source_node_id: outlineNode.id, target_node_id: lessonNodeId, relation_type: "parent_of", label: "属于总纲" });
+  }
   private async ensureSourceNode(projectId: number, payload: QAAskPayload): Promise<KnowledgeNode | null> {
     if (payload.parent_qa_id) { const parent = await this.getQA(projectId, payload.parent_qa_id); return this.createNode(projectId, { node_type: "qa", title: parent.display_title || parent.question, ref_type: "qa", ref_id: parent.id, ref_path: parent.output_path }); }
     if (!payload.source_path) return this.createNode(projectId, { node_type: "manual", title: (await this.getProject(projectId)).name, ref_type: "project", ref_id: projectId });
