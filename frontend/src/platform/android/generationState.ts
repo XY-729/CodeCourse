@@ -63,7 +63,7 @@ function validateBaseFields(raw: Record<string, unknown>, expectedTaskType: stri
 
 /** Full parser — validates AND returns all business fields. */
 export function parseOutlineCheckpoint(
-  raw: unknown, expectedTaskType: "outline" | "file_lesson", expectedInputHash: string,
+  raw: unknown, expectedTaskType: "outline" | "sub_outline" | "file_lesson", expectedInputHash: string,
 ): OutlineCheckpoint | null {
   if (!raw || typeof raw !== "object") return null;
   const cp = raw as Record<string, unknown>;
@@ -155,7 +155,7 @@ export function validateBaseCheckpoint(raw: unknown, expectedTaskType: string, e
 // ---- course group ----
 
 export function courseGroupForTaskType(taskType: string): string {
-  if (taskType === "outline") return "总纲";
+  if (taskType === "outline" || taskType === "sub_outline") return "总纲";
   if (taskType === "file_lesson") return "文件课件";
   if (taskType === "outline_lesson") return "课件";
   throw new Error(`Unknown task type: ${taskType}`);
@@ -167,6 +167,7 @@ type TaskOutput = { filename: string; content: string };
 
 export function buildCompletionLabel(taskType: string, projectName: string, output: TaskOutput): string {
   if (taskType === "outline") return `${projectName} · 学习总纲已生成`;
+  if (taskType === "sub_outline") return `${projectName} · 子学习总纲已生成`;
   if (taskType === "file_lesson") {
     const fileName = output.filename.split("/").pop() ?? output.filename;
     return `${projectName} · ${fileName} 的文件课件已生成`;

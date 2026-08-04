@@ -337,6 +337,7 @@ def generate_outline_lesson(project_id: int, payload: GenerateOutlineLessonReque
             payload.title,
             settings.get("model"),
             payload.instructions,
+            payload.outline_path,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -348,6 +349,7 @@ def generate_outline_lesson(project_id: int, payload: GenerateOutlineLessonReque
             payload.lesson_number,
             payload.title,
             payload.instructions,
+            payload.outline_path,
         )
     return _to_task_response(task)
 
@@ -366,6 +368,7 @@ def preview_outline_lesson(
             project_id,
             payload.lesson_number,
             payload.title,
+            payload.outline_path,
         ))
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -420,7 +423,7 @@ async def generate_outline_lesson_stream(project_id: int, payload: GenerateOutli
     async def generate():
         try:
             async for event in stream_outline_lesson_generation(
-                project_id, payload.lesson_number, payload.title, payload.instructions,
+                project_id, payload.lesson_number, payload.title, payload.instructions, payload.outline_path,
             ):
                 yield _format_sse(event)
         except asyncio.CancelledError:

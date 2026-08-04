@@ -304,7 +304,7 @@ def extract_outline_lessons(outline: str) -> list[tuple[int, str]]:
     return [(number, title) for number, title in lessons if not (number in seen or seen.add(number))][:12]
 
 
-def add_outline_lesson_links(outline: str) -> str:
+def add_outline_lesson_links(outline: str, outline_path: Optional[str] = None) -> str:
     cleaned = re.sub(
         rf"\n?{re.escape(LESSON_LINKS_START)}.*?{re.escape(LESSON_LINKS_END)}\n?",
         "\n",
@@ -314,6 +314,7 @@ def add_outline_lesson_links(outline: str) -> str:
     lessons = extract_outline_lessons(cleaned)
     if not lessons:
         return cleaned + "\n"
+    suffix = f"&outline_path={quote(outline_path, safe='')}" if outline_path else ""
     lines = [
         LESSON_LINKS_START,
         "## 按课生成课件",
@@ -321,7 +322,7 @@ def add_outline_lesson_links(outline: str) -> str:
         "",
     ]
     for number, title in lessons:
-        lines.append(f"- [生成第 {number} 课：{title}](https://codecourse.local/generate-lesson/{number}?title={quote(title, safe='')})")
+        lines.append(f"- [生成第 {number} 课：{title}](https://codecourse.local/generate-lesson/{number}?title={quote(title, safe='')}{suffix})")
     lines.extend([LESSON_LINKS_END, ""])
     return cleaned + "\n\n" + "\n".join(lines)
 
@@ -339,6 +340,16 @@ def _outline_lesson_filename(lesson_number: int) -> str:
     return f"lessons/lesson_{lesson_number:02d}.md"
 
 
+_SUB_OUTLINE_RE = re.compile(r"^sub-outline-[0-9a-f]{8}\.md$")
+
+
+def _sub_outline_filename(scope: LearningScopeRequest) -> str:
+    return f"sub-outline-{hashlib.sha256(json.dumps({'paths': scope.paths, 'title': ''}, sort_keys=True).encode()).hexdigest()[:8]}.md"
+def _validate_sub_outline_path(outline_path: str) -> None:
+    if not _SUB_OUTLINE_RE.match(outline_path):
+        raise RuntimeError("子总纲课件只能基于子总纲文件生成。")
+
+
 def _current_index_fingerprint(project_id: int) -> Optional[str]:
     status = get_project_index_status(project_id)
     value = status.get("indexed_fingerprint") or status.get("active_generation")
@@ -351,8 +362,23 @@ def _ensure_lesson_files(
     lesson_number: int,
     lesson_title: str,
     lesson_section: str,
+    bypass_cache: bool = False,
 ) -> list[str]:
     """Refresh missing, stale, or invalid lesson-file references before use."""
+    if bypass_cache:
+        selected = select_lesson_file_paths(
+            project_id,
+            repo_root,
+            lesson_title,
+            lesson_section,
+        )
+        upsert_lesson_files(
+            project_id,
+            lesson_number,
+            [(path, "index") for path in selected],
+            _current_index_fingerprint(project_id),
+        )
+        return selected
     records = get_lesson_file_records(project_id, lesson_number)
     fingerprint = _current_index_fingerprint(project_id)
     stale = not records
@@ -384,6 +410,7 @@ def _repository_lesson_evidence(
     lesson_number: int,
     lesson_title: str,
     lesson_section: str,
+    bypass_cache: bool = False,
 ) -> tuple[str, str, dict[str, Any]]:
     """Resolve fresh file samples and ranked RAG snippets for one lesson."""
     search_query = f"{lesson_title} {lesson_section[:2000]}".strip()
@@ -401,6 +428,7 @@ def _repository_lesson_evidence(
         lesson_number,
         lesson_title,
         lesson_section,
+        bypass_cache=bypass_cache,
     )
     ranges = [
         EvidenceRange(item.path, item.start_line, item.end_line)
@@ -446,6 +474,7 @@ def preview_outline_lesson_evidence(
     project_id: int,
     lesson_number: int,
     requested_title: str,
+    outline_path: Optional[str] = None,
 ) -> dict[str, Any]:
     project = get_project(project_id)
     if project is None:
@@ -460,10 +489,13 @@ def preview_outline_lesson_evidence(
             "budget_skipped": [],
             "ready": True,
         }
-    outline_path = project_course_dir(project_id) / "outline.md"
-    if not outline_path.is_file():
+    outline_rel = outline_path or "outline.md"
+    if outline_path is not None and outline_path != "outline.md":
+        _validate_sub_outline_path(outline_path)
+    outline_full = project_course_dir(project_id) / outline_rel
+    if not outline_full.is_file():
         raise RuntimeError("请先生成项目学习总纲，再生成课件。")
-    outline = outline_path.read_text(encoding="utf-8")
+    outline = outline_full.read_text(encoding="utf-8")
     lesson_title, lesson_section = _lesson_outline_section(outline, lesson_number, requested_title)
     _, _, preview = _repository_lesson_evidence(
         project_id,
@@ -471,6 +503,7 @@ def preview_outline_lesson_evidence(
         lesson_number,
         lesson_title,
         lesson_section,
+        bypass_cache=outline_rel != "outline.md",
     )
     return preview
 
@@ -481,11 +514,15 @@ def build_outline_lesson_input(
     lesson_number: int,
     requested_title: str,
     instructions: str = "",
+    outline_path: Optional[str] = None,
 ) -> tuple[str, str, str]:
-    outline_path = project_course_dir(project_id) / "outline.md"
-    if not outline_path.is_file():
+    outline_rel = outline_path or "outline.md"
+    if outline_path is not None and outline_path != "outline.md":
+        _validate_sub_outline_path(outline_path)
+    outline_full = project_course_dir(project_id) / outline_rel
+    if not outline_full.is_file():
         raise RuntimeError("请先生成项目学习总纲，再生成课件。")
-    outline = outline_path.read_text(encoding="utf-8")
+    outline = outline_full.read_text(encoding="utf-8")
     lesson_title, lesson_section = _lesson_outline_section(outline, lesson_number, requested_title)
     project = get_project(project_id)
     user_instructions = _clean_instructions(instructions)
@@ -512,6 +549,7 @@ def build_outline_lesson_input(
         lesson_number,
         lesson_title,
         lesson_section,
+        bypass_cache=outline_rel != "outline.md",
     )
     lesson_input = "\n\n".join(
         [
@@ -527,6 +565,7 @@ def build_outline_lesson_input(
         str(lesson_number),
         lesson_title,
         user_instructions,
+        outline_rel,
         outline,
         file_blocks,
         rag_context,
@@ -664,11 +703,16 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
         content, model_terms = parse_term_metadata(content)
         project_map, outline = _parse_outline_files(content)
         output_dir = project_course_dir(project_id)
-        _atomic_write(output_dir / "project_map.md", project_map)
-        _atomic_write(output_dir / "outline.md", add_outline_lesson_links(outline))
-        register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
-        register_document_terms(project_id, "course", "outline.md", outline, model_terms)
-        _select_and_persist_lesson_files(project_id, repo_root, outline)
+        if scope.type == "files":
+            sub_path = _sub_outline_filename(scope)
+            _atomic_write(output_dir / sub_path, add_outline_lesson_links(outline, sub_path))
+            register_document_terms(project_id, "course", sub_path, outline, model_terms)
+        else:
+            _atomic_write(output_dir / "project_map.md", project_map)
+            _atomic_write(output_dir / "outline.md", add_outline_lesson_links(outline))
+            register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
+            register_document_terms(project_id, "course", "outline.md", outline, model_terms)
+            _select_and_persist_lesson_files(project_id, repo_root, outline)
         update_generation_task(
             task_id,
             "completed",
@@ -1374,6 +1418,7 @@ def run_outline_lesson_task(
     lesson_number: int,
     requested_title: str,
     instructions: str = "",
+    outline_path: Optional[str] = None,
 ) -> None:
     project = get_project(project_id)
     if project is None:
@@ -1389,6 +1434,7 @@ def run_outline_lesson_task(
             lesson_number,
             requested_title,
             instructions,
+            outline_path,
         )
         _debug_dump("L" + str(lesson_number) + "-build-input.txt",
                      "lesson_number=" + str(lesson_number) + "\nrequested_title=" + requested_title + "\n"
@@ -1483,13 +1529,17 @@ def create_or_reuse_outline_lesson_task(
     title: str,
     model: Optional[str],
     instructions: str = "",
+    outline_path: Optional[str] = None,
 ) -> tuple[GenerationTask, bool]:
-    _, _, input_hash = build_outline_lesson_input(project_id, repo_root, lesson_number, title, instructions)
+    outline_rel = outline_path or "outline.md"
+    if outline_path is not None and outline_path != "outline.md":
+        _validate_sub_outline_path(outline_path)
+    _, _, input_hash = build_outline_lesson_input(project_id, repo_root, lesson_number, title, instructions, outline_path)
     project = get_project(project_id)
     prompt_key = "prompt.learning_plan.lesson" if project is not None and project.project_type == "learning_plan" else "prompt.outline_lesson"
     prompt_hash = hash_inputs(input_hash, load_prompt(prompt_key), load_prompt("prompt.system"))
     mode = f"lesson-{lesson_number:02d}"
-    cached = find_completed_task(project_id, "outline_lesson", prompt_hash, PROMPT_VERSION, source_path="outline.md", mode=mode)
+    cached = find_completed_task(project_id, "outline_lesson", prompt_hash, PROMPT_VERSION, source_path=outline_rel, mode=mode)
     if cached and cached.output_path and Path(cached.output_path).exists():
         return cached, True
     output_path = project_course_dir(project_id) / _outline_lesson_filename(lesson_number)
@@ -1498,7 +1548,7 @@ def create_or_reuse_outline_lesson_task(
         task_type="outline_lesson",
         input_hash=prompt_hash,
         prompt_version=PROMPT_VERSION,
-        source_path="outline.md",
+        source_path=outline_rel,
         mode=mode,
         model=model,
         output_path=output_path,
@@ -1525,18 +1575,20 @@ def create_or_reuse_outline_task(
     instructions: str = "",
     survey_answers: Optional[list] = None,
 ) -> tuple[GenerationTask, bool]:
+    is_sub = scope.type == "files" and bool(scope.paths)
     _, input_hash = build_outline_input(repo_root, scope, instructions)
     intent = _serialize_survey_intent(survey_answers)
     if intent:
         input_hash = hash_inputs(input_hash, intent)
     prompt_key = "prompt.learning_plan.outline" if scope.type == "learning_plan" else "prompt.outline"
     prompt_hash = hash_inputs(input_hash, load_prompt(prompt_key), load_prompt("prompt.system"))
-    cached = find_completed_task(project_id, "outline", prompt_hash, PROMPT_VERSION, mode=scope.type)
+    task_type = "sub_outline" if is_sub else "outline"
+    cached = find_completed_task(project_id, task_type, prompt_hash, PROMPT_VERSION, mode=scope.type)
     if cached and cached.output_path and Path(cached.output_path).exists():
         return cached, True
     task = create_generation_task(
         project_id=project_id,
-        task_type="outline",
+        task_type=task_type,
         input_hash=prompt_hash,
         prompt_version=PROMPT_VERSION,
         source_path=None,
@@ -1701,11 +1753,17 @@ async def stream_outline_generation(
         filename = "outline.md"
 
     # Create task
+    is_sub = scope.type == "files" and bool(scope.paths)
+    task_type = "sub_outline" if is_sub else "outline"
+    if is_sub:
+        filename = _sub_outline_filename(scope)
+    else:
+        filename = "outline.md"
     input_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()[:16]
-    cached = find_completed_task(project_id, "outline", input_hash, PROMPT_VERSION)
+    cached = find_completed_task(project_id, task_type, input_hash, PROMPT_VERSION)
     if cached and cached.output_path and Path(cached.output_path).exists():
         yield _sse_event("completed", {
-            "filename": "outline.md",
+            "filename": filename,
             "task_id": cached.id,
             "cached": True,
         })
@@ -1713,7 +1771,7 @@ async def stream_outline_generation(
 
     task = create_generation_task(
         project_id=project_id,
-        task_type="outline",
+        task_type=task_type,
         input_hash=input_hash,
         prompt_version=PROMPT_VERSION,
         source_path=None,
@@ -1752,14 +1810,20 @@ async def stream_outline_generation(
             register_document_terms(project_id, "course", filename, outline, model_terms)
         else:
             project_map, outline = _parse_outline_files(content)
-            _atomic_write(output_dir / "project_map.md", project_map)
-            outline = add_outline_lesson_links(outline)
-            streaming_path.write_text(outline, encoding="utf-8")
-            streaming_path.replace(output_path)
-            register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
-            register_document_terms(project_id, "course", filename, outline, model_terms)
-            _select_and_persist_lesson_files(project_id, repo_root, outline)
-            yield _sse_event("file_created", {"filename": "project_map.md"})
+            if is_sub:
+                outline = add_outline_lesson_links(outline, filename)
+                streaming_path.write_text(outline, encoding="utf-8")
+                streaming_path.replace(output_path)
+                register_document_terms(project_id, "course", filename, outline, model_terms)
+            else:
+                _atomic_write(output_dir / "project_map.md", project_map)
+                outline = add_outline_lesson_links(outline)
+                streaming_path.write_text(outline, encoding="utf-8")
+                streaming_path.replace(output_path)
+                register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
+                register_document_terms(project_id, "course", filename, outline, model_terms)
+                _select_and_persist_lesson_files(project_id, repo_root, outline)
+                yield _sse_event("file_created", {"filename": "project_map.md"})
 
         update_generation_task(task.id, "completed", output_path=output_dir)
         update_project_status(project_id, "outline_ready")
@@ -1890,6 +1954,7 @@ async def stream_outline_lesson_generation(
     lesson_number: int,
     requested_title: str,
     instructions: str = "",
+    outline_path: Optional[str] = None,
 ) -> AsyncIterator[dict[str, Any]]:
     from app.services.storage import (
         GenerationTask,
@@ -1908,8 +1973,12 @@ async def stream_outline_lesson_generation(
     repo_root = Path(project.local_path).resolve()
     settings = _llm_settings_or_error()
 
+    outline_rel = outline_path or "outline.md"
+    if outline_path is not None and outline_path != "outline.md":
+        _validate_sub_outline_path(outline_path)
+
     lesson_title, lesson_input, outline_context = build_outline_lesson_input(
-        project_id, repo_root, lesson_number, requested_title, instructions,
+        project_id, repo_root, lesson_number, requested_title, instructions, outline_path,
     )
 
     filename = _outline_lesson_filename(lesson_number)
@@ -1937,7 +2006,7 @@ async def stream_outline_lesson_generation(
         task_type = "outline_lesson"
 
     input_hash = hashlib.sha256(json.dumps(messages, sort_keys=True).encode()).hexdigest()[:16]
-    cached = find_completed_task(project_id, "outline_lesson", input_hash, PROMPT_VERSION, source_path=str(lesson_number))
+    cached = find_completed_task(project_id, "outline_lesson", input_hash, PROMPT_VERSION, source_path=outline_rel)
     if cached and cached.output_path and Path(cached.output_path).exists():
         yield _sse_event("completed", {"filename": filename, "task_id": cached.id, "cached": True})
         return
@@ -1947,7 +2016,7 @@ async def stream_outline_lesson_generation(
         task_type=task_type,
         input_hash=input_hash,
         prompt_version=PROMPT_VERSION,
-        source_path=str(lesson_number),
+        source_path=outline_rel,
         mode=None,
         model=settings.get("model"),
         output_path=output_path,

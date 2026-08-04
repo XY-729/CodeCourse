@@ -15,6 +15,7 @@ import {
   deleteProject,
   generateFileLesson,
   generateOutlineLesson,
+  generateSubOutlineLesson,
   previewOutlineLessonEvidence,
   generateOutline,
   generateOutlineStream,
@@ -3065,7 +3066,7 @@ export default function App() {
     }
   }
 
-  async function handleGenerateOutlineLesson(lessonNumber: number, title: string) {
+  async function handleGenerateOutlineLesson(lessonNumber: number, title: string, outlinePath?: string) {
     if (!project) {
       return;
     }
@@ -3083,7 +3084,7 @@ export default function App() {
       let evidenceSummary = "";
       if (!isLearningPlanProject) {
         setTaskMessage("正在检查课程代码证据");
-        const preview = await previewOutlineLessonEvidence(projectId, lessonNumber, title);
+        const preview = await previewOutlineLessonEvidence(projectId, lessonNumber, title, outlinePath);
         const warningCount = preview.read_failed.length + preview.budget_skipped.length;
         evidenceSummary = `将使用 ${preview.file_count} 个文件、${preview.snippet_count} 个代码片段。${
           warningCount > 0 ? `另有 ${warningCount} 个文件无法读取或因预算被跳过。` : ""
@@ -3104,7 +3105,11 @@ export default function App() {
       setError("");
       setTaskMessage("正在创建课件任务");
 
-      const task = await generateOutlineLesson(projectId, lessonNumber, title, instructions);
+      const task = outlinePath
+        ? mobileRuntime
+          ? await generateSubOutlineLesson(projectId, lessonNumber, title, instructions, outlinePath)
+          : await generateOutlineLesson(projectId, lessonNumber, title, instructions, outlinePath)
+        : await generateOutlineLesson(projectId, lessonNumber, title, instructions);
 
       upsertCurrentGenerationTask(projectId, task);
 
@@ -4761,7 +4766,7 @@ export default function App() {
                 onOpenQAReference={handleOpenQAReference}
                 onGenerateTerm={handleGenerateTerm}
                 onTermAction={handleTermAction}
-                onGenerateLesson={activeItem.path === "outline.md" ? handleGenerateOutlineLesson : undefined}
+                onGenerateLesson={activeItem.type === "course" && (activeItem.path === "outline.md" || activeItem.path.startsWith("sub-outline-")) ? handleGenerateOutlineLesson : undefined}
                 immersiveReading={mobileRuntime && activeGroupId === group.id}
                 initialScrollRatio={activeLearningState?.position_kind === "scroll_ratio" ? activeLearningState.position_value : 0}
                 onScrollRatioChange={(ratio) => queueLearningUpdate(activeItem.qaRecordId ? "qa" : "course", activeItem.path, "scroll_ratio", ratio)}

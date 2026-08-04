@@ -527,10 +527,39 @@ export function generateFileLesson(projectId: number, path: string, mode: "brief
   });
 }
 
-export function generateOutlineLesson(projectId: number, lessonNumber: number, title: string, instructions: string): Promise<GenerationTask> {
+export function generateSubOutline(
+  projectId: number,
+  payload: { title: string; paths: string[]; instructions: string },
+): Promise<GenerationTask> {
+  return request<GenerationTask>(`/projects/${projectId}/outlines/sub`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function generateOutlineLesson(
+  projectId: number,
+  lessonNumber: number,
+  title: string,
+  instructions: string,
+  outlinePath?: string,
+): Promise<GenerationTask> {
   return request<GenerationTask>(`/projects/${projectId}/lessons/outline`, {
     method: "POST",
-    body: JSON.stringify({ lesson_number: lessonNumber, title, instructions }),
+    body: JSON.stringify({ lesson_number: lessonNumber, title, instructions, ...(outlinePath ? { outline_path: outlinePath } : {}) }),
+  });
+}
+
+export function generateSubOutlineLesson(
+  projectId: number,
+  lessonNumber: number,
+  title: string,
+  instructions: string,
+  outlinePath: string,
+): Promise<GenerationTask> {
+  return request<GenerationTask>(`/projects/${projectId}/lessons/sub-outline`, {
+    method: "POST",
+    body: JSON.stringify({ outline_path: outlinePath, lesson_number: lessonNumber, title, instructions }),
   });
 }
 
@@ -538,10 +567,11 @@ export function previewOutlineLessonEvidence(
   projectId: number,
   lessonNumber: number,
   title: string,
+  outlinePath?: string,
 ): Promise<LessonEvidencePreview> {
   return request<LessonEvidencePreview>(`/projects/${projectId}/lessons/outline/evidence`, {
     method: "POST",
-    body: JSON.stringify({ lesson_number: lessonNumber, title, instructions: "" }),
+    body: JSON.stringify({ lesson_number: lessonNumber, title, instructions: "", ...(outlinePath ? { outline_path: outlinePath } : {}) }),
   });
 }
 
@@ -671,11 +701,12 @@ export async function generateOutlineLessonStream(
   instructions: string,
   handlers: GenStreamHandlers = {},
   signal?: AbortSignal,
+  outlinePath?: string,
 ): Promise<string | null> {
   const response = await fetch(httpApiUrl(`/projects/${projectId}/lessons/outline/stream`), {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ lesson_number: lessonNumber, title, instructions }),
+    body: JSON.stringify({ lesson_number: lessonNumber, title, instructions, ...(outlinePath ? { outline_path: outlinePath } : {}) }),
     signal,
   });
   return consumeGenStream(response, handlers);

@@ -111,11 +111,12 @@ const LEGACY_PROMPT_HASHES: Record<string, string> = {
 };
 const PROMPT_SCHEMA_SETTING_PREFIX = "prompt_schema_version.";
 
-function addOutlineLessonLinks(outline: string): string {
+function addOutlineLessonLinks(outline: string, outlinePath?: string): string {
   const START = "<!-- CODECOURSE_LESSON_LINKS_START -->";
   const END = "<!-- CODECOURSE_LESSON_LINKS_END -->";
   const HEADING_RE = /^###\s*第\s*(\d+)\s*课\s*[：:]\s*(.+?)\s*$/gm;
   const TABLE_RE = /^\|\s*(\d+)\s*\|\s*([^|]+?)\s*\|/gm;
+  const suffix = outlinePath ? `&outline_path=${encodeURIComponent(outlinePath)}` : "";
 
   const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const cleaned = outline.replace(new RegExp(`\\n?${esc(START)}.*?${esc(END)}\\n?`, "s"), "\n").trimEnd();
@@ -135,7 +136,7 @@ function addOutlineLessonLinks(outline: string): string {
 
   const lines = [START, "## 按课生成课件", "> 课件按需生成。点击一节课后会请求模型，并优先使用项目索引中的相关代码片段。", ""];
   for (const [n, t] of lessons) {
-    lines.push(`- [生成第 ${n} 课：${t}](https://codecourse.local/generate-lesson/${n}?title=${encodeURIComponent(t)})`);
+    lines.push(`- [生成第 ${n} 课：${t}](https://codecourse.local/generate-lesson/${n}?title=${encodeURIComponent(t)}${suffix})`);
   }
   lines.push(END, "");
 
@@ -650,6 +651,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       let output: TaskOutput;
       if (taskType === "outline") {
         output = await this.generateOutline(projectId, payload, taskId, taskInputHash);
+      } else if (taskType === "sub_outline") {
+        output = await this.generateSubOutline(projectId, payload, taskId, taskInputHash);
       } else if (taskType === "file_lesson") {
         output = await this.generateFileLesson(projectId, payload, taskId, taskInputHash);
       } else if (taskType === "outline_lesson") {
@@ -659,7 +662,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       }
 
       // Persist result — group by taskType, not filename
-      const group = taskType === "outline" ? "总纲" : taskType === "file_lesson" ? "文件课件" : "课件";
+      const group = taskType === "outline" || taskType === "sub_outline" ? "总纲" : taskType === "file_lesson" ? "文件课件" : "课件";
       await this.upsertCourse(projectId, output.filename, output.content, group);
       await this.ensureCourseNode(projectId, output.filename);
       await db.run("UPDATE generation_tasks SET status='completed',progress_current=progress_total,stage_label='completed',output_path=?,updated_at=? WHERE id=?", [output.filename, now(), taskId]);
@@ -770,9 +773,13 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       return this.outlineConfirm(Number(match[1]), body) as Promise<T>;
     }
     if ((match = path.match(/^\/projects\/(\d+)\/outline\/generate$/))) return this.queueTask(Number(match[1]), "outline", body) as Promise<T>;
+    if ((match = path.match(/^\/projects\/(\d+)\/outlines\/sub$/))) return this.queueTask(Number(match[1]), "sub_outline", body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/lessons\/file$/))) return this.queueTask(Number(match[1]), "file_lesson", body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/lessons\/outline\/evidence$/))) {
       return this.previewOutlineLessonEvidence(Number(match[1]), body) as Promise<T>;
+    }
+    if ((match = path.match(/^\/projects\/(\d+)\/lessons\/sub-outline$/))) {
+      return this.queueSubOutlineLesson(Number(match[1]), body) as Promise<T>;
     }
     if ((match = path.match(/^\/projects\/(\d+)\/lessons\/outline$/))) return this.queueTask(Number(match[1]), "outline_lesson", body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/tasks$/))) return this.listTasks(Number(match[1])) as Promise<T>;
@@ -1237,8 +1244,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       sourceFingerprint = hashText(await readRepoFile(projectId, String(payload.path)));
       promptFingerprint = `${prompts["prompt.file_lesson.template"] || ""}\n${prompts[`prompt.file_lesson.${payload.mode}_expected`] || ""}`;
     } else if (taskType === "outline_lesson") {
-      sourceFingerprint = hashText(await readGeneratedFile(projectId, "outline.md"));
+      const outlinePath = String(payload.outline_path || "outline.md");
+      sourceFingerprint = hashText(await readGeneratedFile(projectId, outlinePath));
       promptFingerprint = prompts[project.project_type === "learning_plan" ? "prompt.learning_plan.lesson" : "prompt.outline_lesson"] || "";
+    } else if (taskType === "sub_outline") {
+      const paths = Array.isArray(payload.paths) ? payload.paths.map(String) : [];
+      const contents = await Promise.all(paths.map((path) => readRepoFile(projectId, path).catch(() => "")));
+      sourceFingerprint = hashText(JSON.stringify(contents));
+      promptFingerprint = prompts["prompt.outline"] || "";
     } else {
       promptFingerprint = prompts[project.project_type === "learning_plan" ? "prompt.learning_plan.outline" : "prompt.outline"] || "";
     }
@@ -1255,6 +1268,18 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async getTask(projectId: number, taskId: number): Promise<GenerationTask> {
     const row = (await db.query<Row>("SELECT * FROM generation_tasks WHERE project_id=? AND id=?", [projectId, taskId]))[0];
     if (!row) throw new Error("生成任务不存在。"); return taskFromRow(row);
+  }
+
+  private async queueSubOutlineLesson(projectId: number, body: Record<string, unknown>): Promise<GenerationTask> {
+    const outlinePath = String(body.outline_path || "");
+    if (!/^sub-outline-[0-9a-f]{8}\.md$/.test(outlinePath)) {
+      throw new Error("子总纲课件只能基于子总纲文件生成。");
+    }
+    const exists = await db.query<Row>("SELECT id FROM course_files WHERE project_id=? AND filename=?", [projectId, outlinePath]);
+    if (!exists.length) {
+      throw new Error("子总纲文件不存在或已删除。");
+    }
+    return this.queueTask(projectId, "outline_lesson", { ...body, outline_path: outlinePath });
   }
 
   private async retryTask(projectId: number, taskId: number): Promise<GenerationTask> {
@@ -1342,7 +1367,13 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     lessonNumber: number,
     title: string,
     lessonSection: string,
+    bypassCache = false,
   ): Promise<string[]> {
+    if (bypassCache) {
+      const files = await this.selectLessonFilePaths(projectId, `${title} ${lessonSection.slice(0, 2000)}`);
+      await this.persistLessonFiles(projectId, lessonNumber, files);
+      return files;
+    }
     const rows = await db.query<Row>(
       `SELECT file_path,indexed_fingerprint FROM lesson_files
        WHERE project_id=? AND lesson_number=? ORDER BY relevance_rank,file_path`,
@@ -1365,11 +1396,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     lessonNumber: number,
     title: string,
     lessonSection: string,
+    bypassCache = false,
   ) {
     const query = `${title} ${lessonSection.slice(0, 2000)}`.trim();
     const hits = (await this.search(projectId, query, undefined, 10).catch(() => []))
       .filter((item) => item.content.trim());
-    const lessonFiles = await this.ensureLessonFiles(projectId, lessonNumber, title, lessonSection);
+    const lessonFiles = await this.ensureLessonFiles(projectId, lessonNumber, title, lessonSection, bypassCache);
     const readable: ReadableEvidenceFile[] = [];
     const readFailed: string[] = [];
     for (const path of lessonFiles) {
@@ -1420,7 +1452,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         read_failed: [], budget_skipped: [], ready: true,
       };
     }
-    const outline = await readGeneratedFile(projectId, "outline.md");
+    const outlinePath = String(body.outline_path || "outline.md");
+    const outline = await readGeneratedFile(projectId, outlinePath);
     const lessonNumber = Number(body.lesson_number || 0);
     const title = String(body.title || "");
     const matches = [...outline.matchAll(/^###\s*第\s*(\d+)\s*课\s*[：:]\s*(.+?)\s*$/gm)];
@@ -1428,7 +1461,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const start = index >= 0 ? (matches[index].index ?? 0) : 0;
     const end = index >= 0 ? (matches[index + 1]?.index ?? outline.length) : outline.length;
     const section = index >= 0 ? outline.slice(start, end) : title;
-    return (await this.prepareLessonEvidence(projectId, lessonNumber, title, section)).preview;
+    return (await this.prepareLessonEvidence(projectId, lessonNumber, title, section, outlinePath !== "outline.md")).preview;
   }
 
   private async outlinePreflight(projectId: number, body: Record<string, unknown>): Promise<OutlinePreflight> {
@@ -1570,6 +1603,59 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return { filename: "outline.md", content };
   }
 
+  private async generateSubOutline(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
+    const prompts = await this.getPrompts();
+    const paths = Array.isArray(payload.paths) ? payload.paths.map(String) : [];
+    if (!paths.length) {
+      throw new Error("子总纲需要至少选择一个文件。");
+    }
+    const title = String(payload.title || "");
+    const filename = `sub-outline-${hashText(JSON.stringify({ paths, title }))}.md`;
+
+    const cp = parseOutlineCheckpoint(payload._checkpoint, "sub_outline", inputHash);
+    let content: string;
+    if (cp?.generated && cp.generatedContent) {
+      content = cp.generatedContent;
+    } else {
+      await db.run("UPDATE generation_tasks SET stage_label='生成子总纲',updated_at=? WHERE id=?", [now(), taskId]);
+      await this.reportProgress(taskId, "生成子总纲", 0, 1, true);
+      const settings = await this.getLLMSettings();
+      const context = await this.projectContext(projectId, paths);
+      const prompt = renderPrompt(prompts["prompt.outline"] || "生成详细学习总纲", {
+        model: settings.model,
+        scope_text: `files: ${paths.slice(0, 80).join(", ")}`,
+        user_instructions: String(payload.instructions || title || "无"),
+        prompt_input: context,
+      });
+      content = await this.callLLM([
+        {
+          role: "system",
+          content: composeSystemPrompt(prompts["prompt.system"] || "你是学习助手。", "markdown"),
+        },
+        { role: "user", content: prompt },
+      ]);
+      if (!content.startsWith("#")) content = `# ${title || "子学习总纲"}\n\n${content}`;
+      if (content.includes("## FILE:")) {
+        const outlinePart = content.match(/## FILE:\s*outline\.md\s*([\s\S]*)/i)?.[1]?.trim();
+        if (outlinePart) content = outlinePart;
+      }
+
+      const checkpoint: OutlineCheckpoint = {
+        version: CHECKPOINT_VERSION,
+        taskType: "sub_outline",
+        inputHash,
+        updatedAt: now(),
+        generatedContent: content,
+        generated: true,
+      };
+      await db.run("UPDATE generation_tasks SET payload_json=? WHERE id=?", [JSON.stringify({ ...payload, _checkpoint: checkpoint }), taskId]);
+    }
+
+    content = addOutlineLessonLinks(content, filename);
+    await this.reportProgress(taskId, "子总纲生成完成", 1, 1, false);
+    return { filename, content };
+  }
+
   private async generateFileLesson(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
     const prompts = await this.getPrompts();
     const sourcePath = String(payload.path || "");
@@ -1618,7 +1704,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
   private async generateOutlineLesson(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
     const project = await this.getProject(projectId); const prompts = await this.getPrompts();
-    const outline = await readGeneratedFile(projectId, "outline.md");
+    const outlinePath = String(payload.outline_path || "outline.md");
+    const outline = await readGeneratedFile(projectId, outlinePath);
     const key = project.project_type === "learning_plan" ? "prompt.learning_plan.lesson" : "prompt.outline_lesson";
     const settings = await this.getLLMSettings();
     let lessonInput = `项目学习总纲：\n${compactText(outline, 16000)}`;
@@ -1634,6 +1721,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         lessonNumber,
         String(payload.title || ""),
         lessonSection,
+        outlinePath !== "outline.md",
       );
       lessonInput += `\n\n涉及文件代码：\n${evidence.fileBlocks}`;
       lessonInput += `\n\nRAG 索引检索片段：\n${evidence.ragContext || "（相关文件正文已加载，索引没有额外命中片段。）"}`;

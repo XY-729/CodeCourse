@@ -29,7 +29,7 @@ type Props = {
   onOpenQAReference?: (projectId: number, qaRecordId: number) => void;
   onGenerateTerm?: (term: DocumentTerm, position?: { x: number; y: number }) => void;
   onTermAction?: (term: DocumentTerm, position?: { x: number; y: number }) => void;
-  onGenerateLesson?: (lessonNumber: number, title: string) => void;
+  onGenerateLesson?: (lessonNumber: number, title: string, outlinePath?: string) => void;
   headerActions?: ReactNode;
   embedded?: boolean;
   immersiveReading?: boolean;
@@ -700,11 +700,12 @@ export default function MarkdownViewer({
     a: ({ href, children }: { href?: string; children?: ReactNode }) => {
       const match = href?.match(/^https:\/\/codecourse\.local\/generate-lesson\/(\d+)\?title=(.*)$/);
       if (match && onGenerateLesson) {
+        const outlineMatch = href?.match(/[?&]outline_path=([^&]+)/)?.[1];
         return (
           <button
             type="button"
             className="lesson-generate-link"
-            onClick={() => onGenerateLesson(Number(match[1]), decodeURIComponent(match[2] || "课件"))}
+            onClick={() => onGenerateLesson(Number(match[1]), decodeURIComponent(match[2] || "课件"), outlineMatch ? decodeURIComponent(outlineMatch) : undefined)}
           >
             {children}
           </button>
