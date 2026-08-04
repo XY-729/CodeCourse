@@ -991,8 +991,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         lastError = error instanceof Error ? error : new Error(String(error));
         const msg = lastError.message;
         if (msg.includes("模型返回了空内容") || msg.includes("请先在模型 API")) throw lastError;
+        // 4xx（401/403/404 等）不可恢复，直接失败；429/5xx/网络错误为瞬态，退避重试。
+        const statusMatch = msg.match(/模型调用失败（(\d+)）/);
+        if (statusMatch && Number(statusMatch[1]) < 500 && Number(statusMatch[1]) !== 429) throw lastError;
         if (attempt < 2) {
-          await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 1000));
+          await new Promise((resolve) => setTimeout(resolve, 3000 * 2 ** attempt));
         }
       }
     }

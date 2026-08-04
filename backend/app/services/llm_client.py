@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any
 
 import httpx
@@ -14,6 +15,22 @@ _SYNC_CLIENT = httpx.Client(
     follow_redirects=True,
 )
 _ASYNC_CLIENT: httpx.AsyncClient | None = None
+
+# 瞬态错误：服务过载/限流/网关故障，重试可能成功；4xx 等不可恢复错误不重试。
+_TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
+_MAX_ATTEMPTS = 3
+_RETRY_BASE_SECONDS = 1.5
+
+
+def _retry_backoff(attempt: int) -> None:
+    # attempt 从 0 开始，第 0/1 次失败后等待 1.5s / 3s，第 2 次失败后不再等待。
+    if attempt < _MAX_ATTEMPTS - 1:
+        sleep(_RETRY_BASE_SECONDS * (2 ** attempt))
+
+
+async def _retry_backoff_async(attempt: int) -> None:
+    if attempt < _MAX_ATTEMPTS - 1:
+        await asyncio.sleep(_RETRY_BASE_SECONDS * (2 ** attempt))
 
 
 @dataclass(frozen=True)
@@ -67,34 +84,41 @@ def call_openai_compatible_chat_result(
         "stream": False,
         "max_tokens": 65536,
     }
-    started = perf_counter()
-    try:
-        response = _SYNC_CLIENT.post(
-            endpoint,
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=timeout,
-        )
-        response.raise_for_status()
-        data = response.json()
-        usage = data.get("usage") or {}
-        return LLMCallResult(
-            content=_message_content(data),
-            usage={
-                "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
-                "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
-                "total_tokens": int(usage.get("total_tokens") or 0),
-            },
-            model=str(data.get("model") or model),
-            latency_ms=int((perf_counter() - started) * 1000),
-        )
-    except httpx.HTTPStatusError as exc:
-        detail = exc.response.text
-        raise RuntimeError(f"LLM HTTP {exc.response.status_code}: {detail[:500]}") from exc
-    except httpx.HTTPError as exc:
-        raise RuntimeError(f"LLM network error: {exc}") from exc
-    except (ValueError, TypeError) as exc:
-        raise RuntimeError("LLM response is not valid JSON") from exc
+    last_error: BaseException | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        started = perf_counter()
+        try:
+            response = _SYNC_CLIENT.post(
+                endpoint,
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            data = response.json()
+            usage = data.get("usage") or {}
+            return LLMCallResult(
+                content=_message_content(data),
+                usage={
+                    "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
+                    "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+                    "total_tokens": int(usage.get("total_tokens") or 0),
+                },
+                model=str(data.get("model") or model),
+                latency_ms=int((perf_counter() - started) * 1000),
+            )
+        except httpx.HTTPStatusError as exc:
+            last_error = exc
+            if exc.response.status_code not in _TRANSIENT_STATUS:
+                raise RuntimeError(f"LLM HTTP {exc.response.status_code}: {exc.response.text[:500]}") from exc
+        except httpx.HTTPError as exc:
+            last_error = exc
+        except (ValueError, TypeError) as exc:
+            raise RuntimeError("LLM response is not valid JSON") from exc
+        _retry_backoff(attempt)
+    if isinstance(last_error, httpx.HTTPStatusError):
+        raise RuntimeError(f"LLM HTTP {last_error.response.status_code}: {last_error.response.text[:500]}") from last_error
+    raise RuntimeError(f"LLM network error: {last_error}") from last_error
 
 
 def call_openai_compatible_chat(
@@ -129,47 +153,59 @@ async def stream_openai_compatible_chat(
         "max_tokens": 65536,
     }
     client = _async_client()
-    try:
-        async with client.stream(
-            "POST",
-            endpoint,
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=httpx.Timeout(timeout),
-        ) as response:
-            if response.status_code >= 400:
-                detail = (await response.aread()).decode("utf-8", errors="replace")
-                raise RuntimeError(f"LLM HTTP {response.status_code}: {detail[:500]}")
+    last_error: BaseException | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            async with client.stream(
+                "POST",
+                endpoint,
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=httpx.Timeout(timeout),
+            ) as response:
+                if response.status_code >= 400:
+                    detail = (await response.aread()).decode("utf-8", errors="replace")
+                    error = RuntimeError(f"LLM HTTP {response.status_code}: {detail[:500]}")
+                    if response.status_code in _TRANSIENT_STATUS:
+                        last_error = error
+                        await _retry_backoff_async(attempt)
+                        continue
+                    raise error
 
-            content_type = response.headers.get("content-type", "").lower()
-            if "text/event-stream" not in content_type:
-                body = await response.aread()
-                try:
-                    content = _message_content(json.loads(body.decode("utf-8")))
-                except (ValueError, TypeError, UnicodeDecodeError) as exc:
-                    raise RuntimeError("LLM response is neither SSE nor valid JSON") from exc
-                if content:
-                    yield content
+                content_type = response.headers.get("content-type", "").lower()
+                if "text/event-stream" not in content_type:
+                    body = await response.aread()
+                    try:
+                        content = _message_content(json.loads(body.decode("utf-8")))
+                    except (ValueError, TypeError, UnicodeDecodeError) as exc:
+                        raise RuntimeError("LLM response is neither SSE nor valid JSON") from exc
+                    if content:
+                        yield content
+                    return
+
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if not data or data == "[DONE]":
+                        if data == "[DONE]":
+                            break
+                        continue
+                    try:
+                        event = json.loads(data)
+                    except ValueError:
+                        continue
+                    choices = event.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    content = delta.get("content")
+                    if content:
+                        yield str(content)
                 return
-
-            async for line in response.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if not data or data == "[DONE]":
-                    if data == "[DONE]":
-                        break
-                    continue
-                try:
-                    event = json.loads(data)
-                except ValueError:
-                    continue
-                choices = event.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                content = delta.get("content")
-                if content:
-                    yield str(content)
-    except httpx.HTTPError as exc:
-        raise RuntimeError(f"LLM network error: {exc}") from exc
+        except httpx.HTTPError as exc:
+            last_error = exc
+            await _retry_backoff_async(attempt)
+    if isinstance(last_error, httpx.HTTPError):
+        raise RuntimeError(f"LLM network error: {last_error}") from last_error
+    raise last_error if isinstance(last_error, RuntimeError) else RuntimeError(f"LLM network error: {last_error}") from last_error
