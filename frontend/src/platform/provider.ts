@@ -4,6 +4,7 @@ import type { ProviderNotice } from "./android/generationState";
 
 export interface CodeCourseProvider {
   request<T>(path: string, init?: RequestInit): Promise<T>;
+  startBackgroundRecovery?(): Promise<void>;
   reconcileGenerationServiceState?(): Promise<void>;
   getNotificationPermissionStatus?(): Promise<NotificationPermissionResult>;
   invalidatePermissionCache?(): void;

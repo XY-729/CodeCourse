@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useLayoutEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import type { PointerEvent, ReactNode } from "react";
 import {
   animateSpringY,
@@ -7,7 +7,6 @@ import {
   readTranslateY,
   rubberband,
   sheetBackdropProgress,
-  sheetOpenProgress,
 } from "../gestures/fluidMotion";
 
 type Sample = {
@@ -20,6 +19,7 @@ type Props = {
   className?: string;
   label: string;
   onDismiss: () => void;
+  onMotionPhaseChange?: (phase: "entering" | "open" | "exiting") => void;
 };
 
 export type FluidBottomSheetHandle = {
@@ -27,7 +27,7 @@ export type FluidBottomSheetHandle = {
 };
 
 const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function FluidBottomSheet(
-  { children, className = "", label, onDismiss },
+  { children, className = "", label, onDismiss, onMotionPhaseChange },
   forwardedRef,
 ) {
   const sheetRef = useRef<HTMLElement | null>(null);
@@ -35,6 +35,7 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
   const dismissingRef = useRef(false);
   const onDismissRef = useRef(onDismiss);
   const entryStartRef = useRef(1);
+  const measuredHeightRef = useRef(0);
   const entryFramesRef = useRef<number[]>([]);
   const dragPaintFrameRef = useRef<number | null>(null);
   const pendingDragPositionRef = useRef<number | null>(null);
@@ -45,8 +46,10 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     dragging: boolean;
     samples: Sample[];
   } | null>(null);
+  const onMotionPhaseChangeRef = useRef(onMotionPhaseChange);
 
   onDismissRef.current = onDismiss;
+  onMotionPhaseChangeRef.current = onMotionPhaseChange;
 
   function cancelEntryFrames() {
     for (const frame of entryFramesRef.current) {
@@ -58,10 +61,7 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
   function updateBackdrop(sheet: HTMLElement, position: number) {
     const layer = sheet.parentElement;
     if (!layer) return;
-    const openProgress = sheetOpenProgress(position, entryStartRef.current);
     const effect = sheetBackdropProgress(position, entryStartRef.current);
-    sheet.dataset.openProgress = openProgress.toFixed(4);
-    sheet.dataset.backdropProgress = effect.toFixed(4);
     layer.style.setProperty("--sheet-scrim-alpha", String(effect * 0.24));
   }
 
@@ -97,7 +97,8 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     cancelEntryFrames();
     dismissingRef.current = true;
     sheet.dataset.motionPhase = "exiting";
-    const target = Math.max(entryStartRef.current, sheet.getBoundingClientRect().height - 2);
+    onMotionPhaseChangeRef.current?.("exiting");
+    const target = Math.max(entryStartRef.current, measuredHeightRef.current - 2);
     animateSpringY(sheet, target, {
       damping: velocity > 0 ? 0.88 : 1,
       response: 0.3,
@@ -111,44 +112,62 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
 
   useImperativeHandle(forwardedRef, () => ({ dismiss }), []);
 
+  useEffect(() => {
+    const sheet = sheetRef.current;
+    if (!sheet || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      measuredHeightRef.current = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+    });
+    observer.observe(sheet);
+    return () => observer.disconnect();
+  }, []);
+
   useLayoutEffect(() => {
     const sheet = sheetRef.current;
     if (!sheet) return;
 
-    const start = Math.max(sheet.getBoundingClientRect().height - 2, 2);
+    const start = Math.max(sheet.clientHeight - 2, 2);
+    measuredHeightRef.current = sheet.clientHeight;
     entryStartRef.current = start;
     sheet.dataset.entryStartY = String(start);
+    sheet.style.setProperty("--sheet-entry-y", `${start}px`);
 
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       sheet.style.transform = "translate3d(0, 0, 0)";
       sheet.dataset.motionPhase = "open";
       updateBackdrop(sheet, 0);
+      onMotionPhaseChangeRef.current?.("open");
       return;
     }
 
-    // Commit a real closed presentation before starting the spring. Two RAFs
-    // guarantee Android WebView paints one frame with only the sheet's top
-    // border visible at the bottom edge.
-    sheet.dataset.motionPhase = "primed";
+    // The shell is already mounted at its closed transform. One frame starts
+    // a compositor-only transition before heavy drawer content is attached.
     sheet.style.transform = `translate3d(0, ${start}px, 0)`;
     updateBackdrop(sheet, start);
     const firstFrame = window.requestAnimationFrame(() => {
-      const secondFrame = window.requestAnimationFrame(() => {
-        sheet.dataset.motionPhase = "entering";
-        animateSpringY(sheet, 0, {
-          damping: 1,
-          response: 0.32,
-          onUpdate: (position) => updateBackdrop(sheet, position),
-          onComplete: () => {
-            sheet.dataset.motionPhase = "open";
-          },
-        });
-      });
-      entryFramesRef.current = [secondFrame];
+      sheet.dataset.motionPhase = "entering";
+      onMotionPhaseChangeRef.current?.("entering");
+      sheet.style.transform = "translate3d(0, 0, 0)";
+      const layer = sheet.parentElement;
+      if (layer) layer.style.setProperty("--sheet-scrim-alpha", "0.24");
     });
     entryFramesRef.current = [firstFrame];
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.target !== sheet || event.propertyName !== "transform" || dismissingRef.current) return;
+      sheet.dataset.motionPhase = "open";
+      onMotionPhaseChangeRef.current?.("open");
+    };
+    sheet.addEventListener("transitionend", onTransitionEnd);
+    const fallback = window.setTimeout(() => {
+      if (!dismissingRef.current && sheet.dataset.motionPhase !== "open") {
+        sheet.dataset.motionPhase = "open";
+        onMotionPhaseChangeRef.current?.("open");
+      }
+    }, 240);
     return () => {
       cancelEntryFrames();
+      window.clearTimeout(fallback);
+      sheet.removeEventListener("transitionend", onTransitionEnd);
       cancelSpring(sheet);
       if (dragPaintFrameRef.current !== null) {
         window.cancelAnimationFrame(dragPaintFrameRef.current);

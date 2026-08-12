@@ -3,6 +3,12 @@ import { CodeCourseSecureStore } from "../runtime";
 
 const DATABASE = "codecourse_mobile";
 const DATABASE_VERSION = 1;
+const SCHEMA_VERSION = 2;
+
+type ColumnMigration = {
+  name: string;
+  definition: string;
+};
 
 function randomSecret(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -11,10 +17,22 @@ function randomSecret(): string {
 
 export class MobileDatabase {
   private opened = false;
+  private initializationPromise: Promise<void> | null = null;
   private ftsVersion: 4 | 5 = 4;
 
   async init(): Promise<void> {
     if (this.opened) return;
+    if (this.initializationPromise) return this.initializationPromise;
+    this.initializationPromise = this.initialize();
+    try {
+      await this.initializationPromise;
+    } catch (error) {
+      this.initializationPromise = null;
+      throw error;
+    }
+  }
+
+  private async initialize(): Promise<void> {
     let secret = (await CodeCourseSecureStore.get({ key: "database_secret" })).value;
     if (!secret) {
       secret = randomSecret();
@@ -30,8 +48,62 @@ export class MobileDatabase {
       readonly: false,
     });
     await CapacitorSQLite.open({ database: DATABASE, readonly: false });
-    await this.createSchema();
+    await CapacitorSQLite.execute({
+      database: DATABASE,
+      statements: "PRAGMA foreign_keys = ON",
+      transaction: false,
+      readonly: false,
+    });
+    const versionRows = await CapacitorSQLite.query({
+      database: DATABASE,
+      statement: "PRAGMA user_version",
+      values: [],
+      readonly: false,
+    });
+    const currentVersion = Number(versionRows.values?.[0]?.user_version ?? 0);
+    if (currentVersion < SCHEMA_VERSION) {
+      await this.createSchema();
+      await CapacitorSQLite.execute({
+        database: DATABASE,
+        statements: `PRAGMA user_version = ${SCHEMA_VERSION}`,
+        transaction: false,
+        readonly: false,
+      });
+    } else {
+      await this.restoreRuntimeSchemaState();
+    }
     this.opened = true;
+  }
+
+  private async restoreRuntimeSchemaState(): Promise<void> {
+    const result = await CapacitorSQLite.query({
+      database: DATABASE,
+      statement: "SELECT sql FROM sqlite_master WHERE name = 'code_chunks_fts' LIMIT 1",
+      values: [],
+      readonly: false,
+    });
+    const createSql = String(result.values?.[0]?.sql ?? "").toLowerCase();
+    this.ftsVersion = createSql.includes("fts5") ? 5 : 4;
+  }
+
+  private async ensureColumns(table: string, columns: ColumnMigration[]): Promise<void> {
+    const result = await CapacitorSQLite.query({
+      database: DATABASE,
+      statement: `PRAGMA table_info(${table})`,
+      values: [],
+      readonly: false,
+    });
+    const existing = new Set((result.values ?? []).map((row) => String(row.name)));
+    const statements = columns
+      .filter((column) => !existing.has(column.name))
+      .map((column) => `ALTER TABLE ${table} ADD COLUMN ${column.definition}`);
+    if (!statements.length) return;
+    await CapacitorSQLite.execute({
+      database: DATABASE,
+      statements: statements.join(";\n"),
+      transaction: true,
+      readonly: false,
+    });
   }
 
   private async createSchema(): Promise<void> {
@@ -261,27 +333,18 @@ export class MobileDatabase {
       transaction: true,
       readonly: false,
     });
-    for (const statement of [
-      "ALTER TABLE document_terms ADD COLUMN concept_id TEXT",
-      "ALTER TABLE document_terms ADD COLUMN content_hash TEXT",
-      "ALTER TABLE document_terms ADD COLUMN link_origin TEXT NOT NULL DEFAULT 'legacy_unknown'",
-      "ALTER TABLE document_terms ADD COLUMN canonical_name TEXT",
-      "ALTER TABLE document_terms ADD COLUMN category TEXT",
-      "ALTER TABLE document_terms ADD COLUMN source_span_json TEXT",
-      "ALTER TABLE lesson_files ADD COLUMN relevance_rank INTEGER NOT NULL DEFAULT 0",
-      "ALTER TABLE lesson_files ADD COLUMN indexed_fingerprint TEXT",
-    ]) {
-      try {
-        await CapacitorSQLite.execute({
-          database: DATABASE,
-          statements: statement,
-          transaction: false,
-          readonly: false,
-        });
-      } catch {
-        // Existing installations already have the column.
-      }
-    }
+    await this.ensureColumns("document_terms", [
+      { name: "concept_id", definition: "concept_id TEXT" },
+      { name: "content_hash", definition: "content_hash TEXT" },
+      { name: "link_origin", definition: "link_origin TEXT NOT NULL DEFAULT 'legacy_unknown'" },
+      { name: "canonical_name", definition: "canonical_name TEXT" },
+      { name: "category", definition: "category TEXT" },
+      { name: "source_span_json", definition: "source_span_json TEXT" },
+    ]);
+    await this.ensureColumns("lesson_files", [
+      { name: "relevance_rank", definition: "relevance_rank INTEGER NOT NULL DEFAULT 0" },
+      { name: "indexed_fingerprint", definition: "indexed_fingerprint TEXT" },
+    ]);
     try {
       await CapacitorSQLite.execute({
         database: DATABASE,
@@ -670,33 +733,30 @@ export class MobileDatabase {
       transaction: true,
       readonly: false,
     });
-    for (const statement of [
-      "ALTER TABLE term_model_scans ADD COLUMN local_candidate_count INTEGER NOT NULL DEFAULT 0",
-      "ALTER TABLE term_model_scans ADD COLUMN model_candidate_count INTEGER NOT NULL DEFAULT 0",
-      "ALTER TABLE diagnostic_items ADD COLUMN teaching_trial_id TEXT",
-      "ALTER TABLE diagnostic_attempts ADD COLUMN teaching_trial_id TEXT",
-      "ALTER TABLE teaching_trials ADD COLUMN pre_state_json TEXT NOT NULL DEFAULT '{}'",
-      "ALTER TABLE teaching_trials ADD COLUMN target_concepts_json TEXT NOT NULL DEFAULT '[]'",
-      "ALTER TABLE teaching_trials ADD COLUMN target_dimensions_json TEXT NOT NULL DEFAULT '[]'",
-      "ALTER TABLE teaching_trials ADD COLUMN strategy_rationale TEXT NOT NULL DEFAULT ''",
-      "ALTER TABLE teaching_trials ADD COLUMN policy_version TEXT NOT NULL DEFAULT 'teaching-trial-v2.1'",
-      "ALTER TABLE teaching_outcomes ADD COLUMN evidence_type TEXT NOT NULL DEFAULT 'observer_inference'",
-      "ALTER TABLE teaching_outcomes ADD COLUMN evidence_ref_id TEXT",
-      "ALTER TABLE teaching_outcomes ADD COLUMN authority INTEGER NOT NULL DEFAULT 20",
-      "ALTER TABLE teaching_outcomes ADD COLUMN policy_eligible INTEGER NOT NULL DEFAULT 0",
-      "ALTER TABLE teaching_outcomes ADD COLUMN diagnostic_attempt_id TEXT",
-    ]) {
-      try {
-        await CapacitorSQLite.execute({
-          database: DATABASE,
-          statements: statement,
-          transaction: false,
-          readonly: false,
-        });
-      } catch {
-        // Existing installations already have the column.
-      }
-    }
+    await this.ensureColumns("term_model_scans", [
+      { name: "local_candidate_count", definition: "local_candidate_count INTEGER NOT NULL DEFAULT 0" },
+      { name: "model_candidate_count", definition: "model_candidate_count INTEGER NOT NULL DEFAULT 0" },
+    ]);
+    await this.ensureColumns("diagnostic_items", [
+      { name: "teaching_trial_id", definition: "teaching_trial_id TEXT" },
+    ]);
+    await this.ensureColumns("diagnostic_attempts", [
+      { name: "teaching_trial_id", definition: "teaching_trial_id TEXT" },
+    ]);
+    await this.ensureColumns("teaching_trials", [
+      { name: "pre_state_json", definition: "pre_state_json TEXT NOT NULL DEFAULT '{}'" },
+      { name: "target_concepts_json", definition: "target_concepts_json TEXT NOT NULL DEFAULT '[]'" },
+      { name: "target_dimensions_json", definition: "target_dimensions_json TEXT NOT NULL DEFAULT '[]'" },
+      { name: "strategy_rationale", definition: "strategy_rationale TEXT NOT NULL DEFAULT ''" },
+      { name: "policy_version", definition: "policy_version TEXT NOT NULL DEFAULT 'teaching-trial-v2.1'" },
+    ]);
+    await this.ensureColumns("teaching_outcomes", [
+      { name: "evidence_type", definition: "evidence_type TEXT NOT NULL DEFAULT 'observer_inference'" },
+      { name: "evidence_ref_id", definition: "evidence_ref_id TEXT" },
+      { name: "authority", definition: "authority INTEGER NOT NULL DEFAULT 20" },
+      { name: "policy_eligible", definition: "policy_eligible INTEGER NOT NULL DEFAULT 0" },
+      { name: "diagnostic_attempt_id", definition: "diagnostic_attempt_id TEXT" },
+    ]);
   }
 
   async query<T extends Record<string, unknown>>(statement: string, values: unknown[] = []): Promise<T[]> {

@@ -10,7 +10,7 @@ import type {
 } from "./termDisplayTypes";
 import { buildPreliminaryTermDecision } from "./termDisplayDecision";
 import { allocateTermDisplays } from "./termDisplayAllocator";
-import { analyzeMarkdownTermOccurrences } from "./termOccurrences";
+import type { MarkdownTermAnalysis } from "./termOccurrences";
 
 function normalizeText(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
@@ -218,23 +218,34 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     [],
   );
 
-  const markdownAnalysis = useMemo(() => {
-    try {
-      return {
-        analysis: analyzeMarkdownTermOccurrences(content, rawTerms, sourceKey),
+  const [markdownAnalysis, setMarkdownAnalysis] = useState<{
+    analysis: MarkdownTermAnalysis;
+    failed: boolean;
+  }>({
+    analysis: { occurrences: [], occurrenceByCandidateId: new Map(), paragraphCount: 1 },
+    failed: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!content || rawTerms.length === 0) {
+      setMarkdownAnalysis({
+        analysis: { occurrences: [], occurrenceByCandidateId: new Map(), paragraphCount: 1 },
         failed: false,
-      };
-    } catch (error) {
-      console.warn("Term occurrence analysis failed; rendering plain Markdown terms", error);
-      return {
-        analysis: {
-          occurrences: [],
-          occurrenceByCandidateId: new Map(),
-          paragraphCount: 1,
-        },
-        failed: true,
-      };
+      });
+      return;
     }
+    void import("./termOccurrences")
+      .then(({ analyzeMarkdownTermOccurrences }) => analyzeMarkdownTermOccurrences(content, rawTerms, sourceKey))
+      .then((analysis) => { if (!cancelled) setMarkdownAnalysis({ analysis, failed: false }); })
+      .catch((error) => {
+        console.warn("Term occurrence analysis failed; rendering plain Markdown terms", error);
+        if (!cancelled) setMarkdownAnalysis({
+          analysis: { occurrences: [], occurrenceByCandidateId: new Map(), paragraphCount: 1 },
+          failed: true,
+        });
+      });
+    return () => { cancelled = true; };
   }, [content, rawTerms, sourceKey]);
 
   const neutralProfiles = useMemo(() => {

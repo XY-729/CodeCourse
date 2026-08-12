@@ -397,3 +397,16 @@ html.platform-android[data-theme="dark"] .mobile-bottom-navigation {
   }
   html.platform-android .mobile-navigation-indicator { transition: none !important; }
 }
+
+html.platform-android .file-tree-virtual {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  contain: strict;
+}
+
+html.platform-android .tree-item-flat,
+html.platform-android .tree-item-flat .tree-row {
+  min-height: 34px;
+}

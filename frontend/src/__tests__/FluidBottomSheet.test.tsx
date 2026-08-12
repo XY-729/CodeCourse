@@ -94,8 +94,7 @@ describe("FluidBottomSheet", () => {
     // Flush the coalesced rAF paint
     rafCb.current?.(16);
 
-    expect(sheet.dataset.openProgress).toBe("0.5000");
-    expect(sheet.dataset.backdropProgress).toBe("0.0000");
+    expect(sheet.style.transform).toContain("299px");
     expect(layer?.style.getPropertyValue("--sheet-scrim-alpha")).toBe("0");
     bounds.mockRestore();
   });
@@ -114,17 +113,7 @@ describe("FluidBottomSheet", () => {
       frames.push(callback);
       return frames.length;
     });
-    const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-      x: 0,
-      y: 0,
-      width: 360,
-      height: 620,
-      top: 0,
-      right: 360,
-      bottom: 620,
-      left: 0,
-      toJSON: () => ({}),
-    });
+    const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(620);
 
     const { getByRole } = render(
       <FluidBottomSheet label="生成课程" onDismiss={vi.fn()}>
@@ -135,19 +124,15 @@ describe("FluidBottomSheet", () => {
 
     expect(sheet.dataset.entryEdge).toBe("bottom");
     expect(Number(sheet.dataset.entryStartY)).toBe(618);
-    expect(sheet.dataset.motionPhase).toBe("primed");
+    expect(sheet.dataset.motionPhase).toBeUndefined();
     expect(sheet.style.transform).toContain("618px");
     expect(sheet.parentElement?.style.getPropertyValue("--sheet-scrim-alpha")).toBe("0");
 
     frames.shift()?.(16);
-    expect(sheet.dataset.motionPhase).toBe("primed");
-    expect(sheet.style.transform).toContain("618px");
-
-    frames.shift()?.(32);
     expect(sheet.dataset.motionPhase).toBe("entering");
-    expect(sheet.style.transform).toContain("618px");
+    expect(sheet.style.transform).toBe("translate3d(0, 0, 0)");
 
     requestFrame.mockRestore();
-    bounds.mockRestore();
+    clientHeight.mockRestore();
   });
 });

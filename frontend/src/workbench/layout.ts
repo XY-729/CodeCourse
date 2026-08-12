@@ -10,6 +10,7 @@ export type OpenItem = {
   qaRecordId?: number;
   favorite?: boolean;
   dirty?: boolean;
+  hydrated?: boolean;
   restoreLine?: number;
   jumpRequest?: {
     id: string;
@@ -78,7 +79,12 @@ export function stripLayoutContent(node: LayoutNode): LayoutNode {
       ...node,
       group: {
         ...node.group,
-        items: node.group.items.map((item) => ({ ...item, content: "", dirty: false })),
+        items: node.group.items.map((item) => ({
+          ...item,
+          content: "",
+          dirty: false,
+          hydrated: item.type === "knowledge_graph",
+        })),
       },
     };
   }

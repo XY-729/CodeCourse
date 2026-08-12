@@ -369,6 +369,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private promptStates: Record<string, Record<string, unknown>> = {};
   /** 1s keep-alive ticks per running task; cleared when the task ends. */
   private heartbeatIntervals = new Map<number, number>();
+  private backgroundRecoveryPromise: Promise<void> | null = null;
 
   // The coordinator is the only owner of foreground Service state.
   private readonly serviceCoordinator = new GenerationServiceCoordinator(CodeCourseNative);
@@ -460,17 +461,26 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   static async create(): Promise<AndroidLocalProvider> {
     const provider = new AndroidLocalProvider();
     await db.init();
-    // 恢复任务必须等待：生成中的任务需要立刻接续，避免状态错乱。
-    await provider.resumeTasks();
-    // 其余恢复不阻塞冷启动首帧：前台服务状态/索引/观察任务在后台完成。
-    void provider.reconcileGenerationServiceState().catch((error) => {
-      console.warn("Initial generation Service reconcile failed", error);
-    });
-    void provider.resumeIndexes();
-    void provider.resumeObserverJobs().catch((error) => {
-      console.warn("Observer job resume failed", error);
-    });
     return provider;
+  }
+
+  /** Resume persisted work after the first interactive frame. Safe to call repeatedly. */
+  async startBackgroundRecovery(): Promise<void> {
+    if (this.backgroundRecoveryPromise) return this.backgroundRecoveryPromise;
+    this.backgroundRecoveryPromise = (async () => {
+      await this.resumeTasks();
+      await this.reconcileGenerationServiceState().catch((error) => {
+        console.warn("Initial generation Service reconcile failed", error);
+      });
+      void this.resumeIndexes();
+      void this.resumeObserverJobs().catch((error) => {
+        console.warn("Observer job resume failed", error);
+      });
+    })().catch((error) => {
+      this.backgroundRecoveryPromise = null;
+      throw error;
+    });
+    return this.backgroundRecoveryPromise;
   }
 
   // ==================================================================

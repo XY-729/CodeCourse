@@ -44,4 +44,32 @@ describe("MobileWorkspaceSheet", () => {
     expect(getByRole("region", { name: "源码" })).toBe(sheet);
     expect(getByRole("button", { name: "关闭源码" })).toBeTruthy();
   });
+
+  it("mounts heavy content only after the opening transition", () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockImplementation(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    });
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(620);
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const renderContent = vi.fn(() => <p>重内容</p>);
+    const { getByRole, queryByText } = render(
+      <MobileWorkspaceSheet tabKey="assistant" title="AI 助手" onDismiss={vi.fn()} renderContent={renderContent} />,
+    );
+
+    expect(renderContent).not.toHaveBeenCalled();
+    expect(queryByText("重内容")).toBeNull();
+    frames.shift()?.(16);
+    fireEvent.transitionEnd(getByRole("region", { name: "AI 助手" }), { propertyName: "transform" });
+    expect(renderContent).toHaveBeenCalledTimes(1);
+    expect(queryByText("重内容")).toBeTruthy();
+  });
 });

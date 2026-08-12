@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
-import hljs from "highlight.js";
 import { isAndroidRuntime } from "../platform/runtime";
+import { normalizeHighlightLanguage } from "../utils/highlightLanguages";
+import { requestMobileHighlight } from "../utils/mobileHighlight";
 import type { CodeJumpRequest, ViewerRange, ViewerSelection } from "./CodeViewer";
 
 type Props = {
@@ -302,15 +303,19 @@ export default function MobileCodeViewer({
   }
 
   // highlighting
-  const highlightedLines = useMemo(() => {
-    if (shouldSkipHighlight) return null;
-    const valid = language && hljs.getLanguage(language) ? language : undefined;
-    if (!valid) return null;
-    try {
-      const lines = splitHighlightedToLines(hljs.highlight(content, { language: valid, ignoreIllegals: true }).value);
+  const [highlightedLines, setHighlightedLines] = useState<string[] | null>(null);
+  useEffect(() => {
+    setHighlightedLines(null);
+    const normalizedLanguage = normalizeHighlightLanguage(language);
+    if (shouldSkipHighlight || normalizedLanguage === "plaintext") return;
+    const controller = new AbortController();
+    void requestMobileHighlight(content, normalizedLanguage, controller.signal).then((html) => {
+      if (!html || controller.signal.aborted) return;
+      const lines = splitHighlightedToLines(html);
       while (lines.length < totalLines) lines.push(" ");
-      return lines;
-    } catch { return null; }
+      setHighlightedLines(lines);
+    });
+    return () => controller.abort();
   }, [content, language, shouldSkipHighlight, totalLines]);
 
   // search matches

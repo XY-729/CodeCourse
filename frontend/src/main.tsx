@@ -1,7 +1,6 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import DetachedDocumentWindow from "./components/DetachedDocumentWindow";
 import GestureLayer from "./components/GestureLayer";
 import "./styles.css";
 import "./styles/apple-tokens.css";
@@ -20,8 +19,12 @@ import "./styles/android-assistant.css";
 import "./styles/android-me.css";
 import "./styles/android-generation.css";
 import { applyPlatformClass } from "./platform/runtime";
+import { initializeAndroidPerformanceMode, markAndroidPerformance } from "./platform/android/performance";
 
 applyPlatformClass();
+if (document.documentElement.classList.contains("platform-android")) {
+  initializeAndroidPerformanceMode();
+}
 
 // Inline script in index.html already sets data-theme + background-color.
 // Sync theme-color as a fallback in case the meta tag moved.
@@ -31,9 +34,13 @@ if (observedTheme === "dark" || observedTheme === "light") {
 }
 
 const detachedWindow = new URLSearchParams(window.location.search).has("detached");
+const DetachedDocumentWindow = lazy(() => import("./components/DetachedDocumentWindow"));
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {detachedWindow ? <DetachedDocumentWindow /> : <><App /><GestureLayer /></>}
+    {detachedWindow
+      ? <Suspense fallback={<div className="viewer-loading">正在打开文档…</div>}><DetachedDocumentWindow /></Suspense>
+      : <><App /><GestureLayer /></>}
   </React.StrictMode>,
 );
+markAndroidPerformance("react-render-requested");

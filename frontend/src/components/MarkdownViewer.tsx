@@ -4,12 +4,40 @@ import ReactMarkdown from "react-markdown";
 import type { PluggableList } from "unified";
 import { remarkTermOccurrences } from "../personalization/termOccurrences";
 import remarkGfm from "remark-gfm";
-import hljs from "highlight.js";
 import type { DocumentTerm, HighlightRecord, KnowledgeLink } from "../api/client";
 import { isAndroidRuntime } from "../platform/runtime";
+import { normalizeHighlightLanguage } from "../utils/highlightLanguages";
 import type { Annotation } from "../types";
 import { COLOR_VALUES } from "../types";
 import type { ViewerSelection } from "./CodeViewer";
+
+function HighlightedCode({ className, code }: { className: string; code: string }) {
+  const [html, setHtml] = useState<string | null>(null);
+  const language = normalizeHighlightLanguage(className.replace(/^language-/, ""));
+
+  useEffect(() => {
+    setHtml(null);
+    if (language === "plaintext") return;
+    let cancelled = false;
+    let idleId: number | null = null;
+    const run = () => {
+      void import("../utils/highlightRuntime")
+        .then(({ highlightCode }) => highlightCode(code, language))
+        .then((value) => { if (!cancelled) setHtml(value); })
+        .catch(() => undefined);
+    };
+    if (window.requestIdleCallback) idleId = window.requestIdleCallback(run, { timeout: 500 });
+    else window.setTimeout(run, 0);
+    return () => {
+      cancelled = true;
+      if (idleId !== null) window.cancelIdleCallback?.(idleId);
+    };
+  }, [code, language]);
+
+  return html
+    ? <code className={`hljs ${className}`} dangerouslySetInnerHTML={{ __html: html }} />
+    : <code className={className}>{code}</code>;
+}
 
 type Props = {
   title: string | null;
@@ -684,15 +712,7 @@ export default function MarkdownViewer({
       const codeText = String(children ?? "").replace(/\n$/, "");
       const lang = className?.replace(/^language-/, "") ?? "";
       if (className?.startsWith("language-") && lang) {
-        try {
-          const validLang = hljs.getLanguage(lang) ? lang : undefined;
-          const result = validLang
-            ? hljs.highlight(codeText, { language: validLang, ignoreIllegals: true })
-            : hljs.highlightAuto(codeText);
-          return <code className={`hljs ${className}`} dangerouslySetInnerHTML={{ __html: result.value }} />;
-        } catch {
-          return <code className={className}>{children}</code>;
-        }
+        return <HighlightedCode className={className} code={codeText} />;
       }
       return <code>{children}</code>;
     },

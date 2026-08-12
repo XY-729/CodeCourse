@@ -82,25 +82,17 @@ import AppDialog from "./components/AppDialog";
 import CodeViewer, { ViewerRange, ViewerSelection } from "./components/CodeViewer";
 import CommandPalette, { type CommandPaletteItem } from "./components/CommandPalette";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
-import LLMSettingsDialog from "./components/LLMSettingsDialog";
-import LearnerProfileDialog from "./components/LearnerProfileDialog";
-import OutlineQuestionnaireDialog from "./components/OutlineQuestionnaireDialog";
-import ContextFilePickerDialog from "./components/ContextFilePickerDialog";
-import MarkdownViewer from "./components/MarkdownViewer";
-import PromptEditor from "./components/PromptEditor";
 import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
 import SelectionQuickBar from "./components/SelectionQuickBar";
 import SlidingSelectionIndicator from "./components/SlidingSelectionIndicator";
 import MobileTopBar from "./components/MobileTopBar";
-import MobileAssistantPanel, { type MobileAssistantView } from "./components/MobileAssistantPanel";
-import MobileMePanel from "./components/MobileMePanel";
+import type { MobileAssistantView } from "./components/MobileAssistantPanel";
 import MobileBottomNavigation, { type MobilePrimaryDestination } from "./components/MobileBottomNavigation";
 import MobileReaderHeader from "./components/MobileReaderHeader";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
 import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolbar";
 import { isGenerationTaskRunning, selectPrimaryGenerationTask, sortGenerationTasks, upsertGenerationTask } from "./components/generationTaskModel";
-import GenerationSheet from "./components/GenerationSheet";
-import MobileGenerationPanel, { type MobileGenerationView } from "./components/MobileGenerationPanel";
+import type { MobileGenerationView } from "./components/MobileGenerationPanel";
 import MobileWorkspaceSheet, { type MobileWorkspaceSheetHandle } from "./components/MobileWorkspaceSheet";
 import TitleBar from "./components/TitleBar";
 import TaskFeedback from "./components/TaskFeedback";
@@ -114,6 +106,7 @@ import { usePersonalizationController } from "./personalization/usePersonalizati
 import { useDocumentTermsController } from "./personalization/useDocumentTermsController";
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
 import { getCodeCourseProvider } from "./platform/provider";
+import { markAndroidPerformance, scheduleAfterInteractiveFrame } from "./platform/android/performance";
 import { canRetry, permissionNotice as buildPermissionNotice, batteryNotice as buildBatteryNotice, type PermissionNotice, type ProviderNotice } from "./platform/android/generationState";
 import { setCodeCourseDragImage } from "./utils/dragImage";
 import { useAppDialog } from "./hooks/useAppDialog";
@@ -170,6 +163,16 @@ import type {
 } from "./workbench/layout";
 
 const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewer"));
+const MarkdownViewer = lazy(() => import("./components/MarkdownViewer"));
+const MobileAssistantPanel = lazy(() => import("./components/MobileAssistantPanel"));
+const MobileGenerationPanel = lazy(() => import("./components/MobileGenerationPanel"));
+const MobileMePanel = lazy(() => import("./components/MobileMePanel"));
+const LLMSettingsDialog = lazy(() => import("./components/LLMSettingsDialog"));
+const LearnerProfileDialog = lazy(() => import("./components/LearnerProfileDialog"));
+const OutlineQuestionnaireDialog = lazy(() => import("./components/OutlineQuestionnaireDialog"));
+const ContextFilePickerDialog = lazy(() => import("./components/ContextFilePickerDialog"));
+const PromptEditor = lazy(() => import("./components/PromptEditor"));
+const GenerationSheet = lazy(() => import("./components/GenerationSheet"));
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
@@ -559,6 +562,7 @@ export default function App() {
   const currentProjectIdRef = useRef<number | null>(null);
 
   const mobileWorkspaceTabRef = useRef<MobileWorkspaceTab | null>(null);
+  const mobileWorkspaceMotionRef = useRef<"entering" | "open" | "exiting">("open");
   const mobileWorkspaceSheetRef = useRef<MobileWorkspaceSheetHandle | null>(null);
   const desktopDragDepthRef = useRef(0);
   const recordedTermImpressionsRef = useRef<Set<string>>(new Set());
@@ -692,7 +696,20 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.classList.remove("app-starting");
+    markAndroidPerformance("react-shell-visible");
   }, []);
+
+  useEffect(() => {
+    if (!mobileRuntime) return;
+    return scheduleAfterInteractiveFrame(() => {
+      void getCodeCourseProvider().then(async (provider) => {
+        markAndroidPerformance("database-ready");
+        await provider.startBackgroundRecovery?.();
+      }).catch((error) => {
+        console.warn("Android background recovery failed", error);
+      });
+    });
+  }, [mobileRuntime]);
 
   // Register permission notice handler on Android provider
   useEffect(() => {
@@ -1643,6 +1660,7 @@ export default function App() {
       setProjects(nextProjects);
       if (nextProjects.length === 0) {
         window.localStorage.removeItem(LAST_PROJECT_STORAGE_KEY);
+        window.localStorage.removeItem("codecourse-last-project-name");
       } else if (!project) {
         const rememberedId = Number(window.localStorage.getItem(LAST_PROJECT_STORAGE_KEY));
         const rememberedProject = Number.isSafeInteger(rememberedId) && rememberedId > 0
@@ -1937,6 +1955,22 @@ export default function App() {
   function activateItem(groupId: string, item: OpenItem) {
     setLayout((prev) => updateGroup(prev, groupId, (group) => ({ ...group, activeItemId: item.id })));
     setActiveGroupId(groupId);
+    if (item.hydrated === false && project) {
+      const projectId = project.id;
+      void hydrateStoredItem(item, projectId, courses).then((hydrated) => {
+        if (!hydrated || currentProjectIdRef.current !== projectId) {
+          if (!hydrated) setLayout((prev) => updateGroup(prev, groupId, (group) => closeItem(group, item.id)));
+          return;
+        }
+        setLayout((prev) => updateGroup(prev, groupId, (group) => ({
+          ...group,
+          items: group.items.map((entry) => entry.id === item.id ? hydrated : entry),
+        })));
+        applyActiveItem(hydrated);
+        touchOpenItem(hydrated);
+      });
+      return;
+    }
     applyActiveItem(item);
     touchOpenItem(item);
   }
@@ -1962,6 +1996,7 @@ export default function App() {
           content: file.content,
           language: file.language,
           dirty: false,
+          hydrated: true,
           restoreLine: saved?.position_kind === "line" ? saved.position_value : 1,
           jumpRequest: undefined,
         };
@@ -1973,29 +2008,40 @@ export default function App() {
           const record = await getQARecord(projectId, item.qaRecordId).catch(() => null);
           if (record) title = qaTitle(record);
         }
-        return { ...item, title, content: course.content, dirty: false };
+        return { ...item, title, content: course.content, dirty: false, hydrated: true };
       }
       if (item.type === "qa" && item.qaRecordId) {
         const record = await getQARecord(projectId, item.qaRecordId);
-        return { ...item, title: qaTitle(record), content: record.answer_md, favorite: record.favorite, dirty: false };
+        return { ...item, title: qaTitle(record), content: record.answer_md, favorite: record.favorite, dirty: false, hydrated: true };
       }
-      if (item.type === "knowledge_graph") return { ...item, content: "" };
+      if (item.type === "knowledge_graph") return { ...item, content: "", hydrated: true };
     } catch {
       return null;
     }
     return null;
   }
 
-  async function hydrateStoredLayout(node: LayoutNode, projectId: number, availableCourses: CourseFile[]): Promise<LayoutNode> {
+  async function hydrateStoredLayout(
+    node: LayoutNode,
+    projectId: number,
+    availableCourses: CourseFile[],
+    activeOnly = false,
+    availableFilePaths?: Set<string>,
+  ): Promise<LayoutNode> {
     if (node.type === "group") {
-      const hydrated = await Promise.all(node.group.items.map((item) => hydrateStoredItem(item, projectId, availableCourses)));
+      const hydrated = await Promise.all(node.group.items.map((item) => {
+        if (!activeOnly || item.id === node.group.activeItemId) return hydrateStoredItem(item, projectId, availableCourses);
+        if (item.type === "file" && availableFilePaths && !availableFilePaths.has(item.path)) return null;
+        if (item.type === "course" && !availableCourses.some((course) => course.filename === item.path)) return null;
+        return Promise.resolve({ ...item, content: "", dirty: false, hydrated: false });
+      }));
       const items = hydrated.filter((item): item is OpenItem => Boolean(item));
       const activeItemId = items.some((item) => item.id === node.group.activeItemId) ? node.group.activeItemId : (items.length > 0 ? items[items.length - 1].id : null);
       return { ...node, group: { ...node.group, items, activeItemId } };
     }
     const [first, second] = await Promise.all([
-      hydrateStoredLayout(node.first, projectId, availableCourses),
-      hydrateStoredLayout(node.second, projectId, availableCourses),
+      hydrateStoredLayout(node.first, projectId, availableCourses, activeOnly, availableFilePaths),
+      hydrateStoredLayout(node.second, projectId, availableCourses, activeOnly, availableFilePaths),
     ]);
     return { ...node, first, second };
   }
@@ -2263,7 +2309,10 @@ export default function App() {
    * 恢复上次工作区布局。返回 true 表示已恢复并完成打开。
    * 在第二阶段异步执行，不阻塞骨架渲染。
    */
-  async function restoreStoredWorkbench(projectId: number, courses: CourseFile[]): Promise<boolean> {
+  async function restoreStoredWorkbench(projectId: number, courses: CourseFile[], projectTree?: TreeNode | null): Promise<boolean> {
+    const availableFilePaths = projectTree
+      ? new Set(flattenTree(projectTree).filter((entry) => entry.type === "file").map((entry) => entry.path))
+      : undefined;
     if (mobileRuntime) {
       // Android: try Android key; if missing, one-time migrate from desktop key
       let stored: StoredWorkbench | null = null;
@@ -2276,9 +2325,9 @@ export default function App() {
           const desktop = JSON.parse(desktopRaw) as StoredWorkbench;
           if (desktop?.version === WORKBENCH_STORAGE_VERSION && desktop.layout) {
             // Hydrate once from desktop, normalize, then save stripped + use hydrated in-memory
-            const hydratedDesktop = await hydrateStoredLayout(desktop.layout, projectId, courses);
-            const merged = normalizeToSingleGroup(hydratedDesktop,
+            const mergedStored = normalizeToSingleGroup(desktop.layout,
               desktop.activeGroupId ? findGroup(desktop.layout, desktop.activeGroupId)?.activeItemId : null);
+            const merged = await hydrateStoredLayout(mergedStored, projectId, courses, true, availableFilePaths);
             // Persist stripped layout to Android key
             try { window.localStorage.setItem(androidWorkbenchStorageKey(projectId), JSON.stringify({
               version: WORKBENCH_STORAGE_VERSION, layout: stripLayoutContent(merged),
@@ -2292,10 +2341,10 @@ export default function App() {
       }
       if (stored?.version === WORKBENCH_STORAGE_VERSION && stored.layout) {
         // Always hydrate — stored layout is stripped of content
-        let restoredLayout = syncLayoutIdCounter(await hydrateStoredLayout(stored.layout, projectId, courses));
-        if (restoredLayout.type === "split") {
-          restoredLayout = normalizeToSingleGroup(restoredLayout, stored.activeGroupId ? findGroup(stored.layout, stored.activeGroupId)?.activeItemId : null);
-        }
+        const singleGroupLayout = stored.layout.type === "split"
+          ? normalizeToSingleGroup(stored.layout, stored.activeGroupId ? findGroup(stored.layout, stored.activeGroupId)?.activeItemId : null)
+          : stored.layout;
+        const restoredLayout = syncLayoutIdCounter(await hydrateStoredLayout(singleGroupLayout, projectId, courses, true, availableFilePaths));
         if (countLayoutItems(restoredLayout) > 0) {
           const rg = findGroup(restoredLayout, ROOT_GROUP_ID);
           const ri = rg?.items.find((item) => item.id === rg.activeItemId) ?? null;
@@ -2353,6 +2402,7 @@ export default function App() {
        */
       currentProjectIdRef.current = freshProject.id;
       window.localStorage.setItem(LAST_PROJECT_STORAGE_KEY, String(freshProject.id));
+      window.localStorage.setItem("codecourse-last-project-name", freshProject.name);
       // 第一阶段：仅轻量元数据，尽快渲染骨架。
       const [nextTree, nextCourses, tasks] = await Promise.all([
         getTree(freshProject.id),
@@ -2418,11 +2468,10 @@ export default function App() {
         setIndexBuilding(nextIndexStatus?.status === "building");
         setLearningStates(nextLearningStates);
         setQAHistory(nextQARecords);
-        refreshQAHistory(freshProject.id);
         refreshHighlights(freshProject.id);
         refreshKnowledgeLinks(freshProject.id);
         // 布局恢复依赖 nextCourses（已在第一阶段就绪），放到第二阶段执行。
-        void restoreStoredWorkbench(freshProject.id, nextCourses).then(async (restored) => {
+        void restoreStoredWorkbench(freshProject.id, nextCourses, nextTree).then(async (restored) => {
           if (restored) return;
           const recent = [...nextLearningStates].sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
           const recentCourse = recent?.source_type === "course" ? nextCourses.find((file) => file.filename === recent.source_path) : null;
@@ -4438,6 +4487,7 @@ export default function App() {
   function renderGroup(group: EditorGroup) {
     const activeItem = group.items.find((item) => item.id === group.activeItemId) ?? null;
     const editorMountDeferred = activeItem ? deferredEditorMounts.has(`${group.id}:${activeItem.id}`) : false;
+    const activeItemLoading = activeItem?.hydrated === false;
     const lessonFiles = courses.filter((file) => isLessonPath(file.filename)).sort((a, b) => a.filename.localeCompare(b.filename));
     const lessonIndex = activeItem?.type === "course" ? lessonFiles.findIndex((file) => file.filename === activeItem.path) : -1;
     const activeLearningType: LearningState["source_type"] | null = activeItem?.type === "file" ? "file" : activeItem?.type === "qa" || activeItem?.qaRecordId ? "qa" : activeItem?.type === "course" ? "course" : null;
@@ -4678,7 +4728,7 @@ export default function App() {
             ) : null}
         </div> : null}
         <div className="pane-body">
-          {editorMountDeferred ? <div className="viewer-loading deferred-editor-loading">正在准备工作区…</div> : null}
+          {editorMountDeferred || activeItemLoading ? <div className="viewer-loading deferred-editor-loading">正在准备工作区…</div> : null}
           {!mobileRuntime && activeItem?.type === "course" && lessonIndex >= 0 ? (
             <ReaderLearningToolbar
               title={activeItem.title}
@@ -4690,7 +4740,7 @@ export default function App() {
               onToggleComplete={() => void toggleLessonComplete(activeItem.path)}
             />
           ) : null}
-          {!editorMountDeferred && activeItem?.type === "file" ? (
+          {!editorMountDeferred && !activeItemLoading && activeItem?.type === "file" ? (
             <CodeViewer
               key={activeItem.id}
               path={activeItem.path}
@@ -4718,7 +4768,7 @@ export default function App() {
               mobileSearchRequestId={mobileRuntime ? mobileCodeSearchRequestId : undefined}
             />
           ) : null}
-          {!editorMountDeferred && activeItem?.type === "course" ? (
+          {!editorMountDeferred && !activeItemLoading && activeItem?.type === "course" ? (
             editingCourseItemId === activeItem.id ? (
               <div className="viewer qa-editor-view">
                 {!mobileRuntime ? (
@@ -4783,7 +4833,7 @@ export default function App() {
               />
             )
           ) : null}
-          {!editorMountDeferred && activeItem?.type === "qa" ? (
+          {!editorMountDeferred && !activeItemLoading && activeItem?.type === "qa" ? (
             <div className="viewer qa-editor-view">
               {!mobileRuntime ? (
                 <div className="viewer-header">
@@ -4839,7 +4889,7 @@ export default function App() {
             </div>
           ) : null}
           {!activeItem ? <div className="empty-state">点击或拖拽文件/课件到这里阅读</div> : null}
-          {!editorMountDeferred && activeItem?.type === "knowledge_graph" && project ? (
+          {!editorMountDeferred && !activeItemLoading && activeItem?.type === "knowledge_graph" && project ? (
             <Suspense fallback={<div className="viewer-loading">正在加载知识网络…</div>}><KnowledgeGraphViewer
               projectId={project.id}
               refreshKey={knowledgeRefreshKey}
@@ -5386,6 +5436,19 @@ export default function App() {
     setMobileWorkspaceTab("me");
   }
 
+  function preloadMobileWorkspaceContent(tab: MobileWorkspaceTab) {
+    if (tab === "assistant") void import("./components/MobileAssistantPanel");
+    else if (tab === "generation") void import("./components/MobileGenerationPanel");
+    else if (tab === "me") void import("./components/MobileMePanel");
+  }
+
+  function renderMobileWorkspaceContent(tab: MobileWorkspaceTab) {
+    if (tab === "projects" || tab === "courses" || tab === "files") return renderSidebar(tab, true);
+    if (tab === "assistant") return renderMobileAssistantPanel();
+    if (tab === "generation") return renderMobileGenerationPanel();
+    return renderMobileMePanel();
+  }
+
   function openGeneration(intent: GenerationIntent) {
     setGenerationIntent(intent);
     if (mobileRuntime) {
@@ -5542,7 +5605,7 @@ export default function App() {
         settings={llmSettings}
         panelError={qaPanelError}
         knowledgeDisabled={!project}
-        knowledgeContent={project ? renderKnowledgeGraph() : null}
+        knowledgeContent={mobileAssistantView === "knowledge" && mobileWorkspaceMotionRef.current === "open" && project ? renderKnowledgeGraph() : null}
         onQuestionChange={handleQAQuestionChange}
         onSelectionTextChange={handleSelectionTextChange}
         onClearSelection={handleClearSelection}
@@ -5988,16 +6051,19 @@ export default function App() {
               onDismissError={() => setError("")}
             />
           ) : undefined}
-          onDismiss={() => setMobileWorkspaceTab(null)}
-        >
-          {mobileWorkspaceTab === "projects" || mobileWorkspaceTab === "courses" || mobileWorkspaceTab === "files"
-            ? renderSidebar(mobileWorkspaceTab, true)
-            : mobileWorkspaceTab === "assistant"
-              ? renderMobileAssistantPanel()
-              : mobileWorkspaceTab === "generation"
-                ? renderMobileGenerationPanel()
-                : renderMobileMePanel()}
-        </MobileWorkspaceSheet>
+          preloadContent={() => preloadMobileWorkspaceContent(mobileWorkspaceTab)}
+          renderContent={() => renderMobileWorkspaceContent(mobileWorkspaceTab)}
+          onMotionPhaseChange={(phase) => {
+            mobileWorkspaceMotionRef.current = phase;
+            document.documentElement.toggleAttribute("data-mobile-sheet-moving", phase !== "open");
+            if (phase === "entering") markAndroidPerformance("drawer-first-frame");
+            if (phase === "open") markAndroidPerformance("drawer-open");
+          }}
+          onDismiss={() => {
+            document.documentElement.removeAttribute("data-mobile-sheet-moving");
+            setMobileWorkspaceTab(null);
+          }}
+        />
       ) : null}
       {!mobileRuntime ? (
         <GenerationSheet

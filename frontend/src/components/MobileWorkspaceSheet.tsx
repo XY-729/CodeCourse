@@ -1,12 +1,15 @@
-import { forwardRef, useImperativeHandle, useRef, type ReactNode } from "react";
+import { forwardRef, Suspense, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import FluidBottomSheet, { type FluidBottomSheetHandle } from "./FluidBottomSheet";
 
 type Props = {
   action?: ReactNode;
-  children: ReactNode;
+  children?: ReactNode;
   feedback?: ReactNode;
   onDismiss: () => void;
+  onMotionPhaseChange?: (phase: "entering" | "open" | "exiting") => void;
+  preloadContent?: () => void;
+  renderContent?: () => ReactNode;
   tabKey: string;
   title: string;
   variant?: "standard" | "assistant" | "me" | "generation";
@@ -17,14 +20,25 @@ export type MobileWorkspaceSheetHandle = {
 };
 
 const MobileWorkspaceSheet = forwardRef<MobileWorkspaceSheetHandle, Props>(function MobileWorkspaceSheet({
-    action, children, feedback, onDismiss, tabKey, title,
+    action, children, feedback, onDismiss, onMotionPhaseChange, preloadContent, renderContent, tabKey, title,
     variant = "standard",
   },
   forwardedRef,
 ) {
   const sheetRef = useRef<FluidBottomSheetHandle | null>(null);
+  const [readyTabKey, setReadyTabKey] = useState<string | null>(null);
+  const openedRef = useRef(false);
   const dismiss = () => sheetRef.current?.dismiss();
   useImperativeHandle(forwardedRef, () => ({ dismiss }), []);
+
+  useEffect(() => {
+    preloadContent?.();
+    if (!openedRef.current) return;
+    const frame = window.requestAnimationFrame(() => setReadyTabKey(tabKey));
+    return () => window.cancelAnimationFrame(frame);
+  }, [tabKey]);
+
+  const contentReady = readyTabKey === tabKey;
 
   const variantClass =
     variant === "assistant"
@@ -45,6 +59,13 @@ const MobileWorkspaceSheet = forwardRef<MobileWorkspaceSheetHandle, Props>(funct
         }
         label={title}
         onDismiss={onDismiss}
+        onMotionPhaseChange={(phase) => {
+          if (phase === "open") {
+            openedRef.current = true;
+            setReadyTabKey(tabKey);
+          }
+          onMotionPhaseChange?.(phase);
+        }}
       >
         <header className="mobile-workspace-sheet-header">
           <strong>{title}</strong>
@@ -56,8 +77,14 @@ const MobileWorkspaceSheet = forwardRef<MobileWorkspaceSheetHandle, Props>(funct
           </div>
         </header>
         {feedback}
-        <div className="mobile-workspace-sheet-content" key={tabKey}>
-          {children}
+        <div className={`mobile-workspace-sheet-content ${contentReady ? "is-ready" : "is-deferred"}`}>
+          {contentReady ? <Suspense fallback={<div className="mobile-workspace-sheet-skeleton"><i /><i /><i /></div>}>
+            {renderContent?.() ?? children}
+          </Suspense> : (
+            <div className="mobile-workspace-sheet-skeleton" aria-label={`${title}正在准备`}>
+              <i /><i /><i /><i />
+            </div>
+          )}
         </div>
       </FluidBottomSheet>
     </div>

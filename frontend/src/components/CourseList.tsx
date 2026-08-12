@@ -1,5 +1,5 @@
 import { BookOpen, Check, ChevronDown, ChevronRight, Circle, Trash2 } from "lucide-react";
-import { useState, type CSSProperties } from "react";
+import { memo, useMemo, useState, type CSSProperties } from "react";
 import type { CourseFile, LearningState } from "../api/client";
 import { setCodeCourseDragImage } from "../utils/dragImage";
 
@@ -24,10 +24,13 @@ function groupFiles(files: CourseFile[]): Map<string, CourseFile[]> {
   return map;
 }
 
-export default function CourseList({ files, selected, onSelect, onDragItem, onDelete, learningStates = [] }: Props) {
+function CourseList({ files, selected, onSelect, onDragItem, onDelete, learningStates = [] }: Props) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
-  const groups = groupFiles(files);
+  const groups = useMemo(() => groupFiles(files), [files]);
+  const stateByPath = useMemo(() => new Map(
+    learningStates.filter((entry) => entry.source_type === "course").map((entry) => [entry.source_path, entry]),
+  ), [learningStates]);
 
   function toggleGroup(group: string) {
     setCollapsedGroups((prev) => {
@@ -52,7 +55,7 @@ export default function CourseList({ files, selected, onSelect, onDragItem, onDe
           </button>
           {!collapsedGroups.has(group) &&
             groupFiles.map((file, index) => {
-              const state = learningStates.find((entry) => entry.source_type === "course" && entry.source_path === file.filename);
+              const state = stateByPath.get(file.filename);
               const lesson = /^lessons\/lesson_\d+\.md$/i.test(file.filename);
               const stateClass = state?.status === "completed" ? "completed" : state ? "in-progress" : "not-started";
               return (
@@ -98,3 +101,5 @@ export default function CourseList({ files, selected, onSelect, onDragItem, onDe
     </div>
   );
 }
+
+export default memo(CourseList);

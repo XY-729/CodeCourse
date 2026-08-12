@@ -1,7 +1,7 @@
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import JSZip from "jszip";
-import hljs from "highlight.js";
 import type { TreeNode } from "../../api/client";
+import { normalizeHighlightLanguage } from "../../utils/highlightLanguages";
 
 const IGNORED_DIRS = new Set([
   ".git", "node_modules", "build", "dist", "target", "__pycache__", ".venv", "venv", ".next", "coverage",
@@ -108,30 +108,7 @@ export function normalizeLanguage(raw: string): string {
   const key = raw.trim().toLowerCase();
   if (!key || key === "plaintext" || key === "text" || key === "txt") return "plaintext";
 
-  // Legacy DB alias
-  if (LEGACY_DB_ALIASES[key]) {
-    const resolved = LEGACY_DB_ALIASES[key];
-    try {
-      if (hljs.getLanguage(resolved)) return resolved;
-    } catch { /* hljs not available */ }
-    return "plaintext";
-  }
-
-  // Our alias table
-  if (LANGUAGE_ALIASES[key]) {
-    const resolved = LANGUAGE_ALIASES[key];
-    try {
-      if (hljs.getLanguage(resolved)) return resolved;
-    } catch { /* hljs not available */ }
-    return "plaintext";
-  }
-
-  // Direct hljs check
-  try {
-    if (hljs.getLanguage(key)) return key;
-  } catch { /* highlight.js not available in all contexts */ }
-
-  return "plaintext";
+  return normalizeHighlightLanguage(LEGACY_DB_ALIASES[key] ?? LANGUAGE_ALIASES[key] ?? key);
 }
 
 export type ImportedTextFile = {
