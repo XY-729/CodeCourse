@@ -21,6 +21,10 @@ _TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
 _MAX_ATTEMPTS = 3
 _RETRY_BASE_SECONDS = 1.5
 
+# 流式响应没有整体截止时间时，服务端只要缓慢吐数据就能让请求无限挂起
+# （read 超时是每阶段超时，不限制总时长）。total = read + 缓冲 作为硬上限。
+_TOTAL_TIMEOUT_BUFFER_SECONDS = 30
+
 
 def _retry_backoff(attempt: int) -> None:
     # attempt 从 0 开始，第 0/1 次失败后等待 1.5s / 3s，第 2 次失败后不再等待。
@@ -154,58 +158,67 @@ async def stream_openai_compatible_chat(
     }
     client = _async_client()
     last_error: BaseException | None = None
-    for attempt in range(_MAX_ATTEMPTS):
-        try:
-            async with client.stream(
-                "POST",
-                endpoint,
-                json=payload,
-                headers={"Authorization": f"Bearer {api_key}"},
-                timeout=httpx.Timeout(timeout),
-            ) as response:
-                if response.status_code >= 400:
-                    detail = (await response.aread()).decode("utf-8", errors="replace")
-                    error = RuntimeError(f"LLM HTTP {response.status_code}: {detail[:500]}")
-                    if response.status_code in _TRANSIENT_STATUS:
-                        last_error = error
-                        await _retry_backoff_async(attempt)
-                        continue
-                    raise error
+    # 流式响应没有整体截止时间时，服务端只要缓慢吐数据就能让请求无限挂起
+    # （httpx 的 read timeout 是每阶段超时，不限制总时长）。用 asyncio.timeout
+    # 作为硬上限，超出即抛 TimeoutError（不重试——停滞的重试无意义，交由
+    # 上层任务失败路径处理）。
+    deadline = timeout + _TOTAL_TIMEOUT_BUFFER_SECONDS
+    try:
+        async with asyncio.timeout(deadline):
+            for attempt in range(_MAX_ATTEMPTS):
+                try:
+                    async with client.stream(
+                        "POST",
+                        endpoint,
+                        json=payload,
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=httpx.Timeout(timeout),
+                    ) as response:
+                        if response.status_code >= 400:
+                            detail = (await response.aread()).decode("utf-8", errors="replace")
+                            error = RuntimeError(f"LLM HTTP {response.status_code}: {detail[:500]}")
+                            if response.status_code in _TRANSIENT_STATUS:
+                                last_error = error
+                                await _retry_backoff_async(attempt)
+                                continue
+                            raise error
 
-                content_type = response.headers.get("content-type", "").lower()
-                if "text/event-stream" not in content_type:
-                    body = await response.aread()
-                    try:
-                        content = _message_content(json.loads(body.decode("utf-8")))
-                    except (ValueError, TypeError, UnicodeDecodeError) as exc:
-                        raise RuntimeError("LLM response is neither SSE nor valid JSON") from exc
-                    if content:
-                        yield content
-                    return
+                        content_type = response.headers.get("content-type", "").lower()
+                        if "text/event-stream" not in content_type:
+                            body = await response.aread()
+                            try:
+                                content = _message_content(json.loads(body.decode("utf-8")))
+                            except (ValueError, TypeError, UnicodeDecodeError) as exc:
+                                raise RuntimeError("LLM response is neither SSE nor valid JSON") from exc
+                            if content:
+                                yield content
+                            return
 
-                async for line in response.aiter_lines():
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if not data or data == "[DONE]":
-                        if data == "[DONE]":
-                            break
-                        continue
-                    try:
-                        event = json.loads(data)
-                    except ValueError:
-                        continue
-                    choices = event.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        yield str(content)
-                return
-        except httpx.HTTPError as exc:
-            last_error = exc
-            await _retry_backoff_async(attempt)
+                        async for line in response.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data = line[5:].strip()
+                            if not data or data == "[DONE]":
+                                if data == "[DONE]":
+                                    break
+                                continue
+                            try:
+                                event = json.loads(data)
+                            except ValueError:
+                                continue
+                            choices = event.get("choices") or []
+                            if not choices:
+                                continue
+                            delta = choices[0].get("delta") or {}
+                            content = delta.get("content")
+                            if content:
+                                yield str(content)
+                        return
+                except httpx.HTTPError as exc:
+                    last_error = exc
+                    await _retry_backoff_async(attempt)
+    except TimeoutError as exc:
+        raise RuntimeError(f"LLM stream exceeded overall deadline of {deadline}s") from exc
     if isinstance(last_error, httpx.HTTPError):
         raise RuntimeError(f"LLM network error: {last_error}") from last_error
     raise last_error if isinstance(last_error, RuntimeError) else RuntimeError(f"LLM network error: {last_error}") from last_error

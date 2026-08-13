@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import course, files, highlights, index, knowledge, learning, personalization, projects, qa, settings, terms
 from app.services.storage import init_storage
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -16,8 +19,19 @@ async def lifespan(app: FastAPI):
         recover_pending_observer_jobs,
         shutdown_observer,
     )
+    from app.services.storage import fail_stale_generation_tasks
+    from app.services.task_watchdog import start_watchdog, stop_watchdog
+
     recover_pending_observer_jobs()
+    marked = fail_stale_generation_tasks(
+        timeout_minutes=0,
+        error_message="上次生成中断，请重新生成",
+    )
+    if marked:
+        logger.warning("startup cleanup: %d orphaned running task(s) marked as failed", marked)
+    start_watchdog()
     yield
+    await stop_watchdog()
     shutdown_observer(wait=False)
 
 

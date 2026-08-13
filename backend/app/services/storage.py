@@ -2307,6 +2307,40 @@ def list_generation_tasks(project_id: int) -> list[GenerationTask]:
         return [_row_to_task(row) for row in rows]
 
 
+def fail_stale_generation_tasks(timeout_minutes: int = 15, error_message: str = "生成超时，已自动取消，请重新生成") -> int:
+    """Mark running tasks with no progress for longer than `timeout_minutes` as failed.
+
+    Returns the number of tasks that were marked failed. Called by the watchdog
+    (periodic sweep) and at startup to clean up orphaned running tasks."""
+    cutoff = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id FROM generation_tasks
+            WHERE status = 'running'
+              AND datetime(updated_at) <= datetime(?, '-' || ? || ' minutes')
+            """,
+            (cutoff, timeout_minutes),
+        ).fetchall()
+        if not rows:
+            return 0
+        ids = [row["id"] for row in rows]
+        placeholders = ",".join("?" * len(ids))
+        conn.execute(
+            f"""
+            UPDATE generation_tasks
+            SET status = 'failed',
+                error_message = ?,
+                stage_label = '生成失败',
+                updated_at = ?
+            WHERE id IN ({placeholders})
+            """,
+            (error_message, cutoff, *ids),
+        )
+        conn.commit()
+        return len(ids)
+
+
 def find_completed_task(
     project_id: int,
     task_type: str,
