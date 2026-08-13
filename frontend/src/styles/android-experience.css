@@ -2149,3 +2149,17 @@ html.platform-android .context-file-chip button {
 html.platform-android .context-file-chip button:hover {
   background: color-mix(in srgb, var(--mobile-accent) 18%, transparent);
 }
+
+html.platform-android .course-row-actions {
+  gap: 8px;
+  padding-right: 4px;
+}
+
+html.platform-android .course-row-wrapper .course-row-actions .icon-button.compact {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  opacity: 1;
+}

@@ -10,6 +10,7 @@ from app.services.generation_service import (
     create_empty_course_document,
     delete_project_course_file,
     read_project_course_file,
+    rename_project_course_file,
 )
 from app.services.storage import get_project
 
@@ -25,6 +26,10 @@ def _project_root(project_id: int) -> Path:
 
 class CreateEmptyCourseRequest(BaseModel):
     title: str
+
+
+class RenameCourseRequest(BaseModel):
+    name: str
 
 
 @router.post("/{project_id}/course/empty", response_model=CourseFile)
@@ -43,6 +48,21 @@ def get_course_content(project_id: int, filename: str) -> CourseContentResponse:
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Course file not found: {filename}")
     return CourseContentResponse(filename=filename, content=content)
+
+
+@router.patch("/{project_id}/course/{filename:path}", response_model=CourseFile)
+def rename_course_file(project_id: int, filename: str, payload: RenameCourseRequest) -> CourseFile:
+    _project_root(project_id)
+    try:
+        return rename_project_course_file(project_id, filename, payload.name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Course file not found: {filename}")
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="A course file with that name already exists")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(status_code=409, detail=f"Could not rename course file: {exc}")
 
 
 @router.delete("/{project_id}/course/{filename:path}")

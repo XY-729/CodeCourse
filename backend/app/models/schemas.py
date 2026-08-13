@@ -47,6 +47,7 @@ class CourseFile(BaseModel):
     filename: str
     title: str
     group: str = ""
+    is_outline: bool = False
 
 
 class CourseContentResponse(BaseModel):

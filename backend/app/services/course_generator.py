@@ -14,6 +14,7 @@ PREFERRED_COURSE_FILES = [
 ]
 
 SUB_OUTLINE_RE = re.compile(r"^sub-outline-[0-9a-f]{8}\.md$")
+OUTLINE_MARKER = "<!-- CODECOURSE_OUTLINE -->"
 
 GROUP_LABELS = {
     "": "项目总纲",
@@ -39,6 +40,15 @@ def _title_from_markdown(path: Path) -> str:
     return path.stem.replace("_", " ").replace("-", " ").title()
 
 
+def _is_outline(path: Path, relative_path: str) -> bool:
+    if relative_path == "outline.md" or SUB_OUTLINE_RE.match(relative_path):
+        return True
+    try:
+        return OUTLINE_MARKER in path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
 def list_course_files_from_dir(course_dir: Path) -> list[CourseFile]:
     if not course_dir.exists():
         return []
@@ -55,6 +65,7 @@ def list_course_files_from_dir(course_dir: Path) -> list[CourseFile]:
             filename=path.relative_to(course_dir).as_posix(),
             title=_title_from_markdown(path),
             group=_derive_group(path.relative_to(course_dir).as_posix()),
+            is_outline=_is_outline(path, path.relative_to(course_dir).as_posix()),
         )
         for path in [*preferred, *extras]
     ]

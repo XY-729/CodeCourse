@@ -1,4 +1,4 @@
-import { BookOpen, Check, ChevronDown, ChevronRight, Circle, Trash2 } from "lucide-react";
+import { BookOpen, Check, ChevronDown, ChevronRight, Circle, Pencil, Trash2 } from "lucide-react";
 import { memo, useMemo, useState, type CSSProperties } from "react";
 import type { CourseFile, LearningState } from "../api/client";
 import { setCodeCourseDragImage } from "../utils/dragImage";
@@ -9,6 +9,7 @@ type Props = {
   onSelect: (filename: string) => void;
   onDragItem?: (kind: "course", filename: string) => void;
   onDelete?: (file: CourseFile) => void;
+  onRename?: (file: CourseFile) => void;
   learningStates?: LearningState[];
 };
 
@@ -24,7 +25,7 @@ function groupFiles(files: CourseFile[]): Map<string, CourseFile[]> {
   return map;
 }
 
-function CourseList({ files, selected, onSelect, onDragItem, onDelete, learningStates = [] }: Props) {
+function CourseList({ files, selected, onSelect, onDragItem, onDelete, onRename, learningStates = [] }: Props) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const groups = useMemo(() => groupFiles(files), [files]);
@@ -80,6 +81,20 @@ function CourseList({ files, selected, onSelect, onDragItem, onDelete, learningS
                   ) : <BookOpen size={14} />}
                   <span>{file.title}</span>
                 </button>
+                <div className="course-row-actions">
+                {onRename && file.filename !== "outline.md" && file.filename !== "project_map.md" ? (
+                  <button
+                    className="icon-button compact"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onRename(file);
+                    }}
+                    title="重命名课件"
+                    aria-label={`重命名 ${file.title}`}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                ) : null}
                 {onDelete ? (
                   <button
                     className="icon-button danger compact"
@@ -93,6 +108,7 @@ function CourseList({ files, selected, onSelect, onDragItem, onDelete, learningS
                     <Trash2 size={12} />
                   </button>
                 ) : null}
+                </div>
               </div>
               );
             })}

@@ -56,6 +56,7 @@ import {
   updateQARecord,
   deleteQARecord,
   deleteCourseFile,
+  renameCourseFile,
 } from "./api/client";
 import { titleFromMarkdown } from "./utils/titleFromMarkdown";
 import type {
@@ -4409,6 +4410,67 @@ export default function App() {
     }
   }
 
+  async function handleRenameCourse(file: CourseFile) {
+    if (!project) return;
+    if (generationBusy || qaInteractionBusy || isTaskRunning) {
+      setToast("当前有内容正在生成，请完成后再重命名");
+      return;
+    }
+    const requestedName = await requestText({
+      title: "重命名课件",
+      message: "输入容易辨认的文件名；系统会自动保留 .md 扩展名，并同步知识网络等引用。",
+      label: "文件名",
+      initialValue: file.title,
+      confirmText: "保存",
+    });
+    if (requestedName === null || requestedName.trim() === "") return;
+
+    flushPendingLearningUpdate("course", file.filename);
+    flushPendingLearningUpdate("qa", file.filename);
+    setError("");
+    try {
+      const renamed = await renameCourseFile(project.id, file.filename, requestedName);
+      const oldItemId = `course:${file.filename}`;
+      const newItemId = `course:${renamed.filename}`;
+      setLayout((previous) => updateEveryGroup(previous, (group) => ({
+        ...group,
+        items: group.items.map((item) => (item.type === "course" || item.type === "qa") && item.path === file.filename
+          ? { ...item, id: item.type === "course" ? newItemId : item.id, path: renamed.filename, title: renamed.title }
+          : item),
+        activeItemId: group.activeItemId === oldItemId ? newItemId : group.activeItemId,
+      })));
+      setSelectedCourse((current) => current === file.filename ? renamed.filename : current);
+      setQAHistory((items) => items.map((record) => ({
+        ...record,
+        source_path: record.source_type === "course" && record.source_path === file.filename ? renamed.filename : record.source_path,
+        output_path: record.output_path === file.filename ? renamed.filename : record.output_path,
+      })));
+      setSelectedQA((record) => record ? {
+        ...record,
+        source_path: record.source_type === "course" && record.source_path === file.filename ? renamed.filename : record.source_path,
+        output_path: record.output_path === file.filename ? renamed.filename : record.output_path,
+        display_title: record.output_path === file.filename ? renamed.title : record.display_title,
+      } : record);
+      setQASessionTree((items) => items.map((record) => ({
+        ...record,
+        source_path: record.source_type === "course" && record.source_path === file.filename ? renamed.filename : record.source_path,
+        output_path: record.output_path === file.filename ? renamed.filename : record.output_path,
+        display_title: record.output_path === file.filename ? renamed.title : record.display_title,
+      })));
+      await Promise.all([
+        refreshCourses(project.id),
+        getLearningStates(project.id).then(setLearningStates),
+        refreshHighlights(project.id),
+        refreshKnowledgeLinks(project.id),
+        refreshQAHistory(project.id),
+      ]);
+      setKnowledgeRefreshKey((value) => value + 1);
+      setToast(`已重命名为“${renamed.title}”`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "重命名课件失败");
+    }
+  }
+
   async function handleSaveQAItem(groupId: string, item: OpenItem) {
     if (!project || !item.qaRecordId) {
       return;
@@ -5516,6 +5578,7 @@ export default function App() {
         onSelectCourse={handleSelectCourse}
         onCreateCourse={handleCreateCourse}
         onDeleteCourse={handleDeleteCourse}
+        onRenameCourse={handleRenameCourse}
         learningStates={learningStates}
         onContinueLearning={(filename) => project && void openCourseInActiveGroup(project.id, filename)}
         onDragItem={prefetchDropItem}

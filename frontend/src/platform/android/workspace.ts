@@ -327,6 +327,14 @@ export async function removeGeneratedFile(projectId: number, filename: string): 
   await Filesystem.deleteFile({ path: `codecourse/generated/${projectId}/${normalizeEntryPath(filename)}`, directory: Directory.Data }).catch(() => undefined);
 }
 
+export async function renameGeneratedFile(projectId: number, oldFilename: string, newFilename: string): Promise<void> {
+  await Filesystem.rename({
+    from: `codecourse/generated/${projectId}/${normalizeEntryPath(oldFilename)}`,
+    to: `codecourse/generated/${projectId}/${normalizeEntryPath(newFilename)}`,
+    directory: Directory.Data,
+  });
+}
+
 export async function removeProjectFiles(projectId: number): Promise<void> {
   await Filesystem.rmdir({ path: `codecourse/projects/${projectId}`, directory: Directory.Data, recursive: true }).catch(() => undefined);
   await Filesystem.rmdir({ path: `codecourse/generated/${projectId}`, directory: Directory.Data, recursive: true }).catch(() => undefined);

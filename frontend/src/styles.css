@@ -2199,7 +2199,14 @@ button:disabled,
   min-width: 0;
 }
 
-.course-row-wrapper .icon-button.danger.compact {
+.course-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.course-row-wrapper .course-row-actions .icon-button.compact {
   width: 22px;
   height: 22px;
   padding: 0;
@@ -2207,7 +2214,8 @@ button:disabled,
   flex: 0 0 auto;
 }
 
-.course-row-wrapper:hover .icon-button.danger.compact {
+.course-row-wrapper:hover .course-row-actions .icon-button.compact,
+.course-row-actions .icon-button.compact:focus-visible {
   opacity: 1;
 }
 

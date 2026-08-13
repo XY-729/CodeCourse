@@ -28,6 +28,7 @@ type Props = {
   onSelectCourse: (filename: string) => void;
   onCreateCourse?: () => void;
   onDeleteCourse?: (file: CourseFile) => void;
+  onRenameCourse?: (file: CourseFile) => void;
   learningStates?: LearningState[];
   onContinueLearning?: (filename: string) => void;
   onDragItem?: (kind: "file" | "course", path: string) => void;
@@ -56,6 +57,7 @@ export default function Sidebar({
   onSelectCourse,
   onCreateCourse,
   onDeleteCourse,
+  onRenameCourse,
   learningStates = [],
   onContinueLearning,
   onDragItem,
@@ -172,7 +174,7 @@ export default function Sidebar({
             </section>
           ) : null;
         })()}
-        {courses.length ? <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDragItem={onDragItem} onDelete={onDeleteCourse} learningStates={learningStates} /> : (
+        {courses.length ? <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDragItem={onDragItem} onDelete={onDeleteCourse} onRename={onRenameCourse} learningStates={learningStates} /> : (
           <div className="empty">还没有课程内容{onCreateCourse ? <div style={{ marginTop: 10 }}><button className="secondary-button compact" onClick={onCreateCourse} disabled={!currentProjectId}><Plus size={14} />新建文档</button></div> : null}</div>
         )}
       </div>

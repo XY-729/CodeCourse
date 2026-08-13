@@ -121,6 +121,89 @@ def delete_project_course_file(project_id: int, filename: str) -> bool:
     except OSError:
         pass
     return deleted
+
+
+OUTLINE_MARKER = "<!-- CODECOURSE_OUTLINE -->"
+RESERVED_COURSE_FILES = {"outline.md", "project_map.md"}
+
+
+def _normalize_course_rename(filename: str, requested_name: str) -> tuple[str, str]:
+    raw = requested_name.strip()
+    if raw.lower().endswith(".md"):
+        raw = raw[:-3].rstrip()
+    if not raw or raw in {".", ".."}:
+        raise ValueError("File name cannot be empty")
+    if "/" in raw or "\\" in raw or "\0" in raw:
+        raise ValueError("File name must not contain a path")
+    if any(char in raw for char in '<>:"|?*'):
+        raise ValueError("File name contains unsupported characters")
+    parent = Path(filename).parent.as_posix()
+    new_name = f"{raw}.md"
+    return (new_name if parent == "." else f"{parent}/{new_name}"), raw
+
+
+def _replace_markdown_title(content: str, title: str) -> str:
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith("# "):
+            lines[index] = f"# {title}"
+            return "\n".join(lines) + ("\n" if content.endswith("\n") else "")
+    return f"# {title}\n\n{content.lstrip()}"
+
+
+def rename_project_course_file(project_id: int, filename: str, requested_name: str) -> CourseFile:
+    from app.services.storage import rename_course_references
+
+    if filename in RESERVED_COURSE_FILES:
+        raise ValueError("System outline files cannot be renamed")
+    source = resolve_project_course_file(project_id, filename)
+    if not source.is_file():
+        raise FileNotFoundError(filename)
+    new_filename, title = _normalize_course_rename(filename, requested_name)
+    target = resolve_project_course_file(project_id, new_filename)
+    if source == target:
+        raise ValueError("The new file name is unchanged")
+    if target.exists():
+        raise FileExistsError(new_filename)
+
+    original_content = source.read_text(encoding="utf-8")
+    is_outline = filename.startswith("sub-outline-") or OUTLINE_MARKER in original_content
+    updated_content = _replace_markdown_title(original_content, title)
+    if is_outline and OUTLINE_MARKER not in updated_content:
+        updated_content = f"{OUTLINE_MARKER}\n{updated_content}"
+    if is_outline:
+        updated_content = add_outline_lesson_links(updated_content, new_filename)
+
+    encoded_old = quote(filename, safe="")
+    encoded_new = quote(new_filename, safe="")
+    changed_files: dict[Path, str] = {}
+    for path in project_course_dir(project_id).rglob("*.md"):
+        if path == source:
+            continue
+        text = path.read_text(encoding="utf-8")
+        if f"outline_path={encoded_old}" in text:
+            changed_files[path] = text
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.rename(target)
+    try:
+        _atomic_write(target, updated_content)
+        for path, old_content in changed_files.items():
+            _atomic_write(path, old_content.replace(f"outline_path={encoded_old}", f"outline_path={encoded_new}"))
+        rename_course_references(project_id, filename, new_filename, title, str(source), str(target))
+    except Exception:
+        for path, old_content in changed_files.items():
+            _atomic_write(path, old_content)
+        if target.exists():
+            target.rename(source)
+        _atomic_write(source, original_content)
+        raise
+    return next(
+        item for item in list_course_files_from_dir(project_course_dir(project_id))
+        if item.filename == new_filename
+    )
+
+
 def create_empty_course_document(project_id: int, title: str) -> CourseFile:
     """Create an empty markdown course document and a corresponding knowledge node."""
     safe = re.sub(r'[\\/]', '_', title.strip())
@@ -376,8 +459,15 @@ _SUB_OUTLINE_RE = re.compile(r"^sub-outline-[0-9a-f]{8}\.md$")
 
 def _sub_outline_filename(scope: LearningScopeRequest) -> str:
     return f"sub-outline-{hashlib.sha256(json.dumps({'paths': scope.paths, 'title': ''}, sort_keys=True).encode()).hexdigest()[:8]}.md"
-def _validate_sub_outline_path(outline_path: str) -> None:
-    if not _SUB_OUTLINE_RE.match(outline_path):
+def _validate_sub_outline_path(project_id: int, outline_path: str) -> None:
+    try:
+        target = resolve_project_course_file(project_id, outline_path)
+    except ValueError as exc:
+        raise RuntimeError("Invalid outline file path") from exc
+    if not target.is_file():
+        raise RuntimeError("Sub-outline file not found")
+    content = target.read_text(encoding="utf-8")
+    if not (_SUB_OUTLINE_RE.match(outline_path) or OUTLINE_MARKER in content):
         raise RuntimeError("子总纲课件只能基于子总纲文件生成。")
 
 
@@ -522,7 +612,7 @@ def preview_outline_lesson_evidence(
         }
     outline_rel = outline_path or "outline.md"
     if outline_path is not None and outline_path != "outline.md":
-        _validate_sub_outline_path(outline_path)
+        _validate_sub_outline_path(project_id, outline_path)
     outline_full = project_course_dir(project_id) / outline_rel
     if not outline_full.is_file():
         raise RuntimeError("请先生成项目学习总纲，再生成课件。")
@@ -549,7 +639,7 @@ def build_outline_lesson_input(
 ) -> tuple[str, str, str]:
     outline_rel = outline_path or "outline.md"
     if outline_path is not None and outline_path != "outline.md":
-        _validate_sub_outline_path(outline_path)
+        _validate_sub_outline_path(project_id, outline_path)
     outline_full = project_course_dir(project_id) / outline_rel
     if not outline_full.is_file():
         raise RuntimeError("请先生成项目学习总纲，再生成课件。")
@@ -1591,7 +1681,7 @@ def create_or_reuse_outline_lesson_task(
 ) -> tuple[GenerationTask, bool]:
     outline_rel = outline_path or "outline.md"
     if outline_path is not None and outline_path != "outline.md":
-        _validate_sub_outline_path(outline_path)
+        _validate_sub_outline_path(project_id, outline_path)
     _, _, input_hash = build_outline_lesson_input(project_id, repo_root, lesson_number, title, instructions, outline_path)
     project = get_project(project_id)
     prompt_key = "prompt.learning_plan.lesson" if project is not None and project.project_type == "learning_plan" else "prompt.outline_lesson"
@@ -2033,7 +2123,7 @@ async def stream_outline_lesson_generation(
 
     outline_rel = outline_path or "outline.md"
     if outline_path is not None and outline_path != "outline.md":
-        _validate_sub_outline_path(outline_path)
+        _validate_sub_outline_path(project_id, outline_path)
 
     lesson_title, lesson_input, outline_context = build_outline_lesson_input(
         project_id, repo_root, lesson_number, requested_title, instructions, outline_path,

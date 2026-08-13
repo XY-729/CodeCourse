@@ -26,6 +26,7 @@ export type CourseFile = {
   filename: string;
   title: string;
   group: string;
+  is_outline?: boolean;
 };
 
 export type FileContent = {
@@ -763,6 +764,13 @@ export function searchProject(projectId: number, query: string, sourcePath?: str
     method: "POST",
     body: JSON.stringify({ query, source_path: sourcePath ?? null, limit }),
   });
+}
+
+export function renameCourseFile(projectId: number, filename: string, name: string): Promise<CourseFile> {
+  return request<CourseFile>(
+    `/projects/${projectId}/course/${filename.split("/").map(encodeURIComponent).join("/")}`,
+    { method: "PATCH", body: JSON.stringify({ name }) },
+  );
 }
 
 export function askQuestion(projectId: number, payload: QAAskPayload): Promise<QARecord> {

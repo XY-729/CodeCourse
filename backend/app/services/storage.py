@@ -3447,6 +3447,58 @@ def cleanup_course_artifacts(project_id: int, source_path: str) -> None:
         conn.commit()
 
 
+def rename_course_references(
+    project_id: int,
+    old_path: str,
+    new_path: str,
+    new_title: str,
+    old_absolute_path: Optional[str] = None,
+    new_absolute_path: Optional[str] = None,
+) -> None:
+    """Move course references without recreating graph nodes or edges."""
+    now = datetime.now(timezone.utc).isoformat()
+
+    def migrate(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            "UPDATE generation_tasks SET source_path = ?, updated_at = ? WHERE project_id = ? AND source_path = ?",
+            (new_path, now, project_id, old_path),
+        )
+        conn.execute(
+            "UPDATE generation_tasks SET output_path = ?, updated_at = ? WHERE project_id = ? AND output_path = ?",
+            (new_path, now, project_id, old_path),
+        )
+        if old_absolute_path and new_absolute_path:
+            conn.execute(
+                "UPDATE generation_tasks SET output_path = ?, updated_at = ? WHERE project_id = ? AND output_path = ?",
+                (new_absolute_path, now, project_id, old_absolute_path),
+            )
+        conn.execute(
+            "UPDATE qa_records SET source_path = ?, updated_at = ? "
+            "WHERE project_id = ? AND source_type = 'course' AND source_path = ?",
+            (new_path, now, project_id, old_path),
+        )
+        conn.execute(
+            "UPDATE qa_records SET output_path = ?, display_title = ?, updated_at = ? WHERE project_id = ? AND output_path = ?",
+            (new_path, new_title, now, project_id, old_path),
+        )
+        conn.execute(
+            "UPDATE qa_sessions SET active_source_path = ?, updated_at = ? WHERE project_id = ? AND active_source_path = ?",
+            (new_path, now, project_id, old_path),
+        )
+        for table in ("highlights", "knowledge_links", "document_terms", "learning_states", "term_impressions", "term_model_scans"):
+            conn.execute(
+                f"UPDATE {table} SET source_path = ?, updated_at = ? WHERE project_id = ? AND source_type IN ('course', 'qa') AND source_path = ?",
+                (new_path, now, project_id, old_path),
+            )
+        conn.execute(
+            "UPDATE knowledge_nodes SET ref_path = ?, title = ?, updated_at = ? "
+            "WHERE project_id = ? AND ref_type IN ('course', 'qa') AND ref_path = ?",
+            (new_path, new_title, now, project_id, old_path),
+        )
+
+    run_in_transaction(migrate)
+
+
 def create_knowledge_edge(
     project_id: int,
     source_node_id: int,
