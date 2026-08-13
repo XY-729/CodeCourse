@@ -262,6 +262,19 @@ export function pickDefaultCourse(courses: CourseFile[], recentCourse: CourseFil
     ?? null;
 }
 
+/**
+ * Reset the sub-outline file selection after a generation task is created:
+ * clears the selected paths (which also clears the sidebar highlight) and
+ * returns the scope to the whole project so the next sheet opens fresh.
+ */
+export function resetGenerationScope(
+  isLearningPlanProject: boolean,
+  currentScope: ScopeType,
+): { scopeType: ScopeType; selectedScopeFiles: string[] } {
+  if (isLearningPlanProject) return { scopeType: currentScope, selectedScopeFiles: [] };
+  return { scopeType: "full_project", selectedScopeFiles: [] };
+}
+
 function flattenTree(node: TreeNode | null): TreeNode[] {
   if (!node) return [];
   return [node, ...node.children.flatMap((child) => flattenTree(child))];
@@ -2979,6 +2992,10 @@ export default function App() {
         setGenerationOpen(false);
       }
 
+      const nextScope = resetGenerationScope(isLearningPlanProject, scopeType);
+      setScopeType(nextScope.scopeType);
+      setSelectedScopeFiles(nextScope.selectedScopeFiles);
+
       void trackTask(projectId, task);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建总纲任务失败");
@@ -3176,6 +3193,10 @@ export default function App() {
       } else {
         setGenerationOpen(false);
       }
+
+      const nextScope = resetGenerationScope(isLearningPlanProject, scopeType);
+      setScopeType(nextScope.scopeType);
+      setSelectedScopeFiles(nextScope.selectedScopeFiles);
 
       void trackTask(projectId, task);
     } catch (caught) {
@@ -6082,6 +6103,11 @@ export default function App() {
             if (nextScope !== "files") {
               setSelectedScopeFiles([]);
             } else {
+              /*
+               * 桌面端以左侧源码侧边栏承载文件选择。面板遮罩（.apple-sheet-layer）
+               * 会盖住侧边栏并拦截点击，必须先关闭面板，否则看起来“没有弹出选择窗口”。
+               */
+              setGenerationOpen(false);
               openMobileNavigation("files");
             }
           }}
