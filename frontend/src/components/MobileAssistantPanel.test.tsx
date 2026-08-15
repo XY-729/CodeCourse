@@ -43,10 +43,17 @@ describe("MobileAssistantPanel", () => {
     expect(screen.getByText("src/App.tsx")).toBeTruthy();
   });
 
-  it("updates question immediately", () => {
+  it("updates question immediately in the local draft", () => {
     const props = createProps();
     render(<MobileAssistantPanel {...props} />);
-    fireEvent.change(screen.getByRole("textbox", { name: "输入问题" }), { target: { value: "立即提交的问题" } });
+    const textbox = screen.getByRole("textbox", { name: "输入问题" }) as HTMLTextAreaElement;
+    fireEvent.change(textbox, { target: { value: "立即提交的问题" } });
+    expect(textbox.value).toBe("立即提交的问题");
+    // The send action is enabled straight away from the local draft (typing
+    // must not re-render the whole app).
+    expect((screen.getByRole("button", { name: "询问" }) as HTMLButtonElement).disabled).toBe(false);
+    // The draft is lifted to the parent on blur.
+    fireEvent.blur(textbox);
     expect(props.onQuestionChange).toHaveBeenCalledWith("立即提交的问题");
   });
 
@@ -55,6 +62,7 @@ describe("MobileAssistantPanel", () => {
     render(<MobileAssistantPanel {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "这个文件的主要职责是什么？" }));
     expect(props.onQuestionChange).toHaveBeenCalledWith("这个文件的主要职责是什么？");
+    expect((screen.getByRole("textbox", { name: "输入问题" }) as HTMLTextAreaElement).value).toBe("这个文件的主要职责是什么？");
   });
 
   it("selects history and returns to ask", () => {

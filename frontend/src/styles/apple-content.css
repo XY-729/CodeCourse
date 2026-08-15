@@ -55,14 +55,14 @@ html:not(.platform-android) .markdown-scroll-viewport {
   scroll-behavior: auto;
 }
 
-/* A workspace document keeps a stable line measure. The viewport consumes
-   outer whitespace first, then clips/scrolls the fixed page instead of
-   reflowing every paragraph while a horizontal divider is moving. */
+/* The page keeps its 860px reading measure when space permits. During a
+   divider drag the viewport itself is frozen, so this responsive fallback
+   only reflows once after the interaction ends. */
 html:not(.platform-android) .reader-pane > .pane-body > .markdown-viewer:not(.embedded) > .markdown-scroll-viewport > .markdown-body {
-  width: 860px;
-  min-width: 860px;
-  max-width: none;
-  padding-inline: 64px;
+  width: min(860px, 100%);
+  min-width: 0;
+  max-width: 860px;
+  padding-inline: clamp(28px, 6vw, 64px);
 }
 
 /* Embedded answers live in the narrow inspector and remain responsive. */

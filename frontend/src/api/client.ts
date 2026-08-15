@@ -35,7 +35,61 @@ export type FileContent = {
   content: string;
 };
 
-export type SourceType = "file" | "course" | "selection" | "qa";
+export type SourceType = "file" | "course" | "selection" | "qa" | "call_guide";
+
+export type CallGuideNode = {
+  id: string;
+  symbol_name: string;
+  qualified_name?: string | null;
+  path: string;
+  start_line: number;
+  end_line: number;
+  signature?: string | null;
+  content: string;
+  direction: "caller" | "root" | "callee";
+  hop: 0 | 1 | 2;
+};
+
+export type CallGuideEdge = {
+  id: string;
+  source: string;
+  target: string;
+  relation: "calls";
+  verified: boolean;
+};
+
+export type CallGuideCoverage = {
+  status: "complete" | "partial" | "unavailable";
+  callers_complete: boolean;
+  callees_complete: boolean;
+  reason?: string | null;
+  engine: string;
+};
+
+export type CallGuideCandidate = {
+  symbol_name: string;
+  qualified_name?: string | null;
+  path: string;
+  start_line: number;
+  end_line: number;
+  signature?: string | null;
+};
+
+export type CallGuide = {
+  id: number;
+  project_id: number;
+  title: string;
+  root: CallGuideCandidate;
+  nodes: CallGuideNode[];
+  edges: CallGuideEdge[];
+  coverage: CallGuideCoverage;
+  indexed_fingerprint?: string | null;
+  current_node_id?: string | null;
+  visited_node_ids: string[];
+  stale: boolean;
+  created_at: string;
+  updated_at: string;
+};
 
 export type RetrievalSource = {
   path: string;
@@ -146,6 +200,9 @@ export type QAAskPayload = {
     end_column: number;
   } | null;
   context_files?: string[];
+  call_guide_id?: number | null;
+  focused_node_id?: string | null;
+  route_node_ids?: string[];
 };
 
 export type QAStreamStage = "queued" | "retrieving" | "waiting_model" | "answering" | "saving";
@@ -771,6 +828,60 @@ export function renameCourseFile(projectId: number, filename: string, name: stri
     `/projects/${projectId}/course/${filename.split("/").map(encodeURIComponent).join("/")}`,
     { method: "PATCH", body: JSON.stringify({ name }) },
   );
+}
+
+export function resolveCallGuide(
+  projectId: number,
+  payload: {
+    source_path?: string | null;
+    line?: number | null;
+    selected_text?: string;
+    symbol_name?: string | null;
+    qualified_name?: string | null;
+  },
+): Promise<{ candidates: CallGuideCandidate[]; structural_status: string; reason?: string | null }> {
+  return request(`/projects/${projectId}/call-guides/resolve`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createCallGuide(
+  projectId: number,
+  root: CallGuideCandidate,
+  title?: string,
+): Promise<CallGuide> {
+  return request<CallGuide>(`/projects/${projectId}/call-guides`, {
+    method: "POST",
+    body: JSON.stringify({ root, title }),
+  });
+}
+
+export function listCallGuides(projectId: number): Promise<CallGuide[]> {
+  return request<CallGuide[]>(`/projects/${projectId}/call-guides`);
+}
+
+export function getCallGuide(projectId: number, guideId: number): Promise<CallGuide> {
+  return request<CallGuide>(`/projects/${projectId}/call-guides/${guideId}`);
+}
+
+export function updateCallGuide(
+  projectId: number,
+  guideId: number,
+  payload: { title?: string; current_node_id?: string; visited_node_ids?: string[] },
+): Promise<CallGuide> {
+  return request<CallGuide>(`/projects/${projectId}/call-guides/${guideId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function refreshCallGuide(projectId: number, guideId: number): Promise<CallGuide> {
+  return request<CallGuide>(`/projects/${projectId}/call-guides/${guideId}/refresh`, { method: "POST" });
+}
+
+export function deleteCallGuide(projectId: number, guideId: number): Promise<{ status: string }> {
+  return request<{ status: string }>(`/projects/${projectId}/call-guides/${guideId}`, { method: "DELETE" });
 }
 
 export function askQuestion(projectId: number, payload: QAAskPayload): Promise<QARecord> {

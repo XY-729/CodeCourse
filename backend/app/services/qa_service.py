@@ -30,6 +30,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 from app.services.code_intelligence import hybrid_retrieve
+from app.services.call_guide_service import CallGuideError, build_call_guide_qa_context
 from app.services.storage import (
     DocumentTerm,
     LearningAnchor,
@@ -311,6 +312,33 @@ def _retrieval_context(
     question: str,
     selected_text: str,
 ) -> tuple[str, str, list[dict[str, object]]]:
+    if payload.source_type == "call_guide":
+        try:
+            guide_context, guide_sources = build_call_guide_qa_context(
+                project_id,
+                payload.call_guide_id,
+                payload.focused_node_id,
+                payload.route_node_ids,
+            )
+        except CallGuideError as exc:
+            raise RuntimeError(str(exc)) from exc
+        blocks: list[str] = []
+        trace_lines: list[str] = []
+        for index, source in enumerate(guide_sources[:10], start=1):
+            header = (
+                f"[{index}] {source['path']}:{source['start_line']}-{source['end_line']} "
+                f"symbol={source.get('symbol_name') or ''} relation={source.get('relation') or ''} "
+                f"type=call_guide provider={source['provider']}"
+            )
+            blocks.append(f"{header}\n```text\n{source.get('content', '')}\n```")
+            trace_lines.append(header)
+        context = (
+            f"{guide_context}\n\n"
+            "只解释这些结构证据能够证明的控制流、输入输出和调用职责；"
+            "不得用关键词相似度补写调用关系。\n\n"
+            + "\n\n".join(blocks)
+        )
+        return context, "\n".join(trace_lines), guide_sources[:10]
     query = _retrieval_query(payload, question, selected_text)
     if not query.strip():
         return "", "", []
@@ -411,6 +439,8 @@ def _build_assistant_context(
         base_context = _course_context(project_id, payload.source_path)
     elif payload.source_type == "qa":
         base_context = _qa_context(project_id, payload)
+    elif payload.source_type == "call_guide":
+        base_context = "上下文类型：已验证调用链学习导览"
     else:
         base_context = _project_context(project_id)
     return "\n\n".join(part for part in [base_context, range_context, retrieval_context] if part.strip())

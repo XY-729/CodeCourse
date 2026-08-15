@@ -135,6 +135,12 @@ export type TermDisplayDiagnostics = {
 
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 const EMPTY_TIERS: ReadonlyMap<string, TermDisplayTier> = new Map();
+const EMPTY_PROFILES = new Map<string, TermPersonalizationProfile>();
+const EMPTY_MARKDOWN_ANALYSIS: MarkdownTermAnalysis = {
+  occurrences: [],
+  occurrenceByCandidateId: new Map(),
+  paragraphCount: 1,
+};
 
 export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResult {
   const { projectId, sourceKey, content, rawTerms, terminologyDensity, profileRevision = 0, loadProfiles } = params;
@@ -155,8 +161,8 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
 
   useEffect(() => {
     if (projectId == null || !content || rawTerms.length === 0 || terminologyDensity <= 0) {
-      setProfiles(new Map());
-      setStatus("idle");
+      setProfiles((current) => current.size === 0 ? current : EMPTY_PROFILES);
+      setStatus((current) => current === "idle" ? current : "idle");
       return;
     }
 
@@ -222,17 +228,18 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     analysis: MarkdownTermAnalysis;
     failed: boolean;
   }>({
-    analysis: { occurrences: [], occurrenceByCandidateId: new Map(), paragraphCount: 1 },
+    analysis: EMPTY_MARKDOWN_ANALYSIS,
     failed: false,
   });
 
   useEffect(() => {
     let cancelled = false;
     if (!content || rawTerms.length === 0) {
-      setMarkdownAnalysis({
-        analysis: { occurrences: [], occurrenceByCandidateId: new Map(), paragraphCount: 1 },
-        failed: false,
-      });
+      setMarkdownAnalysis((current) => (
+        current.analysis === EMPTY_MARKDOWN_ANALYSIS && !current.failed
+          ? current
+          : { analysis: EMPTY_MARKDOWN_ANALYSIS, failed: false }
+      ));
       return;
     }
     void import("./termOccurrences")

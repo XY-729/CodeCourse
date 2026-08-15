@@ -2,12 +2,13 @@ import type { DragEvent } from "react";
 
 export type OpenItem = {
   id: string;
-  type: "file" | "course" | "qa" | "knowledge_graph";
+  type: "file" | "course" | "qa" | "knowledge_graph" | "call_guide";
   path: string;
   title: string;
   content: string;
   language?: string;
   qaRecordId?: number;
+  callGuideId?: number;
   favorite?: boolean;
   dirty?: boolean;
   hydrated?: boolean;
@@ -61,6 +62,7 @@ export type DropPayload = {
   path?: string;
   filename?: string;
   qaId?: number;
+  callGuideId?: number;
   itemId?: string;
   sourceGroupId?: string;
 };
@@ -209,6 +211,7 @@ export function dropPayloadItemId(payload: DropPayload): string | null {
   if (payload.kind === "file" && payload.path) return `file:${payload.path}`;
   if (payload.kind === "course" && payload.filename) return `course:${payload.filename}`;
   if (payload.kind === "qa" && payload.qaId) return `qa:${payload.qaId}`;
+  if (payload.kind === "call_guide" && payload.callGuideId) return `call-guide:${payload.callGuideId}`;
   if (payload.kind === "knowledge_graph" || payload.kind === "knowledge") return "knowledge:graph";
   return null;
 }

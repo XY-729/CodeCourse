@@ -1,0 +1,257 @@
+html:not(.platform-android) .call-guide-viewer {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  color: var(--text-primary);
+  background: var(--surface-canvas);
+}
+
+html:not(.platform-android) .call-guide-toolbar {
+  min-height: 54px;
+  padding: 9px 14px 8px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+}
+
+html:not(.platform-android) .call-guide-toolbar > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+html:not(.platform-android) .call-guide-toolbar strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+html:not(.platform-android) .call-guide-toolbar span,
+html:not(.platform-android) .call-guide-node-meta,
+html:not(.platform-android) .call-guide-detail-heading p {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+html:not(.platform-android) .call-guide-actions,
+html:not(.platform-android) .call-guide-stepper,
+html:not(.platform-android) .call-guide-detail-footer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+html:not(.platform-android) .call-guide-notice {
+  min-height: 34px;
+  padding: 7px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--accent-soft) 62%, var(--surface-1));
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+
+html:not(.platform-android) .call-guide-notice.is-stale {
+  color: var(--warning-text, #9a5a00);
+}
+
+html:not(.platform-android) .call-guide-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(210px, 29%) minmax(0, 1fr);
+}
+
+html:not(.platform-android) .call-guide-map,
+html:not(.platform-android) .call-guide-detail {
+  min-height: 0;
+  overflow: auto;
+}
+
+html:not(.platform-android) .call-guide-map {
+  padding: 12px;
+  border-right: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-2) 74%, transparent);
+}
+
+html:not(.platform-android) .call-guide-stage + .call-guide-stage {
+  margin-top: 14px;
+}
+
+html:not(.platform-android) .call-guide-stage h3 {
+  height: 25px;
+  margin: 0 4px 5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+html:not(.platform-android) .call-guide-stage h3 span {
+  margin-left: auto;
+  opacity: .7;
+}
+
+html:not(.platform-android) .call-guide-node-list {
+  display: grid;
+  gap: 4px;
+}
+
+html:not(.platform-android) .call-guide-node-list > p {
+  margin: 6px 8px;
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 11px;
+}
+
+html:not(.platform-android) .call-guide-node {
+  position: relative;
+  width: 100%;
+  min-height: 48px;
+  padding: 7px 38px 7px 10px;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-primary);
+  transition: transform 160ms ease-out, opacity 160ms ease-out;
+}
+
+html:not(.platform-android) .call-guide-node:hover {
+  transform: translateY(-1px);
+  background: var(--surface-hover);
+}
+
+html:not(.platform-android) .call-guide-node.is-active {
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-1);
+}
+
+html:not(.platform-android) .call-guide-node.is-visited:not(.is-active)::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 13px;
+  bottom: 13px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  opacity: .55;
+}
+
+html:not(.platform-android) .call-guide-node-symbol {
+  overflow: hidden;
+  font: 600 12px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html:not(.platform-android) .call-guide-hop {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 10px;
+}
+
+html:not(.platform-android) .call-guide-detail {
+  padding: clamp(16px, 2vw, 28px);
+  background: var(--surface-1);
+}
+
+html:not(.platform-android) .call-guide-detail-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+html:not(.platform-android) .call-guide-detail-heading > div { min-width: 0; }
+html:not(.platform-android) .call-guide-detail-heading h2 {
+  margin: 4px 0 5px;
+  overflow-wrap: anywhere;
+  font: 650 17px/1.35 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+html:not(.platform-android) .call-guide-detail-heading p { margin: 0; }
+
+html:not(.platform-android) .call-guide-detail-heading button,
+html:not(.platform-android) .call-guide-stepper button,
+html:not(.platform-android) .call-guide-explain {
+  min-height: 30px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+html:not(.platform-android) .call-guide-route {
+  min-height: 32px;
+  margin: 18px 0 10px;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+html:not(.platform-android) .call-guide-route span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 11px ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+html:not(.platform-android) .call-guide-code {
+  min-height: 250px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: var(--code-bg, var(--surface-3));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 7%, transparent), var(--shadow-1);
+  font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre;
+}
+
+html:not(.platform-android) .call-guide-detail-footer {
+  margin-top: 13px;
+  justify-content: space-between;
+}
+
+html:not(.platform-android) .call-guide-stepper span {
+  min-width: 44px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+html:not(.platform-android) .call-guide-empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+@media (max-width: 1120px) {
+  html:not(.platform-android) .call-guide-body { grid-template-columns: 210px minmax(0, 1fr); }
+  html:not(.platform-android) .call-guide-detail { padding: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(.platform-android) .call-guide-node { transition: none; }
+}

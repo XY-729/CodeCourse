@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import {
   ArrowLeft,
   BookOpen,
@@ -24,6 +26,8 @@ import type {
 } from "./DesktopToolbar";
 
 import FileTree from "./FileTree";
+
+import { DeferredLiftTextarea } from "./DeferredLiftText";
 
 import {
   generationTaskDate,
@@ -105,7 +109,9 @@ type Props = {
     value: string,
   ) => void;
 
-  onGenerate: () => void;
+  onGenerate: (
+    instructions: string,
+  ) => void;
 
   onRetry: (
     task: GenerationTask,
@@ -268,6 +274,17 @@ export default function MobileGenerationPanel({
   const learningPlan =
     projectType ===
     "learning_plan";
+
+  /*
+   * The instructions draft lives here instead of App state so typing does not
+   * re-render the whole app (which was the source of input lag). The parent
+   * hears about the draft via a short debounce (for validation) and receives
+   * it directly when the user taps the generate action.
+   */
+  const [
+    instructionsDraft,
+    setInstructionsDraft,
+  ] = useState(instructions);
 
   const options:
     IntentOption[] = [
@@ -700,13 +717,11 @@ export default function MobileGenerationPanel({
                 </button>
               </div>
 
-              <textarea
+              <DeferredLiftTextarea
                 value={instructions}
-                onChange={(event) =>
-                  onInstructionsChange(
-                    event.target.value,
-                  )
-                }
+                onLift={onInstructionsChange}
+                onDraftChange={setInstructionsDraft}
+                liftDelayMs={250}
                 disabled={
                   generationBusy
                 }
@@ -746,7 +761,11 @@ export default function MobileGenerationPanel({
             <button
               type="button"
               className="mobile-generation-primary"
-              onClick={onGenerate}
+              onClick={() =>
+                onGenerate(
+                  instructionsDraft,
+                )
+              }
               disabled={
                 !canGenerate ||
                 generationBusy

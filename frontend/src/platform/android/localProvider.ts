@@ -93,7 +93,7 @@ import { createAndroidTermRoutes } from "./termRoutes";
 import { AndroidTeachingOutcomeService } from "./teachingOutcomeService";
 import {
   buildTree, downloadGitHubSnapshot, inferLanguage, readGeneratedFile, readRepoFile, readZipFiles, removeGeneratedFile,
-  removeProjectFiles, writeGeneratedFileAtomic, writeRepoFile,
+  removeProjectFiles, renameGeneratedFile, writeGeneratedFileAtomic, writeRepoFile,
 } from "./workspace";
 
 type Row = Record<string, unknown>;
@@ -141,6 +141,23 @@ function addOutlineLessonLinks(outline: string, outlinePath?: string): string {
   lines.push(END, "");
 
   return cleaned + "\n\n" + lines.join("\n");
+}
+
+function replaceMarkdownTitle(content: string, title: string): string {
+  const lines = content.split("\n");
+  const index = lines.findIndex((line) => line.startsWith("# "));
+  if (index >= 0) lines[index] = `# ${title}`;
+  else lines.unshift(`# ${title}`, "");
+  return lines.join("\n");
+}
+
+function replaceJsonPath(value: unknown, oldPath: string, newPath: string): unknown {
+  if (value === oldPath) return newPath;
+  if (Array.isArray(value)) return value.map((entry) => replaceJsonPath(entry, oldPath, newPath));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, replaceJsonPath(entry, oldPath, newPath)]));
+  }
+  return value;
 }
 
 // ---- checkpoint types (from shared generationState) ----
@@ -809,6 +826,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if ((match = path.match(/^\/projects\/(\d+)\/course\/(.+)$/))) {
       const projectId = Number(match[1]); const filename = decodePath(match[2]);
       if (method === "GET") return this.getCourse(projectId, filename) as Promise<T>;
+      if (method === "PATCH") return this.renameCourse(projectId, filename, String(body.name || "")) as Promise<T>;
       if (method === "DELETE") return this.deleteCourse(projectId, filename) as Promise<T>;
     }
     if ((match = path.match(/^\/projects\/(\d+)\/regenerate$/))) return this.regenerate(Number(match[1])) as Promise<T>;
@@ -996,7 +1014,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
   private async listCourses(projectId: number): Promise<CourseFile[]> {
     return (await db.query<Row>("SELECT filename,title,group_name FROM course_files WHERE project_id = ? ORDER BY filename", [projectId]))
-      .map((row) => ({ filename: String(row.filename), title: String(row.title), group: String(row.group_name) }));
+      .map((row) => ({ filename: String(row.filename), title: String(row.title), group: String(row.group_name), is_outline: String(row.filename) === "outline.md" || /^sub-outline-[0-9a-f]{8}\.md$/.test(String(row.filename)) || (String(row.group_name) === "总纲" && String(row.filename) !== "project_map.md") }));
   }
   private async upsertCourse(projectId: number, filename: string, content: string, group = "课程"): Promise<void> {
     await writeGeneratedFileAtomic(projectId, filename, content);
@@ -1013,6 +1031,68 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const exists = await db.query<Row>("SELECT id FROM course_files WHERE project_id = ? AND filename = ?", [projectId, filename]);
     if (!exists.length) throw new Error("课程文件不存在。");
     return { filename, content: await readGeneratedFile(projectId, filename) };
+  }
+  private async renameCourse(projectId: number, filename: string, requestedName: string): Promise<CourseFile> {
+    if (filename === "outline.md" || filename === "project_map.md") throw new Error("系统总纲文件不能改名。");
+    let title = requestedName.trim();
+    if (title.toLowerCase().endsWith(".md")) title = title.slice(0, -3).trimEnd();
+    if (!title || title === "." || title === "..") throw new Error("文件名不能为空。");
+    if (/[\\/\0<>:"|?*]/.test(title)) throw new Error("文件名不能包含路径或特殊字符。");
+    const parent = filename.includes("/") ? filename.slice(0, filename.lastIndexOf("/") + 1) : "";
+    const newFilename = `${parent}${title}.md`;
+    if (newFilename === filename) throw new Error("新文件名与原文件名相同。");
+
+    const row = (await db.query<Row>("SELECT group_name FROM course_files WHERE project_id=? AND filename=?", [projectId, filename]))[0];
+    if (!row) throw new Error("课程文件不存在。");
+    if ((await db.query<Row>("SELECT id FROM course_files WHERE project_id=? AND filename=?", [projectId, newFilename])).length) throw new Error("同名课程文件已存在。");
+    const originalContent = await readGeneratedFile(projectId, filename);
+    const isOutline = /^sub-outline-[0-9a-f]{8}\.md$/.test(filename) || String(row.group_name) === "总纲" || originalContent.includes("<!-- CODECOURSE_OUTLINE -->");
+    let updatedContent = replaceMarkdownTitle(originalContent, title);
+    if (isOutline && !updatedContent.includes("<!-- CODECOURSE_OUTLINE -->")) updatedContent = `<!-- CODECOURSE_OUTLINE -->\n${updatedContent}`;
+    if (isOutline) updatedContent = addOutlineLessonLinks(updatedContent, newFilename);
+
+    const encodedOld = encodeURIComponent(filename);
+    const encodedNew = encodeURIComponent(newFilename);
+    const relatedChanges: Array<{ filename: string; content: string; updated: string }> = [];
+    for (const course of await this.listCourses(projectId)) {
+      if (course.filename === filename) continue;
+      const content = await readGeneratedFile(projectId, course.filename).catch(() => null);
+      if (content === null) continue;
+      const updated = content.replaceAll(`outline_path=${encodedOld}`, `outline_path=${encodedNew}`);
+      if (updated !== content) relatedChanges.push({ filename: course.filename, content, updated });
+    }
+
+    await renameGeneratedFile(projectId, filename, newFilename);
+    try {
+      await writeGeneratedFileAtomic(projectId, newFilename, updatedContent);
+      for (const change of relatedChanges) await writeGeneratedFileAtomic(projectId, change.filename, change.updated);
+      const taskRows = await db.query<Row>("SELECT id,payload_json FROM generation_tasks WHERE project_id=? AND payload_json IS NOT NULL", [projectId]);
+      await db.transaction(async () => {
+        const stamp = now();
+        await db.runInTx("UPDATE course_files SET filename=?,title=?,updated_at=? WHERE project_id=? AND filename=?", [newFilename, title, stamp, projectId, filename]);
+        await db.runInTx("UPDATE generation_tasks SET source_path=?,updated_at=? WHERE project_id=? AND source_path=?", [newFilename, stamp, projectId, filename]);
+        await db.runInTx("UPDATE generation_tasks SET output_path=?,updated_at=? WHERE project_id=? AND output_path=?", [newFilename, stamp, projectId, filename]);
+        for (const task of taskRows) {
+          try {
+            const original = JSON.parse(String(task.payload_json));
+            const updated = replaceJsonPath(original, filename, newFilename);
+            if (JSON.stringify(updated) !== JSON.stringify(original)) await db.runInTx("UPDATE generation_tasks SET payload_json=?,updated_at=? WHERE id=?", [JSON.stringify(updated), stamp, task.id]);
+          } catch { /* keep legacy malformed checkpoints untouched */ }
+        }
+        await db.runInTx("UPDATE qa_records SET source_path=?,updated_at=? WHERE project_id=? AND source_type='course' AND source_path=?", [newFilename, stamp, projectId, filename]);
+        await db.runInTx("UPDATE qa_records SET output_path=?,display_title=?,updated_at=? WHERE project_id=? AND output_path=?", [newFilename, title, stamp, projectId, filename]);
+        for (const table of ["highlights", "knowledge_links", "document_terms", "learning_states", "term_impressions", "term_model_scans"]) {
+          await db.runInTx(`UPDATE ${table} SET source_path=?,updated_at=? WHERE project_id=? AND source_type IN ('course','qa') AND source_path=?`, [newFilename, stamp, projectId, filename]);
+        }
+        await db.runInTx("UPDATE knowledge_nodes SET ref_path=?,title=?,updated_at=? WHERE project_id=? AND ref_type IN ('course','qa') AND ref_path=?", [newFilename, title, stamp, projectId, filename]);
+      });
+    } catch (error) {
+      for (const change of relatedChanges) await writeGeneratedFileAtomic(projectId, change.filename, change.content).catch(() => undefined);
+      await renameGeneratedFile(projectId, newFilename, filename).catch(() => undefined);
+      await writeGeneratedFileAtomic(projectId, filename, originalContent).catch(() => undefined);
+      throw error;
+    }
+    return { filename: newFilename, title, group: String(row.group_name), is_outline: isOutline };
   }
   private async deleteCourse(projectId: number, filename: string): Promise<{ deleted: boolean; filename: string }> {
     await db.run("DELETE FROM course_files WHERE project_id = ? AND filename = ?", [projectId, filename]);
@@ -1306,7 +1386,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const cached = (await db.query<Row>(`SELECT t.* FROM generation_tasks t JOIN course_files c ON c.project_id=t.project_id AND c.filename=t.output_path WHERE t.project_id=? AND t.task_type=? AND t.status='completed' AND t.input_hash=? ORDER BY t.id DESC LIMIT 1`, [projectId, taskType, inputHash]))[0];
     if (cached) return taskFromRow(cached);
     const id = await db.run(`INSERT INTO generation_tasks(project_id,task_type,status,source_path,mode,model,prompt_version,input_hash,payload_json,stage_label,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, [projectId, taskType, "queued", payload.path || null, payload.mode || null, settings.model, "mobile-v3", inputHash, serialized, "排队中", stamp, stamp]);
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, [projectId, taskType, "queued", payload.path || payload.outline_path || null, payload.mode || null, settings.model, "mobile-v3", inputHash, serialized, "排队中", stamp, stamp]);
     void this.runTask(id); return this.getTask(projectId, id);
   }
 
@@ -1318,6 +1398,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
   private async queueSubOutlineLesson(projectId: number, body: Record<string, unknown>): Promise<GenerationTask> {
     const outlinePath = String(body.outline_path || "");
+    const outline = (await db.query<Row>("SELECT id,group_name FROM course_files WHERE project_id=? AND filename=?", [projectId, outlinePath]))[0];
+    if (outline && (Boolean(outline.group_name === "总纲") || /^sub-outline-[0-9a-f]{8}\.md$/.test(outlinePath))) {
+      return this.queueTask(projectId, "outline_lesson", { ...body, outline_path: outlinePath });
+    }
     if (!/^sub-outline-[0-9a-f]{8}\.md$/.test(outlinePath)) {
       throw new Error("子总纲课件只能基于子总纲文件生成。");
     }

@@ -10,6 +10,7 @@ import {
 import { useTermDisplay, type TermDisplayDiagnostics } from "./useTermDisplay";
 
 type SourceType = "course" | "qa";
+const EMPTY_DOCUMENT_TERMS: DocumentTerm[] = [];
 
 type Params = {
   projectId: number | null;
@@ -73,7 +74,7 @@ export function useDocumentTermsController(params: Params): DocumentTermsControl
   }, [onError, projectId]);
 
   const activeKey = sourceType && sourcePath ? sourceKey(sourceType, sourcePath) : "";
-  const rawTerms = activeKey ? termsBySource[activeKey] ?? [] : [];
+  const rawTerms = activeKey ? termsBySource[activeKey] ?? EMPTY_DOCUMENT_TERMS : EMPTY_DOCUMENT_TERMS;
   const scanStatus = activeKey ? statusBySource[activeKey] ?? null : null;
   const display = useTermDisplay({
     projectId,

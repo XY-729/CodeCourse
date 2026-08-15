@@ -6,6 +6,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
 import type { AssistantContextSummary, SelectionSummary } from "./ExplainPanel";
+import { DeferredLiftInput, DeferredLiftTextarea, type DeferredLiftTextareaHandle } from "./DeferredLiftText";
 import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
 
 export type MobileAssistantView = "ask" | "history" | "knowledge";
@@ -37,9 +38,11 @@ type Props = {
   onQuestionChange: (value: string) => void;
   onSelectionTextChange: (value: string) => void;
   onClearSelection: () => void;
-  onAsk: () => void;
+  onAsk: (question: string) => void;
   onNewConversation: () => void;
   onHistoryQueryChange: (value: string) => void;
+  /** Bumped by the parent when it clears the underlying question state; resets the composer draft. */
+  resetToken?: unknown;
   onFavoriteOnlyChange: (value: boolean) => void;
   onSelectRecord: (record: QARecord) => void;
   onOpenRecord: (record: QARecord) => void;
@@ -111,10 +114,17 @@ export default function MobileAssistantPanel({
   onDeleteRecord, onRenameRecord, onToggleFavorite, onOpenSettings,
   onAnswerSurvey, onDismissSurvey, onDisableSurveys,
   onAnswerDiagnostic, onDismissDiagnostic, onFlagDiagnostic,
+  resetToken,
 }: Props) {
-  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerRef = useRef<DeferredLiftTextareaHandle | null>(null);
   const [diagnosticAnswer, setDiagnosticAnswer] = useState<unknown>(null);
   const [diagnosticOrder, setDiagnosticOrder] = useState<string[]>([]);
+  /*
+   * The composer draft lives here instead of App state so typing does not
+   * re-render the whole app (which was the source of input lag). The parent
+   * only hears about the draft on blur/unmount or via an explicit resetToken.
+   */
+  const [questionDraft, setQuestionDraft] = useState(question);
 
   useEffect(() => {
     setDiagnosticAnswer(null);
@@ -131,12 +141,20 @@ export default function MobileAssistantPanel({
   );
 
   const modelReady = Boolean(settings?.enabled && settings.has_api_key);
-  const canAsk = !loading && !selectedRecordReadOnly && modelReady && Boolean(question.trim());
+  const canAsk = !loading && !selectedRecordReadOnly && modelReady && Boolean(questionDraft.trim());
 
   function chooseSuggestion(value: string) {
+    setQuestionDraft(value);
     onQuestionChange(value);
+    composerRef.current?.setValue(value);
     onViewChange("ask");
     window.requestAnimationFrame(() => { composerRef.current?.focus(); });
+  }
+
+  function handleSend() {
+    const questionText = questionDraft.trim();
+    if (!questionText) return;
+    onAsk(questionText);
   }
 
   function selectHistoryRecord(record: QARecord) {
@@ -199,7 +217,7 @@ export default function MobileAssistantPanel({
                 <>
                   <div className="mobile-assistant-context-meta"><span>{sourceLabel(selection.sourceType)}</span><span>{selection.selectedText.length} 字符</span></div>
                   <div className="mobile-assistant-context-path">{selection.sourcePath || "未命名来源"}</div>
-                  <textarea value={selection.selectedText} onChange={(event) => onSelectionTextChange(event.target.value)} disabled={loading} aria-label="附带给 AI 的上下文" />
+                  <DeferredLiftTextarea value={selection.selectedText} onLift={onSelectionTextChange} liftDelayMs={250} disabled={loading} aria-label="附带给 AI 的上下文" />
                 </>
               ) : contextSummary ? (
                 <>
@@ -296,10 +314,13 @@ export default function MobileAssistantPanel({
               {selectedRecord ? <button type="button" onClick={onNewConversation} disabled={loading}>清空会话</button> : null}
             </div>
             {selectedRecordReadOnly ? <div className="mobile-assistant-readonly-note">这是其他项目中的历史回答，当前只能查看，不能继续追问。</div> : null}
-            <textarea
-              ref={composerRef} value={question}
-              onChange={(event) => onQuestionChange(event.target.value)}
-              onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canAsk) { event.preventDefault(); onAsk(); } }}
+            <DeferredLiftTextarea
+              ref={composerRef}
+              value={question}
+              onLift={onQuestionChange}
+              onDraftChange={setQuestionDraft}
+              resetToken={resetToken}
+              onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canAsk) { event.preventDefault(); handleSend(); } }}
               placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"}
               disabled={loading || selectedRecordReadOnly} aria-label="输入问题" rows={3}
             />
@@ -310,7 +331,7 @@ export default function MobileAssistantPanel({
               ) : (
                 <button type="button" className="mobile-assistant-configure" onClick={onOpenSettings}><SettingsIcon size={17} aria-hidden="true" />配置模型</button>
               )}
-              <button type="button" className="mobile-assistant-send" onClick={onAsk} disabled={!canAsk}>
+              <button type="button" className="mobile-assistant-send" onClick={handleSend} disabled={!canAsk}>
                 {loading ? <Loader2 size={18} className="spin" aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
                 <span>{loading ? loadingLabel || "生成中" : selectedRecord ? "继续追问" : "询问"}</span>
               </button>
@@ -322,7 +343,7 @@ export default function MobileAssistantPanel({
       {view === "history" ? (
         <section id="mobile-assistant-view-history" className="mobile-assistant-view mobile-assistant-history-view" role="tabpanel" aria-labelledby="mobile-assistant-tab-history">
           <div className="mobile-assistant-history-tools">
-            <label><Search size={18} aria-hidden="true" /><input value={historyQuery} onChange={(event) => onHistoryQueryChange(event.target.value)} placeholder="搜索历史回答" aria-label="搜索历史回答" /></label>
+            <label><Search size={18} aria-hidden="true" /><DeferredLiftInput value={historyQuery} onLift={onHistoryQueryChange} liftDelayMs={250} placeholder="搜索历史回答" aria-label="搜索历史回答" /></label>
             <button type="button" className={favoriteOnly ? "active" : ""} aria-pressed={favoriteOnly} onClick={() => onFavoriteOnlyChange(!favoriteOnly)}><Star size={18} aria-hidden="true" />收藏</button>
           </div>
           <div className="mobile-assistant-history-list">

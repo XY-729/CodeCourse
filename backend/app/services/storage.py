@@ -1757,6 +1757,28 @@ def init_storage() -> None:
             """CREATE INDEX IF NOT EXISTS idx_lesson_files_project
                ON lesson_files(project_id, lesson_number)"""
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS call_guides (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                root_json TEXT NOT NULL,
+                graph_json TEXT NOT NULL,
+                coverage_json TEXT NOT NULL,
+                indexed_fingerprint TEXT,
+                current_node_id TEXT,
+                visited_node_ids_json TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id)
+            )
+            """
+        )
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_call_guides_project_updated
+               ON call_guides(project_id, updated_at DESC)"""
+        )
         conn.commit()
 
 
@@ -2102,6 +2124,7 @@ def delete_project(project_id: int) -> bool:
                 f"DELETE FROM learner_inferences WHERE subject_type = 'concept' AND subject_key IN ({placeholders})",
                 project_concept_ids,
             )
+        conn.execute("DELETE FROM call_guides WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM learning_states WHERE project_id = ?", (project_id,))
         anchor_ids = [row["id"] for row in conn.execute("SELECT id FROM learning_anchors WHERE project_id = ?", (project_id,)).fetchall()]
         for anchor_id in anchor_ids:
@@ -2150,6 +2173,103 @@ def delete_project(project_id: int) -> bool:
                 project_concept_ids,
             )
         cursor = conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def create_call_guide(
+    project_id: int,
+    title: str,
+    root_json: str,
+    graph_json: str,
+    coverage_json: str,
+    indexed_fingerprint: Optional[str],
+    current_node_id: Optional[str],
+) -> dict[str, object]:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        cursor = conn.execute(
+            """INSERT INTO call_guides (
+                   project_id, title, root_json, graph_json, coverage_json,
+                   indexed_fingerprint, current_node_id, visited_node_ids_json,
+                   created_at, updated_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?, ?)""",
+            (
+                project_id, title, root_json, graph_json, coverage_json,
+                indexed_fingerprint, current_node_id, now, now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM call_guides WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        if row is None:
+            raise RuntimeError("call guide was not persisted")
+        return dict(row)
+
+
+def get_call_guide(project_id: int, guide_id: int) -> Optional[dict[str, object]]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM call_guides WHERE id = ? AND project_id = ?",
+            (guide_id, project_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_call_guides(project_id: int, limit: int = 30) -> list[dict[str, object]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT * FROM call_guides WHERE project_id = ?
+               ORDER BY updated_at DESC, id DESC LIMIT ?""",
+            (project_id, max(1, min(limit, 100))),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def update_call_guide(
+    project_id: int,
+    guide_id: int,
+    *,
+    title: Optional[str] = None,
+    graph_json: Optional[str] = None,
+    coverage_json: Optional[str] = None,
+    indexed_fingerprint: Optional[str] = None,
+    current_node_id: Optional[str] = None,
+    visited_node_ids_json: Optional[str] = None,
+    update_fingerprint: bool = False,
+) -> Optional[dict[str, object]]:
+    fields = ["updated_at = ?"]
+    values: list[object] = [datetime.now(timezone.utc).isoformat()]
+    for column, value in (
+        ("title", title),
+        ("graph_json", graph_json),
+        ("coverage_json", coverage_json),
+        ("current_node_id", current_node_id),
+        ("visited_node_ids_json", visited_node_ids_json),
+    ):
+        if value is not None:
+            fields.append(f"{column} = ?")
+            values.append(value)
+    if update_fingerprint:
+        fields.append("indexed_fingerprint = ?")
+        values.append(indexed_fingerprint)
+    values.extend([guide_id, project_id])
+    with _connect() as conn:
+        cursor = conn.execute(
+            f"UPDATE call_guides SET {', '.join(fields)} WHERE id = ? AND project_id = ?",
+            values,
+        )
+        conn.commit()
+        if cursor.rowcount <= 0:
+            return None
+    return get_call_guide(project_id, guide_id)
+
+
+def delete_call_guide(project_id: int, guide_id: int) -> bool:
+    with _connect() as conn:
+        cursor = conn.execute(
+            "DELETE FROM call_guides WHERE id = ? AND project_id = ?",
+            (guide_id, project_id),
+        )
         conn.commit()
         return cursor.rowcount > 0
 

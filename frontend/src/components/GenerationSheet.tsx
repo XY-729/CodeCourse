@@ -1,7 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Sparkles, X } from "lucide-react";
 import type { GenerationTask, Project } from "../api/client";
 import type { GenerationIntent } from "./DesktopToolbar";
+import { DeferredLiftTextarea } from "./DeferredLiftText";
 import { generationTaskProgress } from "./generationTaskModel";
 
 export type GenerationScope = "full_project" | "files" | "learning_plan";
@@ -20,7 +21,7 @@ type Props = {
   onScopeChange: (scope: GenerationScope) => void;
   onInstructionsChange: (value: string) => void;
   onOpenPrompts: () => void;
-  onGenerate: () => void;
+  onGenerate: (instructions: string) => void;
 };
 
 const labels: Record<GenerationIntent, { title: string; action: string; help: string }> = {
@@ -47,6 +48,13 @@ export default function GenerationSheet(props: Props) {
     onOpenPrompts,
     onGenerate,
   } = props;
+  /*
+   * The instructions draft lives here instead of App state so typing does not
+   * re-render the whole app (which was the source of input lag). The parent
+   * hears about the draft via a short debounce (for validation) and receives
+   * it directly when the user taps the generate action.
+   */
+  const [instructionsDraft, setInstructionsDraft] = useState(instructions);
   useEffect(() => {
     document.body.classList.toggle("has-sheet", open);
     return () => document.body.classList.remove("has-sheet");
@@ -92,9 +100,11 @@ export default function GenerationSheet(props: Props) {
           ) : null}
           <label className="apple-field">
             <span>补充要求</span>
-            <textarea
+            <DeferredLiftTextarea
               value={instructions}
-              onChange={(event) => onInstructionsChange(event.target.value)}
+              onLift={onInstructionsChange}
+              onDraftChange={setInstructionsDraft}
+              liftDelayMs={250}
               placeholder="例如：面向初学者，优先解释请求如何流经后端"
               disabled={!project || running}
             />
@@ -113,7 +123,7 @@ export default function GenerationSheet(props: Props) {
         </div>
         <footer className="apple-sheet-footer">
           <button className="apple-secondary-button" onClick={onClose}>取消</button>
-          <button className="apple-primary-button" onClick={onGenerate} disabled={!project || running}>
+          <button className="apple-primary-button" onClick={() => onGenerate(instructionsDraft)} disabled={!project || running}>
             <Sparkles size={15} />{running ? "生成中…" : copy.action}
           </button>
         </footer>

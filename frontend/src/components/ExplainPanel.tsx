@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, Bot, Edit3, FileText, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
+import { DeferredLiftInput, DeferredLiftTextarea } from "./DeferredLiftText";
 import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
 
 export type SelectionSummary = {
@@ -49,9 +50,11 @@ type Props = {
   onQuestionChange: (value: string) => void;
   onSelectionTextChange: (value: string) => void;
   onClearSelection: () => void;
-  onAsk: () => void;
+  onAsk: (question: string) => void;
   onNewConversation: () => void;
   onHistoryQueryChange: (value: string) => void;
+  /** Bumped by the parent when it clears the underlying question state; resets the composer draft. */
+  resetToken?: unknown;
   onFavoriteOnlyChange: (value: boolean) => void;
   onSelectRecord: (record: QARecord) => void;
   onOpenRecord: (record: QARecord) => void;
@@ -97,9 +100,16 @@ export default function ExplainPanel(props: Props) {
     onOpenRecord, onDeleteRecord, onRenameRecord, onToggleFavorite, onOpenSettings,
     onAnswerSurvey, onDismissSurvey, onDisableSurveys,
     onAnswerDiagnostic, onDismissDiagnostic, onFlagDiagnostic, onClose,
+    resetToken,
   } = props;
   const [diagnosticAnswer, setDiagnosticAnswer] = useState<unknown>(null);
   const [diagnosticOrder, setDiagnosticOrder] = useState<string[]>([]);
+  /*
+   * The composer draft lives here instead of App state so typing does not
+   * re-render the whole app (which was the source of input lag). The parent
+   * only hears about the draft on blur/unmount or via an explicit resetToken.
+   */
+  const [questionDraft, setQuestionDraft] = useState(questionInput ?? question);
   useEffect(() => {
     setDiagnosticAnswer(null);
     setDiagnosticOrder(
@@ -167,7 +177,7 @@ export default function ExplainPanel(props: Props) {
                 </div>
               ) : null}
               <div className="qa-section history-tools">
-                <div className="search-row"><Search size={14} /><input value={historyQuery} onChange={(event) => onHistoryQueryChange(event.target.value)} placeholder="搜索历史" aria-label="搜索历史" /></div>
+                <div className="search-row"><Search size={14} /><DeferredLiftInput value={historyQuery} onLift={onHistoryQueryChange} liftDelayMs={250} placeholder="搜索历史" aria-label="搜索历史" /></div>
                 <label className="favorite-filter"><input type="checkbox" checked={favoriteOnly} onChange={(event) => onFavoriteOnlyChange(event.target.checked)} />只看收藏</label>
               </div>
               <div className="qa-history">
@@ -214,7 +224,7 @@ export default function ExplainPanel(props: Props) {
               <>
                 <div className="selection-meta"><span>{sourceLabel(selection.sourceType)}</span><span>{selectedLength} 字符</span></div>
                 <div className="selection-path">{selection.sourcePath ?? "未命名来源"}</div>
-                <textarea className="selection-editor" value={selection.selectedText} onChange={(event) => onSelectionTextChange(event.target.value)} disabled={loading} aria-label="附带上下文文本" />
+                <DeferredLiftTextarea className="selection-editor" value={selection.selectedText} onLift={onSelectionTextChange} liftDelayMs={250} disabled={loading} aria-label="附带上下文文本" />
                 <button type="button" className="secondary-button compact" onClick={onClearSelection} disabled={loading}><Trash2 size={14} />清空文本</button>
               </>
             ) : contextSummary ? (
@@ -335,7 +345,16 @@ export default function ExplainPanel(props: Props) {
             ) : null}
           </div>
           {selectedRecordReadOnly ? <div className="qa-readonly-note">这是其他项目中的此前解释。当前以只读方式打开。</div> : null}
-          <textarea value={questionInput ?? question} onChange={(event) => onQuestionChange(event.target.value)} placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"} disabled={loading || selectedRecordReadOnly} aria-label="输入问题" />
+          <DeferredLiftTextarea
+            value={questionInput ?? question}
+            onLift={onQuestionChange}
+            onDraftChange={setQuestionDraft}
+            resetToken={resetToken}
+            placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"}
+            disabled={loading || selectedRecordReadOnly}
+            aria-label="输入问题"
+            onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && questionDraft.trim()) { event.preventDefault(); onAsk(questionDraft.trim()); } }}
+          />
         </div>
 
         <div className="qa-ask-bottom">
@@ -349,7 +368,7 @@ export default function ExplainPanel(props: Props) {
               <button type="button" className="secondary-button compact" onClick={onOpenSettings}>配置模型</button>
             </div>
           )}
-          <button className="primary-button" onClick={onAsk} disabled={loading || selectedRecordReadOnly || !modelReady || !question.trim()}>
+          <button className="primary-button" onClick={() => { if (questionDraft.trim()) onAsk(questionDraft.trim()); }} disabled={loading || selectedRecordReadOnly || !modelReady || !questionDraft.trim()}>
             {loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}{loading ? (loadingLabel || "生成中...") : selectedRecord ? "继续追问" : "询问"}
           </button>
         </div>

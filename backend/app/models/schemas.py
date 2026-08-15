@@ -160,7 +160,7 @@ class SelectionRange(BaseModel):
 
 
 class QAAskRequest(BaseModel):
-    source_type: Literal["file", "course", "selection", "qa"]
+    source_type: Literal["file", "course", "selection", "qa", "call_guide"]
     source_path: Optional[str] = Field(default=None, max_length=1000)
     selected_text: str = Field(default="", max_length=20000)
     question: str = Field(min_length=1, max_length=4000)
@@ -173,6 +173,88 @@ class QAAskRequest(BaseModel):
     term_candidate_id: Optional[int] = None
     selection_range: Optional[SelectionRange] = None
     context_files: list[str] = Field(default_factory=list, max_length=50)
+    call_guide_id: Optional[int] = None
+    focused_node_id: Optional[str] = Field(default=None, max_length=240)
+    route_node_ids: list[str] = Field(default_factory=list, max_length=12)
+
+
+class CallGuideNode(BaseModel):
+    id: str
+    symbol_name: str
+    qualified_name: Optional[str] = None
+    path: str
+    start_line: int = 1
+    end_line: int = 1
+    signature: Optional[str] = None
+    content: str = ""
+    direction: Literal["caller", "root", "callee"] = "root"
+    hop: int = Field(default=0, ge=0, le=2)
+
+
+class CallGuideEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    relation: Literal["calls"] = "calls"
+    verified: bool = True
+
+
+class CallGuideCoverage(BaseModel):
+    status: Literal["complete", "partial", "unavailable"] = "complete"
+    callers_complete: bool = True
+    callees_complete: bool = True
+    reason: Optional[str] = None
+    engine: str = "codebase-memory-mcp"
+
+
+class CallGuideCandidate(BaseModel):
+    symbol_name: str
+    qualified_name: Optional[str] = None
+    path: str
+    start_line: int = 1
+    end_line: int = 1
+    signature: Optional[str] = None
+
+
+class CallGuideResolveRequest(BaseModel):
+    source_path: Optional[str] = Field(default=None, max_length=1000)
+    line: Optional[int] = Field(default=None, ge=1)
+    selected_text: str = Field(default="", max_length=20000)
+    symbol_name: Optional[str] = Field(default=None, max_length=240)
+    qualified_name: Optional[str] = Field(default=None, max_length=500)
+
+
+class CallGuideResolveResponse(BaseModel):
+    candidates: list[CallGuideCandidate] = Field(default_factory=list)
+    structural_status: str
+    reason: Optional[str] = None
+
+
+class CallGuideCreateRequest(BaseModel):
+    root: CallGuideCandidate
+    title: Optional[str] = Field(default=None, max_length=200)
+
+
+class CallGuideUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    current_node_id: Optional[str] = Field(default=None, max_length=240)
+    visited_node_ids: Optional[list[str]] = Field(default=None, max_length=64)
+
+
+class CallGuideResponse(BaseModel):
+    id: int
+    project_id: int
+    title: str
+    root: CallGuideCandidate
+    nodes: list[CallGuideNode]
+    edges: list[CallGuideEdge]
+    coverage: CallGuideCoverage
+    indexed_fingerprint: Optional[str] = None
+    current_node_id: Optional[str] = None
+    visited_node_ids: list[str] = Field(default_factory=list)
+    stale: bool = False
+    created_at: str
+    updated_at: str
 
 
 class RetrievalSourceResponse(BaseModel):
