@@ -1577,6 +1577,10 @@ export default function App() {
       document.body.classList.remove("resizing-x", "resizing-y");
       if (currentDrag.kind === "split") {
         currentDrag.indicator.remove();
+        currentDrag.frozenPanes.forEach((pane) => {
+          pane.style.removeProperty("--drag-pane-width");
+          pane.style.removeProperty("--drag-pane-height");
+        });
         if (!splitCommitted) clearLiveSplitPreview();
       }
     };

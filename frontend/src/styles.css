@@ -48,8 +48,37 @@ body.resizing-y .split-node {
   contain: layout paint;
 }
 
-body.resizing-x .reader-pane .pane-body {
-  overflow: hidden;
+/* Frozen document layout while dragging a split: the viewer keeps its exact
+   width (row drags) / height (column drags), so fonts and line layout never
+   reflow mid-drag (no per-frame Monaco/markdown re-layout). The frozen
+   document may slide under the neighbouring pane — see the layering rules
+   further down. */
+body.resizing-x .reader-pane .pane-body,
+body.resizing-y .reader-pane .pane-body {
+  overflow: visible;
+}
+
+body.resizing-x .reader-pane .pane-body > .viewer {
+  flex: 1 1 auto;
+  width: var(--drag-pane-width);
+  min-width: var(--drag-pane-width);
+  max-width: var(--drag-pane-width);
+}
+
+body.resizing-y .reader-pane .pane-body > .viewer {
+  flex: 1 1 auto;
+  height: var(--drag-pane-height);
+  min-height: var(--drag-pane-height);
+  max-height: var(--drag-pane-height);
+}
+
+/* Layered cover: when a pane is narrower than its frozen document, the
+   document spills toward the later (right/bottom) pane, which paints above it
+   (see the z-index layering on .split-child below). Right takes priority and
+   covers the left document, shown as multiple layers. */
+body.resizing-x .split-node.row > .split-child.first,
+body.resizing-y .split-node.column > .split-child.first {
+  overflow: visible;
 }
 
 button,
@@ -538,8 +567,10 @@ button:disabled,
   overflow: hidden;
 }
 
-/* Later editor groups always paint above earlier groups. A narrow group clips
-   its own document instead of letting the left document cover its neighbour. */
+/* Later editor groups always paint above earlier groups: when the left pane is
+   narrower than its frozen document (see the drag rules above), the document
+   slides under the right pane, which covers it — right takes priority and the
+   panes appear as multiple layers. */
 .split-node.row > .split-child.first {
   z-index: 1;
 }

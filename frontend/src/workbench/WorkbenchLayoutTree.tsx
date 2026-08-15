@@ -24,6 +24,7 @@ export type SplitResizeStart = {
   rootBounds: LayoutBounds;
   rootElement: HTMLDivElement;
   splitElements: Map<string, HTMLDivElement>;
+  frozenPanes: HTMLDivElement[];
   indicator: HTMLDivElement;
   layoutSnapshot: LayoutNode;
   boundaries: Map<string, SplitBoundarySnapshot>;
@@ -65,6 +66,18 @@ function startSplitResize(
     const splitId = splitElement.dataset.splitId;
     if (splitId) splitElements.set(splitId, splitElement);
   });
+  /*
+   * Freeze every document at its current layout size. During the drag the
+   * frozen viewer keeps its exact width/height (no reflow); when a pane is
+   * narrower than its frozen document, the document slides under the later
+   * (right/bottom) pane, which covers it (layered preview).
+   */
+  const frozenPanes = Array.from(rootElement.querySelectorAll<HTMLDivElement>(".reader-pane"));
+  frozenPanes.forEach((pane) => {
+    const rect = pane.getBoundingClientRect();
+    pane.style.setProperty("--drag-pane-width", `${rect.width}px`);
+    pane.style.setProperty("--drag-pane-height", `${rect.height}px`);
+  });
 
   const [firstBounds, secondBounds] = splitChildBounds(
     targetSnapshot.bounds,
@@ -102,6 +115,7 @@ function startSplitResize(
     rootBounds,
     rootElement,
     splitElements,
+    frozenPanes,
     indicator,
     layoutSnapshot: layout,
     boundaries,

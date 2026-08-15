@@ -65,10 +65,11 @@ describe("WorkbenchLayoutTree", () => {
       direction: "row",
       startBoundary: 500,
     }));
-    // The document must preview live while dragging: panes are not pinned to
-    // their pre-drag width.
+    // Documents are frozen at their current layout size while dragging: the
+    // viewer keeps its width/height, so nothing reflows mid-drag.
     container.querySelectorAll<HTMLElement>(".reader-pane").forEach((pane) => {
-      expect(pane.style.getPropertyValue("--drag-pane-width")).toBe("");
+      expect(pane.style.getPropertyValue("--drag-pane-width")).toBe("500px");
+      expect(pane.style.getPropertyValue("--drag-pane-height")).toBe("600px");
     });
     document.querySelectorAll(".split-drag-indicator").forEach((node) => node.remove());
   });
