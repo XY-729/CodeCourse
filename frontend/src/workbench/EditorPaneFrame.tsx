@@ -1,4 +1,4 @@
-import type { DragEvent, ReactNode } from "react";
+import { useEffect, useRef, type DragEvent, type ReactNode } from "react";
 import { MoreHorizontal, X } from "lucide-react";
 import MobileReaderHeader from "../components/MobileReaderHeader";
 import SlidingSelectionIndicator from "../components/SlidingSelectionIndicator";
@@ -65,8 +65,22 @@ export default function EditorPaneFrame({
   onDrop,
   children,
 }: Props) {
+  const paneRef = useRef<HTMLElement | null>(null);
+
+  // A different document renders at the pane's current size: release this
+  // pane's frozen sheet (fixed-sheet model) so the new document re-anchors to
+  // the viewport instead of inheriting a stale frozen width/height.
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    pane.classList.remove("cc-frozen");
+    pane.style.removeProperty("--drag-pane-width");
+    pane.style.removeProperty("--drag-pane-height");
+  }, [group.activeItemId, group.items.length]);
+
   return (
     <section
+      ref={paneRef}
       className={`reader-pane ${active ? "active" : ""}`}
       onClick={onActivatePane}
       onDragOver={mobile ? undefined : onDragOver}

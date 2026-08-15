@@ -1577,14 +1577,33 @@ export default function App() {
       document.body.classList.remove("resizing-x", "resizing-y");
       if (currentDrag.kind === "split") {
         currentDrag.indicator.remove();
-        currentDrag.frozenPanes.forEach((pane) => {
-          pane.style.removeProperty("--drag-pane-width");
-          pane.style.removeProperty("--drag-pane-height");
-        });
+        /*
+         * The document freeze (cc-frozen + --drag-pane-*) deliberately stays:
+         * releasing a drag must not reflow the documents (fixed-sheet model).
+         * It re-anchors on window resize and on the next drag start.
+         */
         if (!splitCommitted) clearLiveSplitPreview();
       }
     };
   }, [dragState]);
+
+  /*
+   * Re-anchor the frozen document sheets when the window is resized: a resize
+   * changes pane sizes for a reason other than split dragging, so the
+   * documents reflow once to their new panes and the freeze is released until
+   * the next drag re-captures it.
+   */
+  useEffect(() => {
+    function reanchorFrozenDocuments() {
+      document.querySelectorAll<HTMLElement>(".reader-pane.cc-frozen").forEach((pane) => {
+        pane.classList.remove("cc-frozen");
+        pane.style.removeProperty("--drag-pane-width");
+        pane.style.removeProperty("--drag-pane-height");
+      });
+    }
+    window.addEventListener("resize", reanchorFrozenDocuments);
+    return () => window.removeEventListener("resize", reanchorFrozenDocuments);
+  }, []);
 
   useEffect(() => {
     if (!project) {

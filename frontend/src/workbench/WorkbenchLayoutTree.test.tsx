@@ -65,9 +65,11 @@ describe("WorkbenchLayoutTree", () => {
       direction: "row",
       startBoundary: 500,
     }));
-    // Documents are frozen at their current layout size while dragging: the
-    // viewer keeps its width/height, so nothing reflows mid-drag.
+    // Documents are frozen at their current layout size (fixed-sheet model):
+    // the viewer keeps its width/height, so nothing reflows during or after
+    // the drag.
     container.querySelectorAll<HTMLElement>(".reader-pane").forEach((pane) => {
+      expect(pane.classList.contains("cc-frozen")).toBe(true);
       expect(pane.style.getPropertyValue("--drag-pane-width")).toBe("500px");
       expect(pane.style.getPropertyValue("--drag-pane-height")).toBe("600px");
     });

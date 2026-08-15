@@ -48,36 +48,32 @@ body.resizing-y .split-node {
   contain: layout paint;
 }
 
-/* Frozen document layout while dragging a split: the viewer keeps its exact
-   width (row drags) / height (column drags), so fonts and line layout never
-   reflow mid-drag (no per-frame Monaco/markdown re-layout). The frozen
-   document may slide under the neighbouring pane — see the layering rules
-   further down. */
-body.resizing-x .reader-pane .pane-body,
-body.resizing-y .reader-pane .pane-body {
+/* Frozen document layout (fixed-sheet model): once a split drag starts, every
+   viewer keeps its exact width and height. Fonts and line layout never reflow
+   — neither during the drag nor after releasing — so there is no per-frame
+   re-layout (jank) and no heavy reflow on release (the panes become viewports
+   and the document behaves like a fixed-layout sheet). The freeze re-anchors
+   on window resize. */
+.reader-pane.cc-frozen .pane-body {
   overflow: visible;
 }
 
-body.resizing-x .reader-pane .pane-body > .viewer {
+.reader-pane.cc-frozen .pane-body > .viewer {
   flex: 1 1 auto;
   width: var(--drag-pane-width);
   min-width: var(--drag-pane-width);
   max-width: var(--drag-pane-width);
-}
-
-body.resizing-y .reader-pane .pane-body > .viewer {
-  flex: 1 1 auto;
   height: var(--drag-pane-height);
   min-height: var(--drag-pane-height);
   max-height: var(--drag-pane-height);
 }
 
-/* Layered cover: when a pane is narrower than its frozen document, the
-   document spills toward the later (right/bottom) pane, which paints above it
-   (see the z-index layering on .split-child below). Right takes priority and
-   covers the left document, shown as multiple layers. */
-body.resizing-x .split-node.row > .split-child.first,
-body.resizing-y .split-node.column > .split-child.first {
+/* Layered cover: when a frozen document is wider/taller than its pane, it
+   slides under the later (right/bottom) pane, which paints above it (see the
+   z-index layering on .split-child below). Right takes priority and covers the
+   left document, shown as multiple layers. */
+.split-node.row > .split-child.first:has(.reader-pane.cc-frozen),
+.split-node.column > .split-child.first:has(.reader-pane.cc-frozen) {
   overflow: visible;
 }
 

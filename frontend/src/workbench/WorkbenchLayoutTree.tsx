@@ -67,14 +67,19 @@ function startSplitResize(
     if (splitId) splitElements.set(splitId, splitElement);
   });
   /*
-   * Freeze every document at its current layout size. During the drag the
-   * frozen viewer keeps its exact width/height (no reflow); when a pane is
-   * narrower than its frozen document, the document slides under the later
-   * (right/bottom) pane, which covers it (layered preview).
+   * Freeze every document at its current layout size (fixed-sheet model): the
+   * viewer keeps its exact width/height during the drag AND after releasing,
+   * so nothing reflows (no jank, no release snap). When a pane is narrower
+   * than its frozen document, the document slides under the later
+   * (right/bottom) pane, which covers it (layered preview). The freeze
+   * re-anchors on window resize; re-capturing the viewer size here means a
+   * later drag starts from the current frozen size without snapping.
    */
   const frozenPanes = Array.from(rootElement.querySelectorAll<HTMLDivElement>(".reader-pane"));
   frozenPanes.forEach((pane) => {
-    const rect = pane.getBoundingClientRect();
+    const viewer = pane.querySelector<HTMLElement>(".pane-body > .viewer");
+    const rect = (viewer ?? pane).getBoundingClientRect();
+    pane.classList.add("cc-frozen");
     pane.style.setProperty("--drag-pane-width", `${rect.width}px`);
     pane.style.setProperty("--drag-pane-height", `${rect.height}px`);
   });
