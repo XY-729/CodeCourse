@@ -329,6 +329,25 @@ export function findSplitNode(node: LayoutNode, splitId: string): SplitNode | nu
   return findSplitNode(node.first, splitId) ?? findSplitNode(node.second, splitId);
 }
 
+/**
+ * Applies a set of split ratios (keyed by split id) onto an existing layout,
+ * preserving every other part of it (tabs, content, active ids, splits that
+ * are not in the map). Used when a drag commits: the ratios are computed from
+ * the drag-start snapshot, but they must merge into the *current* layout so
+ * concurrent changes (streaming deltas, tabs opened/closed mid-drag) are not
+ * discarded.
+ */
+export function applySplitRatios(node: LayoutNode, ratios: Map<string, number>): LayoutNode {
+  if (node.type === "group") return node;
+  const ratio = ratios.get(node.id);
+  const next = ratio !== undefined ? { ...node, ratio } : node;
+  return {
+    ...next,
+    first: applySplitRatios(next.first, ratios),
+    second: applySplitRatios(next.second, ratios),
+  };
+}
+
 export function adjacentLeafBounds(
   node: LayoutNode,
   bounds: LayoutBounds,

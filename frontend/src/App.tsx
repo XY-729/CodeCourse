@@ -136,6 +136,7 @@ import {
 import {
   MAX_GROUPS,
   ROOT_GROUP_ID,
+  applySplitRatios,
   calculateSplitRatios,
   closeItem,
   countGroups,
@@ -1538,7 +1539,7 @@ export default function App() {
         } else {
           const finalBoundary = clamp(requestedBoundary, currentDrag.minBoundary, currentDrag.maxBoundary);
           const ratios = new Map<string, number>();
-          const finalLayout = rebuildLayoutFromBoundaries(
+          rebuildLayoutFromBoundaries(
             currentDrag.layoutSnapshot,
             currentDrag.rootBounds,
             currentDrag.boundaries,
@@ -1547,7 +1548,14 @@ export default function App() {
             ratios,
           );
           splitCommitted = true;
-          commitLayoutChange(() => finalLayout);
+          /*
+           * Merge the drag result into the *current* layout instead of
+           * replacing it with the drag-start snapshot: the workbench may have
+           * changed while dragging (streaming content deltas, tabs opened or
+           * closed), and replacing would silently discard those changes and
+           * corrupt the visible ratios.
+           */
+          commitLayoutChange((current) => applySplitRatios(current, ratios));
           window.requestAnimationFrame(() => window.requestAnimationFrame(clearLiveSplitPreview));
         }
       }
@@ -1569,7 +1577,6 @@ export default function App() {
       document.body.classList.remove("resizing-x", "resizing-y");
       if (currentDrag.kind === "split") {
         currentDrag.indicator.remove();
-        currentDrag.frozenPanes.forEach((pane) => pane.style.removeProperty("--drag-pane-width"));
         if (!splitCommitted) clearLiveSplitPreview();
       }
     };

@@ -52,13 +52,6 @@ body.resizing-x .reader-pane .pane-body {
   overflow: hidden;
 }
 
-body.resizing-x .reader-pane .pane-body > .viewer,
-body.resizing-x .reader-pane .pane-body > .markdown-scroll-viewport {
-  flex: 0 0 var(--drag-pane-width);
-  width: var(--drag-pane-width);
-  max-width: none;
-}
-
 button,
 input,
 select,

@@ -65,6 +65,11 @@ describe("WorkbenchLayoutTree", () => {
       direction: "row",
       startBoundary: 500,
     }));
+    // The document must preview live while dragging: panes are not pinned to
+    // their pre-drag width.
+    container.querySelectorAll<HTMLElement>(".reader-pane").forEach((pane) => {
+      expect(pane.style.getPropertyValue("--drag-pane-width")).toBe("");
+    });
     document.querySelectorAll(".split-drag-indicator").forEach((node) => node.remove());
   });
 });

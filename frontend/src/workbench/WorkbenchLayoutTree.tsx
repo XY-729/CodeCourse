@@ -24,7 +24,6 @@ export type SplitResizeStart = {
   rootBounds: LayoutBounds;
   rootElement: HTMLDivElement;
   splitElements: Map<string, HTMLDivElement>;
-  frozenPanes: HTMLDivElement[];
   indicator: HTMLDivElement;
   layoutSnapshot: LayoutNode;
   boundaries: Map<string, SplitBoundarySnapshot>;
@@ -66,10 +65,6 @@ function startSplitResize(
     const splitId = splitElement.dataset.splitId;
     if (splitId) splitElements.set(splitId, splitElement);
   });
-  const frozenPanes = Array.from(rootElement.querySelectorAll<HTMLDivElement>(".reader-pane"));
-  frozenPanes.forEach((pane) => {
-    pane.style.setProperty("--drag-pane-width", `${pane.getBoundingClientRect().width}px`);
-  });
 
   const [firstBounds, secondBounds] = splitChildBounds(
     targetSnapshot.bounds,
@@ -107,7 +102,6 @@ function startSplitResize(
     rootBounds,
     rootElement,
     splitElements,
-    frozenPanes,
     indicator,
     layoutSnapshot: layout,
     boundaries,
