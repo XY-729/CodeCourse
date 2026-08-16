@@ -70,10 +70,10 @@ SENTENCE_PUNCTUATION_RE = re.compile(r"[。！？!?；;，,]\s*$|[。！？!?；
 # is never a term (e.g. "**下一步学习建议**", "**一句话大白话**"). Belt and
 # suspenders on top of the EMPHASIS_TERM_RE inline-only fix.
 HEADING_PREFIX_RE = re.compile(
-    r"^(?:为什么|怎么|如何|如果|不要|不能|必须|应该|下一步|常见|一句话|逐步|最小|"
+    r"^(?:为什么|怎么|如何|如果|不要|不能|必须|应该|以为|下一步|常见|一句话|逐步|最小|"
     r"注意|总结|提醒|补充|示例|例子|建议|思考|练习|请|帮我)"
 )
-SENTENCE_MARKER_RE = re.compile(r"不要|不能|必须|应该|还要|就能|因为|所以|为了")
+SENTENCE_MARKER_RE = re.compile(r"不要|不能|必须|应该|可以|直接|还要|就能|因为|所以|为了")
 ALLOWED_TERM_CATEGORIES = {
     "concept",
     "api",
@@ -187,9 +187,12 @@ def _clean_term(term: str) -> str:
         return ""
     if any(char in cleaned for char in ("=", "|", "$", "+")):
         return ""
-    # Parentheses (ASCII or full-width) usually introduce glosses/definitions,
-    # e.g. "时间片（time slice）", not a term itself.
+    # Parentheses (ASCII or full-width) and embedded quotes usually introduce
+    # glosses/definitions or quoted phrases, e.g. "时间片（time slice）",
+    # '精确地按“系统调用”级别过滤' — not a term itself.
     if any(char in cleaned for char in ("(", ")", "（", "）")):
+        return ""
+    if re.search(r"[\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]", cleaned):
         return ""
     if HEADING_PREFIX_RE.search(cleaned) or SENTENCE_MARKER_RE.search(cleaned):
         return ""

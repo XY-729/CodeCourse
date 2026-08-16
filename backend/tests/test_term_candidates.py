@@ -169,6 +169,11 @@ bind 会把套接字绑定到本地地址。"""
         self.assertEqual(_clean_term("生产代码里不要手动忙等线程结束"), "")
         self.assertEqual(_clean_term("常见坑和误解"), "")
         self.assertEqual(_clean_term("下一步学习建议"), "")
+        # Inline-bold sentences that start with a verb are not terms either.
+        self.assertEqual(_clean_term("以为 BPF 规则能限制 CPU 时间和内存"), "")
+        self.assertEqual(_clean_term("以为规则可以提前随意加上"), "")
+        self.assertEqual(_clean_term("精确地按“系统调用”级别过滤"), "")
+        self.assertEqual(_clean_term("直接杀死进程"), "")
         self.assertEqual(_clean_term("依赖注入"), "依赖注入")
         self.assertEqual(_clean_term("事件循环"), "事件循环")
 
