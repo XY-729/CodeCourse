@@ -2528,7 +2528,7 @@ def create_qa_record(
                 answer_md,
                 provider,
                 model,
-                str(output_path) if output_path else None,
+                str(output_path).replace("\\", "/") if output_path else None,
                 retrieval_trace,
                 retrieval_sources_json,
                 now,
@@ -2609,7 +2609,7 @@ def update_qa_record(
                 display_title if display_title is not None else existing.display_title,
                 question if question is not None else existing.question,
                 answer_md if answer_md is not None else existing.answer_md,
-                str(output_path) if output_path else None,
+                str(output_path).replace("\\", "/") if output_path else None,
                 now,
                 project_id,
                 record_id,
@@ -4057,16 +4057,22 @@ def delete_stale_document_term_candidates(
     source_path: str,
     content_hash: str,
 ) -> int:
-    """Remove obsolete auto-candidates while preserving linked and user-labelled terms."""
+    """Remove obsolete auto-candidates while preserving linked and user-labelled terms.
+
+    The path is matched with normalized separators so rows recorded under a
+    backslash variant (legacy Windows writes) are cleaned too.
+    """
+    normalized = source_path.replace("\\", "/")
     with _connect() as conn:
         cursor = conn.execute(
             """
             DELETE FROM document_terms
-            WHERE project_id = ? AND source_type = ? AND source_path = ?
+            WHERE project_id = ? AND source_type = ?
+              AND REPLACE(source_path, '\\', '/') = ?
               AND status = 'candidate'
               AND COALESCE(content_hash, '') <> ?
             """,
-            (project_id, source_type, source_path, content_hash),
+            (project_id, source_type, normalized, content_hash),
         )
         conn.commit()
         return cursor.rowcount

@@ -27,10 +27,19 @@ from app.services.storage import (
 TERMS_LINE_RE = re.compile(r"^\s*(?:TERMS|术语)\s*[:：]\s*(\[.*\])\s*$", re.IGNORECASE)
 CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE_RE = re.compile(r"`([^`\n]{2,80})`")
-EMPHASIS_TERM_RE = re.compile(r"(?:\*\*|__)([^*_\n]{2,40})(?:\*\*|__)")
+# Bold spans used as inline emphasis can carry real terms ("**数据竞争**：C++…").
+# Generated documents also use **bold** for section headings on their own line
+# ("**一句话大白话**"), which are not terms — the trailing lookahead rejects
+# bold that is followed by a line break (i.e. stands on its own line).
+EMPHASIS_TERM_RE = re.compile(r"(?:\*\*|__)([^*_\n]{2,40})(?:\*\*|__)(?!\s*\n)")
+# Chinese technical dictionary words (线程, 进程, 缓存, 事件循环, 中间件…).
+# The match IS the dictionary word itself — never the surrounding phrase, so
+# whole sentences like "轮流分给各个进程" can no longer become candidates
+# (only 进程 would). No word boundaries are used because Chinese has no spaces
+# between words; _clean_term and STOP_TERMS filter the results.
 CHINESE_TECH_RE = re.compile(
-    r"(?<![\u4e00-\u9fff])([\u4e00-\u9fff]{2,12}(?:算法|协议|框架|模型|索引|队列|缓存|路由|"
-    r"线程|进程|协程|事务|依赖|接口|中间件|序列化|反序列化|调用链|事件循环))(?![\u4e00-\u9fff])"
+    r"(?:算法|协议|框架|模型|索引|队列|缓存|路由|"
+    r"线程|进程|协程|事务|依赖|接口|中间件|序列化|反序列化|调用链|事件循环)"
 )
 IDENTIFIER_RE = re.compile(
     r"\b(?:[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|[A-Z]{2,}[A-Z0-9_-]*|[A-Za-z]+\.[A-Za-z0-9_.-]+)\b"
@@ -57,6 +66,14 @@ MARKDOWN_FRAGMENT_RE = re.compile(
     re.MULTILINE,
 )
 SENTENCE_PUNCTUATION_RE = re.compile(r"[。！？!?；;，,]\s*$|[。！？!?；;]")
+# Section headings in generated documents use imperative/heading phrasing that
+# is never a term (e.g. "**下一步学习建议**", "**一句话大白话**"). Belt and
+# suspenders on top of the EMPHASIS_TERM_RE inline-only fix.
+HEADING_PREFIX_RE = re.compile(
+    r"^(?:为什么|怎么|如何|如果|不要|不能|必须|应该|下一步|常见|一句话|逐步|最小|"
+    r"注意|总结|提醒|补充|示例|例子|建议|思考|练习|请|帮我)"
+)
+SENTENCE_MARKER_RE = re.compile(r"不要|不能|必须|应该|还要|就能|因为|所以|为了")
 ALLOWED_TERM_CATEGORIES = {
     "concept",
     "api",
@@ -131,6 +148,13 @@ _SCAN_LOCK = threading.Lock()
 _QUEUED_SCANS: set[str] = set()
 
 
+def _normalize_source_path(source_path: str) -> str:
+    """QA answer paths may be stored with backslashes on Windows; every term
+    row must key on the same forward-slash form so a document is scanned and
+    deduplicated once."""
+    return source_path.replace("\\", "/")
+
+
 def _balanced_delimiters(value: str) -> bool:
     pairs = {")": "(", "]": "[", "}": "{", ">": "<"}
     stack: list[str] = []
@@ -161,9 +185,13 @@ def _clean_term(term: str) -> str:
         return ""
     if ERROR_MESSAGE_RE.search(cleaned) or MARKDOWN_FRAGMENT_RE.search(cleaned):
         return ""
-    if any(char in cleaned for char in ("=", "|", "$")):
+    if any(char in cleaned for char in ("=", "|", "$", "+")):
         return ""
-    if "(" in cleaned or ")" in cleaned:
+    # Parentheses (ASCII or full-width) usually introduce glosses/definitions,
+    # e.g. "时间片（time slice）", not a term itself.
+    if any(char in cleaned for char in ("(", ")", "（", "）")):
+        return ""
+    if HEADING_PREFIX_RE.search(cleaned) or SENTENCE_MARKER_RE.search(cleaned):
         return ""
     if cleaned.casefold().startswith(("template ", "class ", "struct ", "def ")):
         return ""
@@ -346,7 +374,7 @@ def _local_candidates(project_id: int, content: str) -> list[dict[str, object]]:
     for match in EMPHASIS_TERM_RE.finditer(without_fences):
         add(match.group(1), "rule", 0.78, "concept")
     for match in CHINESE_TECH_RE.finditer(without_fences):
-        add(match.group(1), "dictionary", 0.8, "concept")
+        add(match.group(0), "dictionary", 0.8, "concept")
     for term in KNOWN_TECH_TERMS:
         if term in without_fences:
             add(term, "rule", 0.84, "library")
@@ -378,6 +406,7 @@ def register_document_terms(
     *,
     allow_model_scan: bool = True,
 ) -> list[DocumentTerm]:
+    source_path = _normalize_source_path(source_path)
     content_hash = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
     delete_stale_document_term_candidates(
         project_id,
@@ -667,6 +696,7 @@ def schedule_term_model_scan(
 
 
 def _load_document_content(project_id: int, source_type: str, source_path: str) -> str:
+    source_path = _normalize_source_path(source_path)
     content = ""
     if source_type == "course":
         target = (GENERATED_ROOT / str(project_id) / source_path).resolve()
@@ -689,6 +719,7 @@ def get_document_term_status(
     source_type: str,
     source_path: str,
 ) -> dict[str, object]:
+    source_path = _normalize_source_path(source_path)
     content = _load_document_content(project_id, source_type, source_path)
     if not content:
         return {
@@ -733,6 +764,7 @@ def rescan_document_terms(
     source_type: str,
     source_path: str,
 ) -> dict[str, object]:
+    source_path = _normalize_source_path(source_path)
     content = _load_document_content(project_id, source_type, source_path)
     if content:
         content_hash = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
@@ -742,6 +774,7 @@ def rescan_document_terms(
 
 
 def ensure_document_terms(project_id: int, source_type: str, source_path: str) -> list[DocumentTerm]:
+    source_path = _normalize_source_path(source_path)
     content = _load_document_content(project_id, source_type, source_path)
     if content:
         return register_document_terms(project_id, source_type, source_path, content)

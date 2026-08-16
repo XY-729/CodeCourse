@@ -8,6 +8,9 @@ from unittest.mock import patch
 
 from app.services.term_service import (
     _clean_historical_candidates,
+    _clean_term,
+    _local_candidates,
+    _normalize_source_path,
     get_document_term_status,
     normalize_term_candidate,
     parse_term_metadata,
@@ -123,6 +126,55 @@ bind 会把套接字绑定到本地地址。"""
             status = rescan_document_terms(3, "course", "lesson.md")
         self.assertEqual(status["scan_status"], "idle")
         delete_state.assert_called_once()
+
+    def test_emphasis_rule_rejects_headings_keeps_inline_terms(self):
+        content = (
+            "**一句话大白话**\n\n"
+            "原子变量是一种特殊的变量。\n\n"
+            "**数据竞争**：C++ 标准规定两个线程同时访问同一个非原子变量就是未定义行为。\n"
+        )
+        with patch("app.services.term_service.list_code_chunks", return_value=[]):
+            candidates = _local_candidates(1, content)
+        names = [str(c["display_name"]) for c in candidates]
+        # The inline bold term is kept…
+        self.assertIn("数据竞争", names)
+        # …but the bold section heading on its own line is not a term.
+        self.assertNotIn("一句话大白话", names)
+        self.assertNotIn("原子变量是一种特殊的变量", names)
+
+    def test_chinese_tech_rule_keeps_dictionary_words_only(self):
+        content = (
+            "事件循环由中间件驱动，依赖注入是它的关键。"
+            "轮流分给各个进程的时间片由调度器决定。"
+            "每个核有自己的缓存，主线程开了一个子线程。"
+        )
+        with patch("app.services.term_service.list_code_chunks", return_value=[]):
+            candidates = _local_candidates(1, content)
+        names = [str(c["display_name"]) for c in candidates]
+        # The dictionary words themselves are detected…
+        self.assertIn("事件循环", names)
+        self.assertIn("中间件", names)
+        self.assertIn("依赖", names)
+        self.assertIn("进程", names)
+        self.assertIn("缓存", names)
+        self.assertIn("线程", names)
+        # …but whole sentences that merely END in a tech word are not.
+        self.assertNotIn("轮流分给各个进程", names)
+        self.assertNotIn("每个核有自己的缓存", names)
+        self.assertNotIn("主线程开了一个子线程", names)
+
+    def test_clean_term_rejects_expressions_glosses_and_heading_phrases(self):
+        self.assertEqual(_clean_term("rusage.ru_utime + rusage.ru_stime"), "")
+        self.assertEqual(_clean_term("时间片（time slice）"), "")
+        self.assertEqual(_clean_term("生产代码里不要手动忙等线程结束"), "")
+        self.assertEqual(_clean_term("常见坑和误解"), "")
+        self.assertEqual(_clean_term("下一步学习建议"), "")
+        self.assertEqual(_clean_term("依赖注入"), "依赖注入")
+        self.assertEqual(_clean_term("事件循环"), "事件循环")
+
+    def test_source_path_is_normalized_to_forward_slashes(self):
+        self.assertEqual(_normalize_source_path("selection_answers\\原子变量_0034.md"), "selection_answers/原子变量_0034.md")
+        self.assertEqual(_normalize_source_path("lessons/lesson_01.md"), "lessons/lesson_01.md")
 
 
 if __name__ == "__main__":
