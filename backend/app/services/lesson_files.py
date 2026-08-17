@@ -6,6 +6,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from app.services.include_resolver import (
+    extract_quoted_includes,
+    is_c_cpp,
+    resolve_include,
+    walk_source_files,
+)
 from app.services.scanner import list_key_files, read_text_file
 
 MIN_FILES_PER_LESSON = 2
@@ -13,6 +19,10 @@ MAX_FILES_PER_LESSON = 10
 DEFAULT_BUDGET = 24000
 PER_FILE_CAP = 12000
 MIN_FILE_SAMPLE = 1600
+
+# Bump when the file-selection algorithm changes so previously persisted
+# per-lesson file sets are re-selected on next use instead of served stale.
+SELECTION_SCHEME_VERSION = "ccpp-includes-1"
 
 ENTRY_POINT_NAMES = {
     "main.c", "main.cc", "main.cpp", "main.py", "main.js", "main.ts",
@@ -73,6 +83,42 @@ def _search_files(project_id: int, query: str) -> list[str]:
     return seen
 
 
+def expand_c_cpp_includes(repo_root: Path, files: list[str], *, cap: int = MAX_FILES_PER_LESSON) -> list[str]:
+    """Expand a lesson's file set with transitively quoted-included headers.
+
+    Runs only when the set already contains a C/C++ file. Ranked files keep
+    their order; resolved headers append after them, deduped, never exceeding
+    `cap`. A header whose include path resolves nowhere is silently skipped.
+    """
+    selected = list(files)
+    if not any(is_c_cpp(rel) for rel in selected):
+        return selected
+    seen = set(selected)
+    source_files: list[str] | None = None
+    queue = list(selected)
+    while queue and len(selected) < cap:
+        relative = queue.pop(0)
+        if not is_c_cpp(relative):
+            continue
+        try:
+            content, _language = read_text_file(repo_root, relative)
+        except Exception:
+            continue
+        for include_path in extract_quoted_includes(content):
+            if len(selected) >= cap:
+                break
+            resolved = resolve_include(repo_root, relative, include_path, source_files)
+            if resolved is None and source_files is None:
+                source_files = walk_source_files(repo_root)
+                resolved = resolve_include(repo_root, relative, include_path, source_files)
+            if resolved is None or resolved in seen:
+                continue
+            seen.add(resolved)
+            selected.append(resolved)
+            queue.append(resolved)
+    return selected
+
+
 def select_lesson_file_paths(
     project_id: int,
     repo_root: Path,
@@ -88,6 +134,7 @@ def select_lesson_file_paths(
                 files.append(rel)
             if len(files) >= MIN_FILES_PER_LESSON:
                 break
+    files = expand_c_cpp_includes(repo_root, files)
     return files[:MAX_FILES_PER_LESSON]
 
 

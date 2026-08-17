@@ -42,6 +42,7 @@ from app.services.course_generator import (
 )
 from app.services.lesson_files import (
     EvidenceRange,
+    SELECTION_SCHEME_VERSION,
     assemble_file_code_blocks,
     select_lesson_file_paths,
     select_lesson_files,
@@ -477,6 +478,16 @@ def _current_index_fingerprint(project_id: int) -> Optional[str]:
     return str(value) if value not in (None, "") else None
 
 
+def _lesson_files_fingerprint(project_id: int) -> Optional[str]:
+    """Index fingerprint tagged with the selection-scheme version, so changing
+    the file-selection algorithm auto-stales previously persisted per-lesson
+    file sets on next generation instead of serving them from cache."""
+    fingerprint = _current_index_fingerprint(project_id)
+    if fingerprint is None:
+        return None
+    return f"{fingerprint}#{SELECTION_SCHEME_VERSION}"
+
+
 def _ensure_lesson_files(
     project_id: int,
     repo_root: Path,
@@ -497,11 +508,11 @@ def _ensure_lesson_files(
             project_id,
             lesson_number,
             [(path, "index") for path in selected],
-            _current_index_fingerprint(project_id),
+            _lesson_files_fingerprint(project_id),
         )
         return selected
     records = get_lesson_file_records(project_id, lesson_number)
-    fingerprint = _current_index_fingerprint(project_id)
+    fingerprint = _lesson_files_fingerprint(project_id)
     stale = not records
     if not stale and fingerprint is not None:
         stale = any(row.get("indexed_fingerprint") != fingerprint for row in records)

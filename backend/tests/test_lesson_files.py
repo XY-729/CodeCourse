@@ -58,6 +58,80 @@ class LessonFileSelectionTest(unittest.TestCase):
             self.assertLessEqual(len(files), lesson_files.MAX_FILES_PER_LESSON)
 
 
+class IncludeExpansionTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name) / "repo"
+        self.repo.mkdir()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _write(self, rel: str, content: str) -> None:
+        path = self.repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    def test_expands_include_root_header(self):
+        # mikuOJ-style: src/*.cpp includes "cppjudge/sandbox_internal.h" which
+        # lives under include/.
+        self._write("src/sandbox_common.cpp", '#include "cppjudge/sandbox_internal.h"\nint main() {}\n')
+        self._write("include/cppjudge/sandbox_internal.h", "struct RawOutcome {};\n")
+        result = lesson_files.expand_c_cpp_includes(self.repo, ["src/sandbox_common.cpp"])
+        self.assertEqual(result, ["src/sandbox_common.cpp", "include/cppjudge/sandbox_internal.h"])
+
+    def test_expands_same_directory_header(self):
+        self._write("src/util.cpp", '#include "util.h"\nint util() {}\n')
+        self._write("src/util.h", "int util();\n")
+        result = lesson_files.expand_c_cpp_includes(self.repo, ["src/util.cpp"])
+        self.assertIn("src/util.h", result)
+
+    def test_expands_transitively(self):
+        self._write("src/main.cpp", '#include "a.h"\n')
+        self._write("src/a.h", '#include "b.h"\n')
+        self._write("src/b.h", "int b();\n")
+        result = lesson_files.expand_c_cpp_includes(self.repo, ["src/main.cpp"])
+        self.assertEqual(result, ["src/main.cpp", "src/a.h", "src/b.h"])
+
+    def test_suffix_fallback_for_custom_include_dir(self):
+        self._write("src/main.cpp", '#include "sandbox/internal.h"\n')
+        self._write("deps/sandbox/internal.h", "struct X {};\n")
+        result = lesson_files.expand_c_cpp_includes(self.repo, ["src/main.cpp"])
+        self.assertIn("deps/sandbox/internal.h", result)
+
+    def test_dedupes_and_respects_cap(self):
+        self._write("src/a.cpp", '#include "shared.h"\n')
+        self._write("src/b.cpp", '#include "shared.h"\n')
+        self._write("src/shared.h", "int shared();\n")
+        capped = lesson_files.expand_c_cpp_includes(self.repo, ["src/a.cpp", "src/b.cpp"], cap=2)
+        self.assertEqual(capped, ["src/a.cpp", "src/b.cpp"])
+        roomy = lesson_files.expand_c_cpp_includes(self.repo, ["src/a.cpp", "src/b.cpp"], cap=3)
+        self.assertEqual(roomy, ["src/a.cpp", "src/b.cpp", "src/shared.h"])
+
+    def test_non_cpp_unchanged(self):
+        self._write("a.py", '# include "x.h"  # fake include in python\n')
+        result = lesson_files.expand_c_cpp_includes(self.repo, ["a.py"])
+        self.assertEqual(result, ["a.py"])
+
+    def test_missing_include_skipped(self):
+        self._write("src/main.cpp", '#include "nope.h"\n')
+        result = lesson_files.expand_c_cpp_includes(self.repo, ["src/main.cpp"])
+        self.assertEqual(result, ["src/main.cpp"])
+
+    def test_select_lesson_file_paths_wires_expansion(self):
+        hit = SimpleNamespace(path="src/main.cpp", start_line=1, end_line=1, content="", language="cpp")
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "app.services.index_service.search_project", return_value=[hit]
+        ):
+            repo = Path(temp)
+            (repo / "src").mkdir()
+            (repo / "src" / "main.cpp").write_text('#include "core.h"\nint main() {}\n', encoding="utf-8")
+            (repo / "include").mkdir()
+            (repo / "include" / "core.h").write_text("int core();\n", encoding="utf-8")
+            selected = lesson_files.select_lesson_file_paths(9999, repo, "构建")
+        self.assertIn("include/core.h", selected)
+
+
 class CompactCodeTest(unittest.TestCase):
     def test_small_file_kept_whole(self):
         content = "line1\nline2\n"
@@ -202,7 +276,39 @@ class LessonFileRefreshTest(unittest.TestCase):
 
         self.assertEqual(result, ["new.py"])
         select.assert_called_once_with(3, repo, "路由", "讲解注册和分发流程")
-        upsert.assert_called_once_with(3, 2, [("new.py", "index")], "new")
+        versioned = f"new#{lesson_files.SELECTION_SCHEME_VERSION}"
+        upsert.assert_called_once_with(3, 2, [("new.py", "index")], versioned)
+
+    def test_selection_scheme_version_stales_old_records(self):
+        # Same index fingerprint, but the persisted record predates the include
+        # expansion scheme: it must be re-selected, not served from cache.
+        from app.services.generation_service import _ensure_lesson_files
+
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "new.cpp").write_text("int x();\n", encoding="utf-8")
+            with (
+                patch(
+                    "app.services.generation_service.get_lesson_file_records",
+                    return_value=[{"file_path": "old.cpp", "indexed_fingerprint": "abc"}],
+                ),
+                patch("app.services.generation_service._current_index_fingerprint", return_value="abc"),
+                patch(
+                    "app.services.generation_service.select_lesson_file_paths",
+                    return_value=["new.cpp"],
+                ) as select,
+                patch("app.services.generation_service.upsert_lesson_files") as upsert,
+            ):
+                result = _ensure_lesson_files(3, repo, 2, "构建", "讲解编译流程")
+
+        self.assertEqual(result, ["new.cpp"])
+        select.assert_called_once_with(3, repo, "构建", "讲解编译流程")
+        upsert.assert_called_once_with(
+            3,
+            2,
+            [("new.cpp", "index")],
+            f"abc#{lesson_files.SELECTION_SCHEME_VERSION}",
+        )
 
     def test_stale_index_text_cannot_replace_missing_repository_code(self):
         from app.services.generation_service import _repository_lesson_evidence
