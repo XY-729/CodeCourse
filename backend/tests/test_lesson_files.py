@@ -63,14 +63,33 @@ class CompactCodeTest(unittest.TestCase):
         content = "line1\nline2\n"
         self.assertEqual(_compact_code(content, 12000), content)
 
-    def test_large_file_head_tail(self):
+    def test_large_file_head_tail_with_real_line_ranges(self):
         lines = [f"line{i}" for i in range(1, 5001)]
         content = "\n".join(lines) + "\n"
         out = _compact_code(content, 12000)
         self.assertLess(len(out), 12000)
         self.assertIn("省略", out)
-        self.assertTrue(out.startswith("line1"))
+        # Fragments are anchored with their real line ranges so models never
+        # have to extrapolate across the omission.
+        self.assertTrue(out.startswith("# lines 1-"))
+        self.assertIn("# lines 1-", out)
+        self.assertRegex(out, r"# \.\.\. 省略 \d+-\d+ 行 \.\.\.")
+        self.assertIn("line1", out)
         self.assertTrue(out.rstrip().endswith("line5000"))
+
+    def test_omitted_range_is_accurate(self):
+        content = "\n".join(f"line{i}" for i in range(1, 101)) + "\n"
+        out = _compact_code(content, 200)
+        match = __import__("re").search(r"省略 (\d+)-(\d+) 行", out)
+        self.assertIsNotNone(match)
+        omitted_start, omitted_end = int(match.group(1)), int(match.group(2))
+        # Every line outside the omitted range must be absent from the sample.
+        for line_no in range(1, 101):
+            present = f"line{line_no}" in out
+            if omitted_start <= line_no <= omitted_end:
+                self.assertFalse(present, f"line {line_no} should be omitted")
+            else:
+                self.assertTrue(present, f"line {line_no} should be present")
 
     def test_budget_enforced(self):
         lines = [f"line{i}" for i in range(1, 5001)]
@@ -89,6 +108,29 @@ class BuildBlocksTest(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
+
+    def test_strip_chunk_metadata_keeps_pure_code(self):
+        from app.services.generation_service import _strip_chunk_metadata
+
+        chunk = (
+            "文件：src/sandbox_linux.cpp\n"
+            "行号：442-444\n"
+            "语言：cpp\n"
+            "符号：make_linux_ns_sandbox\n"
+            "\n"
+            "std::unique_ptr<SandboxBackend> make_linux_ns_sandbox() {\n"
+            "    return std::make_unique<LinuxNsSandbox>();\n"
+            "}\n"
+        )
+        stripped = _strip_chunk_metadata(chunk)
+        self.assertEqual(
+            stripped,
+            "std::unique_ptr<SandboxBackend> make_linux_ns_sandbox() {\n"
+            "    return std::make_unique<LinuxNsSandbox>();\n"
+            "}\n",
+        )
+        # Code that already has no metadata header is untouched.
+        self.assertEqual(_strip_chunk_metadata("int main() {}\n"), "int main() {}\n")
 
     def test_builds_blocks_with_paths(self):
         out = build_file_code_blocks(self.repo, ["a.py", "b.py"])

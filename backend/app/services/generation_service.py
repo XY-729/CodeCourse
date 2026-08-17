@@ -525,6 +525,26 @@ def _ensure_lesson_files(
     return [str(row["file_path"]) for row in records]
 
 
+_CHUNK_META_LINE_RE = re.compile(r"^(?:文件|行号|语言|符号|签名|引用)：")
+
+def _strip_chunk_metadata(content: str) -> str:
+    """Drop the leading metadata header baked into indexed chunk content
+    (文件/行号/语言/符号/签名 lines), leaving pure code so a model maps the
+    fence lines straight to the file:line range given in the block header —
+    otherwise the metadata lines shift every cited line by a few numbers."""
+    lines = content.splitlines()
+    start = 0
+    for index, line in enumerate(lines):
+        if _CHUNK_META_LINE_RE.match(line) or not line.strip():
+            start = index + 1
+        else:
+            break
+    stripped = "\n".join(lines[start:])
+    if content.endswith("\n") and not stripped.endswith("\n"):
+        stripped += "\n"
+    return stripped
+
+
 def _repository_lesson_evidence(
     project_id: int,
     repo_root: Path,
@@ -573,7 +593,7 @@ def _repository_lesson_evidence(
         seen.add(key)
         rag_blocks.append(
             f"### {item.path}:{item.start_line}-{item.end_line}\n"
-            f"```{item.language}\n{item.content[:3600]}\n```"
+            f"```{item.language}\n{_strip_chunk_metadata(item.content)[:3600]}\n```"
         )
     rag_context = "\n\n".join(rag_blocks)
     if not assembly.content.strip() and not rag_context.strip():

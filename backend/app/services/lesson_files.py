@@ -113,19 +113,64 @@ def select_lesson_files(project_id: int, repo_root: Path, outline: str) -> dict[
 
 
 def _compact_code(content: str, cap: int) -> str:
-    """Sample both ends of a file while respecting even very small caps."""
+    """Sample both ends of a file, annotating every fragment with its real line
+    range and the exact omitted range, so downstream models cite real
+    file:line locations instead of extrapolating across the omission."""
     if cap <= 0:
         return ""
     if len(content) <= cap:
         return content
-    effective_cap = max(0, cap - 1)
-    marker = "\n# ... 省略 ...\n"
-    if effective_cap <= len(marker) + 2:
-        return content[:effective_cap]
-    available = effective_cap - len(marker)
-    head_chars = max(1, int(available * 0.58))
-    tail_chars = max(1, available - head_chars)
-    return content[:head_chars] + marker + content[-tail_chars:]
+    lines = content.splitlines()
+    total = len(lines)
+    if total == 0:
+        return content[:cap]
+
+    # Reserve the anchor/marker overhead (worst case uses the full range).
+    anchor = len(f"# lines 1-{total}\n")
+    marker = f"\n# ... 省略 1-{total} 行 ...\n"
+    reserved = anchor + len(marker) + anchor
+    if cap <= reserved:
+        return content[:cap]
+    available = cap - reserved
+    head_budget = max(1, int(available * 0.58))
+    tail_budget = max(1, available - head_budget)
+
+    head: list[str] = []
+    head_len = 0
+    for line in lines:
+        piece = line + "\n"
+        if head_len + len(piece) > head_budget and head:
+            break
+        head.append(line)
+        head_len += len(piece)
+
+    tail: list[str] = []
+    tail_len = 0
+    for line in reversed(lines):
+        piece = line + "\n"
+        if tail_len + len(piece) > tail_budget and tail:
+            break
+        tail.append(line)
+        tail_len += len(piece)
+    tail.reverse()
+
+    head_end = len(head)
+    tail_start = total - len(tail) + 1
+    if head_end >= tail_start - 1:
+        # Budgets overlapped (tiny cap / short lines): head slice only.
+        end = max(1, tail_start - 1)
+        return f"# lines 1-{end}\n" + "\n".join(lines[:end])[:cap]
+
+    parts: list[str] = []
+    if head:
+        parts.append(f"# lines 1-{head_end}")
+        parts.extend(head)
+    parts.append(f"# ... 省略 {head_end + 1}-{tail_start - 1} 行 ...")
+    if tail:
+        parts.append(f"# lines {tail_start}-{total}")
+        parts.extend(tail)
+    result = "\n".join(parts)
+    return result if len(result) <= cap else result[:cap]
 
 
 def _range_excerpt(content: str, ranges: Iterable[EvidenceRange], cap: int) -> str:
