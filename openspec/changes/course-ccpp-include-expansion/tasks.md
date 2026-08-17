@@ -26,4 +26,4 @@
 ## 5. 验证
 
 - [x] 5.1 真实 mikuOJ 仓库验证:sandbox_common.cpp → include/cppjudge/sandbox_internal.h + common.h + sandbox.h 全部选中
-- [ ] 5.2 提交前 git status 只含本变更文件
+- [x] 5.2 提交(6b6abd4)只含本变更文件,已推送 origin/main
