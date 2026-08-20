@@ -1,6 +1,6 @@
 import type { Core } from "cytoscape";
 import type { KnowledgeGraph } from "../api/client";
-import { getKnowledgeGraphIndex, getKnowledgeNeighborhood } from "./knowledgeGraphModel";
+import { getKnowledgeNeighborhood } from "./knowledgeGraphModel";
 
 export type LabelOverlayState = {
   viewMode: "overview" | "focus";
@@ -112,22 +112,12 @@ export function updateLabelVisibility(
   graph: KnowledgeGraph,
   labels: Map<number, HTMLDivElement>,
   state: LabelOverlayState,
-  metrics: LabelMetrics = new Map(),
+  _metrics: LabelMetrics = new Map(),
 ) {
-  const { degreeById } = getKnowledgeGraphIndex(graph);
   const query = state.searchQuery.trim().toLocaleLowerCase();
   const focusedNodeIds = state.viewMode === "focus" && state.focusedNodeId != null
     ? getKnowledgeNeighborhood(graph, state.focusedNodeId, state.focusDepth).nodeIds
     : null;
-  const candidates: Array<{
-    id: number;
-    element: HTMLDivElement;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    priority: number;
-  }> = [];
 
   for (const graphNode of graph.nodes) {
     const node = cy.getElementById(`n${graphNode.id}`);
@@ -152,57 +142,6 @@ export function updateLabelVisibility(
     label.dataset.visible = "true";
     label.classList.toggle("important", important);
     label.classList.toggle("matched", matched);
-    const measured = metrics.get(graphNode.id);
-    const width = measured?.width ?? Math.min(176, Math.max(48, graphNode.title.length * 7.2));
-    const height = measured?.height ?? (graphNode.title.length > 20 ? 38 : 22);
-    candidates.push({
-      id: graphNode.id,
-      element: label,
-      x: rendered.x,
-      y,
-      width,
-      height,
-      priority: (important ? 1000 : 0) + (matched ? 800 : 0) + (degreeById.get(graphNode.id) ?? 0) * 10,
-    });
-  }
-
-  const readableLabelCapacity = Math.max(12, Math.floor((cy.width() * cy.height()) / 12_000));
-  if (candidates.length > readableLabelCapacity) {
-    const cellSize = 104;
-    const occupied = new Map<string, typeof candidates>();
-    const sorted = [...candidates].sort((left, right) => right.priority - left.priority || left.id - right.id);
-    for (const candidate of sorted) {
-      const minCellX = Math.floor((candidate.x - candidate.width / 2 - 6) / cellSize);
-      const maxCellX = Math.floor((candidate.x + candidate.width / 2 + 6) / cellSize);
-      const minCellY = Math.floor((candidate.y - candidate.height / 2 - 4) / cellSize);
-      const maxCellY = Math.floor((candidate.y + candidate.height / 2 + 4) / cellSize);
-      let overlaps = false;
-      for (let cellX = minCellX; cellX <= maxCellX && !overlaps; cellX += 1) {
-        for (let cellY = minCellY; cellY <= maxCellY && !overlaps; cellY += 1) {
-          for (const item of occupied.get(`${cellX}:${cellY}`) ?? []) {
-            if (
-              Math.abs(item.x - candidate.x) < (item.width + candidate.width) / 2 + 6
-              && Math.abs(item.y - candidate.y) < (item.height + candidate.height) / 2 + 4
-            ) {
-              overlaps = true;
-              break;
-            }
-          }
-        }
-      }
-      if (overlaps && candidate.priority < 800) {
-        candidate.element.dataset.visible = "false";
-        continue;
-      }
-      for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
-        for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
-          const key = `${cellX}:${cellY}`;
-          const bucket = occupied.get(key) ?? [];
-          bucket.push(candidate);
-          occupied.set(key, bucket);
-        }
-      }
-    }
   }
   positionLabelOverlay(cy, graph, labels);
 }

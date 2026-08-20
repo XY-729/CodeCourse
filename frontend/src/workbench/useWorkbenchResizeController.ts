@@ -18,6 +18,7 @@ export type WorkbenchResizeState =
 type Options = {
   mobile: boolean;
   commitLayoutChange: (updater: (current: LayoutNode) => LayoutNode) => void;
+  collapseSplit: (splitId: string, removeSide: "first" | "second") => void;
 };
 
 function clamp(value: number, min: number, max: number) {
@@ -37,7 +38,7 @@ function releasePointer(drag: SplitResizeStart) {
   }
 }
 
-export function useWorkbenchResizeController({ mobile, commitLayoutChange }: Options) {
+export function useWorkbenchResizeController({ mobile, commitLayoutChange, collapseSplit }: Options) {
   const [sidebarWidth, setSidebarWidth] = useState(264);
   const [assistantWidth, setAssistantWidth] = useState(initialAssistantWidth);
   const [dragState, setDragState] = useState<WorkbenchResizeState | null>(null);
@@ -117,22 +118,24 @@ export function useWorkbenchResizeController({ mobile, commitLayoutChange }: Opt
         setAssistantWidth(clamp(currentDrag.startWidth - (clientX - currentDrag.startX), 340, 520));
       } else {
         const delta = currentDrag.direction === "row" ? clientX - currentDrag.startX : clientY - currentDrag.startY;
-        const finalBoundary = clamp(
-          currentDrag.startBoundary + delta,
-          currentDrag.minBoundary,
-          currentDrag.maxBoundary,
-        );
-        latestRatios = new Map<string, number>();
-        calculateSplitRatios(
-          currentDrag.layoutSnapshot,
-          currentDrag.rootBounds,
-          currentDrag.boundaries,
-          currentDrag.splitId,
-          finalBoundary,
-          latestRatios,
-        );
+        const requestedBoundary = currentDrag.startBoundary + delta;
         flushSync(() => {
-          commitLayoutChange((current) => applySplitRatios(current, latestRatios));
+          if (requestedBoundary <= currentDrag.minBoundary) {
+            collapseSplit(currentDrag.splitId, "first");
+          } else if (requestedBoundary >= currentDrag.maxBoundary) {
+            collapseSplit(currentDrag.splitId, "second");
+          } else {
+            latestRatios = new Map<string, number>();
+            calculateSplitRatios(
+              currentDrag.layoutSnapshot,
+              currentDrag.rootBounds,
+              currentDrag.boundaries,
+              currentDrag.splitId,
+              requestedBoundary,
+              latestRatios,
+            );
+            commitLayoutChange((current) => applySplitRatios(current, latestRatios));
+          }
           setDragState(null);
         });
         clearLiveSplitPreview();
@@ -204,7 +207,7 @@ export function useWorkbenchResizeController({ mobile, commitLayoutChange }: Opt
         }
       }
     };
-  }, [commitLayoutChange, dragState, mobile]);
+  }, [collapseSplit, commitLayoutChange, dragState, mobile]);
 
   return { sidebarWidth, setSidebarWidth, assistantWidth, dragState, setDragState };
 }

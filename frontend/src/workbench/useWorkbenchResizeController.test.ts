@@ -66,6 +66,7 @@ describe("useWorkbenchResizeController", () => {
     const { result } = renderHook(() => useWorkbenchResizeController({
       mobile: false,
       commitLayoutChange: vi.fn(),
+      collapseSplit: vi.fn(),
     }));
     expect(result.current.assistantWidth).toBe(520);
   });
@@ -74,6 +75,7 @@ describe("useWorkbenchResizeController", () => {
     const { result } = renderHook(() => useWorkbenchResizeController({
       mobile: false,
       commitLayoutChange: vi.fn(),
+      collapseSplit: vi.fn(),
     }));
     act(() => result.current.setDragState({ kind: "sidebar-width", startX: 100, startWidth: 264 }));
     act(() => window.dispatchEvent(new MouseEvent("mousemove", { clientX: 140 })));
@@ -82,7 +84,7 @@ describe("useWorkbenchResizeController", () => {
     expect(result.current.sidebarWidth).toBe(304);
   });
 
-  it("coalesces pointer moves and clamps an extreme split drag without collapsing a group", () => {
+  it("coalesces pointer moves and commits an in-bounds split drag once", () => {
     const frames: FrameRequestCallback[] = [];
     window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
       frames.push(callback);
@@ -92,38 +94,62 @@ describe("useWorkbenchResizeController", () => {
     const commitLayoutChange = vi.fn((updater: (current: LayoutNode) => LayoutNode) => {
       committed = updater(committed);
     });
+    const collapseSplit = vi.fn();
     const drag = splitDrag(committed);
-    const { result } = renderHook(() => useWorkbenchResizeController({ mobile: false, commitLayoutChange }));
+    const { result } = renderHook(() => useWorkbenchResizeController({ mobile: false, commitLayoutChange, collapseSplit }));
 
     act(() => result.current.setDragState(drag.state));
     act(() => {
       window.dispatchEvent(pointerEvent("pointermove", 7, 200));
-      window.dispatchEvent(pointerEvent("pointermove", 7, -1000));
+      window.dispatchEvent(pointerEvent("pointermove", 7, 300));
     });
     expect(window.requestAnimationFrame).toHaveBeenCalledTimes(1);
     act(() => frames.shift()?.(performance.now()));
-    expect(Number(drag.splitElement.style.getPropertyValue("--split-ratio"))).toBeCloseTo(8 / 994, 6);
+    expect(Number(drag.splitElement.style.getPropertyValue("--split-ratio"))).toBeCloseTo(297 / 994, 6);
 
-    act(() => window.dispatchEvent(pointerEvent("pointerup", 7, -1000)));
+    act(() => window.dispatchEvent(pointerEvent("pointerup", 7, 300)));
     expect(commitLayoutChange).toHaveBeenCalledTimes(1);
+    expect(collapseSplit).not.toHaveBeenCalled();
     expect(committed.type).toBe("split");
-    if (committed.type === "split") expect(committed.ratio).toBeCloseTo(8 / 994, 6);
+    if (committed.type === "split") expect(committed.ratio).toBeCloseTo(297 / 994, 6);
     expect(result.current.dragState).toBeNull();
     expect(drag.splitElement.style.getPropertyValue("--split-ratio")).toBe("");
     expect(drag.pane.classList.contains("cc-frozen")).toBe(false);
     expect(drag.indicator.isConnected).toBe(false);
   });
 
+  it.each([
+    [-1000, "first"],
+    [2000, "second"],
+  ] as const)("collapses the %s-side pane after dragging beyond the usable boundary", (clientX, removeSide) => {
+    const layout = splitGroup(createGroup("group-1"), "group-1", "row", "after", createGroup("group-2"), "split-1");
+    const commitLayoutChange = vi.fn();
+    const collapseSplit = vi.fn();
+    const drag = splitDrag(layout);
+    const { result } = renderHook(() => useWorkbenchResizeController({ mobile: false, commitLayoutChange, collapseSplit }));
+
+    act(() => result.current.setDragState(drag.state));
+    act(() => window.dispatchEvent(pointerEvent("pointerup", 7, clientX)));
+
+    expect(collapseSplit).toHaveBeenCalledOnce();
+    expect(collapseSplit).toHaveBeenCalledWith("split-1", removeSide);
+    expect(commitLayoutChange).not.toHaveBeenCalled();
+    expect(result.current.dragState).toBeNull();
+    expect(drag.indicator.isConnected).toBe(false);
+  });
+
   it("cancels pointer capture without committing or leaving transient state", () => {
     const layout = splitGroup(createGroup("group-1"), "group-1", "row", "after", createGroup("group-2"), "split-1");
     const commitLayoutChange = vi.fn();
+    const collapseSplit = vi.fn();
     const drag = splitDrag(layout);
-    const { result } = renderHook(() => useWorkbenchResizeController({ mobile: false, commitLayoutChange }));
+    const { result } = renderHook(() => useWorkbenchResizeController({ mobile: false, commitLayoutChange, collapseSplit }));
 
     act(() => result.current.setDragState(drag.state));
     act(() => window.dispatchEvent(pointerEvent("pointercancel", 7, 400)));
 
     expect(commitLayoutChange).not.toHaveBeenCalled();
+    expect(collapseSplit).not.toHaveBeenCalled();
     expect(result.current.dragState).toBeNull();
     expect(drag.pane.classList.contains("cc-frozen")).toBe(false);
     expect(drag.pane.style.getPropertyValue("--drag-pane-width")).toBe("");
