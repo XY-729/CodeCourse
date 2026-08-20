@@ -324,7 +324,6 @@ export default function App() {
   } = useWorkbenchResizeController({
     mobile: mobileRuntime,
     commitLayoutChange,
-    collapseSplit: collapseControlledSplit,
   });
   useWorkbenchPersistence({
     projectId: project?.id ?? null,
