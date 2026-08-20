@@ -11,6 +11,10 @@ export function isKnowledgeGraphInteractionActive(state: KnowledgeGraphInteracti
   return state.graphInteracting || state.workbenchResizing;
 }
 
+export function isUserGraphViewportEvent(event: { originalEvent?: unknown } | null | undefined) {
+  return event?.originalEvent != null;
+}
+
 export function setGraphInteraction(state: KnowledgeGraphInteractionState, active: boolean) {
   state.graphInteracting = active;
 }

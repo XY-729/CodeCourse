@@ -86,16 +86,15 @@ export function positionLabelOverlay(
   const viewportWidth = cy.width();
   const viewportHeight = cy.height();
   for (const [nodeId, label] of labels) {
-    if (label.dataset.visible === "false") {
-      continue;
-    }
     const node = cy.getElementById(`n${nodeId}`);
     const graphHidden = node.empty() || node.hasClass("graph-hidden") || node.hasClass("hover-dim");
     if (graphHidden) {
-      label.dataset.visible = "false";
+      // Logical visibility belongs to updateLabelVisibility().  A render pass
+      // may run halfway through a focus/overview animation, so mutating it here
+      // can otherwise turn a transient hidden class into permanent label state.
+      label.dataset.inViewport = "false";
       continue;
     }
-    if (node.empty()) continue;
     const rendered = node.renderedPosition();
     const y = rendered.y + node.renderedOuterHeight() / 2 + 7;
     const outsideViewport = rendered.x < -190
