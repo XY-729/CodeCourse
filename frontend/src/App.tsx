@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { FolderTree, PanelLeft, RefreshCw, Search } from "lucide-react";
+import { FolderTree, Loader2, PanelLeft, RefreshCw, Search } from "lucide-react";
 import {
   buildProjectIndex,
   createEmptyCourseFile,
@@ -56,8 +56,11 @@ import {
   updateQARecord,
   deleteQARecord,
   deleteCourseFile,
+  exportDataArchive,
+  importDataArchive,
   renameCourseFile,
 } from "./api/client";
+import { saveDataArchive } from "./dataTransfer/saveArchive";
 import { titleFromMarkdown } from "./utils/titleFromMarkdown";
 import {
   flattenTree,
@@ -189,6 +192,7 @@ type SelectionAnchor = SelectionSummary & {
 
 const THEME_STORAGE_KEY = "codecourse.theme";
 const LAST_PROJECT_STORAGE_KEY = "codecourse.lastProjectId";
+const DATA_ARCHIVE_IMPORT_NOTICE_KEY = "codecourse.dataArchiveImportNotice";
 const MIN_READER_WIDTH = 520;
 
 function getInitialTheme(): ThemeMode {
@@ -205,6 +209,7 @@ export default function App() {
   const [fileContent, setFileContent] = useState<FileContent | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [dataTransferBusy, setDataTransferBusy] = useState(false);
   const [restoringWorkbenchProjectId, setRestoringWorkbenchProjectId] = useState<number | null>(null);
   const [busyProjectId, setBusyProjectId] = useState<number | null>(null);
   const [error, setError] = useState("");
@@ -319,6 +324,7 @@ export default function App() {
   } = useWorkbenchResizeController({
     mobile: mobileRuntime,
     commitLayoutChange,
+    collapseSplit: collapseControlledSplit,
   });
   useWorkbenchPersistence({
     projectId: project?.id ?? null,
@@ -536,6 +542,7 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialTheme);
 
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
+  const dataArchiveInputRef = useRef<HTMLInputElement | null>(null);
   const mobileWorkspaceTabRef = useRef<MobileWorkspaceTab | null>(null);
   const mobileWorkspaceMotionRef = useRef<"entering" | "open" | "exiting">("open");
   const mobileWorkspaceSheetRef = useRef<MobileWorkspaceSheetHandle | null>(null);
@@ -733,11 +740,13 @@ export default function App() {
 
   const showBusy =
     loading ||
+    dataTransferBusy ||
     generationBusy ||
     qaInteractionBusy;
 
   const mobileWorkspaceBusy =
     loading ||
+    dataTransferBusy ||
     (
       generationBusy &&
       mobileWorkspaceTab !==
@@ -751,6 +760,7 @@ export default function App() {
 
   const mobileMeBusy =
     loading ||
+    dataTransferBusy ||
     generationBusy ||
     qaInteractionBusy;
 
@@ -1102,6 +1112,17 @@ export default function App() {
     const timer = window.setTimeout(() => setToast(""), 2400);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    try {
+      const notice = window.sessionStorage.getItem(DATA_ARCHIVE_IMPORT_NOTICE_KEY);
+      if (!notice) return;
+      window.sessionStorage.removeItem(DATA_ARCHIVE_IMPORT_NOTICE_KEY);
+      setToast(notice);
+    } catch {
+      // Session storage may be unavailable in hardened WebViews.
+    }
+  }, []);
 
   useEffect(() => {
     if (!gestureGuideOpen) return;
@@ -2189,6 +2210,93 @@ export default function App() {
     } finally {
       setLoading(false);
       if (archiveInputRef.current) archiveInputRef.current.value = "";
+    }
+  }
+
+  function requestDataArchiveImport() {
+    if (dataTransferBusy) {
+      setToast("数据迁移正在进行，请稍候");
+      return;
+    }
+    if (loading) {
+      setToast("当前操作仍在处理，请稍候");
+      return;
+    }
+    if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) return;
+    dataArchiveInputRef.current?.click();
+  }
+
+  async function handleExportDataArchive() {
+    if (dataTransferBusy) {
+      setToast("数据迁移正在进行，请稍候");
+      return;
+    }
+    if (loading) {
+      setToast("当前操作仍在处理，请稍候");
+      return;
+    }
+    if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) return;
+    setDataTransferBusy(true);
+    setLoading(true);
+    setError("");
+    setTaskMessage("正在整理 CodeCourse 数据包");
+    try {
+      await flushAllPendingLearningUpdates();
+      const archive = await exportDataArchive();
+      setTaskMessage("正在保存 CodeCourse 数据包");
+      const saved = await saveDataArchive(archive.filename, archive.blob);
+      if (!saved.saved) {
+        setToast("已取消导出");
+      } else if (mobileRuntime) {
+        setToast(`数据包已保存到“文档/CodeCourse/${archive.filename}”`);
+      } else {
+        setToast(saved.location ? `数据包已导出到 ${saved.location}` : "数据包已导出");
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "导出 CodeCourse 数据包失败");
+    } finally {
+      setDataTransferBusy(false);
+      setLoading(false);
+      setTaskMessage("");
+    }
+  }
+
+  async function handleImportDataArchive(file: File) {
+    try {
+      if (dataTransferBusy) {
+        setToast("数据迁移正在进行，请稍候");
+        return;
+      }
+      if (loading) {
+        setToast("当前操作仍在处理，请稍候");
+        return;
+      }
+      if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) return;
+      const confirmed = await confirmAction(
+        "替换当前设备的 CodeCourse 数据",
+        "导入后，数据包中的项目、源码、课件、问答、知识网络和学习记录将替换当前设备的全部 CodeCourse 数据。当前设备的 API Key 不会导出或被覆盖，代码索引会在需要时重建。此操作无法撤销。",
+        { confirmText: "替换并导入", danger: true },
+      );
+      if (!confirmed) return;
+      setDataTransferBusy(true);
+      setLoading(true);
+      setError("");
+      setTaskMessage("正在校验并恢复 CodeCourse 数据");
+      await flushAllPendingLearningUpdates();
+      const result = await importDataArchive(file);
+      try {
+        window.sessionStorage.setItem(DATA_ARCHIVE_IMPORT_NOTICE_KEY, result.message);
+      } catch {
+        // Reload is still required even when session storage is unavailable.
+      }
+      window.location.reload();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "导入 CodeCourse 数据包失败");
+    } finally {
+      setDataTransferBusy(false);
+      setLoading(false);
+      setTaskMessage("");
+      if (dataArchiveInputRef.current) dataArchiveInputRef.current.value = "";
     }
   }
 
@@ -4727,6 +4835,14 @@ export default function App() {
           void handleResetLearningProgress();
         }}
 
+        onExportDataArchive={() => {
+          void handleExportDataArchive();
+        }}
+
+        onImportDataArchive={
+          requestDataArchiveImport
+        }
+
         onToggleTheme={() => {
           setThemeMode(
             (current) =>
@@ -4801,6 +4917,15 @@ export default function App() {
     <div className="app-shell">
       <TitleBar />
       <input ref={archiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportArchive(file); }} />
+      <input ref={dataArchiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportDataArchive(file); }} />
+      {dataTransferBusy ? (
+        <div className="data-transfer-lock" role="status" aria-live="assertive">
+          <div className="data-transfer-lock-card">
+            <Loader2 className="spin" size={20} aria-hidden="true" />
+            <span>{taskMessage || "正在处理 CodeCourse 数据包"}</span>
+          </div>
+        </div>
+      ) : null}
       {!mobileRuntime ? (
         <DesktopToolbar
           project={project}
@@ -4810,7 +4935,7 @@ export default function App() {
           navigationOpen={navigationOpen}
           assistantOpen={assistantOpen}
           busyProjectId={busyProjectId}
-          loading={loading || isTaskRunning}
+          loading={loading || dataTransferBusy || isTaskRunning}
           canGenerateLesson={Boolean(activeLessonNumber)}
           canGenerateFile={canGenerateFileLesson}
           indexLabel={indexBuilding || indexStatus?.status === "building" ? "正在构建索引" : "构建项目索引"}
@@ -4832,6 +4957,8 @@ export default function App() {
           onOpenPreferences={openLearnerProfile}
           onOpenPrompts={() => setPromptEditorOpen(true)}
           onOpenGestureGuide={() => setGestureGuideOpen(true)}
+          onExportDataArchive={() => { void handleExportDataArchive(); }}
+          onImportDataArchive={requestDataArchiveImport}
           onBuildIndex={() => void handleBuildIndex()}
           onToggleTheme={() => setThemeMode((current) => current === "dark" ? "light" : "dark")}
         />
@@ -4863,7 +4990,7 @@ export default function App() {
         batteryNotice={batteryNotice}
         error={mobileRuntime && mobileWorkspaceTab ? "" : error}
         busy={showBusy && !(mobileRuntime && mobileWorkspaceTab)}
-        label={qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
+        label={dataTransferBusy ? taskMessage : qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
         progressCurrent={activeTask?.progress_current}
         progressTotal={activeTask?.progress_total}
         toast={mobileRuntime && mobileWorkspaceTab ? "" : toast}
@@ -4913,7 +5040,7 @@ export default function App() {
           coursesAvailable={courses.length > 0}
           error={error}
           busy={mobileWorkspaceBusy}
-          busyLabel={mobileWorkspaceTab !== "assistant" && qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
+          busyLabel={dataTransferBusy ? taskMessage : mobileWorkspaceTab !== "assistant" && qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
           progressCurrent={activeTask?.progress_current}
           progressTotal={activeTask?.progress_total}
           toast={toast}

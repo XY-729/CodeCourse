@@ -51,6 +51,7 @@ export function useLearningStateController({
   const pendingUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
   const updateSequences = useRef<Map<string, number>>(new Map());
   const inFlightSequences = useRef<Map<string, number>>(new Map());
+  const inFlightPromises = useRef<Map<string, Promise<void>>>(new Map());
 
   useEffect(() => {
     statesRef.current = states;
@@ -75,47 +76,53 @@ export function useLearningStateController({
     )
   ), []);
 
-  const persist = useCallback(async (
+  const persist = useCallback((
     targetProjectId: number,
     key: string,
     payload: LearningStateUpdate,
     sequence: number,
-  ) => {
-    if (inFlightSequences.current.get(key) === sequence) return;
+  ): Promise<void> => {
+    const existing = inFlightPromises.current.get(key);
+    if (inFlightSequences.current.get(key) === sequence && existing) return existing;
     inFlightSequences.current.set(key, sequence);
-    try {
-      const saved = await updateLearningState(targetProjectId, payload);
-      if (updateSequences.current.get(key) !== sequence) return;
-      const previous = statesRef.current.find(
-        (entry) => stateKey(entry.source_type, entry.source_path) === key,
-      );
-      const next = [
-        ...statesRef.current.filter(
-          (entry) => stateKey(entry.source_type, entry.source_path) !== key,
-        ),
-        saved,
-      ];
-      statesRef.current = next;
+    const operation = (async () => {
+      try {
+        const saved = await updateLearningState(targetProjectId, payload);
+        if (updateSequences.current.get(key) !== sequence) return;
+        const previous = statesRef.current.find(
+          (entry) => stateKey(entry.source_type, entry.source_path) === key,
+        );
+        const next = [
+          ...statesRef.current.filter(
+            (entry) => stateKey(entry.source_type, entry.source_path) !== key,
+          ),
+          saved,
+        ];
+        statesRef.current = next;
 
-      // Ordinary scrolling only updates the ref. Course completion changes
-      // render state because it affects visible progress controls.
-      if (
-        !previous
-        || previous.status !== saved.status
-        || previous.completed_at !== saved.completed_at
-      ) {
-        setStates(next);
+        // Ordinary scrolling only updates the ref. Course completion changes
+        // render state because it affects visible progress controls.
+        if (
+          !previous
+          || previous.status !== saved.status
+          || previous.completed_at !== saved.completed_at
+        ) {
+          setStates(next);
+        }
+      } catch (error) {
+        onError(error instanceof Error ? error.message : "保存学习位置失败");
+      } finally {
+        if (inFlightSequences.current.get(key) === sequence) {
+          inFlightSequences.current.delete(key);
+          inFlightPromises.current.delete(key);
+        }
+        if (updateSequences.current.get(key) === sequence) {
+          pendingUpdates.current.delete(key);
+        }
       }
-    } catch (error) {
-      onError(error instanceof Error ? error.message : "保存学习位置失败");
-    } finally {
-      if (inFlightSequences.current.get(key) === sequence) {
-        inFlightSequences.current.delete(key);
-      }
-      if (updateSequences.current.get(key) === sequence) {
-        pendingUpdates.current.delete(key);
-      }
-    }
+    })();
+    inFlightPromises.current.set(key, operation);
+    return operation;
   }, [onError]);
 
   const queueUpdate = useCallback((
@@ -172,17 +179,20 @@ export function useLearningStateController({
     });
   }, [persist, projectId]);
 
-  const flushAll = useCallback(() => {
+  const flushAll = useCallback(async () => {
     if (!projectId) return;
+    const saves: Promise<void>[] = [];
     for (const key of pendingUpdates.current.keys()) {
       const separator = key.indexOf(":");
       if (separator <= 0) continue;
-      flushUpdate(
-        key.slice(0, separator) as LearningState["source_type"],
-        key.slice(separator + 1),
-      );
+      const payload = pendingUpdates.current.get(key);
+      const sequence = updateSequences.current.get(key);
+      if (!payload || sequence == null) continue;
+      saveScheduler.current.cancel(key);
+      saves.push(persist(projectId, key, payload, sequence));
     }
-  }, [flushUpdate, projectId]);
+    await Promise.all(saves);
+  }, [persist, projectId]);
 
   const touchOpenItem = useCallback((item: OpenItem) => {
     if (item.type === "file" || item.type === "knowledge_graph") return;

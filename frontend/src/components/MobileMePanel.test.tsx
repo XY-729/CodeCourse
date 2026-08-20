@@ -50,6 +50,9 @@ function createProps() {
     onResetLearningProgress:
       vi.fn(),
 
+    onExportDataArchive: vi.fn(),
+    onImportDataArchive: vi.fn(),
+
     onToggleTheme: vi.fn(),
   };
 }
@@ -177,6 +180,14 @@ describe(
         );
 
         fireEvent.click(
+          screen.getByRole("button", { name: /导出 CodeCourse 数据包/ }),
+        );
+
+        fireEvent.click(
+          screen.getByRole("button", { name: /导入 CodeCourse 数据包/ }),
+        );
+
+        fireEvent.click(
           screen.getByRole(
             "button",
             {
@@ -207,6 +218,9 @@ describe(
         expect(
           props.onToggleTheme,
         ).toHaveBeenCalledTimes(1);
+
+        expect(props.onExportDataArchive).toHaveBeenCalledTimes(1);
+        expect(props.onImportDataArchive).toHaveBeenCalledTimes(1);
       },
     );
 
@@ -251,6 +265,16 @@ describe(
             },
           ) as HTMLButtonElement;
 
+        const exportData = screen.getByRole(
+          "button",
+          { name: /导出 CodeCourse 数据包/ },
+        ) as HTMLButtonElement;
+
+        const importData = screen.getByRole(
+          "button",
+          { name: /导入 CodeCourse 数据包/ },
+        ) as HTMLButtonElement;
+
         expect(
           settings.disabled,
         ).toBe(true);
@@ -262,6 +286,9 @@ describe(
         expect(
           theme.disabled,
         ).toBe(false);
+
+        expect(exportData.disabled).toBe(true);
+        expect(importData.disabled).toBe(true);
       },
     );
 

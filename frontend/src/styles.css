@@ -1372,6 +1372,33 @@ button:disabled,
   background: rgba(18, 27, 39, 0.42);
 }
 
+.data-transfer-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 17, 31, 0.18);
+  touch-action: none;
+}
+
+.data-transfer-lock-card {
+  min-height: 52px;
+  max-width: min(420px, calc(100vw - 48px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--cc-border, rgba(34, 74, 61, 0.18));
+  border-radius: 14px;
+  color: var(--cc-text, #17231f);
+  background: var(--cc-surface, #fff);
+  box-shadow: var(--apple-shadow-md, 0 14px 34px rgba(24, 52, 43, 0.18));
+  font-size: 14px;
+  font-weight: 600;
+}
+
 .app-dialog {
   width: min(440px, 100%);
   border: 1px solid #c8d0da;

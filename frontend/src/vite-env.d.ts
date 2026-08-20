@@ -10,6 +10,7 @@ interface CodeCourseDesktopAPI {
   openLogs?: () => Promise<boolean>;
   reportDiagnostic?: (payload: string | Record<string, unknown>) => Promise<boolean>;
   getPathForFile?: (file: File) => string;
+  saveDataArchive?: (filename: string, data: ArrayBuffer) => Promise<{ saved: boolean; location?: string }>;
   notify?: (payload: { title: string; body: string }) => Promise<boolean>;
   detachTab?: (payload: { type: "file" | "course" | "qa"; path: string; title: string; content: string; language?: string }) => Promise<boolean>;
   getDetachedPayload?: () => Promise<{ type: "file" | "course" | "qa"; path: string; title: string; content: string; language?: string } | null>;

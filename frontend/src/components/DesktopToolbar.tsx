@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Code2,
   Download,
+  FileArchive,
   FileText,
   FolderPlus,
   MoreHorizontal,
@@ -51,6 +52,8 @@ type Props = {
   onOpenPrompts: () => void;
   onOpenPreferences?: () => void;
   onOpenGestureGuide: () => void;
+  onExportDataArchive: () => void;
+  onImportDataArchive: () => void;
   onBuildIndex: () => void;
   onToggleTheme: () => void;
 };
@@ -85,6 +88,8 @@ export default function DesktopToolbar(props: Props) {
     onOpenPrompts,
     onOpenPreferences,
     onOpenGestureGuide,
+    onExportDataArchive,
+    onImportDataArchive,
     onBuildIndex,
     onToggleTheme,
   } = props;
@@ -226,6 +231,9 @@ export default function DesktopToolbar(props: Props) {
               <button onClick={() => { setMenu(null); onOpenPrompts(); }}><Sparkles size={15} />提示词编辑</button>
               <button onClick={() => { setMenu(null); onBuildIndex(); }} disabled={indexDisabled}><RefreshCw size={15} />{indexLabel}</button>
               <button onClick={() => { setMenu(null); onOpenGestureGuide(); }}><MousePointer2 size={15} />鼠标手势指南</button>
+              <div className="apple-popover-divider" />
+              <button onClick={() => { setMenu(null); onExportDataArchive(); }}><Download size={15} />导出 CodeCourse 数据包</button>
+              <button onClick={() => { setMenu(null); onImportDataArchive(); }}><FileArchive size={15} />导入 CodeCourse 数据包</button>
               <div className="apple-popover-divider" />
               <button onClick={() => { setMenu(null); onOpenCommandPalette(); }}><Settings2 size={15} />命令面板 <kbd>Ctrl K</kbd></button>
             </div>

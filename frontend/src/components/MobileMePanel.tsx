@@ -2,6 +2,7 @@ import {
   Bot,
   BrainCircuit,
   ChevronRight,
+  Download,
   FolderTree,
   KeyRound,
   Moon,
@@ -9,6 +10,7 @@ import {
   RotateCcw,
   Sparkles,
   Sun,
+  Upload,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
@@ -44,6 +46,8 @@ type Props = {
 
   onBuildIndex: () => void;
   onResetLearningProgress: () => void;
+  onExportDataArchive: () => void;
+  onImportDataArchive: () => void;
   onToggleTheme: () => void;
 };
 
@@ -148,6 +152,8 @@ export default function MobileMePanel({
 
   onBuildIndex,
   onResetLearningProgress,
+  onExportDataArchive,
+  onImportDataArchive,
   onToggleTheme,
 }: Props) {
   const hasProject =
@@ -381,6 +387,28 @@ export default function MobileMePanel({
                 busy
               }
               danger
+            />
+          </div>
+        </section>
+
+        <section className="mobile-me-section">
+          <h2>数据迁移</h2>
+
+          <div className="mobile-me-action-card">
+            <ActionRow
+              icon={Download}
+              title="导出 CodeCourse 数据包"
+              description="保存项目、课件、问答和学习记录，不含 API Key"
+              onClick={onExportDataArchive}
+              disabled={busy}
+            />
+
+            <ActionRow
+              icon={Upload}
+              title="导入 CodeCourse 数据包"
+              description="从桌面端或其他安装端恢复全部数据"
+              onClick={onImportDataArchive}
+              disabled={busy}
             />
           </div>
         </section>

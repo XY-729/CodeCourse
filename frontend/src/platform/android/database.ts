@@ -803,6 +803,26 @@ export class MobileDatabase {
     return result.changes?.lastId ?? 0;
   }
 
+  async runSetInTx(statement: string, rows: unknown[][]): Promise<void> {
+    if (!rows.length) return;
+    await CapacitorSQLite.executeSet({
+      database: DATABASE,
+      set: rows.map((values) => ({ statement, values })),
+      transaction: false,
+      readonly: false,
+    });
+  }
+
+  async setForeignKeys(enabled: boolean): Promise<void> {
+    await this.init();
+    await CapacitorSQLite.execute({
+      database: DATABASE,
+      statements: `PRAGMA foreign_keys = ${enabled ? "ON" : "OFF"}`,
+      transaction: false,
+      readonly: false,
+    });
+  }
+
   /**
    * Query within an already-open transaction.
    */

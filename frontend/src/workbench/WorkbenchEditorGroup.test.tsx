@@ -73,7 +73,7 @@ function baseProps(group: EditorGroup, overrides: Partial<Props> = {}): Props {
     callGuideBusyId: null,
     knowledgeRefreshKey: 0,
     knowledgeFocusRef: null,
-    findLearningState: vi.fn(),
+    learningStates: [],
     isOutlineCourse: vi.fn(() => false),
     onActivatePane: vi.fn(),
     onActivateItem: vi.fn(),
