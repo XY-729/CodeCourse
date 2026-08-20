@@ -1,9 +1,10 @@
-import { useEffect, useRef, type DragEvent, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type DragEvent, type ReactNode } from "react";
 import { MoreHorizontal, X } from "lucide-react";
 import MobileReaderHeader from "../components/MobileReaderHeader";
 import SlidingSelectionIndicator from "../components/SlidingSelectionIndicator";
 import { setCodeCourseDragImage } from "../utils/dragImage";
 import type { EditorGroup, OpenItem } from "./layout";
+import { clearFrozenPane } from "./workspaceFreeze";
 
 export type MobileReaderLesson = {
   index: number;
@@ -70,12 +71,10 @@ export default function EditorPaneFrame({
   // A different document renders at the pane's current size: release this
   // pane's frozen sheet (fixed-sheet model) so the new document re-anchors to
   // the viewport instead of inheriting a stale frozen width/height.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const pane = paneRef.current;
     if (!pane) return;
-    pane.classList.remove("cc-frozen");
-    pane.style.removeProperty("--drag-pane-width");
-    pane.style.removeProperty("--drag-pane-height");
+    clearFrozenPane(pane);
   }, [group.activeItemId, group.items.length]);
 
   return (

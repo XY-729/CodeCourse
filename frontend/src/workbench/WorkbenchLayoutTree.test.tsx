@@ -56,23 +56,35 @@ describe("WorkbenchLayoutTree", () => {
     const root = container.querySelector(".reader-workspace") as HTMLDivElement;
     root.getBoundingClientRect = () => ({ left: 0, top: 0, right: 1000, bottom: 600, width: 1000, height: 600, x: 0, y: 0, toJSON: () => ({}) });
     container.querySelectorAll<HTMLElement>(".reader-pane").forEach((pane) => {
-      pane.getBoundingClientRect = () => ({ left: 0, top: 0, right: 500, bottom: 600, width: 500, height: 600, x: 0, y: 0, toJSON: () => ({}) });
+      pane.getBoundingClientRect = () => ({ left: 0, top: 0, right: 497, bottom: 600, width: 497, height: 600, x: 0, y: 0, toJSON: () => ({}) });
     });
-    fireEvent.mouseDown(container.querySelector(".split-resizer") as Element, { clientX: 500, clientY: 200 });
+    const split = container.querySelector(".split-node") as HTMLDivElement;
+    split.getBoundingClientRect = () => ({ left: 0, top: 0, right: 1000, bottom: 600, width: 1000, height: 600, x: 0, y: 0, toJSON: () => ({}) });
+    const handle = container.querySelector(".split-resizer") as HTMLDivElement;
+    handle.getBoundingClientRect = () => ({ left: 497, top: 0, right: 503, bottom: 600, width: 6, height: 600, x: 497, y: 0, toJSON: () => ({}) });
+    handle.setPointerCapture = vi.fn();
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 7, clientX: 500, clientY: 200 });
     expect(onStartResize).toHaveBeenCalledWith(expect.objectContaining({
       kind: "split",
       splitId: "split-1",
       direction: "row",
-      startBoundary: 500,
+      pointerId: 7,
+      startBoundary: 497,
+      minBoundary: 8,
+      maxBoundary: 986,
     }));
     // Documents are frozen at their current layout size (fixed-sheet model):
     // the viewer keeps its width/height, so nothing reflows during or after
     // the drag.
     container.querySelectorAll<HTMLElement>(".reader-pane").forEach((pane) => {
       expect(pane.classList.contains("cc-frozen")).toBe(true);
-      expect(pane.style.getPropertyValue("--drag-pane-width")).toBe("500px");
+      expect(pane.style.getPropertyValue("--drag-pane-width")).toBe("497px");
       expect(pane.style.getPropertyValue("--drag-pane-height")).toBe("600px");
     });
+    const panes = container.querySelectorAll<HTMLElement>(".reader-pane");
+    expect(panes[0].classList.contains("cc-frozen-row-start")).toBe(true);
+    expect(panes[1].classList.contains("cc-frozen-row-end")).toBe(true);
+    expect(handle.setPointerCapture).toHaveBeenCalledWith(7);
     document.querySelectorAll(".split-drag-indicator").forEach((node) => node.remove());
   });
 });

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { AlertCircle, BookOpen, BrainCircuit, Download, FileArchive, FolderTree, PanelLeft, Pencil, Plus, RefreshCw, Save, Search, Sparkles, Star, X } from "lucide-react";
+import { FolderTree, PanelLeft, RefreshCw, Search } from "lucide-react";
 import {
   buildProjectIndex,
   createEmptyCourseFile,
@@ -27,8 +27,6 @@ import {
   getCourseContent,
   getCallGuide,
   getCourseFiles,
-  getGenerationTask,
-  retryGenerationTask,
   getLLMSettings,
   getLearningStates,
   getProject,
@@ -61,6 +59,19 @@ import {
   renameCourseFile,
 } from "./api/client";
 import { titleFromMarkdown } from "./utils/titleFromMarkdown";
+import {
+  flattenTree,
+  indexStatusMessage,
+  isLessonPath,
+  normalizeOutputPath as _normalizeOutputPath,
+  parentDir,
+  parseScopePaths,
+  qaTitle,
+  resetGenerationScope,
+  taskStatusMessage,
+} from "./app/appUtils";
+import { resolveRecentProjectDocument } from "./projects/resolveRecentProjectDocument";
+export { pickDefaultCourse, resetGenerationScope } from "./app/appUtils";
 import type {
   CourseFile,
   FileContent,
@@ -83,27 +94,21 @@ import type {
   CallGuide,
   CallGuideNode,
 } from "./api/client";
-import AppDialog from "./components/AppDialog";
-import CodeViewer, { type ViewerRange, type ViewerSelection } from "./components/CodeViewer";
-import CommandPalette, { type CommandPaletteItem } from "./components/CommandPalette";
+import type { ViewerRange, ViewerSelection } from "./components/CodeViewer";
 import ExplainPanel, { AssistantContextSummary, SelectionSummary } from "./components/ExplainPanel";
-import ReaderLearningToolbar from "./components/ReaderLearningToolbar";
-import SelectionQuickBar from "./components/SelectionQuickBar";
 import MobileTopBar from "./components/MobileTopBar";
+import MobileMoreMenu from "./components/MobileMoreMenu";
 import type { MobileAssistantView } from "./components/MobileAssistantPanel";
-import MobileBottomNavigation, { type MobilePrimaryDestination } from "./components/MobileBottomNavigation";
+import MobileWorkspaceChrome, { type MobilePrimaryDestination, type MobileWorkspaceSheetHandle, type MobileWorkspaceTab } from "./components/MobileWorkspaceChrome";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
 import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolbar";
-import { isGenerationTaskRunning, sortGenerationTasks } from "./components/generationTaskModel";
+import { isGenerationTaskRunning } from "./components/generationTaskModel";
 import type { MobileGenerationView } from "./components/MobileGenerationPanel";
-import MobileWorkspaceSheet, { type MobileWorkspaceSheetHandle } from "./components/MobileWorkspaceSheet";
 import TitleBar from "./components/TitleBar";
-import TaskFeedback from "./components/TaskFeedback";
-import TeachingRationale from "./components/TeachingRationale";
-import TermActionPopover from "./components/TermActionPopover";
-import { GESTURE_COMPLETE_EVENT } from "./components/GestureLayer";
-import type { GesturePath } from "./gestures/GestureDrawer";
-import { recognizeGesture } from "./gestures/GestureRecognizer";
+import AppOverlayLayer from "./components/AppOverlayLayer";
+import AppFeedbackLayer from "./components/AppFeedbackLayer";
+import GestureGuide from "./components/GestureGuide";
+import { useGestureCommands } from "./gestures/useGestureCommands";
 import type { UseTermDisplayParams } from "./personalization";
 import { usePersonalizationController } from "./personalization/usePersonalizationController";
 import { useDocumentTermsController } from "./personalization/useDocumentTermsController";
@@ -112,32 +117,33 @@ import { getCodeCourseProvider } from "./platform/provider";
 import { markAndroidPerformance, scheduleAfterInteractiveFrame } from "./platform/android/performance";
 import { canRetry, permissionNotice as buildPermissionNotice, batteryNotice as buildBatteryNotice, type PermissionNotice, type ProviderNotice } from "./platform/android/generationState";
 import { useAppDialog } from "./hooks/useAppDialog";
+import { useQAAskController } from "./hooks/useQAAskController";
 import { useQAGenerationController } from "./hooks/useQAGenerationController";
 import { useLearningStateController } from "./learning/useLearningStateController";
 import { useGenerationTaskController } from "./generation/useGenerationTaskController";
+import { useGenerationTrackingController } from "./generation/useGenerationTrackingController";
 import {
   callGuideOpenItem,
   useCallGuideController,
 } from "./callGuides/useCallGuideController";
 import { useDesktopInteractionLight } from "./hooks/useDesktopInteractionLight";
+import { useDesktopImportDrop } from "./hooks/useDesktopImportDrop";
+import { useCommandPaletteItems } from "./commands/useCommandPaletteItems";
 import { markDesktopPerformance, measureDesktopInteraction } from "./performance/desktopPerformance";
 import { useWorkbenchLayoutController } from "./workbench/useWorkbenchLayoutController";
-import WorkbenchLayoutTree, { type SplitResizeStart } from "./workbench/WorkbenchLayoutTree";
+import { useWorkbenchResizeController } from "./workbench/useWorkbenchResizeController";
+import { useWorkbenchPersistence } from "./workbench/useWorkbenchPersistence";
 import WorkbenchEditorGroup from "./workbench/WorkbenchEditorGroup";
-import EditorPaneFrame from "./workbench/EditorPaneFrame";
+import WorkbenchSurface from "./workbench/WorkbenchSurface";
 import {
-  WORKBENCH_STORAGE_VERSION,
   androidWorkbenchStorageKey,
   hydrateStoredItem as hydratePersistedItem,
   restoreStoredWorkbench as restorePersistedWorkbench,
   workbenchStorageKey,
-  type StoredWorkbench,
 } from "./workbench/persistence";
 import {
   MAX_GROUPS,
   ROOT_GROUP_ID,
-  applySplitRatios,
-  calculateSplitRatios,
   closeItem,
   countGroups,
   createGroup,
@@ -152,11 +158,9 @@ import {
   firstGroupId,
   hasGroup,
   openItem,
-  rebuildLayoutFromBoundaries,
   splitGroup,
   normalizeGroupIds,
   splitMeta,
-  stripLayoutContent,
   updateEveryGroup,
   updateGroup,
 } from "./workbench/layout";
@@ -169,165 +173,26 @@ import type {
 } from "./workbench/layout";
 
 const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewer"));
-const CallGuideViewer = lazy(() => import("./components/CallGuideViewer"));
-const MarkdownViewer = lazy(() => import("./components/MarkdownViewer"));
 const MobileAssistantPanel = lazy(() => import("./components/MobileAssistantPanel"));
 const MobileGenerationPanel = lazy(() => import("./components/MobileGenerationPanel"));
 const MobileMePanel = lazy(() => import("./components/MobileMePanel"));
-const LLMSettingsDialog = lazy(() => import("./components/LLMSettingsDialog"));
-const LearnerProfileDialog = lazy(() => import("./components/LearnerProfileDialog"));
-const OutlineQuestionnaireDialog = lazy(() => import("./components/OutlineQuestionnaireDialog"));
-const ContextFilePickerDialog = lazy(() => import("./components/ContextFilePickerDialog"));
-const PromptEditor = lazy(() => import("./components/PromptEditor"));
 const GenerationSheet = lazy(() => import("./components/GenerationSheet"));
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
-type MobileWorkspaceTab = "projects" | "courses" | "files" | "assistant" | "me" | "generation";
 type MobileSurface = "navigation" | "workspace" | "assistant" | "generation" | "more" | "command" | "settings" | "prompts" | "profile";
-
-const EMPTY_COMMAND_PALETTE_ITEMS: CommandPaletteItem[] = [];
-
-type DragState =
-  | { kind: "sidebar-width"; startX: number; startWidth: number }
-  | { kind: "explain-width"; startX: number; startWidth: number }
-  | { kind: "sidebar-project"; startY: number; startHeight: number }
-  | { kind: "sidebar-course"; startY: number; startHeight: number }
-  | SplitResizeStart;
 
 type SelectionAnchor = SelectionSummary & {
   range?: ViewerRange;
   anchorRect?: ViewerSelection["anchorRect"];
 };
 
-const ASSISTANT_WIDTH_STORAGE_KEY = "codecourse.assistantWidth";
 const THEME_STORAGE_KEY = "codecourse.theme";
 const LAST_PROJECT_STORAGE_KEY = "codecourse.lastProjectId";
 const MIN_READER_WIDTH = 520;
 
 function getInitialTheme(): ThemeMode {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function parseScopePaths(value: string): string[] {
-  return value
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function parentDir(path: string): string {
-  const parts = path.split("/");
-  parts.pop();
-  return parts.join("/");
-}
-
-function taskLabel(task: GenerationTask): string {
-  const type = task.task_type === "file_lesson" ? "文件课件" : task.task_type === "outline_lesson" ? "按课课件" : "项目总纲";
-  return `${type} / ${task.status}`;
-}
-
-function isLessonPath(path: string): boolean {
-  return /^lessons\/lesson_\d+\.md$/i.test(path);
-}
-
-export function pickDefaultCourse(courses: CourseFile[], recentCourse: CourseFile | null | undefined): CourseFile | null {
-  return courses.find((file) => file.filename === "outline.md")
-    ?? recentCourse
-    ?? courses.find((file) => isLessonPath(file.filename))
-    ?? courses[0]
-    ?? null;
-}
-
-/**
- * Reset the sub-outline file selection after a generation task is created:
- * clears the selected paths (which also clears the sidebar highlight) and
- * returns the scope to the whole project so the next sheet opens fresh.
- */
-export function resetGenerationScope(
-  isLearningPlanProject: boolean,
-  currentScope: ScopeType,
-): { scopeType: ScopeType; selectedScopeFiles: string[] } {
-  if (isLearningPlanProject) return { scopeType: currentScope, selectedScopeFiles: [] };
-  return { scopeType: "full_project", selectedScopeFiles: [] };
-}
-
-function flattenTree(node: TreeNode | null): TreeNode[] {
-  if (!node) return [];
-  return [node, ...node.children.flatMap((child) => flattenTree(child))];
-}
-
-
-function taskStatusMessage(task: GenerationTask): string {
-  if (task.stage_label) {
-    const progress = task.progress_total > 0 ? ` (${task.progress_current}/${task.progress_total})` : "";
-    return `${task.stage_label}${progress}`;
-  }
-  return taskLabel(task);
-}
-
-function indexStatusMessage(status: ProjectIndexStatus | null): string {
-  if (!status) return "索引未构建";
-  const stageLabel: Record<string, string> = {
-    scanning: "正在扫描文件",
-    comparing: "正在对比文件变化",
-    building_text_index: "正在构建文本索引",
-    building_structural_index: "正在分析调用关系",
-    switching_generation: "正在切换索引版本",
-    cleaning_old_generation: "正在清理旧索引",
-    completed: "索引完成",
-    failed: "索引失败",
-    cancelled: "索引已取消",
-  };
-  if (status.stage && stageLabel[status.stage]) {
-    const parts = [stageLabel[status.stage]];
-    if (status.progress_total && status.progress_total > 0) {
-      parts.push(`(${status.progress_current}/${status.progress_total})`);
-    }
-    return parts.join(" ");
-  }
-  if (status.text_status === "building") return "正在构建基础索引";
-  if (status.structural_status === "building") return "基础索引完成，正在分析调用关系";
-  if (status.structural_status === "completed") {
-    const graphSize = status.node_count ? ` · ${status.node_count} 个结构节点` : "";
-    return `结构索引已完成${graphSize}`;
-  }
-  if (status.text_status === "completed") {
-    const degraded = status.degraded_reason ? `（${status.degraded_reason.slice(0, 60)}）` : "";
-    return `基础索引已完成${degraded}`;
-  }
-  if (status.status === "failed") {
-    if (status.active_generation && (status.active_generation > 1)) {
-      return "新版索引构建失败，当前仍在使用上一版索引。";
-    }
-    return "索引失败";
-  }
-  if (status.status === "building" && status.active_generation && (status.active_generation > 0)) {
-    const buildGen = status.building_generation ? ` gen ${status.building_generation}` : "";
-    return `正在构建新版索引${buildGen}，搜索仍使用 gen ${status.active_generation}。`;
-  }
-  if (status.status === "completed") {
-    const parts: string[] = [status.chunk_count ? `${status.chunk_count} 个片段` : ""];
-    if (status.active_generation) parts.push(`gen ${status.active_generation}`);
-    if (status.degraded_reason) parts.push(`(${status.degraded_reason.slice(0, 40)})`);
-    if (status.failed_files) parts.push(`${status.failed_files} 个文件失败`);
-    if (status.last_good_index_at) {
-      try {
-        const d = new Date(status.last_good_index_at);
-        parts.push(d.toLocaleString("zh-CN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }));
-      } catch { /* ignore */ }
-    }
-    return parts.join(" · ") || "索引完成";
-  }
-  return `${status.status} · ${status.chunk_count} 个文本片段`;
-}
-
-function qaTitle(record: QARecord): string {
-  return record.display_title?.trim() || `回答 #${record.id}`;
 }
 
 export default function App() {
@@ -343,6 +208,7 @@ export default function App() {
   const [restoringWorkbenchProjectId, setRestoringWorkbenchProjectId] = useState<number | null>(null);
   const [busyProjectId, setBusyProjectId] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [toast, setToast] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [learnerProfileOpen, setLearnerProfileOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
@@ -388,14 +254,43 @@ export default function App() {
     taskMessage: taskStatusMessage,
     onMessage: setTaskMessage,
   });
-  const [sidebarWidth, setSidebarWidth] = useState(264);
-  const [explainWidth, setExplainWidth] = useState(() => {
-    const stored = Number(window.localStorage.getItem(ASSISTANT_WIDTH_STORAGE_KEY));
-    return Number.isFinite(stored) && stored > 0 ? clamp(stored, 340, 520) : 400;
+  const {
+    retryingTaskId,
+    clearRetryingTask,
+    acquireStart: acquireGenerationStart,
+    rejectProjectMutationWhileBusy: rejectProjectMutationWhileGenerationBusy,
+    resumeTracking: resumeGenerationTracking,
+    reloadTasks: reloadGenerationTasks,
+    trackTask,
+    retryTask: handleRetryTask,
+  } = useGenerationTrackingController({
+    project,
+    getCurrentProjectId: () => currentProjectIdRef.current,
+    acquireStartLock: acquireGenerationStartLock,
+    releaseStartLock: releaseGenerationStart,
+    isBusy: isGenerationBusyNow,
+    beginTracking: beginGenerationTracking,
+    endTracking: endGenerationTracking,
+    replaceTasks: replaceGenerationTasks,
+    upsertTask: upsertCurrentGenerationTask,
+    onProjectData: (freshProject, nextCourses) => {
+      setCourses(nextCourses);
+      setProject(freshProject);
+      setProjects((items) => items.map((item) => item.id === freshProject.id ? freshProject : item));
+    },
+    onOpenCourse: openCourseInActiveGroup,
+    onCompleted: notifyTaskCompleted,
+    onKnowledgeChanged: () => setKnowledgeRefreshKey((value) => value + 1),
+    onShowMobileTasks: () => setMobileGenerationView("tasks"),
+    onDismissMobileGeneration: () => {
+      if (mobileRuntime && mobileWorkspaceTabRef.current === "generation") {
+        mobileWorkspaceSheetRef.current?.dismiss();
+      }
+    },
+    onMessage: setTaskMessage,
+    onToast: setToast,
+    onError: setError,
   });
-  const [sidebarProjectHeight, setSidebarProjectHeight] = useState(150);
-  const [sidebarCourseHeight, setSidebarCourseHeight] = useState(240);
-  const [dragState, setDragState] = useState<DragState | null>(null);
   const {
     layout,
     setLayout,
@@ -415,8 +310,29 @@ export default function App() {
     rememberClosedItem: rememberClosedWorkbenchItem,
     deferEditorMount: deferControlledEditorMount,
   } = useWorkbenchLayoutController();
+  const {
+    sidebarWidth,
+    setSidebarWidth,
+    assistantWidth: explainWidth,
+    dragState,
+    setDragState,
+  } = useWorkbenchResizeController({
+    mobile: mobileRuntime,
+    commitLayoutChange,
+  });
+  useWorkbenchPersistence({
+    projectId: project?.id ?? null,
+    restoringProjectId: restoringWorkbenchProjectId,
+    loading,
+    mobile: mobileRuntime,
+    layout,
+    activeGroupId,
+    navigationView,
+    navigationOpen,
+    sidebarWidth,
+    closedItemsRef,
+  });
   const dropPreviewRef = useRef<{ groupId: string; zone: DropZone; element: HTMLDivElement } | null>(null);
-  const [desktopDropActive, setDesktopDropActive] = useState(false);
 
   const [selection, setSelection] = useState<SelectionSummary | null>(null);
   const [qaQuestionInput, setQAQuestionInput] = useState("");
@@ -464,7 +380,6 @@ export default function App() {
     streamingPaths: () => streamingPathsRef.current,
   });
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [toast, setToast] = useState("");
   const {
     generations:
       qaGenerations,
@@ -552,9 +467,7 @@ export default function App() {
   });
   const awaitingNotificationSettingsRef = useRef(false);
   const promptClosePendingRef = useRef(false);
-  const [retryingTaskId, setRetryingTaskId] = useState<number | null>(null);
   const handledCompletionNavRef = useRef(new Set<string>());
-  const [gestureHint, setGestureHint] = useState<{ id: number; text: string } | null>(null);
   const [gestureGuideOpen, setGestureGuideOpen] = useState(false);
   const [workspaceMenuGroupId, setWorkspaceMenuGroupId] = useState<string | null>(null);
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
@@ -626,8 +539,6 @@ export default function App() {
   const mobileWorkspaceTabRef = useRef<MobileWorkspaceTab | null>(null);
   const mobileWorkspaceMotionRef = useRef<"entering" | "open" | "exiting">("open");
   const mobileWorkspaceSheetRef = useRef<MobileWorkspaceSheetHandle | null>(null);
-  const desktopDragDepthRef = useRef(0);
-  const desktopResizeStartedAtRef = useRef(0);
   const recordedTermImpressionsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -645,6 +556,77 @@ export default function App() {
   const dropPrefetchRef = useRef<Map<string, Promise<OpenItem | null>>>(new Map());
   const activeOpenItemRef = useRef<OpenItem | null>(null);
   useDesktopInteractionLight(!mobileRuntime);
+  const desktopDropActive = useDesktopImportDrop(!mobileRuntime, {
+    onLocalPath: handleImportLocalPath,
+    onArchive: handleImportArchive,
+    onRejected: setError,
+  });
+  const gestureHint = useGestureCommands({
+    left: () => {
+      if (layoutHistoryRef.current.length === 0) return "← 没有可撤销的布局调整";
+      undoWorkspaceLayout();
+      return "← 已撤销工作区布局调整";
+    },
+    right: () => {
+      const group = findGroup(layout, activeGroupId);
+      if (!group || group.items.length === 0) return "没有可切换的文档";
+      const activeIndex = group.items.findIndex((item) => item.id === group.activeItemId);
+      const nextItem = group.items[activeIndex >= 0 ? (activeIndex + 1) % group.items.length : 0];
+      activateItem(activeGroupId, nextItem);
+      return group.items.length === 1 ? "→ 当前仅有一个文档" : "→ 下一个文档";
+    },
+    up: () => {
+      const closed = closedItemsRef.current.pop();
+      if (!closed) return "↑ 没有最近关闭的文档";
+      const targetGroupId = findGroup(layout, closed.groupId) ? closed.groupId : activeGroupId;
+      openItemInGroup(targetGroupId, closed.item);
+      return `↑ 已恢复：${closed.item.title}`;
+    },
+    down: () => {
+      const group = findGroup(layout, activeGroupId);
+      const activeItem = group?.items.find((item) => item.id === group.activeItemId);
+      if (!group || !activeItem) return "没有可关闭的文档";
+      if (activeItem.type === "file") flushPendingLearningUpdate("file", activeItem.path);
+      rememberClosedItem(activeGroupId, activeItem);
+      const nextGroup = closeItem(group, activeItem.id);
+      setLayout((current) => updateGroup(current, activeGroupId, () => nextGroup));
+      const nextItem = nextGroup.items.find((item) => item.id === nextGroup.activeItemId);
+      if (nextItem) {
+        applyActiveItem(nextItem);
+        touchOpenItem(nextItem);
+      } else {
+        setFileContent(null);
+        setSelectedCourse(null);
+      }
+      return "↓ 关闭当前文档";
+    },
+    "up-left": () => {
+      dismissTransientSurfaces();
+      setAssistantOpen(false);
+      setNavigationView("files");
+      setNavigationOpen(true);
+      return "↑← 打开源码";
+    },
+    "up-right": () => {
+      dismissTransientSurfaces();
+      setCommandPaletteOpen(true);
+      return "↑→ 打开搜索";
+    },
+    "down-right": () => {
+      dismissTransientSurfaces();
+      setAssistantOpen(false);
+      setNavigationView("courses");
+      setNavigationOpen(true);
+      return "↓→ 打开课程目录";
+    },
+    "down-left": () => {
+      dismissTransientSurfaces();
+      setNavigationOpen(false);
+      setQAUpperTab("history");
+      setAssistantOpen(true);
+      return "↓← 打开 AI 助手";
+    },
+  });
 
   useEffect(() => {
     if (mobileRuntime) return;
@@ -709,6 +691,45 @@ export default function App() {
       : visibleQAGeneration
           ?.label ||
         "正在生成回答";
+
+  const {
+    acquireOperation: acquireQAOperation,
+    isBusy: isQABusyNow,
+    rejectProjectMutationWhileBusy: rejectProjectMutationWhileQABusy,
+    ask: handleAsk,
+  } = useQAAskController({
+    projectId: project?.id ?? null,
+    settings: llmSettings,
+    sessionId: qaSessionId,
+    parentQAId: selectedQA?.id ?? null,
+    selectionRange: selectionAnchor?.range,
+    generationKey: activeQAKey,
+    interactionBusy: qaInteractionBusy,
+    beginOperation: beginQAOperation,
+    endOperation: endQAOperation,
+    isOperationActive: isQAOperationActive,
+    runStreamingQuestion,
+    buildContext: buildAskPayloadContext,
+    confirm: confirmAction,
+    onToast: setToast,
+    onPanelError: setQAPanelError,
+    onAnswerComplete: async (record, projectId) => {
+      setSelectedQA(record);
+      setQASessionId(record.session_id ?? qaSessionId);
+      setQAUpperTab("history");
+      setMobileAssistantView("ask");
+      setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
+      clearQAQuestionInput();
+      await Promise.all([
+        refreshCourses(projectId),
+        refreshQAHistory(projectId),
+        refreshKnowledgeLinks(projectId),
+      ]);
+      setKnowledgeRefreshKey((value) => value + 1);
+      notifyTaskCompleted("CodeCourse 回答完成", record.display_title || "AI 助手已经完成回答。");
+      schedulePersonalizationRefresh();
+    },
+  });
 
   const showBusy =
     loading ||
@@ -1083,12 +1104,6 @@ export default function App() {
   }, [toast]);
 
   useEffect(() => {
-    if (!gestureHint) return;
-    const timer = window.setTimeout(() => setGestureHint(null), 1400);
-    return () => window.clearTimeout(timer);
-  }, [gestureHint]);
-
-  useEffect(() => {
     if (!gestureGuideOpen) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") setGestureGuideOpen(false);
@@ -1098,38 +1113,9 @@ export default function App() {
   }, [gestureGuideOpen]);
 
   useEffect(() => {
-    closedItemsRef.current = [];
-  }, [project?.id]);
-
-  useEffect(() => {
-    if (!project || loading || restoringWorkbenchProjectId === project.id) return;
-    const stored: StoredWorkbench = {
-      version: WORKBENCH_STORAGE_VERSION,
-      layout: stripLayoutContent(layout),
-      activeGroupId,
-      navigationView,
-      navigationOpen,
-      sidebarWidth,
-    };
-    try {
-      // Android uses a separate storage key to avoid overwriting desktop split layouts
-      const key = mobileRuntime
-        ? androidWorkbenchStorageKey(project.id)
-        : workbenchStorageKey(project.id);
-      window.localStorage.setItem(key, JSON.stringify(stored));
-    } catch {
-      // A full storage area must not interrupt reading; recent position still lives in SQLite.
-    }
-  }, [activeGroupId, layout, loading, navigationOpen, navigationView, project?.id, restoringWorkbenchProjectId, sidebarWidth, mobileRuntime]);
-
-  useEffect(() => {
     loadProjects();
     loadLLMSettings();
   }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(ASSISTANT_WIDTH_STORAGE_KEY, String(Math.round(explainWidth)));
-  }, [explainWidth]);
 
   useEffect(() => {
     if (mobileRuntime || !assistantOpen || !navigationOpen) {
@@ -1221,52 +1207,6 @@ export default function App() {
   }, [mobileRuntime]);
 
   useEffect(() => {
-    if (mobileRuntime || !window.codecourseDesktop?.getPathForFile) return;
-
-    const isExternalFileDrag = (event: globalThis.DragEvent) => (
-      Array.from(event.dataTransfer?.types ?? []).includes("Files")
-      && !Array.from(event.dataTransfer?.types ?? []).includes("application/codecourse-item")
-    );
-    const onDragEnter = (event: globalThis.DragEvent) => {
-      if (!isExternalFileDrag(event)) return;
-      event.preventDefault();
-      desktopDragDepthRef.current += 1;
-      setDesktopDropActive(true);
-    };
-    const onDragOver = (event: globalThis.DragEvent) => {
-      if (!isExternalFileDrag(event)) return;
-      event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
-    };
-    const onDragLeave = (event: globalThis.DragEvent) => {
-      if (!isExternalFileDrag(event)) return;
-      desktopDragDepthRef.current = Math.max(0, desktopDragDepthRef.current - 1);
-      if (desktopDragDepthRef.current === 0) setDesktopDropActive(false);
-    };
-    const onDrop = (event: globalThis.DragEvent) => {
-      if (!isExternalFileDrag(event)) return;
-      event.preventDefault();
-      desktopDragDepthRef.current = 0;
-      setDesktopDropActive(false);
-      const file = event.dataTransfer?.files?.[0];
-      if (!file) return;
-      const localPath = window.codecourseDesktop?.getPathForFile?.(file) ?? "";
-      if (localPath) void handleImportLocalPath(localPath);
-      else if (file.name.toLowerCase().endsWith(".zip")) void handleImportArchive(file);
-      else setError("请拖入本地项目文件夹或 ZIP 压缩包");
-    };
-    window.addEventListener("dragenter", onDragEnter);
-    window.addEventListener("dragover", onDragOver);
-    window.addEventListener("dragleave", onDragLeave);
-    window.addEventListener("drop", onDrop);
-    return () => {
-      window.removeEventListener("dragenter", onDragEnter);
-      window.removeEventListener("dragover", onDragOver);
-      window.removeEventListener("dragleave", onDragLeave);
-      window.removeEventListener("drop", onDrop);
-    };
-  }, [mobileRuntime]);
-  useEffect(() => {
     if (mobileRuntime) return;
     window.addEventListener("dragend", clearDropPreview, true);
     window.addEventListener("drop", clearDropPreview, true);
@@ -1278,128 +1218,22 @@ export default function App() {
     };
   }, [clearDropPreview, mobileRuntime]);
 
-  useEffect(() => {
-    function dismissTransientSurfaces() {
-      if (appDialog) closeAppDialog(null);
-      setSettingsOpen(false);
-      setLearnerProfileOpen(false);
-      setPromptEditorOpen(false);
-      setGenerationOpen(false);
-      setMoreMenuOpen(false);
-      setCommandPaletteOpen(false);
-      setQAHighlightDraft(null);
-      setWorkspaceMenuGroupId(null);
-      setGestureGuideOpen(false);
-      clearDropPreview();
-      setDragState(null);
-      setEditingCourseItemId(null);
-      setToast("");
-    }
-
-    function pathLength(path: GesturePath) {
-      let traveled = 0;
-      for (let index = 1; index < path.points.length; index += 1) {
-        const previous = path.points[index - 1];
-        const point = path.points[index];
-        traveled += Math.hypot(point.x - previous.x, point.y - previous.y);
-      }
-      return traveled;
-    }
-
-    function onGestureComplete(event: Event) {
-      const path = (event as CustomEvent<GesturePath>).detail;
-      const gesture = recognizeGesture(path);
-      const showGestureHint = (text: string) => setGestureHint({ id: Date.now(), text });
-      if (gesture === "invalid") {
-        if (pathLength(path) >= 28) showGestureHint("未识别手势，未执行操作");
-        else setGestureHint(null);
-        return;
-      }
-
-      if (gesture === "left") {
-        if (layoutHistoryRef.current.length === 0) {
-          showGestureHint("← 没有可撤销的布局调整");
-          return;
-        }
-        undoWorkspaceLayout();
-        showGestureHint("← 已撤销工作区布局调整");
-        return;
-      }
-
-      if (gesture === "right") {
-        const group = findGroup(layout, activeGroupId);
-        if (!group || group.items.length === 0) {
-          showGestureHint("没有可切换的文档");
-          return;
-        }
-        const activeIndex = group.items.findIndex((item) => item.id === group.activeItemId);
-        const nextIndex = activeIndex >= 0 ? (activeIndex + 1) % group.items.length : 0;
-        const nextItem = group.items[nextIndex];
-        activateItem(activeGroupId, nextItem);
-        showGestureHint(group.items.length === 1 ? "→ 当前仅有一个文档" : "→ 下一个文档");
-        return;
-      }
-
-      if (gesture === "up") {
-        const closed = closedItemsRef.current.pop();
-        if (!closed) {
-          showGestureHint("↑ 没有最近关闭的文档");
-          return;
-        }
-        const targetGroupId = findGroup(layout, closed.groupId) ? closed.groupId : activeGroupId;
-        openItemInGroup(targetGroupId, closed.item);
-        showGestureHint(`↑ 已恢复：${closed.item.title}`);
-        return;
-      }
-
-      if (gesture === "down") {
-        const group = findGroup(layout, activeGroupId);
-        const activeItem = group?.items.find((item) => item.id === group.activeItemId);
-        if (!group || !activeItem) {
-          showGestureHint("没有可关闭的文档");
-          return;
-        }
-        if (activeItem.type === "file") flushPendingLearningUpdate("file", activeItem.path);
-        rememberClosedItem(activeGroupId, activeItem);
-        const nextGroup = closeItem(group, activeItem.id);
-        setLayout((current) => updateGroup(current, activeGroupId, () => nextGroup));
-        const nextItem = nextGroup.items.find((item) => item.id === nextGroup.activeItemId);
-        if (nextItem) {
-          applyActiveItem(nextItem);
-          touchOpenItem(nextItem);
-        } else {
-          setFileContent(null);
-          setSelectedCourse(null);
-        }
-        showGestureHint("↓ 关闭当前文档");
-        return;
-      }
-
-      dismissTransientSurfaces();
-      if (gesture === "up-left") {
-        setAssistantOpen(false);
-        setNavigationView("files");
-        setNavigationOpen(true);
-        showGestureHint("↑← 打开源码");
-      } else if (gesture === "up-right") {
-        setCommandPaletteOpen(true);
-        showGestureHint("↑→ 打开搜索");
-      } else if (gesture === "down-right") {
-        setAssistantOpen(false);
-        setNavigationView("courses");
-        setNavigationOpen(true);
-        showGestureHint("↓→ 打开课程目录");
-      } else if (gesture === "down-left") {
-        setNavigationOpen(false);
-        setQAUpperTab("history");
-        setAssistantOpen(true);
-        showGestureHint("↓← 打开 AI 助手");
-      }
-    }
-
-    window.addEventListener(GESTURE_COMPLETE_EVENT, onGestureComplete);
-    return () => window.removeEventListener(GESTURE_COMPLETE_EVENT, onGestureComplete);
-  }, [activeGroupId, appDialog, clearDropPreview, layout, project?.id, qaHistory]);
+  function dismissTransientSurfaces() {
+    if (appDialog) closeAppDialog(null);
+    setSettingsOpen(false);
+    setLearnerProfileOpen(false);
+    setPromptEditorOpen(false);
+    setGenerationOpen(false);
+    setMoreMenuOpen(false);
+    setCommandPaletteOpen(false);
+    setQAHighlightDraft(null);
+    setWorkspaceMenuGroupId(null);
+    setGestureGuideOpen(false);
+    clearDropPreview();
+    setDragState(null);
+    setEditingCourseItemId(null);
+    setToast("");
+  }
 
   useEffect(() => {
     if (!mobileRuntime) {
@@ -1446,164 +1280,6 @@ export default function App() {
       removeListener?.();
     };
   }, [appDialog, assistantOpen, generationOpen, isTaskRunning, isQAOperationActive, learnerProfileOpen, mobileRuntime, mobileWorkspaceTab, moreMenuOpen, navigationOpen, promptEditorDirty, promptEditorOpen, promptEditorSaving, qaInteractionBusy, settingsDialogBusy, settingsOpen]);
-
-  useEffect(() => {
-    if (!dragState) {
-      document.documentElement.style.removeProperty("--nav-width");
-      document.documentElement.style.removeProperty("--explain-width");
-      document.documentElement.style.removeProperty("--sidebar-project-h");
-      document.documentElement.style.removeProperty("--sidebar-course-h");
-      return;
-    }
-    if (!mobileRuntime) desktopResizeStartedAtRef.current = performance.now();
-    const currentDrag = dragState;
-    let frame = 0;
-    let splitCommitted = false;
-    let latestX = "startX" in currentDrag ? currentDrag.startX : 0;
-    let latestY = "startY" in currentDrag ? currentDrag.startY : 0;
-
-    function clearLiveSplitPreview() {
-      if (currentDrag.kind !== "split") return;
-      currentDrag.splitElements.forEach((element) => element.style.removeProperty("--split-ratio"));
-    }
-
-    function applyDragFrame() {
-      frame = 0;
-      if (currentDrag.kind === "sidebar-width") {
-        const w = clamp(currentDrag.startWidth + latestX - currentDrag.startX, 240, 360);
-        document.documentElement.style.setProperty("--nav-width", `${w}px`);
-      } else if (currentDrag.kind === "explain-width") {
-        const w = clamp(currentDrag.startWidth - (latestX - currentDrag.startX), 340, 520);
-        document.documentElement.style.setProperty("--explain-width", `${w}px`);
-      } else if (currentDrag.kind === "sidebar-project") {
-        const h = clamp(currentDrag.startHeight + latestY - currentDrag.startY, 96, 320);
-        document.documentElement.style.setProperty("--sidebar-project-h", `${h}px`);
-      } else if (currentDrag.kind === "sidebar-course") {
-        const h = clamp(currentDrag.startHeight - (latestY - currentDrag.startY), 120, 420);
-        document.documentElement.style.setProperty("--sidebar-course-h", `${h}px`);
-      } else if (currentDrag.kind === "split") {
-        const delta = currentDrag.direction === "row" ? latestX - currentDrag.startX : latestY - currentDrag.startY;
-        const nextBoundary = clamp(
-          currentDrag.startBoundary + delta,
-          currentDrag.minBoundary,
-          currentDrag.maxBoundary,
-        );
-        const offset = nextBoundary - currentDrag.startBoundary;
-        const ratios = new Map<string, number>();
-        calculateSplitRatios(
-          currentDrag.layoutSnapshot,
-          currentDrag.rootBounds,
-          currentDrag.boundaries,
-          currentDrag.splitId,
-          nextBoundary,
-          ratios,
-        );
-        ratios.forEach((ratio, splitId) => {
-          currentDrag.splitElements.get(splitId)?.style.setProperty("--split-ratio", String(ratio));
-        });
-        currentDrag.indicator.style.transform = currentDrag.direction === "row"
-          ? `translate3d(${offset}px, 0, 0)`
-          : `translate3d(0, ${offset}px, 0)`;
-      }
-    }
-
-    function onMouseMove(event: globalThis.MouseEvent) {
-      latestX = event.clientX;
-      latestY = event.clientY;
-      if (!frame) frame = window.requestAnimationFrame(applyDragFrame);
-    }
-    function onMouseUp(event: globalThis.MouseEvent) {
-      latestX = event.clientX;
-      latestY = event.clientY;
-      if (frame) window.cancelAnimationFrame(frame);
-      applyDragFrame();
-      if (currentDrag.kind === "sidebar-width") {
-        const w = clamp(currentDrag.startWidth + event.clientX - currentDrag.startX, 240, 360);
-        setSidebarWidth(w);
-      } else if (currentDrag.kind === "explain-width") {
-        const w = clamp(currentDrag.startWidth - (event.clientX - currentDrag.startX), 340, 520);
-        setExplainWidth(w);
-      } else if (currentDrag.kind === "sidebar-project") {
-        const h = clamp(currentDrag.startHeight + event.clientY - currentDrag.startY, 96, 320);
-        setSidebarProjectHeight(h);
-      } else if (currentDrag.kind === "sidebar-course") {
-        const h = clamp(currentDrag.startHeight - (event.clientY - currentDrag.startY), 120, 420);
-        setSidebarCourseHeight(h);
-      } else if (currentDrag.kind === "split") {
-        const delta = currentDrag.direction === "row" ? event.clientX - currentDrag.startX : event.clientY - currentDrag.startY;
-        const requestedBoundary = currentDrag.startBoundary + delta;
-        if (requestedBoundary < currentDrag.minBoundary) {
-          collapseSplitById(currentDrag.splitId, "first");
-        } else if (requestedBoundary > currentDrag.maxBoundary) {
-          collapseSplitById(currentDrag.splitId, "second");
-        } else {
-          const finalBoundary = clamp(requestedBoundary, currentDrag.minBoundary, currentDrag.maxBoundary);
-          const ratios = new Map<string, number>();
-          rebuildLayoutFromBoundaries(
-            currentDrag.layoutSnapshot,
-            currentDrag.rootBounds,
-            currentDrag.boundaries,
-            currentDrag.splitId,
-            finalBoundary,
-            ratios,
-          );
-          splitCommitted = true;
-          /*
-           * Merge the drag result into the *current* layout instead of
-           * replacing it with the drag-start snapshot: the workbench may have
-           * changed while dragging (streaming content deltas, tabs opened or
-           * closed), and replacing would silently discard those changes and
-           * corrupt the visible ratios.
-           */
-          commitLayoutChange((current) => applySplitRatios(current, ratios));
-          window.requestAnimationFrame(() => window.requestAnimationFrame(clearLiveSplitPreview));
-        }
-      }
-      setDragState(null);
-      window.dispatchEvent(new Event("codecourse:resize-end"));
-      if (!mobileRuntime) {
-        measureDesktopInteraction("workspace-resize", desktopResizeStartedAtRef.current, {
-          resize_kind: currentDrag.kind,
-        });
-      }
-    }
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-    document.body.classList.add(currentDrag.kind === "split" && currentDrag.direction === "row" ? "resizing-x" : currentDrag.kind.includes("width") ? "resizing-x" : "resizing-y");
-    return () => {
-      if (frame) window.cancelAnimationFrame(frame);
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-      document.body.classList.remove("resizing-x", "resizing-y");
-      if (currentDrag.kind === "split") {
-        currentDrag.indicator.remove();
-        /*
-         * The document freeze (cc-frozen + --drag-pane-*) deliberately stays:
-         * releasing a drag must not reflow the documents (fixed-sheet model).
-         * It re-anchors on window resize and on the next drag start.
-         */
-        if (!splitCommitted) clearLiveSplitPreview();
-      }
-    };
-  }, [dragState]);
-
-  /*
-   * Re-anchor the frozen document sheets when the window is resized: a resize
-   * changes pane sizes for a reason other than split dragging, so the
-   * documents reflow once to their new panes and the freeze is released until
-   * the next drag re-captures it.
-   */
-  useEffect(() => {
-    function reanchorFrozenDocuments() {
-      document.querySelectorAll<HTMLElement>(".reader-pane.cc-frozen").forEach((pane) => {
-        pane.classList.remove("cc-frozen");
-        pane.style.removeProperty("--drag-pane-width");
-        pane.style.removeProperty("--drag-pane-height");
-      });
-    }
-    window.addEventListener("resize", reanchorFrozenDocuments);
-    return () => window.removeEventListener("resize", reanchorFrozenDocuments);
-  }, []);
 
   useEffect(() => {
     if (!project) {
@@ -1683,10 +1359,6 @@ export default function App() {
   function mergeWorkspaceGroups(groupId: string) {
     mergeControlledGroups(groupId);
     setWorkspaceMenuGroupId(null);
-  }
-
-  function collapseSplitById(splitId: string, removeSide: "first" | "second") {
-    collapseControlledSplit(splitId, removeSide);
   }
 
   async function loadLLMSettings() {
@@ -2199,33 +1871,6 @@ export default function App() {
     dismissMobileWorkspaceAfterOpen();
   }
 
-  function _normalizeOutputPath(outputPath: string | null | undefined, recordId: number, projectId: number): string {
-    if (!outputPath) {
-      return `qa/${recordId}`;
-    }
-    // Normalize Windows backslashes to forward slashes
-    const normalized = outputPath.replace(/\\/g, "/");
-    // If it's already a relative path, use as-is
-    if (!normalized.startsWith('/')) {
-      return normalized;
-    }
-    // Old absolute path: extract everything after "generated/{projectId}/"
-    const marker = `generated/${projectId}/`;
-    const idx = normalized.indexOf(marker);
-    if (idx !== -1) {
-      return normalized.slice(idx + marker.length);
-    }
-    // Fallback: try to extract relative path from any "generated/" prefix
-    const genIdx = normalized.lastIndexOf('generated/');
-    if (genIdx !== -1) {
-      // Skip past "generated/{id}/"
-      const after = normalized.slice(genIdx + 'generated/'.length);
-      const slashIdx = after.indexOf('/');
-      return slashIdx !== -1 ? after.slice(slashIdx + 1) : after;
-    }
-    return `qa/${recordId}`;
-  }
-
   async function openQAInActiveGroup(record: QARecord) {
     if (!project) {
       return;
@@ -2463,67 +2108,30 @@ export default function App() {
           return;
         }
 
-        const recent = [...nextLearningStates].sort((a, b) => b.last_opened_at.localeCompare(a.last_opened_at))[0];
-        const recentCourse = recent?.source_type === "course"
-          ? nextCourses.find((file) => file.filename === recent.source_path)
-          : null;
-        const firstCourse = pickDefaultCourse(nextCourses, recentCourse);
-        if (recent?.source_type === "qa") {
-          const nextQARecords = await nextQARecordsPromise;
-          if (currentProjectIdRef.current !== freshProject.id) return;
-          const record = nextQARecords.find((entry) => (
-            _normalizeOutputPath(entry.output_path, entry.id, freshProject.id) === recent.source_path
-          ));
-          if (record) {
-            const relPath = _normalizeOutputPath(record.output_path, record.id, freshProject.id);
-            const course = await getCourseContent(freshProject.id, relPath).catch(() => null);
-            if (currentProjectIdRef.current !== freshProject.id) return;
-            setSelectedQA(record);
-            setQASessionId(record.session_id ?? null);
-            setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, course ? {
-              id: `course:${relPath}`, type: "course", path: relPath, title: qaTitle(record),
-              content: course.content, qaRecordId: record.id, favorite: record.favorite,
-            } : {
-              id: `qa:${record.id}`, type: "qa", path: relPath, title: qaTitle(record),
-              content: record.answer_md, qaRecordId: record.id, favorite: record.favorite,
-            })));
-            measureDesktopInteraction("project-document-restore", restoreStartedAt, {
-              project_id: freshProject.id, source: "recent-qa",
-            });
-            return;
-          }
+        const recentDocument = await resolveRecentProjectDocument({
+          projectId: freshProject.id,
+          courses: nextCourses,
+          learningStates: nextLearningStates,
+          qaRecords: nextQARecordsPromise,
+        });
+        if (currentProjectIdRef.current !== freshProject.id) return;
+        setFileContent(recentDocument.fileContent);
+        setSelectedCourse(recentDocument.selectedCourse);
+        setSelectedQA(recentDocument.selectedQA);
+        setQASessionId(recentDocument.qaSessionId);
+        if (recentDocument.item) {
+          setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, recentDocument.item!)));
         }
-        if (recent?.source_type === "file") {
-          try {
-            const content = await getProjectFile(freshProject.id, recent.source_path);
-            if (currentProjectIdRef.current !== freshProject.id) return;
-            setFileContent(content);
-            setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, {
-              id: `file:${recent.source_path}`, type: "file", path: recent.source_path,
-              title: recent.source_path.split("/").pop() ?? recent.source_path,
-              content: content.content, language: content.language,
-            })));
-            measureDesktopInteraction("project-document-restore", restoreStartedAt, {
-              project_id: freshProject.id, source: "recent-file",
-            });
-            return;
-          } catch {
-            // The file may have been removed since its reading position was saved.
-          }
-        }
-        if (firstCourse) {
-          const content = await getCourseContent(freshProject.id, firstCourse.filename);
-          if (currentProjectIdRef.current !== freshProject.id) return;
-          void refreshDocumentTerms("course", firstCourse.filename, freshProject.id);
-          setSelectedCourse(firstCourse.filename);
-          setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, {
-            id: `course:${firstCourse.filename}`, type: "course", path: firstCourse.filename,
-            title: firstCourse.title, content: content.content,
-          })));
+        if (recentDocument.termSource) {
+          void refreshDocumentTerms(
+            recentDocument.termSource.sourceType,
+            recentDocument.termSource.sourcePath,
+            freshProject.id,
+          );
         }
         measureDesktopInteraction("project-document-restore", restoreStartedAt, {
           project_id: freshProject.id,
-          source: firstCourse ? "default-course" : "empty",
+          source: recentDocument.source,
         });
       }).catch(() => {
         if (mobileRuntime && currentProjectIdRef.current === freshProject.id) {
@@ -2694,154 +2302,6 @@ export default function App() {
       await openCourseInActiveGroup(project.id, created.filename);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创建文档失败");
-    }
-  }
-
-  function acquireGenerationStart() {
-    if (!acquireGenerationStartLock()) {
-      setToast("当前已有内容正在生成，请等待完成");
-      return false;
-    }
-    return true;
-  }
-
-  function rejectProjectMutationWhileGenerationBusy() {
-    if (!isGenerationBusyNow()) {
-      return false;
-    }
-    setToast("当前内容仍在生成，请完成后再切换或修改项目");
-    return true;
-  }
-
-  function resumeGenerationTracking(projectId: number, tasks: GenerationTask[]) {
-    /*
-     * openProject 或前台恢复期间，
-     * 项目可能已经再次发生切换。
-     */
-    if (currentProjectIdRef.current !== projectId) {
-      return;
-    }
-    for (const task of tasks) {
-      if (isGenerationTaskRunning(task)) {
-        void trackTask(projectId, task);
-      }
-    }
-  }
-
-  async function reloadGenerationTasks(projectId: number, resumeTracking = true) {
-    const tasks = await listGenerationTasks(projectId);
-    /*
-     * 请求期间切换了项目：
-     * 返回排序结果供调用方使用，
-     * 但不触碰当前项目状态。
-     */
-    if (currentProjectIdRef.current !== projectId) {
-      return sortGenerationTasks(tasks);
-    }
-    const sorted = replaceGenerationTasks(projectId, tasks);
-    if (resumeTracking) {
-      resumeGenerationTracking(projectId, sorted);
-    }
-    return sorted;
-  }
-
-  async function trackTask(projectId: number, initialTask: GenerationTask) {
-    if (!beginGenerationTracking(projectId, initialTask.id)) {
-      return;
-    }
-    let nextTask = initialTask;
-    upsertCurrentGenerationTask(projectId, nextTask);
-    const trackingDeadline = Date.now() + 2 * 60 * 60 * 1000;
-    let consecutiveErrors = 0;
-    try {
-      while (Date.now() < trackingDeadline) {
-        if (!isGenerationTaskRunning(nextTask)) {
-          break;
-        }
-        await new Promise((resolve) => window.setTimeout(resolve, 1500));
-        try {
-          nextTask = await getGenerationTask(projectId, initialTask.id);
-          consecutiveErrors = 0;
-          upsertCurrentGenerationTask(projectId, nextTask);
-        } catch (caught) {
-          consecutiveErrors += 1;
-          if (consecutiveErrors >= 5) {
-            throw caught;
-          }
-        }
-      }
-      if (isGenerationTaskRunning(nextTask)) {
-        if (currentProjectIdRef.current === projectId) {
-          setTaskMessage("任务仍在后台生成，稍后会继续同步进度");
-        }
-        return;
-      }
-      if (currentProjectIdRef.current !== projectId) {
-        return;
-      }
-      const [nextCourses, freshProject] = await Promise.all([getCourseFiles(projectId), getProject(projectId)]);
-      if (currentProjectIdRef.current !== projectId) {
-        return;
-      }
-      setCourses(nextCourses);
-      setProject(freshProject);
-      setProjects((items) => items.map((item) => (item.id === freshProject.id ? freshProject : item)));
-      if (nextTask.status === "completed") {
-        setTaskMessage("生成完成");
-        setToast("内容已生成");
-        notifyTaskCompleted("CodeCourse 生成完成", `${taskLabel(nextTask)}已经可以阅读。`);
-        const outputPath = nextTask.output_path ?? (nextTask.task_type === "outline" ? "outline.md" : null);
-        const preferred = outputPath
-          ? nextCourses.find((item) => item.filename === outputPath || outputPath.endsWith(`/${item.filename}`))
-          : null;
-        if (preferred) {
-          await openCourseInActiveGroup(projectId, preferred.filename);
-          if (mobileRuntime && mobileWorkspaceTabRef.current === "generation") {
-            mobileWorkspaceSheetRef.current?.dismiss();
-          }
-        }
-        setKnowledgeRefreshKey((value) => value + 1);
-        return;
-      }
-      if (nextTask.status === "failed") {
-        setTaskMessage(`生成失败：${nextTask.error_message ?? "未知错误"}`);
-        return;
-      }
-      if (nextTask.status === "cancelled") {
-        setTaskMessage("生成已取消");
-      }
-    } catch (caught) {
-      if (currentProjectIdRef.current === projectId) {
-        setError(caught instanceof Error ? `同步生成任务失败：${caught.message}` : "同步生成任务失败");
-      }
-    } finally {
-      endGenerationTracking(projectId, initialTask.id);
-    }
-  }
-
-  async function handleRetryTask(task: GenerationTask) {
-    if (!project || task.project_id !== project.id) {
-      return;
-    }
-    if (!acquireGenerationStart()) {
-      return;
-    }
-    if (retryingTaskId === task.id) {
-      releaseGenerationStart();
-      return;
-    }
-    setRetryingTaskId(task.id);
-    setError("");
-    try {
-      const retried = await retryGenerationTask(project.id, task.id);
-      upsertCurrentGenerationTask(project.id, retried);
-      setMobileGenerationView("tasks");
-      void trackTask(project.id, retried);
-    } catch (caught) {
-      setError(`重试失败：${caught instanceof Error ? caught.message : String(caught)}`);
-    } finally {
-      setRetryingTaskId(null);
-      releaseGenerationStart();
     }
   }
 
@@ -3203,7 +2663,7 @@ export default function App() {
 
         currentProjectIdRef.current = null;
         resetGenerationTasks();
-        setRetryingTaskId(null);
+        clearRetryingTask();
 
         setTaskMessage("待生成");
         setMobileGenerationView("configure");
@@ -3258,225 +2718,6 @@ export default function App() {
       range: nextSelection.range,
       anchorRect: nextSelection.anchorRect,
     });
-  }
-
-  function acquireQAOperation() {
-    const token =
-      beginQAOperation();
-
-    if (!token) {
-      setToast(
-        "已有回答正在处理，请等待完成",
-      );
-    }
-
-    return token;
-  }
-
-  function isQABusyNow() {
-    /*
-     * qaInteractionBusy 用于渲染；
-     * isQAOperationActive() 读取 ref，
-     * 同一帧内也能立即拦截。
-     */
-    return (
-      qaInteractionBusy ||
-      isQAOperationActive()
-    );
-  }
-
-  function rejectProjectMutationWhileQABusy() {
-    if (!isQABusyNow()) {
-      return false;
-    }
-
-    setToast(
-      "当前回答仍在处理，请完成后再切换或修改项目",
-    );
-
-    return true;
-  }
-
-  async function handleAsk(question: string) {
-    const trimmedQuestion = question.trim();
-
-    if (
-      !project ||
-      !trimmedQuestion ||
-      !llmSettings?.enabled ||
-      !llmSettings.has_api_key
-    ) {
-      return;
-    }
-
-    const operationToken =
-      acquireQAOperation();
-
-    if (!operationToken) {
-      return;
-    }
-
-    try {
-      const ok =
-        await confirmAction(
-          "AI 助手询问",
-
-          `将调用模型 API 使用 ` +
-            `${llmSettings.model} ` +
-            `回答当前问题，` +
-            `可能消耗 token。` +
-            `是否继续？`,
-
-          {
-            confirmText: "询问",
-            skipKey:
-              "confirm.ask",
-          },
-        );
-
-      if (!ok) {
-        return;
-      }
-
-      setQAPanelError("");
-
-      const generationKey =
-        activeQAKey;
-
-      const context =
-        buildAskPayloadContext();
-
-      const record =
-        await runStreamingQuestion(
-          {
-            source_type:
-              context.source_type,
-
-            source_path:
-              context.source_path,
-
-            selected_text:
-              context.selected_text,
-
-            context_files:
-              context.context_files,
-
-            question:
-              trimmedQuestion,
-
-            provider:
-              llmSettings.provider,
-
-            base_url:
-              llmSettings.base_url,
-
-            model:
-              llmSettings.model,
-
-            session_id:
-              qaSessionId,
-
-            parent_qa_id:
-              selectedQA?.id ??
-              null,
-
-            relation_type:
-              "follow_up",
-
-            selection_range:
-              selectionAnchor?.range
-                ? {
-                    start_line:
-                      selectionAnchor
-                        .range
-                        .startLineNumber,
-
-                    start_column:
-                      selectionAnchor
-                        .range
-                        .startColumn,
-
-                    end_line:
-                      selectionAnchor
-                        .range
-                        .endLineNumber,
-
-                    end_column:
-                      selectionAnchor
-                        .range
-                        .endColumn,
-                  }
-                : null,
-          },
-
-          generationKey,
-          operationToken,
-        );
-
-      setSelectedQA(record);
-
-      setQASessionId(
-        record.session_id ??
-          qaSessionId,
-      );
-
-      setQAUpperTab("history");
-      setMobileAssistantView(
-        "ask",
-      );
-
-      setQAHistory(
-        (items) => [
-          record,
-
-          ...items.filter(
-            (item) =>
-              item.id !==
-              record.id,
-          ),
-        ],
-      );
-
-      clearQAQuestionInput();
-
-      await Promise.all([
-        refreshCourses(
-          project.id,
-        ),
-
-        refreshQAHistory(
-          project.id,
-        ),
-
-        refreshKnowledgeLinks(
-          project.id,
-        ),
-      ]);
-
-      setKnowledgeRefreshKey(
-        (value) =>
-          value + 1,
-      );
-
-      notifyTaskCompleted(
-        "CodeCourse 回答完成",
-
-        record.display_title ||
-          "AI 助手已经完成回答。",
-      );
-
-      schedulePersonalizationRefresh();
-    } catch (caught) {
-      setQAPanelError(
-        caught instanceof Error
-          ? caught.message
-          : "生成回答失败",
-      );
-    } finally {
-      endQAOperation(
-        operationToken,
-      );
-    }
   }
 
   function handleNewConversation() {
@@ -4747,72 +3988,6 @@ export default function App() {
     setToast("诊断摘要已复制，不包含 API Key");
   }
 
-  function commandPaletteItems(): CommandPaletteItem[] {
-    const items: CommandPaletteItem[] = [
-      {
-        id: "command:call-guide",
-        label: "创建调用链学习导览",
-        description: "输入函数或方法名，查看两跳真实调用路径",
-        section: "命令",
-        keywords: "调用链 call graph 函数 方法 上游 下游",
-        disabled: !project || mobileRuntime || isLearningPlanProject,
-        disabledReason: !project ? "需要先打开项目" : isLearningPlanProject ? "学习计划没有结构索引" : "桌面端功能",
-        run: () => {
-          void requestText({
-            title: "创建调用链学习导览",
-            message: "输入函数、方法或限定符号名。CodeCourse 只显示结构索引确认的调用关系。",
-            label: "符号",
-            placeholder: "例如 run 或 App.start",
-            confirmText: "查找",
-          }).then((symbol) => {
-            if (symbol) void resolveAndOpenCallGuide({ symbolName: symbol });
-          });
-        },
-      },
-      { id: "command:assistant", label: "打开 AI 助手", description: "结合当前项目或文档提问", section: "命令", keywords: "ai 问答 提问", run: () => openAssistant("history") },
-      { id: "command:generate", label: "生成学习内容", description: "打开总纲与课件生成抽屉", section: "命令", keywords: "生成 总纲 课件", disabled: !project, disabledReason: !project ? "需要先打开项目" : undefined, run: () => openGeneration("outline") },
-      { id: "command:courses", label: "打开课程导航", section: "命令", keywords: "课程 左栏", run: () => openMobileNavigation("courses") },
-      { id: "command:files", label: "打开源码导航", section: "命令", keywords: "文件 源码", run: () => openMobileNavigation("files") },
-      { id: "command:settings", label: "设置", section: "命令", keywords: "deepseek key 模型 个性化 术语 隐私", run: openSettings },
-      { id: "command:prompts", label: "提示词编辑", section: "命令", keywords: "prompt 模板", run: openPrompts },
-      { id: "command:index", label: "构建项目索引", section: "命令", keywords: "rag 搜索 索引", disabled: !project || isLearningPlanProject, disabledReason: !project ? "需要先打开项目" : isLearningPlanProject ? "学习计划项目无需构建索引" : undefined, run: () => void handleBuildIndex() },
-      { id: "command:reset-progress", label: "重置学习进度", section: "命令", keywords: "清除 完成 阅读位置", disabled: !project || learningStates.length === 0, disabledReason: !project ? "需要先打开项目" : "没有学习进度可重置", run: () => void handleResetLearningProgress() },
-      { id: "command:check-updates", label: "检查更新", description: `当前版本 ${__CODECOURSE_VERSION__}`, section: "命令", keywords: "版本 release 升级", run: () => void handleCheckUpdates() },
-      { id: "command:diagnostics", label: mobileRuntime ? "复制诊断摘要" : "打开诊断日志", section: "命令", keywords: "日志 错误 排查", run: () => void handleOpenDiagnostics() },
-    ];
-    for (const course of courses) {
-      items.push({ id: `course:${course.filename}`, label: course.title, description: course.filename, section: "课程", keywords: course.filename, disabled: !project, disabledReason: !project ? "需要先打开项目" : undefined, run: () => project && void openCourseInActiveGroup(project.id, course.filename) });
-    }
-    for (const node of flattenTree(tree).filter((entry) => entry.type === "file")) {
-      items.push({ id: `file:${node.path}`, label: node.name, description: node.path, section: "源码", keywords: node.path, run: () => project && void openFileInActiveGroup(project.id, node.path) });
-    }
-    for (const record of qaHistory) {
-      items.push({ id: `qa:${record.id}`, label: qaTitle(record), description: record.question, section: "回答", keywords: `${record.source_path ?? ""} ${record.answer_md.slice(0, 160)}`, run: () => void openQAInActiveGroup(record) });
-    }
-    for (const guide of callGuides) {
-      items.push({
-        id: `call-guide:${guide.id}`,
-        label: guide.title,
-        description: guide.stale ? "索引已变化，打开后可刷新" : `${guide.nodes.length} 个符号 · ${guide.edges.length} 条已验证调用`,
-        section: "最近导览",
-        keywords: `${guide.root.symbol_name} ${guide.root.qualified_name ?? ""} ${guide.root.path}`,
-        run: () => openCallGuide(guide),
-      });
-      items.push({
-        id: `call-guide-delete:${guide.id}`,
-        label: `删除 ${guide.title}`,
-        description: "仅删除保存的导览",
-        section: "最近导览",
-        keywords: `删除 调用链 ${guide.root.symbol_name}`,
-        run: () => void handleDeleteCallGuide(guide),
-      });
-    }
-    for (const entry of projects) {
-      items.push({ id: `project:${entry.id}`, label: entry.name, description: entry.project_type === "learning_plan" ? "学习计划" : entry.url, section: "项目", keywords: entry.url, run: () => void openProject(entry) });
-    }
-    return items;
-  }
-
   const activeOpenItem = getActiveOpenItem();
   activeOpenItemRef.current = activeOpenItem;
 
@@ -4868,10 +4043,50 @@ export default function App() {
 
   const canStartGeneration = Boolean(project) && !generationValidationMessage;
   const activeDocumentTitle = activeOpenItem?.title ?? (project ? "学习工作台" : "CodeCourse");
-  const commandItems = useMemo(
-    () => commandPaletteOpen ? commandPaletteItems() : EMPTY_COMMAND_PALETTE_ITEMS,
-    [commandPaletteOpen, courses, tree, qaHistory, callGuides, projects, project, learningStates, isLearningPlanProject],
+  const commandFiles = useMemo(
+    () => flattenTree(tree).filter((entry) => entry.type === "file"),
+    [tree],
   );
+  const commandItems = useCommandPaletteItems({
+    open: commandPaletteOpen,
+    mobile: mobileRuntime,
+    projectAvailable: Boolean(project),
+    learningPlan: isLearningPlanProject,
+    hasLearningProgress: learningStates.length > 0,
+    version: __CODECOURSE_VERSION__,
+    courses,
+    files: commandFiles,
+    qaHistory,
+    callGuides,
+    projects,
+    actions: {
+      createCallGuide: () => {
+        void requestText({
+          title: "创建调用链学习导览",
+          message: "输入函数、方法或限定符号名。CodeCourse 只显示结构索引确认的调用关系。",
+          label: "符号",
+          placeholder: "例如 run 或 App.start",
+          confirmText: "查找",
+        }).then((symbol) => { if (symbol) void resolveAndOpenCallGuide({ symbolName: symbol }); });
+      },
+      openAssistant: () => openAssistant("history"),
+      openGeneration: () => openGeneration("outline"),
+      openCourses: () => openMobileNavigation("courses"),
+      openFiles: () => openMobileNavigation("files"),
+      openSettings,
+      openPrompts,
+      buildIndex: () => { void handleBuildIndex(); },
+      resetProgress: () => { void handleResetLearningProgress(); },
+      checkUpdates: () => { void handleCheckUpdates(); },
+      openDiagnostics: () => { void handleOpenDiagnostics(); },
+      openCourse: (course) => { if (project) void openCourseInActiveGroup(project.id, course.filename); },
+      openFile: (file) => { if (project) void openFileInActiveGroup(project.id, file.path); },
+      openQA: (record) => { void openQAInActiveGroup(record); },
+      openCallGuide,
+      deleteCallGuide: (guide) => { void handleDeleteCallGuide(guide); },
+      openProject: (entry) => { void openProject(entry); },
+    },
+  });
 
   function closeNavigationAnimated() {
     if (navigationOpen && !navigationClosing) {
@@ -5629,208 +4844,88 @@ export default function App() {
           onMore={toggleMobileMoreMenu}
         />
       )}
-      {mobileRuntime && moreMenuOpen ? (
-        <div className="more-menu-layer" onMouseDown={() => setMoreMenuOpen(false)}>
-          <div className="more-menu topbar-more-menu" role="menu" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" role="menuitem" disabled={!project} onClick={() => { openGeneration(activeLessonNumber ? "lesson" : fileContent ? "brief" : "outline"); setMoreMenuOpen(false); }}>
-              <Sparkles size={15} />
-              {activeLessonNumber ? "生成当前课件" : fileContent ? "分析当前文件" : "生成学习内容"}
-            </button>
-            <button type="button" role="menuitem" disabled={!project} onClick={() => { openAssistant("knowledge"); setMoreMenuOpen(false); }}>
-              <BrainCircuit size={15} />
-              知识网络
-            </button>
-            <div className="more-menu-divider" />
-            <button type="button" role="menuitem" onClick={() => { void handleImportRequest(); setMoreMenuOpen(false); }}>
-              <Download size={15} />
-              导入 GitHub 仓库
-            </button>
-            <button type="button" role="menuitem" onClick={() => { archiveInputRef.current?.click(); setMoreMenuOpen(false); }}>
-              <FileArchive size={15} />
-              导入本地 ZIP
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {permissionNotice && dismissedPermissionStatusRef.current !== permissionNotice.status ? (
-        <div className="permission-notice-banner">
-          <span>{permissionNotice.message}</span>
-          <div className="permission-notice-actions">
-            {permissionNotice.showSettingsAction ? (
-              <button className="secondary-button" onClick={handleOpenNotificationSettings}>
-                前往通知设置
-              </button>
-            ) : null}
-            <button className="icon-button" onClick={handleDismissPermissionNotice} title="关闭">
-              <X size={14} />
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {batteryNotice ? (
-        <div className="permission-notice-banner">
-          <span>{batteryNotice.message}</span>
-          <div className="permission-notice-actions">
-            <button className="secondary-button" onClick={handleOpenBatterySettings}>
-              前往电池设置
-            </button>
-            <button className="icon-button" onClick={() => setBatteryNotice(null)} title="关闭">
-              <X size={14} />
-            </button>
-          </div>
-        </div>
-      ) : null}
-      <TaskFeedback
+      <MobileMoreMenu
+        open={mobileRuntime && moreMenuOpen}
+        projectAvailable={Boolean(project)}
+        generationLabel={activeLessonNumber ? "生成当前课件" : fileContent ? "分析当前文件" : "生成学习内容"}
+        onGenerate={() => {
+          openGeneration(activeLessonNumber ? "lesson" : fileContent ? "brief" : "outline");
+          setMoreMenuOpen(false);
+        }}
+        onOpenKnowledge={() => { openAssistant("knowledge"); setMoreMenuOpen(false); }}
+        onImportRepository={() => { void handleImportRequest(); setMoreMenuOpen(false); }}
+        onImportArchive={() => { archiveInputRef.current?.click(); setMoreMenuOpen(false); }}
+        onClose={() => setMoreMenuOpen(false)}
+      />
+      <AppFeedbackLayer
+        permissionNotice={permissionNotice}
+        permissionNoticeDismissed={Boolean(permissionNotice && dismissedPermissionStatusRef.current === permissionNotice.status)}
+        batteryNotice={batteryNotice}
         error={mobileRuntime && mobileWorkspaceTab ? "" : error}
         busy={showBusy && !(mobileRuntime && mobileWorkspaceTab)}
         label={qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
         progressCurrent={activeTask?.progress_current}
         progressTotal={activeTask?.progress_total}
         toast={mobileRuntime && mobileWorkspaceTab ? "" : toast}
+        desktopDropActive={desktopDropActive}
+        gestureHint={gestureHint}
+        onOpenNotificationSettings={handleOpenNotificationSettings}
+        onDismissPermissionNotice={handleDismissPermissionNotice}
+        onOpenBatterySettings={handleOpenBatterySettings}
+        onDismissBatteryNotice={() => setBatteryNotice(null)}
         onDismissError={() => setError("")}
       />
-      {desktopDropActive ? (
-        <div className="desktop-import-drop" role="status" aria-live="polite">
-          <div>
-            <FileArchive size={28} />
-            <strong>松开以导入项目</strong>
-            <span>支持本地文件夹或 ZIP 压缩包</span>
-          </div>
-        </div>
-      ) : null}
-      {gestureHint ? (
-        <div key={gestureHint.id} className="gesture-hint" role="status" aria-live="polite">
-          {gestureHint.text}
-        </div>
-      ) : null}
-      {gestureGuideOpen && !mobileRuntime ? (
-        <div className="gesture-guide-layer" onMouseDown={() => setGestureGuideOpen(false)}>
-          <section className="gesture-guide-card" role="dialog" aria-modal="true" aria-labelledby="gesture-guide-title" onMouseDown={(event) => event.stopPropagation()}>
-            <header>
-              <div>
-                <h2 id="gesture-guide-title">鼠标手势</h2>
-                <p>按住鼠标右键划动，松开后执行操作。</p>
-              </div>
-              <button className="icon-button" onClick={() => setGestureGuideOpen(false)} title="关闭" aria-label="关闭手势指南"><X size={17} /></button>
-            </header>
-            <div className="gesture-guide-grid">
-              <div><kbd>↖</kbd><strong>源码</strong><span>打开源码导航</span></div>
-              <div><kbd>↑</kbd><strong>恢复文档</strong><span>恢复最近关闭的文档</span></div>
-              <div><kbd>↗</kbd><strong>搜索</strong><span>打开命令与内容搜索</span></div>
-              <div><kbd>←</kbd><strong>撤销布局</strong><span>撤销工作区调整</span></div>
-              <div className="gesture-guide-center"><span>右键</span><strong>按住划动</strong></div>
-              <div><kbd>→</kbd><strong>下一文档</strong><span>切换当前组标签</span></div>
-              <div><kbd>↙</kbd><strong>AI 助手</strong><span>打开问答历史</span></div>
-              <div><kbd>↓</kbd><strong>关闭文档</strong><span>关闭当前标签</span></div>
-              <div><kbd>↘</kbd><strong>课程</strong><span>打开课程导航</span></div>
-            </div>
-            <footer>短划不会触发操作；未识别的轨迹会直接取消。</footer>
-          </section>
-        </div>
-      ) : null}
-      <main
-        className={`workbench ${navigationOpen ? "navigation-open" : ""} ${assistantOpen && !mobileRuntime ? "assistant-open" : ""} ${mobileRuntime && (navigationOpen || mobileWorkspaceTab) ? "mobile-panel-open" : ""} ${dragState?.kind === "sidebar-width" ? "navigation-resizing" : ""} ${dragState?.kind === "explain-width" ? "assistant-resizing" : ""}`}
-        style={{
-          gridTemplateColumns: [
-            ...(navigationOpen && !mobileRuntime ? [`var(--nav-width, ${sidebarWidth}px)`, "5px"] : []),
-            "minmax(0, 1fr)",
-            ...(assistantOpen && !mobileRuntime ? ["5px", `var(--explain-width, ${explainWidth}px)`] : []),
-          ].join(" "),
+      <GestureGuide open={gestureGuideOpen && !mobileRuntime} onClose={() => setGestureGuideOpen(false)} />
+      <WorkbenchSurface
+        mobile={mobileRuntime}
+        mobilePanelOpen={mobileRuntime && Boolean(navigationOpen || mobileWorkspaceTab)}
+        projectAvailable={Boolean(project)}
+        projectError={error}
+        layout={layout}
+        navigationOpen={navigationOpen}
+        assistantOpen={assistantOpen}
+        navigationResizing={dragState?.kind === "sidebar-width"}
+        assistantResizing={dragState?.kind === "explain-width"}
+        sidebarWidth={sidebarWidth}
+        assistantWidth={explainWidth}
+        navigationContent={renderSidebar(navigationView === "files" ? "files" : "courses")}
+        assistantContent={renderAssistantPanel()}
+        renderGroup={renderGroup}
+        onCollapseSplit={collapseControlledSplit}
+        onStartSplitResize={setDragState}
+        onStartNavigationResize={(clientX) => setDragState({ kind: "sidebar-width", startX: clientX, startWidth: sidebarWidth })}
+        onStartAssistantResize={(clientX) => setDragState({ kind: "explain-width", startX: clientX, startWidth: explainWidth })}
+        onRelocateProject={() => { setError(""); handleImportRequest(); }}
+        onReturnToProjects={() => {
+          setError("");
+          setProject(null);
+          window.localStorage.removeItem("codecourse-last-project");
         }}
-      >
-        {navigationOpen && !mobileRuntime
-          ? renderSidebar(navigationView === "files" ? "files" : "courses")
-          : null}
-        {navigationOpen && !mobileRuntime ? <div
-          className="resize-handle navigation-resizer"
-          onMouseDown={(event) => setDragState({ kind: "sidebar-width", startX: event.clientX, startWidth: sidebarWidth })}
-          title="拖拽调整左栏宽度"
-        /> : null}
-        <section className="center-pane">
-          {project ? (
-            <div className="reader-workspace">
-              <WorkbenchLayoutTree
-                layout={layout}
-                mobile={mobileRuntime}
-                renderGroup={renderGroup}
-                onCollapseSplit={collapseSplitById}
-                onStartResize={setDragState}
-              />
-            </div>
-          ) : error ? (
-            <section className="learning-empty-state">
-              <div className="learning-empty-mark"><AlertCircle size={24} /></div>
-              <h1>项目无法打开</h1>
-              <p>{error}</p>
-              <div>
-                <button className="primary-button" onClick={() => { setError(""); handleImportRequest(); }}>重新定位目录</button>
-                <button className="secondary-button" onClick={() => { setError(""); setProject(null); window.localStorage.removeItem("codecourse-last-project"); }}>返回项目列表</button>
-              </div>
-            </section>
-          ) : (
-            <section className="learning-empty-state">
-              <div className="learning-empty-mark"><BookOpen size={24} /></div>
-              <h1>从一个项目开始学习</h1>
-              <p>导入 GitHub 仓库，或先创建一个自定义学习计划。</p>
-              <div>
-                <button className="primary-button" onClick={handleImportRequest}><Download size={15} />导入仓库</button>
-                <button className="secondary-button" onClick={handleCreateLearningPlan}>新建学习计划</button>
-              </div>
-            </section>
-          )}
-        </section>
-        {!mobileRuntime ? <div
-          className={`resize-handle assistant-resizer ${assistantOpen ? "visible" : ""}`}
-          onMouseDown={(event) => setDragState({ kind: "explain-width", startX: event.clientX, startWidth: explainWidth })}
-          title="拖拽调整右栏宽度"
-        /> : null}
-        {!mobileRuntime && assistantOpen ? <div className="assistant-drawer open">{renderAssistantPanel()}</div> : null}
-      </main>
+        onImportProject={handleImportRequest}
+        onCreateLearningPlan={handleCreateLearningPlan}
+      />
       {mobileRuntime ? (
-        <MobileBottomNavigation
-          active={mobilePrimaryDestination}
+        <MobileWorkspaceChrome
+          ref={mobileWorkspaceSheetRef}
+          activeDestination={mobilePrimaryDestination}
+          tab={mobileWorkspaceTab}
+          projectAvailable={Boolean(project)}
+          coursesAvailable={courses.length > 0}
+          error={error}
+          busy={mobileWorkspaceBusy}
+          busyLabel={mobileWorkspaceTab !== "assistant" && qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
+          progressCurrent={activeTask?.progress_current}
+          progressTotal={activeTask?.progress_total}
+          toast={toast}
+          preloadContent={preloadMobileWorkspaceContent}
+          renderContent={renderMobileWorkspaceContent}
           onLearn={() => toggleMobileNavigation("courses")}
           onSource={() => toggleMobileNavigation("files")}
           onAsk={() => toggleMobileAssistant("history")}
           onMe={toggleMobileMe}
-        />
-      ) : null}
-      {mobileRuntime && mobileWorkspaceTab ? (
-        <MobileWorkspaceSheet
-          ref={mobileWorkspaceSheetRef}
-          tabKey={mobileWorkspaceTab}
-          variant={mobileWorkspaceTab === "assistant" ? "assistant" : mobileWorkspaceTab === "me" ? "me" : mobileWorkspaceTab === "generation" ? "generation" : "standard"}
-          title={{
-            projects: "项目",
-            courses: "课程",
-            files: "源码",
-            assistant: "AI 助手",
-            me: "我的",
-            generation: "生成中心",
-          }[mobileWorkspaceTab]}
-          action={mobileWorkspaceTab === "projects" ? (
-            <button className="icon-button" type="button" onClick={() => { void handleCreateMobileLearningPlan(); }} aria-label="新建学习计划" title="新建学习计划">
-              <Plus size={17} />
-            </button>
-          ) : mobileWorkspaceTab === "courses" && courses.length ? (
-            <button className="icon-button" type="button" onClick={handleCreateCourse} disabled={!project} aria-label="新建文档" title="新建文档">
-              <Plus size={17} />
-            </button>
-          ) : undefined}
-          feedback={error || mobileWorkspaceBusy || toast ? (
-            <TaskFeedback
-              inline
-              error={error}
-              busy={mobileWorkspaceBusy}
-              label={mobileWorkspaceTab !== "assistant" && qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
-              progressCurrent={activeTask?.progress_current}
-              progressTotal={activeTask?.progress_total}
-              toast={toast}
-              onDismissError={() => setError("")}
-            />
-          ) : undefined}
-          preloadContent={() => preloadMobileWorkspaceContent(mobileWorkspaceTab)}
-          renderContent={() => renderMobileWorkspaceContent(mobileWorkspaceTab)}
+          onCreateLearningPlan={() => { void handleCreateMobileLearningPlan(); }}
+          onCreateCourse={() => { void handleCreateCourse(); }}
+          onDismissError={() => setError("")}
           onMotionPhaseChange={(phase) => {
             mobileWorkspaceMotionRef.current = phase;
             document.documentElement.toggleAttribute("data-mobile-sheet-moving", phase !== "open");
@@ -5873,106 +4968,100 @@ export default function App() {
           onGenerate={runSelectedGeneration}
         />
       ) : null}
-      {termAction ? (
-        <TermActionPopover
-          term={termAction.term}
-          position={termAction.position}
-          onGenerate={() => {
+      <AppOverlayLayer
+        termAction={termAction ? {
+          term: termAction.term,
+          position: termAction.position,
+          onGenerate: () => {
             const term = termAction.term;
             setTermAction(null);
             void generateTermExplanation(term);
-          }}
-          onKnown={() => void handleTermMastery(termAction.term, "known")}
-          onUnknown={() => void handleTermMastery(termAction.term, "unknown")}
-          onDismiss={() => void handleDismissTerm(termAction.term)}
-          onClose={() => setTermAction(null)}
-        />
-      ) : null}
-      <LLMSettingsDialog
-        open={settingsOpen}
-        projectId={project?.id ?? null}
-        onConfirm={confirmAction}
-        onOpenExternal={openExternal}
-        onPreferencesChanged={(density) => {
-          setTerminologyDensity(density);
-          bumpPersonalizationRevision();
+          },
+          onKnown: () => void handleTermMastery(termAction.term, "known"),
+          onUnknown: () => void handleTermMastery(termAction.term, "unknown"),
+          onDismiss: () => void handleDismissTerm(termAction.term),
+          onClose: () => setTermAction(null),
+        } : null}
+        settings={{
+          open: settingsOpen,
+          projectId: project?.id ?? null,
+          onConfirm: confirmAction,
+          onOpenExternal: openExternal,
+          onPreferencesChanged: (density) => {
+            setTerminologyDensity(density);
+            bumpPersonalizationRevision();
+          },
+          onBusyChange: setSettingsDialogBusy,
+          onClose: closeSettingsDialog,
         }}
-        onBusyChange={setSettingsDialogBusy}
-        onClose={closeSettingsDialog}
-      />
-      <LearnerProfileDialog
-        open={learnerProfileOpen}
-        projectId={project?.id ?? null}
-        onClose={() => setLearnerProfileOpen(false)}
-        onChanged={bumpPersonalizationRevision}
-        onConfirm={confirmAction}
-        termScanStatus={activeTermScanStatus}
-        termDiagnostics={termDisplay.diagnostics}
-        onRescanTerms={rescanActiveDocumentTerms}
-      />
-      {promptEditorOpen ? (
-        <PromptEditor
-          onClose={() => {
-            void requestClosePromptEditor();
-          }}
-          onDirtyChange={setPromptEditorDirty}
-          onSavingChange={setPromptEditorSaving}
-        />
-      ) : null}
-      {!mobileRuntime && selectionAnchor?.selectedText ? (
-        <SelectionQuickBar
-          canHighlight={selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa"}
-          highlighted={highlights.some((highlight) =>
+        learnerProfile={{
+          open: learnerProfileOpen,
+          projectId: project?.id ?? null,
+          onClose: () => setLearnerProfileOpen(false),
+          onChanged: bumpPersonalizationRevision,
+          onConfirm: confirmAction,
+          termScanStatus: activeTermScanStatus,
+          termDiagnostics: termDisplay.diagnostics,
+          onRescanTerms: rescanActiveDocumentTerms,
+        }}
+        promptEditor={promptEditorOpen ? {
+          onClose: () => { void requestClosePromptEditor(); },
+          onDirtyChange: setPromptEditorDirty,
+          onSavingChange: setPromptEditorSaving,
+        } : null}
+        selectionBar={!mobileRuntime && selectionAnchor?.selectedText ? {
+          canHighlight: selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa",
+          highlighted: highlights.some((highlight) => (
             highlight.source_type === selectionAnchor.sourceType
             && highlight.source_path === (selectionAnchor.sourcePath ?? "")
             && highlight.selected_text.trim() === selectionAnchor.selectedText.trim()
-          )}
-          anchorRect={selectionAnchor.anchorRect}
-          onAsk={() => {
+          )),
+          anchorRect: selectionAnchor.anchorRect,
+          onAsk: () => {
             setSelection({ ...selectionAnchor });
             openAssistant("history");
-          }}
-          onExplainTerm={() => void handleExplainSelectedTerm()}
-          onCallGuide={selectionAnchor.sourceType === "file" && project?.project_type === "repository"
+          },
+          onExplainTerm: () => void handleExplainSelectedTerm(),
+          onCallGuide: selectionAnchor.sourceType === "file" && project?.project_type === "repository"
             ? () => void resolveAndOpenCallGuide({
                 sourcePath: selectionAnchor.sourcePath,
                 line: selectionAnchor.range?.startLineNumber,
                 selectedText: selectionAnchor.selectedText,
               })
-            : undefined}
-          onToggleHighlight={() => {
+            : undefined,
+          onToggleHighlight: () => {
             if (selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa") {
               void handleToggleHighlight(selectionAnchor.sourceType, selectionAnchor.sourcePath ?? "", selectionAnchor.selectedText);
             }
-          }}
-          onCopy={() => void navigator.clipboard.writeText(selectionAnchor.selectedText)}
-          onClose={handleDismissSelection}
-        />
-      ) : null}
-      <CommandPalette open={commandPaletteOpen} items={commandItems} onClose={() => setCommandPaletteOpen(false)} />
-      <AppDialog
-        state={appDialog}
-        value={appDialogValue}
-        skipChecked={appDialogSkipChecked}
-        onSkipChange={handleAppDialogSkipChange}
-        onValueChange={setAppDialogValue}
-        onCancel={() => closeAppDialog(null)}
-        onConfirm={handleAppDialogConfirm}
-      />
-      <OutlineQuestionnaireDialog
-        preflight={outlinePreflight}
-        loading={outlinePreflightLoading}
-        error={outlinePreflightError}
-        onAnswers={handleOutlineQuestionnaireAnswers}
-        onClose={() => handleOutlineQuestionnaireAnswers(null)}
-      />
-      <ContextFilePickerDialog
-        open={contextFilePickerOpen}
-        files={flattenTree(tree).filter((entry) => entry.type === "file").map((entry) => entry.path)}
-        selected={contextFiles}
-        currentPath={getActiveOpenItem()?.type === "file" ? getActiveOpenItem()?.path ?? null : null}
-        onConfirm={(files) => { setContextFiles(files); setContextFilePickerOpen(false); }}
-        onClose={() => setContextFilePickerOpen(false)}
+          },
+          onCopy: () => void navigator.clipboard.writeText(selectionAnchor.selectedText),
+          onClose: handleDismissSelection,
+        } : null}
+        commandPalette={{ open: commandPaletteOpen, items: commandItems, onClose: () => setCommandPaletteOpen(false) }}
+        appDialog={{
+          state: appDialog,
+          value: appDialogValue,
+          skipChecked: appDialogSkipChecked,
+          onSkipChange: handleAppDialogSkipChange,
+          onValueChange: setAppDialogValue,
+          onCancel: () => closeAppDialog(null),
+          onConfirm: handleAppDialogConfirm,
+        }}
+        outlineQuestionnaire={{
+          preflight: outlinePreflight,
+          loading: outlinePreflightLoading,
+          error: outlinePreflightError,
+          onAnswers: handleOutlineQuestionnaireAnswers,
+          onClose: () => handleOutlineQuestionnaireAnswers(null),
+        }}
+        contextFilePicker={{
+          open: contextFilePickerOpen,
+          files: flattenTree(tree).filter((entry) => entry.type === "file").map((entry) => entry.path),
+          selected: contextFiles,
+          currentPath: getActiveOpenItem()?.type === "file" ? getActiveOpenItem()?.path ?? null : null,
+          onConfirm: (files) => { setContextFiles(files); setContextFilePickerOpen(false); },
+          onClose: () => setContextFilePickerOpen(false),
+        }}
       />
     </div>
   );

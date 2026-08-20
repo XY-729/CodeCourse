@@ -55,6 +55,7 @@ export type LayoutBounds = {
 export type SplitBoundarySnapshot = {
   bounds: LayoutBounds;
   position: number;
+  dividerSize: number;
 };
 
 export type DropPayload = {
@@ -227,11 +228,13 @@ export function calculateSplitRatios(
   if (node.type === "group") return;
   const span = node.direction === "row" ? bounds.right - bounds.left : bounds.bottom - bounds.top;
   const start = node.direction === "row" ? bounds.left : bounds.top;
-  const storedPosition = snapshots.get(node.id)?.position ?? start + span * node.ratio;
+  const dividerSize = Math.max(0, snapshots.get(node.id)?.dividerSize ?? 0);
+  const trackSpan = Math.max(1, span - dividerSize);
+  const storedPosition = snapshots.get(node.id)?.position ?? start + trackSpan * node.ratio;
   const requestedPosition = node.id === targetSplitId ? targetPosition : storedPosition;
-  const position = clamp(requestedPosition, start + 1, start + Math.max(1, span - 1));
-  ratios.set(node.id, clamp((position - start) / Math.max(1, span), 0.001, 0.999));
-  const [firstBounds, secondBounds] = splitChildBounds(bounds, node.direction, position);
+  const position = clamp(requestedPosition, start, start + trackSpan);
+  ratios.set(node.id, clamp((position - start) / trackSpan, 0.001, 0.999));
+  const [firstBounds, secondBounds] = splitChildBounds(bounds, node.direction, position, dividerSize);
   calculateSplitRatios(node.first, firstBounds, snapshots, targetSplitId, targetPosition, ratios);
   calculateSplitRatios(node.second, secondBounds, snapshots, targetSplitId, targetPosition, ratios);
 }
@@ -300,11 +303,12 @@ export function splitChildBounds(
   bounds: LayoutBounds,
   direction: SplitDirection,
   position: number,
+  dividerSize = 0,
 ): [LayoutBounds, LayoutBounds] {
   if (direction === "row") {
-    return [{ ...bounds, right: position }, { ...bounds, left: position }];
+    return [{ ...bounds, right: position }, { ...bounds, left: position + dividerSize }];
   }
-  return [{ ...bounds, bottom: position }, { ...bounds, top: position }];
+  return [{ ...bounds, bottom: position }, { ...bounds, top: position + dividerSize }];
 }
 
 export function captureSplitBoundaries(
@@ -316,7 +320,7 @@ export function captureSplitBoundaries(
   const span = node.direction === "row" ? bounds.right - bounds.left : bounds.bottom - bounds.top;
   const start = node.direction === "row" ? bounds.left : bounds.top;
   const position = start + span * node.ratio;
-  result.set(node.id, { bounds, position });
+  result.set(node.id, { bounds, position, dividerSize: 0 });
   const [firstBounds, secondBounds] = splitChildBounds(bounds, node.direction, position);
   captureSplitBoundaries(node.first, firstBounds, result);
   captureSplitBoundaries(node.second, secondBounds, result);
@@ -358,7 +362,12 @@ export function adjacentLeafBounds(
   if (node.type === "group" || node.direction !== direction) return bounds;
   const snapshot = snapshots.get(node.id);
   if (!snapshot) return bounds;
-  const [firstBounds, secondBounds] = splitChildBounds(bounds, direction, snapshot.position);
+  const [firstBounds, secondBounds] = splitChildBounds(
+    bounds,
+    direction,
+    snapshot.position,
+    snapshot.dividerSize,
+  );
   return edge === "first"
     ? adjacentLeafBounds(node.first, firstBounds, direction, edge, snapshots)
     : adjacentLeafBounds(node.second, secondBounds, direction, edge, snapshots);
@@ -375,12 +384,14 @@ export function rebuildLayoutFromBoundaries(
   if (node.type === "group") return node;
   const span = node.direction === "row" ? bounds.right - bounds.left : bounds.bottom - bounds.top;
   const start = node.direction === "row" ? bounds.left : bounds.top;
-  const storedPosition = snapshots.get(node.id)?.position ?? start + span * node.ratio;
+  const dividerSize = Math.max(0, snapshots.get(node.id)?.dividerSize ?? 0);
+  const trackSpan = Math.max(1, span - dividerSize);
+  const storedPosition = snapshots.get(node.id)?.position ?? start + trackSpan * node.ratio;
   const requestedPosition = node.id === targetSplitId ? targetPosition : storedPosition;
-  const position = clamp(requestedPosition, start + 1, start + Math.max(1, span - 1));
-  const ratio = clamp((position - start) / Math.max(1, span), 0.001, 0.999);
+  const position = clamp(requestedPosition, start, start + trackSpan);
+  const ratio = clamp((position - start) / trackSpan, 0.001, 0.999);
   ratios.set(node.id, ratio);
-  const [firstBounds, secondBounds] = splitChildBounds(bounds, node.direction, position);
+  const [firstBounds, secondBounds] = splitChildBounds(bounds, node.direction, position, dividerSize);
   return {
     ...node,
     ratio,

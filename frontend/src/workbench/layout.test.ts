@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { applySplitRatios, createGroup, splitGroup, updateGroup } from "./layout";
+import {
+  applySplitRatios,
+  calculateSplitRatios,
+  createGroup,
+  splitChildBounds,
+  splitGroup,
+  updateGroup,
+} from "./layout";
 import type { GroupNode, LayoutNode, OpenItem } from "./layout";
 
 function makeItem(id: string): OpenItem {
@@ -68,5 +75,71 @@ describe("applySplitRatios", () => {
     const group = updateGroup(createGroup("group-1"), "group-1", (g) => ({ ...g, items: [makeItem("a")], activeItemId: "a" }));
     const next = applySplitRatios(group, new Map([["split-root", 0.9]]));
     expect(next).toBe(group);
+  });
+});
+
+describe("split resize geometry", () => {
+  it("subtracts the divider from the flex track for horizontal and vertical ratios", () => {
+    expect(splitChildBounds(
+      { left: 0, top: 0, right: 1000, bottom: 600 },
+      "row",
+      497,
+      6,
+    )).toEqual([
+      { left: 0, top: 0, right: 497, bottom: 600 },
+      { left: 503, top: 0, right: 1000, bottom: 600 },
+    ]);
+    expect(splitChildBounds(
+      { left: 0, top: 0, right: 1000, bottom: 600 },
+      "column",
+      297,
+      6,
+    )).toEqual([
+      { left: 0, top: 0, right: 1000, bottom: 297 },
+      { left: 0, top: 303, right: 1000, bottom: 600 },
+    ]);
+  });
+
+  it("keeps an untouched nested divider at its captured screen position", () => {
+    const layout: LayoutNode = {
+      type: "split",
+      id: "split-root",
+      direction: "row",
+      ratio: 400 / 994,
+      first: makeGroup("group-1", "a"),
+      second: {
+        type: "split",
+        id: "split-inner",
+        direction: "row",
+        ratio: 294 / 588,
+        first: makeGroup("group-2", "b"),
+        second: makeGroup("group-3", "c"),
+      },
+    };
+    const ratios = new Map<string, number>();
+    calculateSplitRatios(
+      layout,
+      { left: 0, top: 0, right: 1000, bottom: 600 },
+      new Map([
+        ["split-root", {
+          bounds: { left: 0, top: 0, right: 1000, bottom: 600 },
+          position: 400,
+          dividerSize: 6,
+        }],
+        ["split-inner", {
+          bounds: { left: 406, top: 0, right: 1000, bottom: 600 },
+          position: 700,
+          dividerSize: 6,
+        }],
+      ]),
+      "split-root",
+      500,
+      ratios,
+    );
+
+    expect(ratios.get("split-root")).toBeCloseTo(500 / 994, 8);
+    expect(ratios.get("split-inner")).toBeCloseTo(194 / 488, 8);
+    const innerLeft = 506 + (494 - 6) * (ratios.get("split-inner") ?? 0);
+    expect(innerLeft).toBeCloseTo(700, 8);
   });
 });

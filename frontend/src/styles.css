@@ -55,6 +55,7 @@ body.resizing-y .split-node {
    and the document behaves like a fixed-layout sheet). The freeze re-anchors
    on window resize. */
 .reader-pane.cc-frozen .pane-body {
+  min-width: 0;
   overflow: visible;
 }
 
@@ -66,14 +67,31 @@ body.resizing-y .split-node {
   height: var(--drag-pane-height);
   min-height: var(--drag-pane-height);
   max-height: var(--drag-pane-height);
+  z-index: var(--drag-pane-layer, 1);
 }
 
-/* Layered cover: when a frozen document is wider/taller than its pane, it
-   slides under the later (right/bottom) pane, which paints above it (see the
-   z-index layering on .split-child below). Right takes priority and covers the
-   left document, shown as multiple layers. */
-.split-node.row > .split-child.first:has(.reader-pane.cc-frozen),
-.split-node.column > .split-child.first:has(.reader-pane.cc-frozen) {
+.reader-pane.cc-frozen-row-start .pane-body > .viewer {
+  align-self: flex-start;
+}
+
+.reader-pane.cc-frozen-row-end .pane-body > .viewer {
+  align-self: flex-end;
+}
+
+.reader-pane.cc-frozen-column-start .pane-body > .viewer {
+  margin-top: 0;
+  margin-bottom: auto;
+}
+
+.reader-pane.cc-frozen-column-end .pane-body > .viewer {
+  margin-top: auto;
+  margin-bottom: 0;
+}
+
+/* Frozen sheets may extend beyond either side of their viewport. Every split
+   clips only at the outer workspace; later (right/bottom) branches paint above
+   earlier branches, so insufficient space becomes a stable layered cover. */
+.split-child:has(.reader-pane.cc-frozen) {
   overflow: visible;
 }
 
@@ -533,9 +551,11 @@ button:disabled,
 }
 
 .reader-workspace {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
+  overflow: hidden;
   background: #d5dbe3;
 }
 
@@ -567,11 +587,11 @@ button:disabled,
    narrower than its frozen document (see the drag rules above), the document
    slides under the right pane, which covers it — right takes priority and the
    panes appear as multiple layers. */
-.split-node.row > .split-child.first {
+.split-node > .split-child.first {
   z-index: 1;
 }
 
-.split-node.row > .split-child.second {
+.split-node > .split-child.second {
   z-index: 2;
 }
 
@@ -580,6 +600,7 @@ button:disabled,
   background: #d5dbe3;
   position: relative;
   z-index: 4;
+  touch-action: none;
 }
 
 .split-resizer.row {
