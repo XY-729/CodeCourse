@@ -18,7 +18,7 @@ from app.services.scanner import infer_language, is_key_file
 
 ARCHIVE_FORMAT = "codecourse-data-archive"
 ARCHIVE_VERSION = 1
-MAX_ARCHIVE_BYTES = 250 * 1024 * 1024
+MAX_ARCHIVE_BYTES = 160 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 300 * 1024 * 1024
 MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
 MAX_FILE_COUNT = 10_000
@@ -228,7 +228,7 @@ def _validate_archive(payload: bytes) -> tuple[zipfile.ZipFile, dict[str, Any], 
     if not payload:
         raise DataTransferError("数据包为空。")
     if len(payload) > MAX_ARCHIVE_BYTES:
-        raise DataTransferError("CodeCourse 数据包超过 250 MB。")
+        raise DataTransferError("CodeCourse 数据包超过 160 MB。")
     try:
         archive = zipfile.ZipFile(io.BytesIO(payload))
     except zipfile.BadZipFile as error:
@@ -443,7 +443,7 @@ def export_data_archive(
 
         payload = output.getvalue()
         if len(payload) > MAX_ARCHIVE_BYTES:
-            raise DataTransferError("生成的 CodeCourse 数据包超过 250 MB。")
+            raise DataTransferError("生成的 CodeCourse 数据包超过 160 MB。")
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         return payload, f"CodeCourse-data-{stamp}.zip"
     finally:

@@ -273,22 +273,104 @@ async function parseAndroidArchive(blob: Blob): Promise<{
   return { zip, manifest, database, files };
 }
 
-async function renameDirectory(from: string, to: string): Promise<boolean> {
+async function directoryExists(path: string): Promise<boolean> {
   try {
-    await Filesystem.rename({ from, to, directory: Directory.Data });
-    return true;
+    const info = await Filesystem.stat({ path, directory: Directory.Data });
+    return info.type === "directory";
   } catch {
     return false;
   }
 }
 
-async function removeDirectory(path: string): Promise<void> {
-  await Filesystem.rmdir({ path, directory: Directory.Data, recursive: true }).catch(() => undefined);
+async function backupDirectory(from: string, to: string): Promise<boolean> {
+  if (!(await directoryExists(from))) return false;
+  await Filesystem.rename({ from, to, directory: Directory.Data });
+  return true;
+}
+
+async function installDirectory(from: string, to: string): Promise<void> {
+  await Filesystem.rename({ from, to, directory: Directory.Data });
+}
+
+async function removeDirectory(path: string, ignoreErrors = true): Promise<void> {
+  try {
+    if (!(await directoryExists(path))) return;
+    await Filesystem.rmdir({ path, directory: Directory.Data, recursive: true });
+  } catch (error) {
+    if (!ignoreErrors) throw error;
+  }
 }
 
 async function restoreDirectory(target: string, backup: string, hadTarget: boolean): Promise<void> {
-  await removeDirectory(target);
-  if (hadTarget) await renameDirectory(backup, target);
+  await removeDirectory(target, false);
+  if (hadTarget) {
+    await installDirectory(backup, target);
+  }
+}
+
+async function restoreBothDirectories(
+  projectsBackup: string,
+  generatedBackup: string,
+  hadProjects: boolean,
+  hadGenerated: boolean,
+): Promise<void> {
+  const failures = await Promise.allSettled([
+    restoreDirectory("codecourse/projects", projectsBackup, hadProjects),
+    restoreDirectory("codecourse/generated", generatedBackup, hadGenerated),
+  ]);
+  const rejected = failures.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (rejected) throw rejected.reason;
+}
+
+async function replaceAndroidDirectories(
+  stageRoot: string,
+  projectsBackup: string,
+  generatedBackup: string,
+): Promise<{ hadProjects: boolean; hadGenerated: boolean }> {
+  let hadProjects = false;
+  let hadGenerated = false;
+  let projectsChanged = false;
+  let generatedChanged = false;
+  try {
+    hadProjects = await backupDirectory("codecourse/projects", projectsBackup);
+    projectsChanged = hadProjects;
+    hadGenerated = await backupDirectory("codecourse/generated", generatedBackup);
+    generatedChanged = hadGenerated;
+    await installDirectory(`${stageRoot}/projects`, "codecourse/projects");
+    projectsChanged = true;
+    await installDirectory(`${stageRoot}/generated`, "codecourse/generated");
+    generatedChanged = true;
+    return { hadProjects, hadGenerated };
+  } catch (error) {
+    const restores: Promise<void>[] = [];
+    if (projectsChanged) restores.push(restoreDirectory("codecourse/projects", projectsBackup, hadProjects));
+    if (generatedChanged) restores.push(restoreDirectory("codecourse/generated", generatedBackup, hadGenerated));
+    const failures = await Promise.allSettled(restores);
+    if (failures.some((result) => result.status === "rejected")) {
+      throw new Error("无法替换且无法完整还原 Android 项目文件。请保留原数据包并停止继续操作。");
+    }
+    throw error;
+  }
+}
+
+async function cleanupBackupDirectories(projectsBackup: string, generatedBackup: string): Promise<void> {
+  await Promise.all([
+    removeDirectory(projectsBackup),
+    removeDirectory(generatedBackup),
+  ]);
+}
+
+async function rollbackImportedDirectories(
+  projectsBackup: string,
+  generatedBackup: string,
+  hadProjects: boolean,
+  hadGenerated: boolean,
+): Promise<void> {
+  try {
+    await restoreBothDirectories(projectsBackup, generatedBackup, hadProjects, hadGenerated);
+  } catch {
+    throw new Error("数据库恢复失败，且无法还原导入前的 Android 项目文件。请勿继续使用并从原数据包重试。");
+  }
 }
 
 function normalizeImportedTaskRows(table: string, snapshot: PortableTable): PortableValue[][] {
@@ -416,24 +498,18 @@ export async function importAndroidDataArchive(db: MobileDatabase, blob: Blob): 
       });
     }
 
-    const hadProjects = await renameDirectory("codecourse/projects", projectsBackup);
-    const hadGenerated = await renameDirectory("codecourse/generated", generatedBackup);
-    const installedProjects = await renameDirectory(`${stageRoot}/projects`, "codecourse/projects");
-    const installedGenerated = await renameDirectory(`${stageRoot}/generated`, "codecourse/generated");
-    if (!installedProjects || !installedGenerated) {
-      await restoreDirectory("codecourse/projects", projectsBackup, hadProjects);
-      await restoreDirectory("codecourse/generated", generatedBackup, hadGenerated);
-      throw new Error("无法替换 Android 项目文件。");
-    }
+    const { hadProjects, hadGenerated } = await replaceAndroidDirectories(
+      stageRoot,
+      projectsBackup,
+      generatedBackup,
+    );
     try {
       await replaceAndroidDatabase(db, manifest, database);
     } catch (error) {
-      await restoreDirectory("codecourse/projects", projectsBackup, hadProjects);
-      await restoreDirectory("codecourse/generated", generatedBackup, hadGenerated);
+      await rollbackImportedDirectories(projectsBackup, generatedBackup, hadProjects, hadGenerated);
       throw error;
     }
-    await removeDirectory(projectsBackup);
-    await removeDirectory(generatedBackup);
+    await cleanupBackupDirectories(projectsBackup, generatedBackup);
   } finally {
     await removeDirectory(stageRoot);
   }
