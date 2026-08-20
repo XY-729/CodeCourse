@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("codecourseDesktop", {
   openLogs: () => ipcRenderer.invoke("codecourse:open-logs"),
   reportDiagnostic: (payload) => ipcRenderer.invoke("codecourse:renderer-diagnostic", payload),
   getPathForFile: (file) => webUtils.getPathForFile(file),
+  saveDataArchive: (filename, data) => ipcRenderer.invoke("codecourse:save-data-archive", filename, data),
   notify: (payload) => ipcRenderer.invoke("codecourse:notify", payload),
   detachTab: (payload) => ipcRenderer.invoke("codecourse:detach-tab", payload),
   getDetachedPayload: () => ipcRenderer.invoke("codecourse:get-detached-payload"),

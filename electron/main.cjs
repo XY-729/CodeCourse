@@ -636,6 +636,29 @@ ipcMain.handle("codecourse:open-logs", async () => {
   return true;
 });
 
+ipcMain.handle("codecourse:save-data-archive", async (event, filename, data) => {
+  const safeName = typeof filename === "string"
+    ? path.basename(filename).replace(/[<>:"/\\|?*\x00-\x1f]/g, "-")
+    : "CodeCourse-data.zip";
+  const payload = data instanceof ArrayBuffer
+    ? Buffer.from(data)
+    : ArrayBuffer.isView(data)
+      ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+      : null;
+  if (!payload || payload.length === 0 || payload.length > 300 * 1024 * 1024) {
+    throw new Error("数据包为空或超过 300 MB。");
+  }
+  const owner = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  const result = await dialog.showSaveDialog(owner, {
+    title: "导出 CodeCourse 数据包",
+    defaultPath: path.join(app.getPath("downloads"), safeName || "CodeCourse-data.zip"),
+    filters: [{ name: "CodeCourse 数据包", extensions: ["zip"] }],
+  });
+  if (result.canceled || !result.filePath) return { saved: false };
+  await fs.promises.writeFile(result.filePath, payload);
+  return { saved: true, location: result.filePath };
+});
+
 ipcMain.handle("codecourse:renderer-diagnostic", (_event, payload) => {
   diagnosticLog("renderer", typeof payload === "string" ? payload : JSON.stringify(payload));
   return true;

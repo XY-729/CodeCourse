@@ -1,5 +1,9 @@
 import { httpApiUrl, providerRequest } from "../platform/provider";
 import { isAndroidRuntime } from "../platform/runtime";
+import {
+  portableArchiveFilename,
+  type DataArchiveImportResult,
+} from "../dataTransfer/archive";
 import type { TermPersonalizationProfile } from "../personalization/termDisplayTypes";
 
 export type Project = {
@@ -437,6 +441,53 @@ export type GenerationTask = {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return providerRequest<T>(path, init);
+}
+
+function attachmentFilename(value: string | null): string | null {
+  if (!value) return null;
+  const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded).split(/[\\/]/).pop() || null;
+    } catch {
+      return null;
+    }
+  }
+  return value.match(/filename="?([^";]+)"?/i)?.[1]?.trim().split(/[\\/]/).pop() || null;
+}
+
+async function responseError(response: Response): Promise<Error> {
+  const fallback = response.status >= 500
+    ? "服务器处理数据包失败，请查看后端日志。"
+    : "数据包操作失败。";
+  try {
+    const body = await response.json() as { detail?: unknown };
+    return new Error(typeof body.detail === "string" && body.detail ? body.detail : fallback);
+  } catch {
+    return new Error(fallback);
+  }
+}
+
+export async function exportDataArchive(): Promise<{ blob: Blob; filename: string }> {
+  if (isAndroidRuntime()) {
+    const blob = await providerRequest<Blob>("/data-transfer/export");
+    return { blob, filename: portableArchiveFilename() };
+  }
+  const response = await fetch(httpApiUrl("/data-transfer/export"), {
+    headers: { Accept: "application/zip" },
+  });
+  if (!response.ok) throw await responseError(response);
+  return {
+    blob: await response.blob(),
+    filename: attachmentFilename(response.headers.get("Content-Disposition")) || portableArchiveFilename(),
+  };
+}
+
+export function importDataArchive(file: File): Promise<DataArchiveImportResult> {
+  return request<DataArchiveImportResult>("/data-transfer/import", {
+    method: "POST",
+    body: file,
+  });
 }
 
 export function listProjects(): Promise<Project[]> {

@@ -91,6 +91,7 @@ import { createAndroidPersonalizationRoutes } from "./personalizationRoutes";
 import { dispatchAndroidRoutes } from "./routeRegistry";
 import { createAndroidTermRoutes } from "./termRoutes";
 import { AndroidTeachingOutcomeService } from "./teachingOutcomeService";
+import { exportAndroidDataArchive, importAndroidDataArchive } from "./dataTransfer";
 import {
   buildTree, downloadGitHubSnapshot, inferLanguage, readGeneratedFile, readRepoFile, readZipFiles, removeGeneratedFile,
   removeProjectFiles, renameGeneratedFile, writeGeneratedFileAtomic, writeRepoFile,
@@ -784,6 +785,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const method = (init?.method || "GET").toUpperCase();
     const body = bodyJson(init);
     let match: RegExpMatchArray | null;
+
+    if (path === "/data-transfer/export" && method === "GET") {
+      return (await exportAndroidDataArchive(db)).blob as T;
+    }
+    if (path === "/data-transfer/import" && method === "POST") {
+      if (!(init?.body instanceof Blob)) throw new Error("请选择 CodeCourse ZIP 数据包。");
+      return importAndroidDataArchive(db, init.body) as Promise<T>;
+    }
 
     if (path === "/projects" && method === "GET") return this.listProjects() as Promise<T>;
     if (path === "/projects/import" && method === "POST") return this.importRepository(body.url) as Promise<T>;
