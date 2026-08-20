@@ -7,7 +7,6 @@ import {
   type LayoutNode,
 } from "./layout";
 import type { SplitResizeStart } from "./WorkbenchLayoutTree";
-import { clearFrozenDocuments, restoreFrozenPanes } from "./workspaceFreeze";
 
 const ASSISTANT_WIDTH_STORAGE_KEY = "codecourse.assistantWidth";
 
@@ -43,35 +42,10 @@ export function useWorkbenchResizeController({ mobile, commitLayoutChange }: Opt
   const [assistantWidth, setAssistantWidth] = useState(initialAssistantWidth);
   const [dragState, setDragState] = useState<WorkbenchResizeState | null>(null);
   const resizeStartedAtRef = useRef(0);
-  const dragStateRef = useRef<WorkbenchResizeState | null>(null);
-  const rootResizeObserverRef = useRef<ResizeObserver | null>(null);
-  const observedRootSizeRef = useRef({ width: 0, height: 0 });
-
-  useEffect(() => {
-    dragStateRef.current = dragState;
-  }, [dragState]);
 
   useEffect(() => {
     window.localStorage.setItem(ASSISTANT_WIDTH_STORAGE_KEY, String(Math.round(assistantWidth)));
   }, [assistantWidth]);
-
-  function observeWorkspaceRoot(root: HTMLElement) {
-    rootResizeObserverRef.current?.disconnect();
-    const rect = root.getBoundingClientRect();
-    observedRootSizeRef.current = { width: rect.width, height: rect.height };
-    if (typeof ResizeObserver === "undefined") return;
-    rootResizeObserverRef.current = new ResizeObserver(([entry]) => {
-      if (!entry || dragStateRef.current?.kind === "split") return;
-      const { width, height } = entry.contentRect;
-      const previous = observedRootSizeRef.current;
-      if (Math.abs(width - previous.width) <= 0.5 && Math.abs(height - previous.height) <= 0.5) return;
-      observedRootSizeRef.current = { width, height };
-      clearFrozenDocuments(root);
-    });
-    rootResizeObserverRef.current.observe(root);
-  }
-
-  useEffect(() => () => rootResizeObserverRef.current?.disconnect(), []);
 
   useEffect(() => {
     if (!dragState) {
@@ -162,7 +136,6 @@ export function useWorkbenchResizeController({ mobile, commitLayoutChange }: Opt
           setDragState(null);
         });
         clearLiveSplitPreview();
-        observeWorkspaceRoot(currentDrag.rootElement);
         releasePointer(currentDrag);
       }
 
@@ -180,7 +153,6 @@ export function useWorkbenchResizeController({ mobile, commitLayoutChange }: Opt
       if (frame) window.cancelAnimationFrame(frame);
       clearLiveSplitPreview();
       if (currentDrag.kind === "split") {
-        restoreFrozenPanes(currentDrag.frozenPanes);
         releasePointer(currentDrag);
       }
       setDragState(null);
@@ -228,18 +200,11 @@ export function useWorkbenchResizeController({ mobile, commitLayoutChange }: Opt
         currentDrag.indicator.remove();
         if (!finalized) {
           clearLiveSplitPreview();
-          restoreFrozenPanes(currentDrag.frozenPanes);
           releasePointer(currentDrag);
         }
       }
     };
   }, [commitLayoutChange, dragState, mobile]);
-
-  useEffect(() => {
-    const reanchorFrozenDocuments = () => clearFrozenDocuments();
-    window.addEventListener("resize", reanchorFrozenDocuments);
-    return () => window.removeEventListener("resize", reanchorFrozenDocuments);
-  }, []);
 
   return { sidebarWidth, setSidebarWidth, assistantWidth, dragState, setDragState };
 }

@@ -73,17 +73,14 @@ describe("WorkbenchLayoutTree", () => {
       minBoundary: 8,
       maxBoundary: 986,
     }));
-    // Documents are frozen at their current layout size (fixed-sheet model):
-    // the viewer keeps its width/height, so nothing reflows during or after
-    // the drag.
+    // Resizing must not leave document surfaces frozen at their pre-drag
+    // geometry. The panes follow the split live and remain responsive after
+    // release; compact tracks are handled by CSS layering instead.
     container.querySelectorAll<HTMLElement>(".reader-pane").forEach((pane) => {
-      expect(pane.classList.contains("cc-frozen")).toBe(true);
-      expect(pane.style.getPropertyValue("--drag-pane-width")).toBe("497px");
-      expect(pane.style.getPropertyValue("--drag-pane-height")).toBe("600px");
+      expect(pane.classList.contains("cc-frozen")).toBe(false);
+      expect(pane.style.getPropertyValue("--drag-pane-width")).toBe("");
+      expect(pane.style.getPropertyValue("--drag-pane-height")).toBe("");
     });
-    const panes = container.querySelectorAll<HTMLElement>(".reader-pane");
-    expect(panes[0].classList.contains("cc-frozen-row-start")).toBe(true);
-    expect(panes[1].classList.contains("cc-frozen-row-end")).toBe(true);
     expect(handle.setPointerCapture).toHaveBeenCalledWith(7);
     document.querySelectorAll(".split-drag-indicator").forEach((node) => node.remove());
   });

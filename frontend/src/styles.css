@@ -48,53 +48,6 @@ body.resizing-y .split-node {
   contain: layout paint;
 }
 
-/* Frozen document layout (fixed-sheet model): once a split drag starts, every
-   viewer keeps its exact width and height. Fonts and line layout never reflow
-   — neither during the drag nor after releasing — so there is no per-frame
-   re-layout (jank) and no heavy reflow on release (the panes become viewports
-   and the document behaves like a fixed-layout sheet). The freeze re-anchors
-   on window resize. */
-.reader-pane.cc-frozen .pane-body {
-  min-width: 0;
-  overflow: visible;
-}
-
-.reader-pane.cc-frozen .pane-body > .viewer {
-  flex: 1 1 auto;
-  width: var(--drag-pane-width);
-  min-width: var(--drag-pane-width);
-  max-width: var(--drag-pane-width);
-  height: var(--drag-pane-height);
-  min-height: var(--drag-pane-height);
-  max-height: var(--drag-pane-height);
-  z-index: var(--drag-pane-layer, 1);
-}
-
-.reader-pane.cc-frozen-row-start .pane-body > .viewer {
-  align-self: flex-start;
-}
-
-.reader-pane.cc-frozen-row-end .pane-body > .viewer {
-  align-self: flex-end;
-}
-
-.reader-pane.cc-frozen-column-start .pane-body > .viewer {
-  margin-top: 0;
-  margin-bottom: auto;
-}
-
-.reader-pane.cc-frozen-column-end .pane-body > .viewer {
-  margin-top: auto;
-  margin-bottom: 0;
-}
-
-/* Frozen sheets may extend beyond either side of their viewport. Every split
-   clips only at the outer workspace; later (right/bottom) branches paint above
-   earlier branches, so insufficient space becomes a stable layered cover. */
-.split-child:has(.reader-pane.cc-frozen) {
-  overflow: visible;
-}
-
 button,
 input,
 select,
@@ -580,13 +533,38 @@ button:disabled,
   min-width: 0;
   min-height: 0;
   display: flex;
-  overflow: hidden;
+  overflow: visible;
 }
 
-/* Later editor groups always paint above earlier groups: when the left pane is
-   narrower than its frozen document (see the drag rules above), the document
-   slides under the right pane, which covers it — right takes priority and the
-   panes appear as multiple layers. */
+/* A pane follows its split track normally. Only after the track becomes too
+   small to remain usable does it keep a compact physical surface and overflow
+   as a layer. Later (right/bottom) panes are anchored to the outer edge and
+   paint above earlier panes, producing the requested right-to-left cover
+   without leaving a viewer frozen at a stale pre-drag size. */
+.split-node.row > .split-child > .reader-pane {
+  flex: 0 0 max(100%, 320px);
+  width: max(100%, 320px);
+}
+
+.split-node.row > .split-child.second > .reader-pane {
+  position: absolute;
+  inset: 0 0 0 auto;
+}
+
+.split-node.column > .split-child > .reader-pane {
+  flex: 0 0 auto;
+  width: 100%;
+  height: max(100%, 240px);
+}
+
+.split-node.column > .split-child.second > .reader-pane {
+  position: absolute;
+  inset: auto 0 0;
+}
+
+/* Later editor groups always paint above earlier groups. Once a compact pane
+   overflows its 8px track, the right/bottom workspace covers the earlier one
+   as a stable layer. */
 .split-node > .split-child.first {
   z-index: 1;
 }
@@ -3888,6 +3866,16 @@ html.platform-android #root {
 .platform-android .split-node > .split-child:nth-of-type(n + 2),
 .platform-android .split-node > .split-resizer {
   display: none !important;
+}
+
+.platform-android .split-node > .split-child > .reader-pane {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
 }
 
 .platform-android .editor-tabs {

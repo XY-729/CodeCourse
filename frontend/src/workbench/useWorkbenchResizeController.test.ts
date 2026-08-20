@@ -23,9 +23,7 @@ function splitDrag(layout: LayoutNode) {
   handleElement.hasPointerCapture = vi.fn(() => false);
   handleElement.releasePointerCapture = vi.fn();
   const pane = document.createElement("section");
-  pane.className = "reader-pane cc-frozen cc-frozen-row-start";
-  pane.style.setProperty("--drag-pane-width", "497px");
-  pane.style.setProperty("--drag-pane-height", "600px");
+  pane.className = "reader-pane";
   const indicator = document.createElement("div");
   document.body.append(indicator);
   const state: SplitResizeStart = {
@@ -42,14 +40,6 @@ function splitDrag(layout: LayoutNode) {
     rootBounds: { left: 0, top: 0, right: 1000, bottom: 600 },
     rootElement,
     splitElements: new Map([["split-1", splitElement]]),
-    frozenPanes: [{
-      element: pane,
-      wasFrozen: false,
-      anchorClasses: [],
-      width: "",
-      height: "",
-      layer: "",
-    }],
     indicator,
     layoutSnapshot: layout,
     boundaries: new Map([["split-1", {
@@ -120,11 +110,11 @@ describe("useWorkbenchResizeController", () => {
     if (committed.type === "split") expect(committed.ratio).toBeCloseTo(8 / 994, 6);
     expect(result.current.dragState).toBeNull();
     expect(drag.splitElement.style.getPropertyValue("--split-ratio")).toBe("");
-    expect(drag.pane.classList.contains("cc-frozen")).toBe(true);
+    expect(drag.pane.classList.contains("cc-frozen")).toBe(false);
     expect(drag.indicator.isConnected).toBe(false);
   });
 
-  it("restores the pre-drag sheet state when pointer capture is cancelled", () => {
+  it("cancels pointer capture without committing or leaving transient state", () => {
     const layout = splitGroup(createGroup("group-1"), "group-1", "row", "after", createGroup("group-2"), "split-1");
     const commitLayoutChange = vi.fn();
     const drag = splitDrag(layout);

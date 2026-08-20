@@ -10,8 +10,6 @@ import {
   type SplitBoundarySnapshot,
   type SplitDirection,
 } from "./layout";
-import { freezeWorkspaceDocuments, type FrozenPaneState } from "./workspaceFreeze";
-
 export type SplitResizeStart = {
   kind: "split";
   splitId: string;
@@ -26,7 +24,6 @@ export type SplitResizeStart = {
   rootBounds: LayoutBounds;
   rootElement: HTMLDivElement;
   splitElements: Map<string, HTMLDivElement>;
-  frozenPanes: FrozenPaneState[];
   indicator: HTMLDivElement;
   layoutSnapshot: LayoutNode;
   boundaries: Map<string, SplitBoundarySnapshot>;
@@ -86,8 +83,6 @@ function startSplitResize(
   const targetNode = findSplitNode(layout, node.id);
   const targetSnapshot = boundaries.get(node.id);
   if (!targetNode || !targetSnapshot) return;
-  const frozenPanes = freezeWorkspaceDocuments(rootElement, element, node.direction);
-
   const [firstBounds, secondBounds] = splitChildBounds(
     targetSnapshot.bounds,
     node.direction,
@@ -129,7 +124,6 @@ function startSplitResize(
     rootBounds,
     rootElement,
     splitElements,
-    frozenPanes,
     indicator,
     layoutSnapshot: layout,
     boundaries,
