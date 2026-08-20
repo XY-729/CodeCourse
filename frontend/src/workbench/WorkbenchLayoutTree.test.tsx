@@ -70,8 +70,10 @@ describe("WorkbenchLayoutTree", () => {
       direction: "row",
       pointerId: 7,
       startBoundary: 497,
-      minBoundary: 8,
-      maxBoundary: 986,
+      snapMinBoundary: 320,
+      snapMaxBoundary: 674,
+      collapseMinBoundary: 8,
+      collapseMaxBoundary: 986,
     }));
     // Resizing must not leave document surfaces frozen at their pre-drag
     // geometry. The panes follow the split live and remain responsive after

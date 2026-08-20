@@ -71,9 +71,41 @@ export type DropPayload = {
 export const ROOT_GROUP_ID = "group-1";
 export const MAX_GROUPS = 9;
 export const MIN_SPLIT_TRACK_SIZE = 8;
+export const MIN_SPLIT_PANE_WIDTH = 320;
+export const MIN_SPLIT_PANE_HEIGHT = 240;
+
+export type SplitDragLimits = {
+  snapMinBoundary: number;
+  snapMaxBoundary: number;
+  collapseMinBoundary: number;
+  collapseMaxBoundary: number;
+};
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+export function calculateSplitDragLimits(
+  direction: SplitDirection,
+  startBoundary: number,
+  rawMin: number,
+  rawMax: number,
+): SplitDragLimits {
+  const boundedStart = clamp(startBoundary, rawMin, rawMax);
+  const available = Math.max(0, rawMax - rawMin);
+  const collapseInset = Math.min(MIN_SPLIT_TRACK_SIZE, available / 2);
+  const paneSize = direction === "row" ? MIN_SPLIT_PANE_WIDTH : MIN_SPLIT_PANE_HEIGHT;
+
+  return {
+    // Keep the divider on the visible edge of the compact pane. If the
+    // workspace is already too small for both pane surfaces, retain the
+    // captured boundary so pointer-down never causes an initial jump.
+    snapMinBoundary: Math.min(boundedStart, rawMin + paneSize),
+    snapMaxBoundary: Math.max(boundedStart, rawMax - paneSize),
+    // Closing remains an explicit deeper gesture near the outer edge.
+    collapseMinBoundary: rawMin + collapseInset,
+    collapseMaxBoundary: Math.max(rawMin + collapseInset, rawMax - collapseInset),
+  };
 }
 
 export function stripLayoutContent(node: LayoutNode): LayoutNode {

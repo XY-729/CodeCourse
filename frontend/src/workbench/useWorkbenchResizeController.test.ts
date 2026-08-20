@@ -35,8 +35,10 @@ function splitDrag(layout: LayoutNode) {
     startX: 500,
     startY: 100,
     startBoundary: 497,
-    minBoundary: 8,
-    maxBoundary: 986,
+    snapMinBoundary: 320,
+    snapMaxBoundary: 674,
+    collapseMinBoundary: 8,
+    collapseMaxBoundary: 986,
     rootBounds: { left: 0, top: 0, right: 1000, bottom: 600 },
     rootElement,
     splitElements: new Map([["split-1", splitElement]]),
@@ -100,22 +102,47 @@ describe("useWorkbenchResizeController", () => {
 
     act(() => result.current.setDragState(drag.state));
     act(() => {
-      window.dispatchEvent(pointerEvent("pointermove", 7, 200));
-      window.dispatchEvent(pointerEvent("pointermove", 7, 300));
+      window.dispatchEvent(pointerEvent("pointermove", 7, 450));
+      window.dispatchEvent(pointerEvent("pointermove", 7, 400));
     });
     expect(window.requestAnimationFrame).toHaveBeenCalledTimes(1);
     act(() => frames.shift()?.(performance.now()));
-    expect(Number(drag.splitElement.style.getPropertyValue("--split-ratio"))).toBeCloseTo(297 / 994, 6);
+    expect(Number(drag.splitElement.style.getPropertyValue("--split-ratio"))).toBeCloseTo(397 / 994, 6);
 
-    act(() => window.dispatchEvent(pointerEvent("pointerup", 7, 300)));
+    act(() => window.dispatchEvent(pointerEvent("pointerup", 7, 400)));
     expect(commitLayoutChange).toHaveBeenCalledTimes(1);
     expect(collapseSplit).not.toHaveBeenCalled();
     expect(committed.type).toBe("split");
-    if (committed.type === "split") expect(committed.ratio).toBeCloseTo(297 / 994, 6);
+    if (committed.type === "split") expect(committed.ratio).toBeCloseTo(397 / 994, 6);
     expect(result.current.dragState).toBeNull();
     expect(drag.splitElement.style.getPropertyValue("--split-ratio")).toBe("");
     expect(drag.pane.classList.contains("cc-frozen")).toBe(false);
     expect(drag.indicator.isConnected).toBe(false);
+  });
+
+  it.each([
+    [200, 320, -177],
+    [800, 674, 177],
+  ] as const)("snaps a non-closing drag at boundary %s back to the pane limit", (clientX, boundary, offset) => {
+    let committed = splitGroup(createGroup("group-1"), "group-1", "row", "after", createGroup("group-2"), "split-1");
+    const commitLayoutChange = vi.fn((updater: (current: LayoutNode) => LayoutNode) => {
+      committed = updater(committed);
+    });
+    const collapseSplit = vi.fn();
+    const drag = splitDrag(committed);
+    const { result } = renderHook(() => useWorkbenchResizeController({ mobile: false, commitLayoutChange, collapseSplit }));
+
+    act(() => result.current.setDragState(drag.state));
+    act(() => window.dispatchEvent(pointerEvent("pointermove", 7, clientX)));
+
+    expect(Number(drag.splitElement.style.getPropertyValue("--split-ratio"))).toBeCloseTo(boundary / 994, 6);
+    expect(drag.indicator.style.transform).toBe(`translate3d(${offset}px, 0, 0)`);
+
+    act(() => window.dispatchEvent(pointerEvent("pointerup", 7, clientX)));
+    expect(collapseSplit).not.toHaveBeenCalled();
+    expect(commitLayoutChange).toHaveBeenCalledOnce();
+    expect(committed.type).toBe("split");
+    if (committed.type === "split") expect(committed.ratio).toBeCloseTo(boundary / 994, 6);
   });
 
   it.each([

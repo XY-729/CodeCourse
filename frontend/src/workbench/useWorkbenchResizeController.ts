@@ -78,7 +78,11 @@ export function useWorkbenchResizeController({ mobile, commitLayoutChange, colla
         document.documentElement.style.setProperty("--explain-width", `${width}px`);
       } else {
         const delta = currentDrag.direction === "row" ? latestX - currentDrag.startX : latestY - currentDrag.startY;
-        const nextBoundary = clamp(currentDrag.startBoundary + delta, currentDrag.minBoundary, currentDrag.maxBoundary);
+        const nextBoundary = clamp(
+          currentDrag.startBoundary + delta,
+          currentDrag.snapMinBoundary,
+          currentDrag.snapMaxBoundary,
+        );
         const offset = nextBoundary - currentDrag.startBoundary;
         latestRatios = new Map<string, number>();
         calculateSplitRatios(
@@ -120,18 +124,23 @@ export function useWorkbenchResizeController({ mobile, commitLayoutChange, colla
         const delta = currentDrag.direction === "row" ? clientX - currentDrag.startX : clientY - currentDrag.startY;
         const requestedBoundary = currentDrag.startBoundary + delta;
         flushSync(() => {
-          if (requestedBoundary <= currentDrag.minBoundary) {
+          if (requestedBoundary <= currentDrag.collapseMinBoundary) {
             collapseSplit(currentDrag.splitId, "first");
-          } else if (requestedBoundary >= currentDrag.maxBoundary) {
+          } else if (requestedBoundary >= currentDrag.collapseMaxBoundary) {
             collapseSplit(currentDrag.splitId, "second");
           } else {
+            const finalBoundary = clamp(
+              requestedBoundary,
+              currentDrag.snapMinBoundary,
+              currentDrag.snapMaxBoundary,
+            );
             latestRatios = new Map<string, number>();
             calculateSplitRatios(
               currentDrag.layoutSnapshot,
               currentDrag.rootBounds,
               currentDrag.boundaries,
               currentDrag.splitId,
-              requestedBoundary,
+              finalBoundary,
               latestRatios,
             );
             commitLayoutChange((current) => applySplitRatios(current, latestRatios));

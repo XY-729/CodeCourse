@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applySplitRatios,
+  calculateSplitDragLimits,
   calculateSplitRatios,
   createGroup,
   splitChildBounds,
@@ -79,6 +80,30 @@ describe("applySplitRatios", () => {
 });
 
 describe("split resize geometry", () => {
+  it("separates pane snap limits from the deeper close gesture", () => {
+    expect(calculateSplitDragLimits("row", 497, 0, 994)).toEqual({
+      snapMinBoundary: 320,
+      snapMaxBoundary: 674,
+      collapseMinBoundary: 8,
+      collapseMaxBoundary: 986,
+    });
+    expect(calculateSplitDragLimits("column", 297, 0, 594)).toEqual({
+      snapMinBoundary: 240,
+      snapMaxBoundary: 354,
+      collapseMinBoundary: 8,
+      collapseMaxBoundary: 586,
+    });
+  });
+
+  it("anchors an already narrow split instead of jumping on pointer-down", () => {
+    expect(calculateSplitDragLimits("row", 200, 0, 470)).toEqual({
+      snapMinBoundary: 200,
+      snapMaxBoundary: 200,
+      collapseMinBoundary: 8,
+      collapseMaxBoundary: 462,
+    });
+  });
+
   it("subtracts the divider from the flex track for horizontal and vertical ratios", () => {
     expect(splitChildBounds(
       { left: 0, top: 0, right: 1000, bottom: 600 },

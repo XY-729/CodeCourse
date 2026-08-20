@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import {
-  MIN_SPLIT_TRACK_SIZE,
   adjacentLeafBounds,
+  calculateSplitDragLimits,
   findSplitNode,
   splitChildBounds,
   type EditorGroup,
@@ -19,8 +19,10 @@ export type SplitResizeStart = {
   startX: number;
   startY: number;
   startBoundary: number;
-  minBoundary: number;
-  maxBoundary: number;
+  snapMinBoundary: number;
+  snapMaxBoundary: number;
+  collapseMinBoundary: number;
+  collapseMaxBoundary: number;
   rootBounds: LayoutBounds;
   rootElement: HTMLDivElement;
   splitElements: Map<string, HTMLDivElement>;
@@ -93,7 +95,7 @@ function startSplitResize(
   const nextPane = adjacentLeafBounds(targetNode.second, secondBounds, node.direction, "first", boundaries);
   const rawMin = node.direction === "row" ? previousPane.left : previousPane.top;
   const rawMax = (node.direction === "row" ? nextPane.right : nextPane.bottom) - targetSnapshot.dividerSize;
-  const safeInset = Math.min(MIN_SPLIT_TRACK_SIZE, Math.max(0, (rawMax - rawMin) / 2));
+  const limits = calculateSplitDragLimits(node.direction, targetSnapshot.position, rawMin, rawMax);
   const handleRect = event.currentTarget.getBoundingClientRect();
 
   const indicator = document.createElement("div");
@@ -119,8 +121,7 @@ function startSplitResize(
     startX: event.clientX,
     startY: event.clientY,
     startBoundary: targetSnapshot.position,
-    minBoundary: rawMin + safeInset,
-    maxBoundary: Math.max(rawMin + safeInset, rawMax - safeInset),
+    ...limits,
     rootBounds,
     rootElement,
     splitElements,
