@@ -49,11 +49,15 @@ describe("FluidBottomSheet", () => {
   it("exposes the same animated dismiss path to close buttons and backdrops", () => {
     const onDismiss = vi.fn();
     const ref = createRef<FluidBottomSheetHandle>();
-    render(
+    const { getByRole } = render(
       <FluidBottomSheet ref={ref} label="生成课程" onDismiss={onDismiss}>
         <p>内容</p>
       </FluidBottomSheet>,
     );
+
+    ref.current?.dismiss();
+    expect(getByRole("region", { name: "生成课程" }).dataset.contentSuspended).toBe("true");
+    expect(onDismiss).toHaveBeenCalledTimes(1);
 
     ref.current?.dismiss();
     expect(onDismiss).toHaveBeenCalledTimes(1);

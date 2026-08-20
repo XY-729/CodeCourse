@@ -4604,6 +4604,7 @@ export default function App() {
         callGuides={callGuides}
         callGuideBusyId={callGuideBusyId}
         knowledgeRefreshKey={knowledgeRefreshKey}
+        learningStates={learningStates}
         knowledgeFocusRef={(() => {
           const item = getActiveOpenItem();
           if (item && item.type !== "knowledge_graph") {
@@ -4613,7 +4614,6 @@ export default function App() {
           }
           return selectedQA ? { ref_type: "qa", ref_id: selectedQA.id } : null;
         })()}
-        findLearningState={findLearningState}
         isOutlineCourse={(path) => courses.some((course) => (
           course.filename === path
           && (course.is_outline || course.filename === "outline.md" || course.filename.startsWith("sub-outline-"))
