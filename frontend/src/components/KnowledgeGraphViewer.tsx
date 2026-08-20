@@ -27,6 +27,7 @@ import {
 import {
   createKnowledgeGraphInteractionState,
   isKnowledgeGraphInteractionActive,
+  isUserGraphViewportEvent,
   setGraphInteraction,
   setWorkbenchResize,
 } from "./knowledgeGraphInteraction";
@@ -71,11 +72,13 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const pendingLabelMeasurementsRef = useRef(new Set<number>());
   const labelPositionFrameRef = useRef<number | null>(null);
   const labelVisibilityFrameRef = useRef<number | null>(null);
+  const forceLabelVisibilityRef = useRef(false);
   const labelMeasurementFrameRef = useRef<number | null>(null);
   const scheduleLabelPositionRef = useRef<() => void>(() => undefined);
-  const scheduleLabelVisibilityRef = useRef<() => void>(() => undefined);
+  const scheduleLabelVisibilityRef = useRef<(force?: boolean) => void>(() => undefined);
   const scheduleLabelMeasurementRef = useRef<(ids?: Iterable<number>) => void>(() => undefined);
   const viewportTimeoutRef = useRef<number | null>(null);
+  const graphInteractionSettleTimeoutRef = useRef<number | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const resizeSettleTimeoutRef = useRef<number | null>(null);
   const layoutRunningRef = useRef(false);
@@ -308,11 +311,14 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         positionLabelOverlay(cy, graphRef.current, labelElementsRef.current);
       });
     };
-    const scheduleLabelVisibility = () => {
+    const scheduleLabelVisibility = (force = false) => {
+      if (force) forceLabelVisibilityRef.current = true;
       if (!labelLayer || labelVisibilityFrameRef.current != null) return;
       labelVisibilityFrameRef.current = window.requestAnimationFrame(() => {
         labelVisibilityFrameRef.current = null;
-        if (cy.destroyed() || isKnowledgeGraphInteractionActive(interactionStateRef.current)) return;
+        const forceUpdate = forceLabelVisibilityRef.current;
+        forceLabelVisibilityRef.current = false;
+        if (cy.destroyed() || (isKnowledgeGraphInteractionActive(interactionStateRef.current) && !forceUpdate)) return;
         updateLabelVisibility(cy, graphRef.current, labelElementsRef.current, {
           viewMode: viewModeRef.current,
           focusedNodeId: focusedNodeIdRef.current,
@@ -339,19 +345,34 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     scheduleLabelVisibilityRef.current = scheduleLabelVisibility;
     scheduleLabelMeasurementRef.current = scheduleLabelMeasurements;
     cy.on("render", scheduleLabelPositions);
-    cy.on("pan zoom", () => {
+    const settleGraphInteraction = () => {
+      if (graphInteractionSettleTimeoutRef.current != null) {
+        window.clearTimeout(graphInteractionSettleTimeoutRef.current);
+        graphInteractionSettleTimeoutRef.current = null;
+      }
+      setGraphInteraction(interactionStateRef.current, false);
+      scheduleLabelPositions();
+      scheduleLabelVisibility(true);
+    };
+    cy.on("pan zoom", (event) => {
+      // Cytoscape emits pan/zoom for both touch gestures and cy.animate().  Only
+      // user gestures should suspend label reconciliation; otherwise a fit
+      // animation can leave the overlay locked when WebView omits *end events.
+      if (!isUserGraphViewportEvent(event)) return;
       if (!interactionStateRef.current.graphInteracting) graphInteractionStartedAtRef.current = performance.now();
       setGraphInteraction(interactionStateRef.current, true);
+      if (graphInteractionSettleTimeoutRef.current != null) {
+        window.clearTimeout(graphInteractionSettleTimeoutRef.current);
+      }
+      graphInteractionSettleTimeoutRef.current = window.setTimeout(settleGraphInteraction, 180);
     });
     cy.on("panend zoomend", () => {
-      setGraphInteraction(interactionStateRef.current, false);
       if (!document.documentElement.classList.contains("platform-android")) {
         measureDesktopInteraction("knowledge-graph-viewport", graphInteractionStartedAtRef.current, {
           node_count: graphRef.current.nodes.length,
         });
       }
-      scheduleLabelPositions();
-      scheduleLabelVisibility();
+      settleGraphInteraction();
     });
     cy.on("mouseover", "node", (event) => {
       if (hoverClearTimerRef.current != null) {
@@ -531,6 +552,10 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         window.clearTimeout(viewportTimeoutRef.current);
         viewportTimeoutRef.current = null;
       }
+      if (graphInteractionSettleTimeoutRef.current != null) {
+        window.clearTimeout(graphInteractionSettleTimeoutRef.current);
+        graphInteractionSettleTimeoutRef.current = null;
+      }
       if (hoverClearTimerRef.current != null) {
         window.clearTimeout(hoverClearTimerRef.current);
         hoverClearTimerRef.current = null;
@@ -543,6 +568,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       layoutTaskRef.current = null;
       scheduleLabelPositionRef.current = () => undefined;
       scheduleLabelVisibilityRef.current = () => undefined;
+      forceLabelVisibilityRef.current = false;
       scheduleLabelMeasurementRef.current = () => undefined;
       pendingLabelMeasurementsRef.current.clear();
       labelMetricsRef.current.clear();
@@ -669,7 +695,9 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       fitViewport: true,
       scheduleViewport: scheduleViewportUpdate,
     });
-    scheduleLabelVisibilityRef.current();
+    // A view-mode change must reconcile labels even if a resize or gesture
+    // happens in the same frame. Position-only updates remain throttled.
+    scheduleLabelVisibilityRef.current(true);
   }, [viewMode, focusedNodeId, focusDepth]);
 
   useEffect(() => {
@@ -724,15 +752,38 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
 
   function handleOverview() {
     const cy = cyRef.current;
+    const alreadyOverview = viewModeRef.current === "overview" && focusedNodeIdRef.current == null;
     if (cy && overviewPositionsRef.current.size) {
       cy.nodes().forEach((node) => {
         const position = overviewPositionsRef.current.get(Number(node.data("nodeId")));
         if (position) node.position(position);
       });
     }
+    // Update refs synchronously so a label frame queued by the position restore
+    // cannot reconcile against the stale focus state.
+    viewModeRef.current = "overview";
+    focusedNodeIdRef.current = null;
+    setGraphInteraction(interactionStateRef.current, false);
+    if (graphInteractionSettleTimeoutRef.current != null) {
+      window.clearTimeout(graphInteractionSettleTimeoutRef.current);
+      graphInteractionSettleTimeoutRef.current = null;
+    }
     setViewMode("overview");
     setFocusedNodeId(null);
     setSelectedEdge(null);
+    if (alreadyOverview && cy && graphRef.current.nodes.length > 0) {
+      if (viewportTimeoutRef.current != null) {
+        window.clearTimeout(viewportTimeoutRef.current);
+        viewportTimeoutRef.current = null;
+      }
+      cy.stop();
+      applyGraphView(cy, graphRef.current, "overview", null, focusDepthRef.current, {
+        animate: true,
+        fitViewport: true,
+        scheduleViewport: scheduleViewportUpdate,
+      });
+    }
+    scheduleLabelVisibilityRef.current(true);
     setMessage("已切换到全览");
   }
 
