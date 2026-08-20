@@ -26,7 +26,6 @@ import {
 } from "./knowledgeGraphLayoutTask";
 import {
   createKnowledgeGraphInteractionState,
-  isKnowledgeGraphInteractionActive,
   isUserGraphViewportEvent,
   setGraphInteraction,
   setWorkbenchResize,
@@ -72,12 +71,12 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const pendingLabelMeasurementsRef = useRef(new Set<number>());
   const labelPositionFrameRef = useRef<number | null>(null);
   const labelVisibilityFrameRef = useRef<number | null>(null);
-  const forceLabelVisibilityRef = useRef(false);
   const labelMeasurementFrameRef = useRef<number | null>(null);
   const scheduleLabelPositionRef = useRef<() => void>(() => undefined);
-  const scheduleLabelVisibilityRef = useRef<(force?: boolean) => void>(() => undefined);
+  const scheduleLabelVisibilityRef = useRef<() => void>(() => undefined);
   const scheduleLabelMeasurementRef = useRef<(ids?: Iterable<number>) => void>(() => undefined);
   const viewportTimeoutRef = useRef<number | null>(null);
+  const labelViewportSettleTimeoutRef = useRef<number | null>(null);
   const graphInteractionSettleTimeoutRef = useRef<number | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const resizeSettleTimeoutRef = useRef<number | null>(null);
@@ -98,6 +97,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const overviewPositionsRef = useRef(new Map<number, { x: number; y: number }>());
   const cyRef = useRef<Core | null>(null);
   const lastTapRef = useRef<{ id: string; at: number } | null>(null);
+  const focusRefKeyRef = useRef<string | null>(null);
   const graphRef = useRef<KnowledgeGraph>({ nodes: [], edges: [] });
   const graphSignatureRef = useRef("");
   const renderedGraphRef = useRef<KnowledgeGraph>({ nodes: [], edges: [] });
@@ -122,6 +122,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [focusedNodeId, setFocusedNodeId] = useState<number | null>(null);
   const [focusDepth, setFocusDepth] = useState<1 | 2>(1);
+  const [viewportRevision, setViewportRevision] = useState(0);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [message, setMessage] = useState("");
@@ -171,8 +172,21 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     setGraph({ nodes: [], edges: [] });
     setSelectedNode(null);
     setSelectedEdge(null);
+    selectedNodeIdRef.current = null;
+    hoveredNodeIdRef.current = null;
+    hoverRelatedNodeIdsRef.current.clear();
+    hoverRelatedEdgeIdsRef.current.clear();
+    hoverActiveRef.current = false;
+    lastTapRef.current = null;
+    focusRefKeyRef.current = null;
+    viewModeRef.current = "overview";
+    focusedNodeIdRef.current = null;
+    focusDepthRef.current = 1;
     setViewMode("overview");
     setFocusedNodeId(null);
+    setFocusDepth(1);
+    setSearchOpen(false);
+    setSearchQuery("");
   }, [projectId]);
 
   useEffect(() => {
@@ -211,11 +225,12 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       } else if (!isTyping && event.key === "Escape") {
         setSearchOpen(false);
         setSearchQuery("");
-        setViewMode("overview");
-        setFocusedNodeId(null);
+        handleOverview();
       } else if (!isTyping && (event.key === "+" || event.key === "=")) {
+        focusDepthRef.current = 2;
         setFocusDepth(2);
       } else if (!isTyping && event.key === "-") {
+        focusDepthRef.current = 1;
         setFocusDepth(1);
       }
     }
@@ -249,12 +264,13 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
 
   useEffect(() => {
     if (viewMode === "focus" && focusedNodeId && !graph.nodes.some((node) => node.id === focusedNodeId)) {
+      viewModeRef.current = "overview";
+      focusedNodeIdRef.current = null;
       setViewMode("overview");
       setFocusedNodeId(null);
     }
   }, [graph, viewMode, focusedNodeId]);
 
-  const focusRefKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const key = focusRef ? `${focusRef.ref_type}:${focusRef.ref_id ?? focusRef.ref_path ?? ""}` : null;
     if (key === focusRefKeyRef.current) return;
@@ -277,6 +293,9 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         cy.nodes().forEach((item) => { positions.set(Number(item.data("nodeId")), { ...item.position() }); });
         overviewPositionsRef.current = positions;
       }
+      viewModeRef.current = "focus";
+      focusedNodeIdRef.current = match.id;
+      focusDepthRef.current = 1;
       setViewMode("focus");
       setFocusedNodeId(match.id);
       setFocusDepth(1);
@@ -311,14 +330,14 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         positionLabelOverlay(cy, graphRef.current, labelElementsRef.current);
       });
     };
-    const scheduleLabelVisibility = (force = false) => {
-      if (force) forceLabelVisibilityRef.current = true;
+    const scheduleLabelVisibility = () => {
       if (!labelLayer || labelVisibilityFrameRef.current != null) return;
       labelVisibilityFrameRef.current = window.requestAnimationFrame(() => {
         labelVisibilityFrameRef.current = null;
-        const forceUpdate = forceLabelVisibilityRef.current;
-        forceLabelVisibilityRef.current = false;
-        if (cy.destroyed() || (isKnowledgeGraphInteractionActive(interactionStateRef.current) && !forceUpdate)) return;
+        // This runs only for semantic changes (focus, hover, selection, search,
+        // resize settle), not for every animation frame.  Never drop it because
+        // an interaction flag can outlive the gesture in Android WebView.
+        if (cy.destroyed()) return;
         updateLabelVisibility(cy, graphRef.current, labelElementsRef.current, {
           viewMode: viewModeRef.current,
           focusedNodeId: focusedNodeIdRef.current,
@@ -352,7 +371,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       }
       setGraphInteraction(interactionStateRef.current, false);
       scheduleLabelPositions();
-      scheduleLabelVisibility(true);
+      scheduleLabelVisibility();
     };
     cy.on("pan zoom", (event) => {
       // Cytoscape emits pan/zoom for both touch gestures and cy.animate().  Only
@@ -500,10 +519,19 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         cy.nodes().forEach((item) => { positions.set(Number(item.data("nodeId")), { ...item.position() }); });
         overviewPositionsRef.current = positions;
       }
+      viewModeRef.current = "focus";
+      focusedNodeIdRef.current = nodeId;
+      focusDepthRef.current = 1;
       setViewMode("focus");
       setFocusedNodeId(nodeId);
       setFocusDepth(1);
             setMessage(found ? `已聚焦：${found.title}` : "已聚焦节点");
+    });
+
+    cy.on("tap", (event) => {
+      if (event.target === cy && viewModeRef.current === "focus") {
+        handleOverview();
+      }
     });
 
     cy.on("tap", "edge", (event) => {
@@ -552,6 +580,10 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
         window.clearTimeout(viewportTimeoutRef.current);
         viewportTimeoutRef.current = null;
       }
+      if (labelViewportSettleTimeoutRef.current != null) {
+        window.clearTimeout(labelViewportSettleTimeoutRef.current);
+        labelViewportSettleTimeoutRef.current = null;
+      }
       if (graphInteractionSettleTimeoutRef.current != null) {
         window.clearTimeout(graphInteractionSettleTimeoutRef.current);
         graphInteractionSettleTimeoutRef.current = null;
@@ -568,7 +600,6 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       layoutTaskRef.current = null;
       scheduleLabelPositionRef.current = () => undefined;
       scheduleLabelVisibilityRef.current = () => undefined;
-      forceLabelVisibilityRef.current = false;
       scheduleLabelMeasurementRef.current = () => undefined;
       pendingLabelMeasurementsRef.current.clear();
       labelMetricsRef.current.clear();
@@ -649,6 +680,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     const cy = cyRef.current;
     if (!cy || renderedGraphRef.current.nodes.length === 0) return;
     if (layoutRunningRef.current) return;
+    if (layoutRunningRef.current) return;
     const definitions = new Map(
       toElements(renderedGraphRef.current, containerRef.current, darkMode)
         .map((definition) => [String(definition.data?.id), definition]),
@@ -695,10 +727,36 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       fitViewport: true,
       scheduleViewport: scheduleViewportUpdate,
     });
-    // A view-mode change must reconcile labels even if a resize or gesture
-    // happens in the same frame. Position-only updates remain throttled.
-    scheduleLabelVisibilityRef.current(true);
-  }, [viewMode, focusedNodeId, focusDepth]);
+    // Reconcile synchronously from the same state that produced graph-hidden
+    // classes.  This prevents a stale ref or animation frame from preserving
+    // focus-mode visibility after returning to overview.
+    updateLabelVisibility(cy, renderedGraphRef.current, labelElementsRef.current, {
+      viewMode,
+      focusedNodeId,
+      focusDepth,
+      selectedNodeId: selectedNodeIdRef.current,
+      hoveredNodeId: hoveredNodeIdRef.current,
+      searchQuery: searchQueryRef.current,
+    }, labelMetricsRef.current);
+    if (labelViewportSettleTimeoutRef.current != null) {
+      window.clearTimeout(labelViewportSettleTimeoutRef.current);
+    }
+    // Focus mode first animates node positions and then its viewport, so wait
+    // for both phases.  This is a final fallback when WebView omits a render or
+    // gesture-end event at the exact final transform.
+    labelViewportSettleTimeoutRef.current = window.setTimeout(() => {
+      labelViewportSettleTimeoutRef.current = null;
+      if (cy.destroyed()) return;
+      updateLabelVisibility(cy, renderedGraphRef.current, labelElementsRef.current, {
+        viewMode: viewModeRef.current,
+        focusedNodeId: focusedNodeIdRef.current,
+        focusDepth: focusDepthRef.current,
+        selectedNodeId: selectedNodeIdRef.current,
+        hoveredNodeId: hoveredNodeIdRef.current,
+        searchQuery: searchQueryRef.current,
+      }, labelMetricsRef.current);
+    }, 780);
+  }, [viewMode, focusedNodeId, focusDepth, viewportRevision]);
 
   useEffect(() => {
     if (selectedNode) {
@@ -731,8 +789,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
       }
       await deleteKnowledgeNode(projectId, selectedNode.id);
       if (focusedNodeId === selectedNode.id) {
-        setViewMode("overview");
-        setFocusedNodeId(null);
+        handleOverview();
       }
       setSelectedNode(null);
       await notifyGraphChanged();
@@ -752,7 +809,6 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
 
   function handleOverview() {
     const cy = cyRef.current;
-    const alreadyOverview = viewModeRef.current === "overview" && focusedNodeIdRef.current == null;
     if (cy && overviewPositionsRef.current.size) {
       cy.nodes().forEach((node) => {
         const position = overviewPositionsRef.current.get(Number(node.data("nodeId")));
@@ -763,46 +819,50 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     // cannot reconcile against the stale focus state.
     viewModeRef.current = "overview";
     focusedNodeIdRef.current = null;
+    selectedNodeIdRef.current = null;
+    hoveredNodeIdRef.current = null;
+    hoverRelatedNodeIdsRef.current.clear();
+    hoverRelatedEdgeIdsRef.current.clear();
+    hoverActiveRef.current = false;
     setGraphInteraction(interactionStateRef.current, false);
     if (graphInteractionSettleTimeoutRef.current != null) {
       window.clearTimeout(graphInteractionSettleTimeoutRef.current);
       graphInteractionSettleTimeoutRef.current = null;
     }
+    if (hoverClearTimerRef.current != null) {
+      window.clearTimeout(hoverClearTimerRef.current);
+      hoverClearTimerRef.current = null;
+    }
+    if (viewportTimeoutRef.current != null) {
+      window.clearTimeout(viewportTimeoutRef.current);
+      viewportTimeoutRef.current = null;
+    }
+    cy?.stop();
+    cy?.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge hover-dim hover-related");
+    cy?.elements().unselect();
     setViewMode("overview");
     setFocusedNodeId(null);
+    setSelectedNode(null);
     setSelectedEdge(null);
-    if (alreadyOverview && cy && graphRef.current.nodes.length > 0) {
-      if (viewportTimeoutRef.current != null) {
-        window.clearTimeout(viewportTimeoutRef.current);
-        viewportTimeoutRef.current = null;
-      }
-      cy.stop();
-      applyGraphView(cy, graphRef.current, "overview", null, focusDepthRef.current, {
-        animate: true,
-        fitViewport: true,
-        scheduleViewport: scheduleViewportUpdate,
-      });
-    }
-    scheduleLabelVisibilityRef.current(true);
+    setViewportRevision((revision) => revision + 1);
+    scheduleLabelVisibilityRef.current();
     setMessage("已切换到全览");
   }
 
   async function handleArrangeOverview() {
     const cy = cyRef.current;
-    setViewMode("overview");
-    setFocusedNodeId(null);
-    setSelectedEdge(null);
-
     if (!cy || graphRef.current.nodes.length === 0) {
+      handleOverview();
       return;
     }
 
+    layoutRunningRef.current = true;
+    handleOverview();
     if (viewportTimeoutRef.current != null) {
       window.clearTimeout(viewportTimeoutRef.current);
       viewportTimeoutRef.current = null;
     }
     cy.stop();
-    layoutRunningRef.current = true;
     cy.elements().removeClass("graph-hidden focus-root focus-parent focus-child focus-edge");
 
     layoutTaskRef.current?.cancel();
@@ -886,7 +946,7 @@ export default function KnowledgeGraphViewer({ projectId, refreshKey = 0, compac
     onToggleConnect={() => { setRelationType("explains"); setConnectMode((value) => !value); setConnectSourceId(null); setMessage(connectMode ? "" : "请选择源节点"); }}
     onRename={() => { void handleRenameNode(); }} onDelete={() => { void handleDeleteSelected(); }}
     onSearchQuery={setSearchQuery} onCloseSearch={() => { setSearchOpen(false); setSearchQuery(""); }}
-    onSelectSearchNode={(node) => { setSelectedNode(node); setSelectedEdge(null); setFocusedNodeId(node.id); setFocusDepth(1); setViewMode("focus"); setSearchOpen(false); }}
+    onSelectSearchNode={(node) => { setSelectedNode(node); setSelectedEdge(null); focusedNodeIdRef.current = node.id; focusDepthRef.current = 1; viewModeRef.current = "focus"; setFocusedNodeId(node.id); setFocusDepth(1); setViewMode("focus"); setSearchOpen(false); }}
     onRetry={() => { setMessage(""); void reload(); }}
   />;
 }
