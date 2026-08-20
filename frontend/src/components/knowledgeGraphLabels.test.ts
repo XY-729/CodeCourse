@@ -109,4 +109,24 @@ describe("knowledge graph labels", () => {
     expect(label.dataset.visible).toBe("true");
     expect(label.dataset.inViewport).toBe("true");
   });
+
+  it("ignores a focused id that no longer exists in the current graph", () => {
+    const graph = graphWithOverlappingNodes(3);
+    const labels = new Map(graph.nodes.map((node) => {
+      const label = document.createElement("div");
+      label.dataset.visible = "false";
+      return [node.id, label];
+    }));
+
+    updateLabelVisibility(fakeCore(graph), graph, labels, {
+      viewMode: "focus",
+      focusedNodeId: 999,
+      focusDepth: 1,
+      selectedNodeId: null,
+      hoveredNodeId: 999,
+      searchQuery: "",
+    });
+
+    expect([...labels.values()].every((label) => label.dataset.visible === "true")).toBe(true);
+  });
 });

@@ -87,7 +87,7 @@ export function positionLabelOverlay(
   const viewportHeight = cy.height();
   for (const [nodeId, label] of labels) {
     const node = cy.getElementById(`n${nodeId}`);
-    const graphHidden = node.empty() || node.hasClass("graph-hidden") || node.hasClass("hover-dim");
+    const graphHidden = node.empty() || node.hasClass("graph-hidden");
     if (graphHidden) {
       // Logical visibility belongs to updateLabelVisibility().  A render pass
       // may run halfway through a focus/overview animation, so mutating it here
@@ -114,7 +114,9 @@ export function updateLabelVisibility(
   _metrics: LabelMetrics = new Map(),
 ) {
   const query = state.searchQuery.trim().toLocaleLowerCase();
-  const focusedNodeIds = state.viewMode === "focus" && state.focusedNodeId != null
+  const focusedNodeExists = state.focusedNodeId != null
+    && graph.nodes.some((node) => node.id === state.focusedNodeId);
+  const focusedNodeIds = state.viewMode === "focus" && state.focusedNodeId != null && focusedNodeExists
     ? getKnowledgeNeighborhood(graph, state.focusedNodeId, state.focusDepth).nodeIds
     : null;
 
@@ -125,8 +127,6 @@ export function updateLabelVisibility(
     if (
       node.empty()
       || (focusedNodeIds != null && !focusedNodeIds.has(graphNode.id))
-      || node.hasClass("graph-hidden")
-      || (node.hasClass("hover-dim") && graphNode.id !== state.focusedNodeId)
     ) {
       label.dataset.visible = "false";
       label.classList.remove("important", "matched");
