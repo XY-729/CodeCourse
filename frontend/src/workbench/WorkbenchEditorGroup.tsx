@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, memo, Suspense, useMemo, useRef } from "react";
 import type { DragEvent } from "react";
 import { Pencil, Save, Star, X } from "lucide-react";
 import type {
@@ -54,7 +54,7 @@ type Props = {
   callGuideBusyId: number | null;
   knowledgeRefreshKey: number;
   knowledgeFocusRef: KnowledgeFocusRef;
-  findLearningState: (sourceType: LearningState["source_type"], sourcePath: string) => LearningState | undefined;
+  learningStates: LearningState[];
   isOutlineCourse: (path: string) => boolean;
   onActivatePane: () => void;
   onActivateItem: (item: OpenItem) => void;
@@ -108,7 +108,7 @@ function lessonFiles(courses: CourseFile[]) {
     .sort((a, b) => a.filename.localeCompare(b.filename));
 }
 
-export default function WorkbenchEditorGroup(props: Props) {
+function WorkbenchEditorGroupView(props: Props) {
   const {
     group,
     activeGroupId,
@@ -138,7 +138,9 @@ export default function WorkbenchEditorGroup(props: Props) {
         ? "course"
         : null;
   const learningState = activeItem && learningType
-    ? props.findLearningState(learningType, activeItem.path)
+    ? props.learningStates.find((entry) => (
+        entry.source_type === learningType && entry.source_path === activeItem.path
+      ))
     : undefined;
   const qaHighlights = activeItem?.type === "qa"
     ? highlights.filter((highlight) => highlight.source_type === "qa" && highlight.source_path === activeItem.path)
@@ -441,4 +443,56 @@ export default function WorkbenchEditorGroup(props: Props) {
       ) : null}
     </EditorPaneFrame>
   );
+}
+
+function sameKnowledgeFocus(previous: KnowledgeFocusRef, next: KnowledgeFocusRef) {
+  if (previous === next) return true;
+  if (!previous || !next) return false;
+  return previous.ref_type === next.ref_type
+    && previous.ref_path === next.ref_path
+    && previous.ref_id === next.ref_id;
+}
+
+function sameViewProps(previous: Props, next: Props) {
+  const previousKeys = Object.keys(previous) as Array<keyof Props>;
+  const nextKeys = Object.keys(next) as Array<keyof Props>;
+  if (previousKeys.length !== nextKeys.length) return false;
+  for (const key of previousKeys) {
+    if (key === "knowledgeFocusRef") {
+      if (!sameKnowledgeFocus(previous.knowledgeFocusRef, next.knowledgeFocusRef)) return false;
+    } else if (!Object.is(previous[key], next[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const MemoizedWorkbenchEditorGroupView = memo(WorkbenchEditorGroupView, sameViewProps);
+
+/**
+ * App owns the workbench actions and necessarily recreates a number of small
+ * closures when shell state changes (for example when a mobile drawer opens).
+ * Keep those actions fresh through a ref, while presenting stable callback
+ * identities to the expensive reader subtree. Data props still use normal
+ * identity checks, so document, learning, term and graph changes render at
+ * once without making drawer-only state repaint the reader.
+ */
+export default function WorkbenchEditorGroup(props: Props) {
+  const latestPropsRef = useRef(props);
+  latestPropsRef.current = props;
+
+  const stableCallbacks = useMemo(() => {
+    const callbacks: Partial<Props> = {};
+    for (const key of Object.keys(latestPropsRef.current) as Array<keyof Props>) {
+      if (typeof latestPropsRef.current[key] !== "function") continue;
+      (callbacks as Record<string, unknown>)[String(key)] = (...args: unknown[]) => {
+        const callback = latestPropsRef.current[key];
+        if (typeof callback !== "function") return undefined;
+        return (callback as (...parameters: unknown[]) => unknown)(...args);
+      };
+    }
+    return callbacks;
+  }, []);
+
+  return <MemoizedWorkbenchEditorGroupView {...props} {...stableCallbacks} />;
 }

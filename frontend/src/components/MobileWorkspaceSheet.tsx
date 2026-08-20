@@ -28,15 +28,17 @@ const MobileWorkspaceSheet = forwardRef<MobileWorkspaceSheetHandle, Props>(funct
   const sheetRef = useRef<FluidBottomSheetHandle | null>(null);
   const [readyTabKey, setReadyTabKey] = useState<string | null>(null);
   const openedRef = useRef(false);
+  const preloadContentRef = useRef(preloadContent);
+  preloadContentRef.current = preloadContent;
   const dismiss = () => sheetRef.current?.dismiss();
   useImperativeHandle(forwardedRef, () => ({ dismiss }), []);
 
   useEffect(() => {
-    preloadContent?.();
-    if (!openedRef.current) return;
+    if (!openedRef.current || readyTabKey === tabKey) return;
+    preloadContentRef.current?.();
     const frame = window.requestAnimationFrame(() => setReadyTabKey(tabKey));
     return () => window.cancelAnimationFrame(frame);
-  }, [tabKey]);
+  }, [readyTabKey, tabKey]);
 
   const contentReady = readyTabKey === tabKey;
 
@@ -62,6 +64,7 @@ const MobileWorkspaceSheet = forwardRef<MobileWorkspaceSheetHandle, Props>(funct
         onMotionPhaseChange={(phase) => {
           if (phase === "open") {
             openedRef.current = true;
+            preloadContentRef.current?.();
             setReadyTabKey(tabKey);
           }
           onMotionPhaseChange?.(phase);

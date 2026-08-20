@@ -63,6 +63,7 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     if (!layer) return;
     const effect = sheetBackdropProgress(position, entryStartRef.current);
     layer.style.setProperty("--sheet-scrim-alpha", String(effect * 0.24));
+    layer.style.setProperty("--sheet-scrim-opacity", String(effect));
   }
 
   function paintDragPosition(sheet: HTMLElement, position: number) {
@@ -96,7 +97,9 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     if (!sheet || dismissingRef.current) return;
     cancelEntryFrames();
     dismissingRef.current = true;
+    sheet.dataset.contentSuspended = "true";
     sheet.dataset.motionPhase = "exiting";
+    if (sheet.parentElement) sheet.parentElement.dataset.sheetMotionPhase = "exiting";
     onMotionPhaseChangeRef.current?.("exiting");
     const target = Math.max(entryStartRef.current, measuredHeightRef.current - 2);
     animateSpringY(sheet, target, {
@@ -135,6 +138,7 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       sheet.style.transform = "translate3d(0, 0, 0)";
       sheet.dataset.motionPhase = "open";
+      if (sheet.parentElement) sheet.parentElement.dataset.sheetMotionPhase = "open";
       updateBackdrop(sheet, 0);
       onMotionPhaseChangeRef.current?.("open");
       return;
@@ -146,21 +150,23 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     updateBackdrop(sheet, start);
     const firstFrame = window.requestAnimationFrame(() => {
       sheet.dataset.motionPhase = "entering";
+      if (sheet.parentElement) sheet.parentElement.dataset.sheetMotionPhase = "entering";
       onMotionPhaseChangeRef.current?.("entering");
       sheet.style.transform = "translate3d(0, 0, 0)";
-      const layer = sheet.parentElement;
-      if (layer) layer.style.setProperty("--sheet-scrim-alpha", "0.24");
+      updateBackdrop(sheet, 0);
     });
     entryFramesRef.current = [firstFrame];
     const onTransitionEnd = (event: TransitionEvent) => {
       if (event.target !== sheet || event.propertyName !== "transform" || dismissingRef.current) return;
       sheet.dataset.motionPhase = "open";
+      if (sheet.parentElement) sheet.parentElement.dataset.sheetMotionPhase = "open";
       onMotionPhaseChangeRef.current?.("open");
     };
     sheet.addEventListener("transitionend", onTransitionEnd);
     const fallback = window.setTimeout(() => {
       if (!dismissingRef.current && sheet.dataset.motionPhase !== "open") {
         sheet.dataset.motionPhase = "open";
+        if (sheet.parentElement) sheet.parentElement.dataset.sheetMotionPhase = "open";
         onMotionPhaseChangeRef.current?.("open");
       }
     }, 240);
@@ -178,13 +184,14 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
 
   function pointerDown(event: PointerEvent<HTMLButtonElement>) {
     const sheet = sheetRef.current;
-    if (!sheet || event.button !== 0) return;
+    if (!sheet || dismissingRef.current || event.button !== 0) return;
 
     cancelEntryFrames();
     cancelSpring(sheet);
     draggedRef.current = false;
     event.currentTarget.setPointerCapture(event.pointerId);
     const presentationY = readTranslateY(sheet);
+    if (sheet.parentElement) sheet.parentElement.dataset.sheetDragging = "true";
     gestureRef.current = {
       pointerId: event.pointerId,
       startClientY: event.clientY,
@@ -220,6 +227,7 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
     if (!sheet || !gesture || gesture.pointerId !== event.pointerId) return;
 
     gestureRef.current = null;
+    if (sheet.parentElement) delete sheet.parentElement.dataset.sheetDragging;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -250,6 +258,7 @@ const FluidBottomSheet = forwardRef<FluidBottomSheetHandle, Props>(function Flui
         onUpdate: (position) => updateBackdrop(sheet, position),
         onComplete: () => {
           sheet.dataset.motionPhase = "open";
+          if (sheet.parentElement) sheet.parentElement.dataset.sheetMotionPhase = "open";
         },
       });
     }

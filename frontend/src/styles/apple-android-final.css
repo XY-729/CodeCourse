@@ -1062,6 +1062,7 @@ html.platform-android .selection-quick-bar {
 
 html.platform-android .mobile-workspace-sheet-layer {
   --sheet-scrim-alpha: 0;
+  --sheet-scrim-opacity: 0;
   --sheet-backdrop-blur: 0px;
   position: fixed;
   z-index: 180;
@@ -1071,14 +1072,32 @@ html.platform-android .mobile-workspace-sheet-layer {
   justify-content: center;
   padding: calc(56px + env(safe-area-inset-top)) 8px 0;
   overflow: hidden;
-  background: rgba(0, 0, 0, var(--sheet-scrim-alpha));
+  isolation: isolate;
+  background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  transition: background-color 180ms var(--mobile-ease-out);
+}
+
+html.platform-android .mobile-workspace-sheet-layer::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.24);
+  opacity: var(--sheet-scrim-opacity);
+  will-change: opacity;
+  transition: opacity 160ms var(--mobile-ease-out);
+}
+
+html.platform-android .mobile-workspace-sheet-layer[data-sheet-dragging="true"]::before,
+html.platform-android .mobile-workspace-sheet-layer[data-sheet-motion-phase="exiting"]::before {
+  transition: none;
 }
 
 html.platform-android .mobile-workspace-sheet {
   position: relative;
+  z-index: 1;
   width: min(100%, 720px);
   height: min(82dvh, 100%);
   min-height: 0;
@@ -1110,6 +1129,12 @@ html.platform-android .mobile-workspace-sheet[data-motion-phase="open"] {
 html.platform-android .mobile-workspace-sheet[data-motion-phase="exiting"] {
   transition: none;
   will-change: transform;
+}
+
+html.platform-android .mobile-workspace-sheet[data-content-suspended="true"] .mobile-workspace-sheet-content {
+  content-visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 html.platform-android .mobile-workspace-sheet > .fluid-sheet-grabber {

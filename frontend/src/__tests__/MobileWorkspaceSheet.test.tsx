@@ -60,15 +60,24 @@ describe("MobileWorkspaceSheet", () => {
       frames.push(callback);
       return frames.length;
     });
+    const preloadContent = vi.fn();
     const renderContent = vi.fn(() => <p>重内容</p>);
     const { getByRole, queryByText } = render(
-      <MobileWorkspaceSheet tabKey="assistant" title="AI 助手" onDismiss={vi.fn()} renderContent={renderContent} />,
+      <MobileWorkspaceSheet
+        tabKey="assistant"
+        title="AI 助手"
+        onDismiss={vi.fn()}
+        preloadContent={preloadContent}
+        renderContent={renderContent}
+      />,
     );
 
+    expect(preloadContent).not.toHaveBeenCalled();
     expect(renderContent).not.toHaveBeenCalled();
     expect(queryByText("重内容")).toBeNull();
     frames.shift()?.(16);
     fireEvent.transitionEnd(getByRole("region", { name: "AI 助手" }), { propertyName: "transform" });
+    expect(preloadContent).toHaveBeenCalledTimes(1);
     expect(renderContent).toHaveBeenCalledTimes(1);
     expect(queryByText("重内容")).toBeTruthy();
   });
