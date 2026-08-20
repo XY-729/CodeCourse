@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   validateBaseCheckpoint, parseOutlineCheckpoint, parseDetailedLessonCheckpoint,
-  courseGroupForTaskType, buildCompletionLabel, shouldSendProgress, canRetry,
+  courseGroupForTaskType, buildCompletionLabel, canRetry,
   buildSlimCheckpoint, permissionNotice,
 } from "../platform/android/generationState";
 
@@ -103,18 +103,6 @@ describe("buildCompletionLabel", () => {
     const label = buildCompletionLabel("outline_lesson", "P", lessonOut);
     expect(label).not.toMatch(/第\s+第/);
   });
-});
-
-// ====== shouldSendProgress ======
-
-describe("shouldSendProgress", () => {
-  it("first update always sends", () => expect(shouldSendProgress(true, false, false, false, false, false)).toBe(true));
-  it("label change always sends", () => expect(shouldSendProgress(false, true, false, false, false, false)).toBe(true));
-  it("indeterminate change always sends", () => expect(shouldSendProgress(false, false, true, false, false, false)).toBe(true));
-  it("100% complete always sends", () => expect(shouldSendProgress(false, false, false, true, false, false)).toBe(true));
-  it("stale sends", () => expect(shouldSendProgress(false, false, false, false, true, false)).toBe(true));
-  it("pct change sends", () => expect(shouldSendProgress(false, false, false, false, false, true)).toBe(true));
-  it("nothing: no send", () => expect(shouldSendProgress(false, false, false, false, false, false)).toBe(false));
 });
 
 // ====== canRetry ======

@@ -2,7 +2,7 @@ import { lazy, Suspense } from "react";
 import { isAndroidRuntime } from "../platform/runtime";
 
 const MobileCodeViewer = lazy(() => import("./MobileCodeViewer"));
-const MonacoCodeViewer = lazy(() => import("./MonacoCodeViewer"));
+const MonacoCodeViewer = __ANDROID_BUILD__ ? null : lazy(() => import("./MonacoCodeViewer"));
 
 export type ViewerRange = { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
 export type ViewerAnchorRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
@@ -26,5 +26,6 @@ export default function CodeViewer(props: Props) {
     return <Suspense fallback={<div className="viewer-loading">正在打开代码…</div>}><MobileCodeViewer {...props} /></Suspense>;
   }
   const { mobileSearchRequestId: _, ...desktopProps } = props;
+  if (!MonacoCodeViewer) return null;
   return <Suspense fallback={<div className="viewer-loading">正在打开代码…</div>}><MonacoCodeViewer {...desktopProps} /></Suspense>;
 }

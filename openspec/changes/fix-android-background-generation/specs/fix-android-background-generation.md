@@ -1,5 +1,7 @@
 # 需求规格：fix-android-background-generation
 
+> **状态：已废弃。** Android 不保证后台 WebView 执行；现行规范为 `android-foreground-generation-recovery`。
+
 ## 背景问题
 
 后台生成"假运行"：通知几小时不动，回前台才推进。根因：

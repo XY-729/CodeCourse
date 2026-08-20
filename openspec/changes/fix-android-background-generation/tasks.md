@@ -1,5 +1,7 @@
 # REQ-1 后台保持 WebView 渲染进程存活
 
+> **状态：已废弃。** 下列任务仅保留为历史记录，已由 `android-foreground-generation-recovery` 取代，不再作为当前待办。
+
 - [x] 1.1 MainActivity.onCreate 设置 WebView.setRendererPriorityPolicy(RENDERER_PRIORITY_IMPORTANT, false)
 - [x] 1.2 MainActivity.onPause 在生成任务活跃时跳过 super.onPause（避免 webView.onPause 挂起 JS），并补发 bridge.onResume
 - [x] 1.3 MainActivity.onResume 在任务活跃时显式 bridge.onResume，保证 pause/resume 状态一致

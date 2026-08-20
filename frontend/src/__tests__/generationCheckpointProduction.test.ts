@@ -57,16 +57,6 @@ vi.mock("../platform/runtime", () => ({
     remove: vi.fn(async () => undefined),
   },
   CodeCourseNative: {
-    setGenerationActive: vi.fn(async () => undefined),
-    getGenerationServiceState: vi.fn(async () => ({ active: false, sessionId: 0, taskId: 0 })),
-    switchForegroundTask: vi.fn(async ({ sessionId, taskId }) => ({
-      switched: true,
-      sessionId,
-      taskId,
-    })),
-    updateGenerationProgress: vi.fn(async () => undefined),
-    updateGenerationHeartbeat: vi.fn(async () => undefined),
-    hasGenerationPendingProgress: vi.fn(async () => ({ pending: false })),
     requestNotificationPermission: vi.fn(async () => ({
       granted: true,
       status: "granted",
@@ -98,7 +88,6 @@ type ProviderInternals = {
   getPrompts(): Promise<Record<string, string>>;
   getLLMSettings(): Promise<Record<string, unknown>>;
   ensureNotificationPermission(): Promise<void>;
-  syncGenerationServiceState(): Promise<void>;
   reportProgress(): Promise<void>;
   upsertCourse(projectId: number, filename: string, content: string): Promise<void>;
   ensureCourseNode(): Promise<void>;
@@ -145,7 +134,6 @@ function createProvider() {
     model: "deepseek-chat",
   }));
   provider.ensureNotificationPermission = vi.fn(async () => undefined);
-  provider.syncGenerationServiceState = vi.fn(async () => undefined);
   provider.reportProgress = vi.fn(async () => undefined);
   provider.upsertCourse = vi.fn(async (_projectId, filename, content) => {
     harness.writes.push({ filename, content });

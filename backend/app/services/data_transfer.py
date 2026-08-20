@@ -32,6 +32,7 @@ PORTABLE_TABLES = (
     "prompt_revisions",
     "concepts",
     "qa_records",
+    "teaching_handoffs",
     "generation_tasks",
     "highlights",
     "knowledge_nodes",

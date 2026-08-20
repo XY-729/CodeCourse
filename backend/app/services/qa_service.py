@@ -24,6 +24,11 @@ from app.services.personalization.interaction_observer import (
 from app.services.personalization.teaching.planner_scheduler import (
     schedule_teacher_plan,
 )
+from app.services.continuity_service import (
+    parse_handoff_metadata,
+    persist_teaching_handoff,
+    render_project_learning_context,
+)
 from app.services.scanner import read_text_file
 
 import logging
@@ -596,7 +601,8 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
         payload.source_type,
         payload.source_path,
     )
-    prompt = f"{learner_context}\n\n{base_prompt}"
+    project_learning_context = render_project_learning_context(project_id)
+    prompt = f"{learner_context}\n\n{project_learning_context}\n\n{base_prompt}"
     return PreparedQuestion(
         project_id=project_id,
         payload=payload,
@@ -631,7 +637,12 @@ def finalize_question(
     question = prepared.question
     project_id = prepared.project_id
     raw_answer = raw_answer.strip()
-    answer_without_terms, model_terms = parse_term_metadata(raw_answer)
+    answer_without_handoff, handoff_metadata = parse_handoff_metadata(
+        raw_answer,
+        source_type=payload.source_type,
+        source_path=payload.source_path,
+    )
+    answer_without_terms, model_terms = parse_term_metadata(answer_without_handoff)
     title, answer = _parse_answer_title(answer_without_terms, question, selected_text, payload.source_path)
     if not answer:
         raise RuntimeError("模型返回为空内容，未创建问答记录。")
@@ -660,6 +671,7 @@ def finalize_question(
         raise RuntimeError("QA record disappeared during path update")
 
     written = _write_record_markdown(record_with_path)
+    persist_teaching_handoff(written, handoff_metadata)
     attach_qa_record(written)
     register_document_terms(project_id, "qa", relative_path, written.answer_md, model_terms)
     if prepared.term:

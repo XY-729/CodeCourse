@@ -108,6 +108,49 @@ export type RetrievalSource = {
   score: number;
 };
 
+export type TeachingNextAction = {
+  kind: "follow_up" | "open_source" | "review";
+  label: string;
+  prompt?: string;
+  sourceType?: SourceType | null;
+  sourcePath?: string | null;
+};
+
+export type TeachingHandoff = {
+  id: number;
+  projectId: number;
+  sessionId?: number | null;
+  qaRecordId: number;
+  engagement: "learning";
+  topic: string;
+  progressSummary: string;
+  establishedPoints: string[];
+  unresolvedPoints: string[];
+  nextActions: TeachingNextAction[];
+  sourceType?: SourceType | null;
+  sourcePath?: string | null;
+  sourceAvailable: boolean;
+  usedPriorContext: boolean;
+  isCurrent: boolean;
+  dismissedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type QAThreadSummary = {
+  sessionId: number;
+  topic: string;
+  progressSummary: string;
+  unresolvedPoints: string[];
+  turnCount: number;
+  latestQaRecordId: number;
+  sourceType?: SourceType | null;
+  sourcePath?: string | null;
+  isCurrent: boolean;
+  updatedAt: string;
+  records: number[];
+};
+
 export type QARecord = {
   id: number;
   project_id: number;
@@ -125,6 +168,7 @@ export type QARecord = {
   output_path?: string | null;
   retrieval_trace?: string | null;
   retrieval_sources?: RetrievalSource[];
+  teaching_handoff?: TeachingHandoff | null;
   favorite: boolean;
   created_at: string;
   updated_at: string;
@@ -952,6 +996,20 @@ export function listQARecords(projectId: number, query = "", favorite?: boolean)
   }
   const suffix = params.toString() ? `?${params.toString()}` : "";
   return request<QARecord[]>(`/projects/${projectId}/qa${suffix}`);
+}
+
+export function getQAContinuity(projectId: number): Promise<TeachingHandoff | null> {
+  return request<TeachingHandoff | null>(`/projects/${projectId}/qa/continuity`);
+}
+
+export function dismissQAContinuity(projectId: number): Promise<{ dismissed: boolean; handoffId?: number | null }> {
+  return request<{ dismissed: boolean; handoffId?: number | null }>(`/projects/${projectId}/qa/continuity/dismiss`, {
+    method: "POST",
+  });
+}
+
+export function listQAThreads(projectId: number): Promise<QAThreadSummary[]> {
+  return request<QAThreadSummary[]>(`/projects/${projectId}/qa/threads`);
 }
 
 export function getQARecord(projectId: number, qaId: number): Promise<QARecord> {

@@ -1,8 +1,9 @@
 import { ArrowDown, ArrowUp, Bot, Edit3, FileText, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
+import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, QAThreadSummary, SourceType, TeachingHandoff, TeachingNextAction } from "../api/client";
 import { DeferredLiftInput, DeferredLiftTextarea } from "./DeferredLiftText";
 import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
+import { groupQARecordsByThreads, TeachingClosureCard, TeachingResumeCard } from "./TeachingContinuityCards";
 
 export type SelectionSummary = {
   sourceType: SourceType;
@@ -32,6 +33,8 @@ type Props = {
   loadingLabel?: string;
   streamContent?: string;
   history: QARecord[];
+  threads?: QAThreadSummary[];
+  continuity?: TeachingHandoff | null;
   historyQuery: string;
   favoriteOnly: boolean;
   selectedRecord: QARecord | null;
@@ -61,6 +64,10 @@ type Props = {
   onDeleteRecord?: (record: QARecord) => void;
   onRenameRecord: (record: QARecord) => void;
   onToggleFavorite: (record: QARecord) => void;
+  onResumeContinuity?: (handoff: TeachingHandoff) => void;
+  onOpenContinuitySource?: (handoff: TeachingHandoff) => void;
+  onDismissContinuity?: (handoff: TeachingHandoff) => void;
+  onTeachingNextAction?: (action: TeachingNextAction, handoff: TeachingHandoff) => void;
   onOpenSettings: () => void;
   onAnswerSurvey?: (choice: string) => void;
   onDismissSurvey?: () => void;
@@ -93,11 +100,11 @@ function recordTitle(record: QARecord) {
 
 export default function ExplainPanel(props: Props) {
   const {
-    selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, questionInput, loading, loadingLabel, streamContent, history, historyQuery, favoriteOnly,
+    selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, questionInput, loading, loadingLabel, streamContent, history, threads = [], continuity = null, historyQuery, favoriteOnly,
     selectedRecord, selectedRecordReadOnly = false, surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError, upperTab, mobileMode = false, embeddedMobileSheet = false, onUpperTabChange, knowledgeContent,
     knowledgeDisabled, onQuestionChange, onSelectionTextChange, onClearSelection,
     onAsk, onNewConversation, onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord,
-    onOpenRecord, onDeleteRecord, onRenameRecord, onToggleFavorite, onOpenSettings,
+    onOpenRecord, onDeleteRecord, onRenameRecord, onToggleFavorite, onResumeContinuity = () => {}, onOpenContinuitySource = () => {}, onDismissContinuity = () => {}, onTeachingNextAction = () => {}, onOpenSettings,
     onAnswerSurvey, onDismissSurvey, onDisableSurveys,
     onAnswerDiagnostic, onDismissDiagnostic, onFlagDiagnostic, onClose,
     resetToken,
@@ -110,6 +117,9 @@ export default function ExplainPanel(props: Props) {
    * only hears about the draft on blur/unmount or via an explicit resetToken.
    */
   const [questionDraft, setQuestionDraft] = useState(questionInput ?? question);
+  useEffect(() => {
+    setQuestionDraft(questionInput ?? question);
+  }, [question, questionInput, resetToken]);
   useEffect(() => {
     setDiagnosticAnswer(null);
     setDiagnosticOrder(
@@ -124,6 +134,28 @@ export default function ExplainPanel(props: Props) {
   const mobileKnowledge = mobileMode && upperTab === "knowledge";
   const mobileAssistant = mobileMode && upperTab === "history";
   const knowledgeOnly = upperTab === "knowledge";
+  const threadGroups = groupQARecordsByThreads(threads, history);
+
+  function renderHistoryRecord(record: QARecord) {
+    return (
+      <button
+        key={record.id}
+        className={`qa-history-row ${selectedRecord?.id === record.id ? "selected" : ""}`}
+        onClick={() => onSelectRecord(record)}
+        onDoubleClick={() => onOpenRecord(record)}
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "qa", qaId: record.id }));
+          event.dataTransfer.effectAllowed = "copy";
+        }}
+      >
+        <span>{recordTitle(record)}</span><small>{record.model}</small>
+        <Trash2 size={14} className="history-delete" role="button" tabIndex={0} aria-label="删除记录" onClick={(event) => { event.stopPropagation(); onDeleteRecord?.(record); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onDeleteRecord?.(record); } }} />
+        <Edit3 size={14} className="history-rename" role="button" tabIndex={0} aria-label="重命名记录" onClick={(event) => { event.stopPropagation(); onRenameRecord(record); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onRenameRecord(record); } }} />
+        <Star size={14} className={record.favorite ? "history-star starred" : "history-star"} role="button" tabIndex={0} aria-label={record.favorite ? "取消收藏" : "收藏"} onClick={(event) => { event.stopPropagation(); onToggleFavorite(record); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onToggleFavorite(record); } }} />
+      </button>
+    );
+  }
 
   return (
     <aside
@@ -176,28 +208,22 @@ export default function ExplainPanel(props: Props) {
                   <div className="qa-stream-body markdown-body">{streamContent}</div>
                 </div>
               ) : null}
+              {!selectedRecord && continuity ? (
+                <TeachingResumeCard handoff={continuity} disabled={loading} onResume={onResumeContinuity} onOpenSource={onOpenContinuitySource} onDismiss={onDismissContinuity} />
+              ) : null}
               <div className="qa-section history-tools">
                 <div className="search-row"><Search size={14} /><DeferredLiftInput value={historyQuery} onLift={onHistoryQueryChange} liftDelayMs={250} placeholder="搜索历史" aria-label="搜索历史" /></div>
                 <label className="favorite-filter"><input type="checkbox" checked={favoriteOnly} onChange={(event) => onFavoriteOnlyChange(event.target.checked)} />只看收藏</label>
               </div>
               <div className="qa-history">
-                {history.length ? history.map((record) => (
-                  <button
-                    key={record.id}
-                    className={`qa-history-row ${selectedRecord?.id === record.id ? "selected" : ""}`}
-                    onClick={() => onSelectRecord(record)}
-                    onDoubleClick={() => onOpenRecord(record)}
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData("application/codecourse-item", JSON.stringify({ kind: "qa", qaId: record.id }));
-                      event.dataTransfer.effectAllowed = "copy";
-                    }}
-                  >
-                    <span>{recordTitle(record)}</span><small>{record.model}</small>
-                    <Trash2 size={14} className="history-delete" role="button" tabIndex={0} aria-label="删除记录" onClick={(event) => { event.stopPropagation(); onDeleteRecord?.(record); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onDeleteRecord?.(record); } }} />
-                    <Edit3 size={14} className="history-rename" role="button" tabIndex={0} aria-label="重命名记录" onClick={(event) => { event.stopPropagation(); onRenameRecord(record); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onRenameRecord(record); } }} />
-                    <Star size={14} className={record.favorite ? "history-star starred" : "history-star"} role="button" tabIndex={0} aria-label={record.favorite ? "取消收藏" : "收藏"} onClick={(event) => { event.stopPropagation(); onToggleFavorite(record); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onToggleFavorite(record); } }} />
-                  </button>
+                {history.length ? threadGroups.map(({ summary, records }) => (
+                  <details className={`qa-thread-group ${summary.isCurrent ? "current" : ""}`} key={summary.sessionId} open={summary.isCurrent || records.some((record) => record.id === selectedRecord?.id)}>
+                    <summary>
+                      <span><strong>{`主题 · ${summary.topic}`}</strong>{summary.progressSummary ? <small>{summary.progressSummary}</small> : null}</span>
+                      <small>{summary.turnCount} 轮{summary.sourcePath ? ` · ${fileLabel(summary.sourcePath)}` : ""}</small>
+                    </summary>
+                    <div>{records.map(renderHistoryRecord)}</div>
+                  </details>
                 )) : (
               <div className="assistant-empty-card">
                 <Bot size={28} />
@@ -243,6 +269,10 @@ export default function ExplainPanel(props: Props) {
             ) : null}
             <button type="button" className="secondary-button compact" onClick={onOpenFilePicker} disabled={loading}><FileText size={14} />选择参考文件</button>
           </div>
+
+          {!loading && !selectedRecordReadOnly && selectedRecord?.teaching_handoff ? (
+            <TeachingClosureCard handoff={selectedRecord.teaching_handoff} onAction={onTeachingNextAction} />
+          ) : null}
 
         </div>
 

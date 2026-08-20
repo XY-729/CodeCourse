@@ -31,7 +31,11 @@ export const TASK_OUTPUT_CONTRACTS: Record<TaskOutputKind, string> = {
 第二行必须是 \`TERMS: [...]\`，数组项使用
 \`{"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文原词"}}\`。
 display_name 与 source_span.text 必须逐字出现在正文可见文本中；禁止完整句子、命令、路径、函数调用/签名、编译错误和 Markdown 片段。没有合适术语时使用 \`[]\`。
-之后输出 Markdown 正文。不要在正文重复 TITLE 或 TERMS。
+第三行必须是单行 \`HANDOFF: {...}\` JSON。
+- 教学型回答使用 \`{"engagement":"learning","continuity":"update","topic":"当前学习主题","progress_summary":"本轮后用户已经走到哪里","established_points":["已建立的认识"],"unresolved_points":["仍待弄清的问题"],"next_actions":[{"kind":"follow_up","label":"按钮文字","prompt":"由用户确认后发送的问题"}],"used_prior_context":false}\`。
+- 快速查词、单纯修复、一次性任务或与此前主线无关的回答必须使用 \`{"engagement":"utility","continuity":"preserve","topic":"","progress_summary":"","established_points":[],"unresolved_points":[],"next_actions":[],"used_prior_context":false}\`，不得覆盖项目学习主线。
+- next_actions 最多 2 项，kind 只能是 \`follow_up\`、\`open_source\` 或 \`review\`；不要声称系统会自动发送问题或自动改变课程。
+之后输出 Markdown 正文。不要在正文重复 TITLE、TERMS 或 HANDOFF。
 </task_output_contract>`,
 };
 

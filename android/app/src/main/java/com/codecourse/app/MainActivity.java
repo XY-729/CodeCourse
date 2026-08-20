@@ -11,12 +11,10 @@ import android.view.ActionMode;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
-import android.webkit.WebView;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
-import com.getcapacitor.PluginHandle;
 import com.getcapacitor.JSObject;
 import org.json.JSONObject;
 
@@ -53,12 +51,12 @@ public class MainActivity extends BridgeActivity {
 
     private String savePendingNavigationFromIntent(Intent intent) {
         if (intent == null) return null;
-        int projectId = intent.getIntExtra(CodeCourseGenerationService.EXTRA_PROJECT_ID, 0);
-        int taskId = intent.getIntExtra(CodeCourseGenerationService.EXTRA_COMPLETION_TASK_ID, 0);
+        int projectId = intent.getIntExtra(CompletionNotificationContract.EXTRA_PROJECT_ID, 0);
+        int taskId = intent.getIntExtra(CompletionNotificationContract.EXTRA_COMPLETION_TASK_ID, 0);
         if (projectId <= 0 && taskId <= 0) return null;
 
-        String taskType = intent.getStringExtra(CodeCourseGenerationService.EXTRA_TASK_TYPE);
-        String outputPath = intent.getStringExtra(CodeCourseGenerationService.EXTRA_OUTPUT_PATH);
+        String taskType = intent.getStringExtra(CompletionNotificationContract.EXTRA_TASK_TYPE);
+        String outputPath = intent.getStringExtra(CompletionNotificationContract.EXTRA_OUTPUT_PATH);
         String navigationId = String.valueOf(System.currentTimeMillis()) + "_" + taskId;
 
         try {
@@ -83,12 +81,12 @@ public class MainActivity extends BridgeActivity {
 
     private void emitCompletionNavigation(Intent intent, String navigationId) {
         if (intent == null || navigationId == null || navigationId.isEmpty()) return;
-        int projectId = intent.getIntExtra(CodeCourseGenerationService.EXTRA_PROJECT_ID, 0);
-        int taskId = intent.getIntExtra(CodeCourseGenerationService.EXTRA_COMPLETION_TASK_ID, 0);
+        int projectId = intent.getIntExtra(CompletionNotificationContract.EXTRA_PROJECT_ID, 0);
+        int taskId = intent.getIntExtra(CompletionNotificationContract.EXTRA_COMPLETION_TASK_ID, 0);
         if (projectId <= 0 && taskId <= 0) return;
 
-        String taskType = intent.getStringExtra(CodeCourseGenerationService.EXTRA_TASK_TYPE);
-        String outputPath = intent.getStringExtra(CodeCourseGenerationService.EXTRA_OUTPUT_PATH);
+        String taskType = intent.getStringExtra(CompletionNotificationContract.EXTRA_TASK_TYPE);
+        String outputPath = intent.getStringExtra(CompletionNotificationContract.EXTRA_OUTPUT_PATH);
 
         try {
             JSONObject payload = new JSONObject();
@@ -139,22 +137,8 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onResume() {
-        // Keep the renderer alive while backgrounded so generation tasks can
-        // continue; must be an instance call on the bridge's WebView.
-        applyRendererPriority();
         super.onResume();
         applyFullscreen();
-    }
-
-    /** Instance call (non-static): keep the renderer alive while backgrounded. */
-    private void applyRendererPriority() {
-        if (bridge == null || bridge.getWebView() == null) return;
-        try {
-            bridge.getWebView().setRendererPriorityPolicy(
-                WebView.RENDERER_PRIORITY_IMPORTANT, false);
-        } catch (RuntimeException e) {
-            Log.w(TAG, "setRendererPriorityPolicy failed: " + e.getMessage());
-        }
     }
 
     @Override

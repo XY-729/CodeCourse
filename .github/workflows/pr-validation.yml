@@ -37,19 +37,13 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: TypeScript check
-        working-directory: frontend
-        run: npx tsc --noEmit
+        run: pnpm --dir frontend exec tsc --noEmit
 
       - name: Vitest
-        working-directory: frontend
-        run: npx vitest run
+        run: pnpm --dir frontend run test
 
-      - name: Frontend build
-        working-directory: frontend
-        run: npm run build
-
-      - name: Capacitor sync
-        run: npx cap sync android
+      - name: Build Android web assets and sync Capacitor
+        run: pnpm run mobile:sync
 
       - name: Gradle test
         working-directory: android

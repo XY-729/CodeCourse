@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build --configLoader runner",
+    "build:android": "tsc -b && vite build --mode android --configLoader runner",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run --configLoader runner"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",

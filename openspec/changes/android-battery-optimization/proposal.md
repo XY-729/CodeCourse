@@ -1,5 +1,7 @@
 # Proposal: android-battery-optimization
 
+> **状态：已废弃。** CodeCourse 不再以原生前台 Service/WakeLock 维持 WebView 生成，因此不再申请电池优化豁免。现行行为见 `android-foreground-generation-recovery`。
+
 ## Problem
 
 安卓端"后台生成"依赖前台服务（`CodeCourseGenerationService`，`startForeground` 已实现）。但 Android（尤其国产 ROM：MIUI/EMUI/ColorOS 等）默认对应用开启**电池优化**，系统会在后台冻结/杀死进程。app 从未申请**电池优化豁免**（`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`），用户在系统设置里也找不到对应的"后台运行/电池不受限制"入口（该入口在 ROM 电池设置页，非权限面板）。

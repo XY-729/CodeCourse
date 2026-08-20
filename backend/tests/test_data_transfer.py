@@ -62,6 +62,15 @@ def _seed_source(db_path: Path, repos_root: Path, generated_root: Path) -> None:
             (stamp, stamp),
         )
         conn.execute(
+            """INSERT INTO teaching_handoffs
+               (id,project_id,session_id,qa_record_id,engagement,topic,progress_summary,
+                established_points_json,unresolved_points_json,next_actions_json,source_type,
+                source_path,used_prior_context,is_current,dismissed_at,created_at,updated_at)
+               VALUES(45,7,31,41,'learning','迁移主题','已经理解关系','["关系会保留"]',
+                      '["继续验证"]','[]','course','outline.md',1,1,NULL,?,?)""",
+            (stamp, stamp),
+        )
+        conn.execute(
             """INSERT INTO knowledge_nodes
                (id,project_id,node_type,title,ref_type,ref_id,ref_path,summary,x,y,created_at,updated_at)
                VALUES(51,7,'course','项目总纲','course',NULL,'outline.md','总纲',10,20,?,?)""",
@@ -137,6 +146,7 @@ class DataTransferTests(unittest.TestCase):
             self.assertEqual(manifest["project_count"], 1)
             self.assertNotIn("llm.api_key", database["settings"])
             self.assertNotIn("code_chunks", database["tables"])
+            self.assertEqual(database["tables"]["teaching_handoffs"]["rows"][0][0], 45)
 
         target_db, _target_repos, target_generated = _init_workspace(self.target_root)
         stamp = "2026-08-20T13:00:00+00:00"
@@ -172,6 +182,8 @@ class DataTransferTests(unittest.TestCase):
                 (self.target_root / "portable-projects" / "7" / "repo").resolve(),
             )
             self.assertEqual(conn.execute("SELECT id FROM qa_records").fetchone()[0], 41)
+            handoff = conn.execute("SELECT topic,is_current FROM teaching_handoffs").fetchone()
+            self.assertEqual(tuple(handoff), ("迁移主题", 1))
             edge = conn.execute("SELECT source_node_id,target_node_id FROM knowledge_edges").fetchone()
             self.assertEqual(tuple(edge), (51, 52))
             self.assertAlmostEqual(conn.execute("SELECT position_value FROM learning_states").fetchone()[0], 0.42)

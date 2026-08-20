@@ -11,6 +11,8 @@ import {
   dismissDocumentTerm,
   getQARecord,
   getQASessionTree,
+  getQAContinuity,
+  dismissQAContinuity,
   getLearningAnchor,
   deleteProject,
   generateFileLesson,
@@ -42,6 +44,7 @@ import {
   listKnowledgeLinks,
   listProjects,
   listQARecords,
+  listQAThreads,
   regenerateProject,
   markDocumentTermKnown,
   markConceptKnown,
@@ -89,6 +92,9 @@ import type {
   KnowledgeLink,
   ProjectIndexStatus,
   QARecord,
+  QAThreadSummary,
+  TeachingHandoff,
+  TeachingNextAction,
   QAAskPayload,
   RetrievalSource,
   TreeNode,
@@ -104,13 +110,12 @@ import MobileMoreMenu from "./components/MobileMoreMenu";
 import type { MobileAssistantView } from "./components/MobileAssistantPanel";
 import MobileWorkspaceChrome, { type MobilePrimaryDestination, type MobileWorkspaceSheetHandle, type MobileWorkspaceTab } from "./components/MobileWorkspaceChrome";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
-import DesktopToolbar, { type GenerationIntent } from "./components/DesktopToolbar";
+import type { GenerationIntent } from "./components/DesktopToolbar";
 import { isGenerationTaskRunning } from "./components/generationTaskModel";
 import type { MobileGenerationView } from "./components/MobileGenerationPanel";
 import TitleBar from "./components/TitleBar";
 import AppOverlayLayer from "./components/AppOverlayLayer";
 import AppFeedbackLayer from "./components/AppFeedbackLayer";
-import GestureGuide from "./components/GestureGuide";
 import { useGestureCommands } from "./gestures/useGestureCommands";
 import type { UseTermDisplayParams } from "./personalization";
 import { usePersonalizationController } from "./personalization/usePersonalizationController";
@@ -118,7 +123,7 @@ import { useDocumentTermsController } from "./personalization/useDocumentTermsCo
 import { CodeCourseNative, isAndroidRuntime } from "./platform/runtime";
 import { getCodeCourseProvider } from "./platform/provider";
 import { markAndroidPerformance, scheduleAfterInteractiveFrame } from "./platform/android/performance";
-import { canRetry, permissionNotice as buildPermissionNotice, batteryNotice as buildBatteryNotice, type PermissionNotice, type ProviderNotice } from "./platform/android/generationState";
+import { canRetry, permissionNotice as buildPermissionNotice, type PermissionNotice, type ProviderNotice } from "./platform/android/generationState";
 import { useAppDialog } from "./hooks/useAppDialog";
 import { useQAAskController } from "./hooks/useQAAskController";
 import { useQAGenerationController } from "./hooks/useQAGenerationController";
@@ -179,7 +184,9 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 const MobileAssistantPanel = lazy(() => import("./components/MobileAssistantPanel"));
 const MobileGenerationPanel = lazy(() => import("./components/MobileGenerationPanel"));
 const MobileMePanel = lazy(() => import("./components/MobileMePanel"));
-const GenerationSheet = lazy(() => import("./components/GenerationSheet"));
+const DesktopToolbar = __ANDROID_BUILD__ ? null : lazy(() => import("./components/DesktopToolbar"));
+const GestureGuide = __ANDROID_BUILD__ ? null : lazy(() => import("./components/GestureGuide"));
+const GenerationSheet = __ANDROID_BUILD__ ? null : lazy(() => import("./components/GenerationSheet"));
 
 type ScopeType = LearningScope["type"];
 type ThemeMode = "light" | "dark";
@@ -350,6 +357,8 @@ export default function App() {
   const [qaResetToken, setQaResetToken] = useState(0);
   const [mobileAssistantView, setMobileAssistantView] = useState<MobileAssistantView>("ask");
   const [qaHistory, setQAHistory] = useState<QARecord[]>([]);
+  const [qaThreads, setQAThreads] = useState<QAThreadSummary[]>([]);
+  const [qaContinuity, setQAContinuity] = useState<TeachingHandoff | null>(null);
   const [qaHistoryQuery, setQAHistoryQuery] = useState("");
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
   const [qaUpperTab, setQAUpperTab] = useState<"history" | "knowledge">("history");
@@ -439,8 +448,6 @@ export default function App() {
   });
   const [permissionNotice, setPermissionNotice] = useState<PermissionNotice>(null);
   const dismissedPermissionStatusRef = useRef<string | null>(null);
-  const [batteryNotice, setBatteryNotice] = useState<ReturnType<typeof buildBatteryNotice>>(null);
-  const awaitingBatterySettingsRef = useRef(false);
 
   const activeTermSource = useMemo(() => {
     const item = getActiveOpenItem();
@@ -730,6 +737,7 @@ export default function App() {
       await Promise.all([
         refreshCourses(projectId),
         refreshQAHistory(projectId),
+        refreshQAContinuity(projectId),
         refreshKnowledgeLinks(projectId),
       ]);
       setKnowledgeRefreshKey((value) => value + 1);
@@ -807,9 +815,9 @@ export default function App() {
     return scheduleAfterInteractiveFrame(() => {
       void getCodeCourseProvider().then(async (provider) => {
         markAndroidPerformance("database-ready");
-        await provider.startBackgroundRecovery?.();
+        await provider.startRecovery?.();
       }).catch((error) => {
-        console.warn("Android background recovery failed", error);
+        console.warn("Android task recovery failed", error);
       });
     });
   }, [mobileRuntime]);
@@ -827,11 +835,9 @@ export default function App() {
           if (disposed) return;
           if (!notice) {
             setPermissionNotice(null);
-            setBatteryNotice(null);
             return;
           }
-          if (notice.kind === "permission") setPermissionNotice(notice.notice);
-          else setBatteryNotice(notice.notice);
+          setPermissionNotice(notice.notice);
         });
       }
     });
@@ -853,24 +859,13 @@ export default function App() {
           return;
         }
         void getCodeCourseProvider().then(async (provider) => {
-          await provider.reconcileGenerationServiceState?.().catch((error) => {
-            console.warn("Generation Service resume reconcile failed", error);
-          });
-          /*
-           * 前台服务状态同步完成后，
-           * 重新读取本地数据库中的真实任务状态。
-           */
+          // Re-read the persisted task state when the app returns. Generation
+          // is foreground-only, and checkpoints recover interrupted work.
           const currentProjectId = currentProjectIdRef.current;
           if (currentProjectId) {
             await reloadGenerationTasks(currentProjectId, true).catch((error) => {
               console.warn("Generation task resume sync failed", error);
             });
-          }
-          if (awaitingBatterySettingsRef.current) {
-            awaitingBatterySettingsRef.current = false;
-            provider.invalidateBatteryOptimization?.();
-            const state = await provider.getBatteryOptimizationStatus?.();
-            if (state) setBatteryNotice(buildBatteryNotice(state.ignoring));
           }
           if (!awaitingNotificationSettingsRef.current) return;
           awaitingNotificationSettingsRef.current = false;
@@ -896,22 +891,6 @@ export default function App() {
     void CodeCourseNative.openNotificationSettings().catch(() => {
       awaitingNotificationSettingsRef.current = false;
       setToast("无法打开通知设置");
-    });
-  }, []);
-
-  const handleOpenBatterySettings = useCallback(() => {
-    awaitingBatterySettingsRef.current = true;
-    void CodeCourseNative.requestIgnoreBatteryOptimizations().then((result) => {
-      if (result.granted) {
-        awaitingBatterySettingsRef.current = false;
-        setBatteryNotice(null);
-        return;
-      }
-      if (!result.fallback) return;
-      // 原生侧已回退打开应用详情页，回到 app 时重查。
-    }).catch(() => {
-      awaitingBatterySettingsRef.current = false;
-      setToast("无法打开电池设置");
     });
   }, []);
 
@@ -1438,6 +1417,25 @@ export default function App() {
       setQAPanelError("");
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "加载历史失败");
+    }
+  }
+
+  async function refreshQAContinuity(projectId = project?.id) {
+    if (!projectId) {
+      setQAContinuity(null);
+      setQAThreads([]);
+      return;
+    }
+    try {
+      const [continuity, threads] = await Promise.all([
+        getQAContinuity(projectId),
+        listQAThreads(projectId),
+      ]);
+      if (currentProjectIdRef.current !== projectId) return;
+      setQAContinuity(continuity);
+      setQAThreads(threads);
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "加载教学进展失败");
     }
   }
 
@@ -2065,6 +2063,8 @@ export default function App() {
       setIndexStatus(null);
       setLearningStates([]);
       setQAHistory([]);
+      setQAThreads([]);
+      setQAContinuity(null);
       resetCallGuides();
       setIndexBuilding(false);
       setScopeType(freshProject.project_type === "learning_plan" ? "learning_plan" : "full_project");
@@ -2092,6 +2092,7 @@ export default function App() {
       setLayout(initialLayout);
       setActiveGroupId(ROOT_GROUP_ID);
       markDesktopPerformance("project-metadata-visible", { project_id: freshProject.id });
+      void refreshQAContinuity(freshProject.id);
 
       // 阅读恢复只依赖学习位置和工作区数据，不等待模型、索引、历史或画像。
       const nextLearningStatesPromise = getLearningStates(freshProject.id).catch(() => []);
@@ -2789,6 +2790,8 @@ export default function App() {
         setSelectedScopeFiles([]);
         setSelectionAnchor(null);
         setQAHistory([]);
+        setQAThreads([]);
+        setQAContinuity(null);
         setHighlights([]);
         setKnowledgeLinks([]);
         setLearningStates([]);
@@ -2837,6 +2840,74 @@ export default function App() {
     setQAUpperTab("history");
     setMobileAssistantView("ask");
     startNewQADraft();
+  }
+
+  async function handleResumeContinuity(handoff: TeachingHandoff) {
+    if (!project || handoff.projectId !== project.id) return;
+    try {
+      const record = qaHistory.find((item) => item.id === handoff.qaRecordId)
+        ?? await getQARecord(project.id, handoff.qaRecordId);
+      setSelectedQA(record);
+      setQASessionId(record.session_id ?? handoff.sessionId ?? null);
+      clearQAQuestionInput();
+      openAssistant("history");
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "无法继续上次学习");
+    }
+  }
+
+  async function handleOpenContinuitySource(
+    handoff: TeachingHandoff,
+    action?: TeachingNextAction,
+  ) {
+    if (!project || handoff.projectId !== project.id) return;
+    const sourceType = action?.sourceType || handoff.sourceType;
+    const sourcePath = action?.sourcePath || handoff.sourcePath;
+    try {
+      if (sourceType === "course" && sourcePath) {
+        await openCourseInActiveGroup(project.id, sourcePath);
+      } else if (sourceType === "file" && sourcePath) {
+        await openFileInActiveGroup(project.id, sourcePath);
+      } else if (sourceType === "qa") {
+        const numericId = Number(sourcePath);
+        const linked = sourcePath
+          ? qaHistory.find((record) => record.output_path === sourcePath || String(record.id) === sourcePath)
+          : null;
+        await openQAById(linked?.id || (Number.isInteger(numericId) && numericId > 0 ? numericId : handoff.qaRecordId));
+      }
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "打开关联内容失败");
+    }
+  }
+
+  async function handleDismissContinuity(handoff: TeachingHandoff) {
+    if (!project || handoff.projectId !== project.id) return;
+    try {
+      await dismissQAContinuity(project.id);
+      await refreshQAContinuity(project.id);
+      setToast("已结束当前学习主题");
+    } catch (caught) {
+      setQAPanelError(caught instanceof Error ? caught.message : "结束学习主题失败");
+    }
+  }
+
+  function handleTeachingNextAction(action: TeachingNextAction, handoff: TeachingHandoff) {
+    if (action.kind === "follow_up") {
+      const prompt = action.prompt?.trim() || action.label;
+      setQAQuestionInput(prompt);
+      setQaResetToken((token) => token + 1);
+      openAssistant("history");
+      return;
+    }
+    if (action.kind === "open_source") {
+      void handleOpenContinuitySource(handoff, action);
+      return;
+    }
+    if (action.kind === "review") {
+      void openQAById(handoff.qaRecordId).catch((caught) => {
+        setQAPanelError(caught instanceof Error ? caught.message : "打开回答失败");
+      });
+    }
   }
 
   async function generateTermExplanation(term: DocumentTerm) {
@@ -3636,6 +3707,7 @@ export default function App() {
       );
       await refreshCourses(project.id);
       await refreshKnowledgeLinks(project.id);
+      await refreshQAContinuity(project.id);
       setKnowledgeRefreshKey((value) => value + 1);
     } catch (caught) {
       setQAPanelError(caught instanceof Error ? caught.message : "删除失败");
@@ -3669,6 +3741,7 @@ export default function App() {
         }
       }
       await refreshCourses(project.id);
+      await refreshQAContinuity(project.id);
       const itemId = `course:${file.filename}`;
       setLayout((prev) =>
         updateEveryGroup(prev, (group) => ({
@@ -3724,6 +3797,9 @@ export default function App() {
         source_path: record.source_type === "course" && record.source_path === file.filename ? renamed.filename : record.source_path,
         output_path: record.output_path === file.filename ? renamed.filename : record.output_path,
         display_title: record.output_path === file.filename ? renamed.title : record.display_title,
+        teaching_handoff: record.teaching_handoff?.sourceType === "course" && record.teaching_handoff.sourcePath === file.filename
+          ? { ...record.teaching_handoff, sourcePath: renamed.filename }
+          : record.teaching_handoff,
       } : record);
       setQASessionTree((items) => items.map((record) => ({
         ...record,
@@ -3737,6 +3813,7 @@ export default function App() {
         refreshHighlights(project.id),
         refreshKnowledgeLinks(project.id),
         refreshQAHistory(project.id),
+        refreshQAContinuity(project.id),
       ]);
       setKnowledgeRefreshKey((value) => value + 1);
       setToast(`已重命名为“${renamed.title}”`);
@@ -4635,6 +4712,8 @@ export default function App() {
         loadingLabel={qaBusyLabel}
         streamContent={visibleQAGeneration?.partial}
         history={qaHistory}
+        threads={qaThreads}
+        continuity={qaContinuity}
         historyQuery={qaHistoryQuery}
         favoriteOnly={qaFavoriteOnly}
         selectedRecord={selectedQA}
@@ -4660,6 +4739,10 @@ export default function App() {
         onDeleteRecord={handleDeleteQA}
         onRenameRecord={handleRenameQA}
         onToggleFavorite={handleToggleFavorite}
+        onResumeContinuity={(handoff) => { void handleResumeContinuity(handoff); }}
+        onOpenContinuitySource={(handoff) => { void handleOpenContinuitySource(handoff); }}
+        onDismissContinuity={(handoff) => { void handleDismissContinuity(handoff); }}
+        onTeachingNextAction={handleTeachingNextAction}
         onOpenSettings={openSettings}
         onAnswerSurvey={(choice) => { void handleDynamicSurveyAnswer(choice); }}
         onDismissSurvey={() => { void handleDynamicSurveyDismiss(); }}
@@ -4688,6 +4771,8 @@ export default function App() {
         loadingLabel={qaBusyLabel}
         streamContent={visibleQAGeneration?.partial}
         history={qaHistory}
+        threads={qaThreads}
+        continuity={qaContinuity}
         historyQuery={qaHistoryQuery}
         favoriteOnly={qaFavoriteOnly}
         selectedRecord={selectedQA}
@@ -4711,6 +4796,10 @@ export default function App() {
         onDeleteRecord={handleDeleteQA}
         onRenameRecord={handleRenameQA}
         onToggleFavorite={handleToggleFavorite}
+        onResumeContinuity={(handoff) => { void handleResumeContinuity(handoff); }}
+        onOpenContinuitySource={(handoff) => { void handleOpenContinuitySource(handoff); }}
+        onDismissContinuity={(handoff) => { void handleDismissContinuity(handoff); }}
+        onTeachingNextAction={handleTeachingNextAction}
         onOpenSettings={openSettings}
         onAnswerSurvey={(choice) => { void handleDynamicSurveyAnswer(choice); }}
         onDismissSurvey={() => { void handleDynamicSurveyDismiss(); }}
@@ -4926,7 +5015,7 @@ export default function App() {
           </div>
         </div>
       ) : null}
-      {!mobileRuntime ? (
+      {!mobileRuntime && DesktopToolbar ? (
         <DesktopToolbar
           project={project}
           projects={projects}
@@ -4987,7 +5076,6 @@ export default function App() {
       <AppFeedbackLayer
         permissionNotice={permissionNotice}
         permissionNoticeDismissed={Boolean(permissionNotice && dismissedPermissionStatusRef.current === permissionNotice.status)}
-        batteryNotice={batteryNotice}
         error={mobileRuntime && mobileWorkspaceTab ? "" : error}
         busy={showBusy && !(mobileRuntime && mobileWorkspaceTab)}
         label={dataTransferBusy ? taskMessage : qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
@@ -4998,11 +5086,9 @@ export default function App() {
         gestureHint={gestureHint}
         onOpenNotificationSettings={handleOpenNotificationSettings}
         onDismissPermissionNotice={handleDismissPermissionNotice}
-        onOpenBatterySettings={handleOpenBatterySettings}
-        onDismissBatteryNotice={() => setBatteryNotice(null)}
         onDismissError={() => setError("")}
       />
-      <GestureGuide open={gestureGuideOpen && !mobileRuntime} onClose={() => setGestureGuideOpen(false)} />
+      {GestureGuide ? <GestureGuide open={gestureGuideOpen && !mobileRuntime} onClose={() => setGestureGuideOpen(false)} /> : null}
       <WorkbenchSurface
         mobile={mobileRuntime}
         mobilePanelOpen={mobileRuntime && Boolean(navigationOpen || mobileWorkspaceTab)}
@@ -5065,7 +5151,7 @@ export default function App() {
           }}
         />
       ) : null}
-      {!mobileRuntime ? (
+      {!mobileRuntime && GenerationSheet ? (
         <GenerationSheet
           open={generationOpen}
           intent={generationIntent}

@@ -7,11 +7,27 @@ const packageVersion = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 ).version as string;
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const androidBuild = mode === "android";
+  return {
   base: "./",
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: "codecourse-platform-entry",
+      transformIndexHtml: {
+        order: "pre",
+        handler(html) {
+          return androidBuild
+            ? html.replace('/src/main.tsx', '/src/main.android.tsx')
+            : html;
+        },
+      },
+    },
+  ],
   define: {
     __CODECOURSE_VERSION__: JSON.stringify(packageVersion),
+    __ANDROID_BUILD__: JSON.stringify(androidBuild),
   },
   server: {
     host: "0.0.0.0",
@@ -47,4 +63,5 @@ export default defineConfig({
     globals: true,
     setupFiles: [],
   },
+  };
 });

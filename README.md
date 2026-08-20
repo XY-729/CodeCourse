@@ -307,10 +307,12 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### 2. Web 前端
 
+Node.js 22 与 pnpm 10.16.1 为项目统一的 JavaScript 工具链；依赖版本以根目录 `pnpm-lock.yaml` 为准。
+
 ```bash
 cd frontend
-npm install
-npm run dev -- --host 0.0.0.0
+pnpm install
+pnpm run dev -- --host 0.0.0.0
 ```
 
 浏览器访问：
@@ -324,15 +326,15 @@ http://localhost:5173
 在项目根目录安装依赖后运行：
 
 ```bash
-npm install
-npm run desktop:dev
+pnpm install
+pnpm run desktop:dev
 ```
 
 ### 4. Windows 桌面打包
 
 ```powershell
-npm run desktop:pack
-npm run desktop:release
+pnpm run desktop:pack
+pnpm run desktop:release
 ```
 
 输出目录：
@@ -346,8 +348,8 @@ dist-desktop/
 需要 JDK 21、Android SDK 36 和 Gradle Wrapper：
 
 ```bash
-npm install
-npm run mobile:build
+pnpm install
+pnpm run mobile:build
 ```
 
 APK 默认输出到：
@@ -368,13 +370,13 @@ PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -v
 前端：
 
 ```bash
-npm --prefix frontend run build
+pnpm --dir frontend run build
 ```
 
 Android：
 
 ```bash
-npm run mobile:sync
+pnpm run mobile:sync
 cd android
 ./gradlew testDebugUnitTest assembleDebug
 ```
@@ -389,3 +391,4 @@ CodeCourse 的目标是帮助用户阅读和学习代码，不是替代 IDE。
 - 不保证生成完整、静态可证明的全项目调用图；
 - 模型回答仍可能出错，重要结论应结合“参考代码”回到源码验证；
 - Android 第一版只支持公开仓库快照和本地 ZIP。
+- Android 的生成逻辑运行在当前 WebView 中，需要保持应用在前台；若应用被系统挂起或终止，重新打开后会从已保存的检查点恢复。

@@ -926,7 +926,7 @@ export default function MobileGenerationPanel({
 
                     {running ? (
                       <span>
-                        可以关闭应用，任务会在后台继续。
+                        生成依赖当前页面，请保持应用在前台；中断后会从已保存的检查点恢复。
                       </span>
                     ) : null}
                   </footer>

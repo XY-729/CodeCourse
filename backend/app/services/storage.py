@@ -80,6 +80,27 @@ class QASession:
 
 
 @dataclass
+class TeachingHandoff:
+    id: int
+    project_id: int
+    session_id: Optional[int]
+    qa_record_id: int
+    engagement: str
+    topic: str
+    progress_summary: str
+    established_points_json: str
+    unresolved_points_json: str
+    next_actions_json: str
+    source_type: Optional[str]
+    source_path: Optional[str]
+    used_prior_context: bool
+    is_current: bool
+    dismissed_at: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+@dataclass
 class CodeChunk:
     id: int
     project_id: int
@@ -577,6 +598,44 @@ def init_storage() -> None:
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY(project_id) REFERENCES projects(id)
             )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS teaching_handoffs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id INTEGER NOT NULL,
+                session_id INTEGER,
+                qa_record_id INTEGER NOT NULL UNIQUE,
+                engagement TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                progress_summary TEXT NOT NULL,
+                established_points_json TEXT NOT NULL DEFAULT '[]',
+                unresolved_points_json TEXT NOT NULL DEFAULT '[]',
+                next_actions_json TEXT NOT NULL DEFAULT '[]',
+                source_type TEXT,
+                source_path TEXT,
+                used_prior_context INTEGER NOT NULL DEFAULT 0,
+                is_current INTEGER NOT NULL DEFAULT 0,
+                dismissed_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY(project_id) REFERENCES projects(id),
+                FOREIGN KEY(qa_record_id) REFERENCES qa_records(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_teaching_handoffs_current
+            ON teaching_handoffs(project_id)
+            WHERE is_current = 1
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_teaching_handoffs_session
+            ON teaching_handoffs(project_id, session_id, updated_at DESC)
             """
         )
         conn.execute(
@@ -1841,6 +1900,28 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
     )
 
 
+def _row_to_teaching_handoff(row: sqlite3.Row) -> TeachingHandoff:
+    return TeachingHandoff(
+        id=int(row["id"]),
+        project_id=int(row["project_id"]),
+        session_id=row["session_id"],
+        qa_record_id=int(row["qa_record_id"]),
+        engagement=row["engagement"],
+        topic=row["topic"],
+        progress_summary=row["progress_summary"],
+        established_points_json=row["established_points_json"] or "[]",
+        unresolved_points_json=row["unresolved_points_json"] or "[]",
+        next_actions_json=row["next_actions_json"] or "[]",
+        source_type=row["source_type"],
+        source_path=row["source_path"],
+        used_prior_context=bool(row["used_prior_context"]),
+        is_current=bool(row["is_current"]),
+        dismissed_at=row["dismissed_at"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
 def _row_to_document_term(row: sqlite3.Row) -> DocumentTerm:
     source_span = None
     if "source_span_json" in row.keys() and row["source_span_json"]:
@@ -2152,6 +2233,7 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM misconception_hypotheses WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM teaching_outcomes WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM teaching_trials WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM teaching_handoffs WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM teacher_plans WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM teacher_plan_runs WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM shadow_learner_snapshots WHERE project_id = ?", (project_id,))
@@ -2692,6 +2774,128 @@ def list_qa_session_records(project_id: int, session_id: int) -> list[QARecord]:
             (project_id, session_id),
         ).fetchall()
         return [_row_to_qa_record(row) for row in rows]
+
+
+def create_teaching_handoff(
+    *,
+    project_id: int,
+    session_id: Optional[int],
+    qa_record_id: int,
+    engagement: str,
+    topic: str,
+    progress_summary: str,
+    established_points: list[str],
+    unresolved_points: list[str],
+    next_actions: list[dict[str, object]],
+    source_type: Optional[str],
+    source_path: Optional[str],
+    used_prior_context: bool,
+) -> TeachingHandoff:
+    now = datetime.now(timezone.utc).isoformat()
+
+    def transaction(conn: sqlite3.Connection) -> TeachingHandoff:
+        existing = conn.execute(
+            "SELECT * FROM teaching_handoffs WHERE project_id = ? AND qa_record_id = ?",
+            (project_id, qa_record_id),
+        ).fetchone()
+        if existing is not None:
+            return _row_to_teaching_handoff(existing)
+        conn.execute(
+            "UPDATE teaching_handoffs SET is_current = 0, updated_at = ? WHERE project_id = ? AND is_current = 1",
+            (now, project_id),
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO teaching_handoffs (
+                project_id, session_id, qa_record_id, engagement, topic,
+                progress_summary, established_points_json,
+                unresolved_points_json, next_actions_json, source_type,
+                source_path, used_prior_context, is_current, dismissed_at,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)
+            """,
+            (
+                project_id,
+                session_id,
+                qa_record_id,
+                engagement,
+                topic,
+                progress_summary,
+                json.dumps(established_points, ensure_ascii=False),
+                json.dumps(unresolved_points, ensure_ascii=False),
+                json.dumps(next_actions, ensure_ascii=False),
+                source_type,
+                source_path,
+                1 if used_prior_context else 0,
+                now,
+                now,
+            ),
+        )
+        row = conn.execute(
+            "SELECT * FROM teaching_handoffs WHERE id = ?",
+            (int(cursor.lastrowid),),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("teaching handoff was not persisted")
+        return _row_to_teaching_handoff(row)
+
+    return run_in_transaction(transaction)  # type: ignore[return-value]
+
+
+def get_current_teaching_handoff(project_id: int) -> Optional[TeachingHandoff]:
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM teaching_handoffs
+            WHERE project_id = ? AND is_current = 1 AND dismissed_at IS NULL
+            ORDER BY updated_at DESC, id DESC LIMIT 1
+            """,
+            (project_id,),
+        ).fetchone()
+        return _row_to_teaching_handoff(row) if row else None
+
+
+def get_teaching_handoff_for_qa(project_id: int, qa_record_id: int) -> Optional[TeachingHandoff]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM teaching_handoffs WHERE project_id = ? AND qa_record_id = ? LIMIT 1",
+            (project_id, qa_record_id),
+        ).fetchone()
+        return _row_to_teaching_handoff(row) if row else None
+
+
+def list_teaching_handoffs(project_id: int) -> list[TeachingHandoff]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM teaching_handoffs WHERE project_id = ? ORDER BY updated_at DESC, id DESC",
+            (project_id,),
+        ).fetchall()
+        return [_row_to_teaching_handoff(row) for row in rows]
+
+
+def dismiss_current_teaching_handoff(project_id: int) -> Optional[TeachingHandoff]:
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM teaching_handoffs WHERE project_id = ? AND is_current = 1 LIMIT 1",
+            (project_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute(
+            """
+            UPDATE teaching_handoffs
+            SET is_current = 0, dismissed_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, row["id"]),
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT * FROM teaching_handoffs WHERE id = ?",
+            (row["id"],),
+        ).fetchone()
+        return _row_to_teaching_handoff(updated) if updated else None
 
 
 def set_project_index_status(
@@ -3398,6 +3602,10 @@ def delete_qa_record(project_id: int, record_id: int) -> bool:
             "UPDATE qa_records SET parent_qa_id = NULL WHERE project_id = ? AND parent_qa_id = ?",
             (project_id, record_id),
         )
+        conn.execute(
+            "DELETE FROM teaching_handoffs WHERE project_id = ? AND qa_record_id = ?",
+            (project_id, record_id),
+        )
         for node_id in qa_nodes:
             conn.execute(
                 "DELETE FROM knowledge_edges WHERE project_id = ? AND (source_node_id = ? OR target_node_id = ?)",
@@ -3637,6 +3845,11 @@ def rename_course_references(
         )
         conn.execute(
             "UPDATE qa_sessions SET active_source_path = ?, updated_at = ? WHERE project_id = ? AND active_source_path = ?",
+            (new_path, now, project_id, old_path),
+        )
+        conn.execute(
+            "UPDATE teaching_handoffs SET source_path = ?, updated_at = ? "
+            "WHERE project_id = ? AND source_type = 'course' AND source_path = ?",
             (new_path, now, project_id, old_path),
         )
         for table in ("highlights", "knowledge_links", "document_terms", "learning_states", "term_impressions", "term_model_scans"):

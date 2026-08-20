@@ -1,5 +1,7 @@
 # Tasks
 
+> **状态：已废弃。** 下列任务仅保留为历史记录，不再作为当前待办。
+
 ## REQ-1 原生
 
 - [x] 1.1 Manifest 加 `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`

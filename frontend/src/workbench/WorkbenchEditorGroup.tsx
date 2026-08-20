@@ -19,7 +19,7 @@ import type { TermDisplayTier } from "../personalization/termDisplayTypes";
 import EditorPaneFrame from "./EditorPaneFrame";
 import type { EditorGroup, OpenItem } from "./layout";
 
-const CallGuideViewer = lazy(() => import("../components/CallGuideViewer"));
+const CallGuideViewer = __ANDROID_BUILD__ ? null : lazy(() => import("../components/CallGuideViewer"));
 const KnowledgeGraphViewer = lazy(() => import("../components/KnowledgeGraphViewer"));
 const MarkdownViewer = lazy(() => import("../components/MarkdownViewer"));
 
@@ -405,7 +405,7 @@ function WorkbenchEditorGroupView(props: Props) {
         </div>
       ) : null}
 
-      {!mobile && !editorMountDeferred && !activeItemLoading && activeItem?.type === "call_guide" ? (() => {
+      {CallGuideViewer && !mobile && !editorMountDeferred && !activeItemLoading && activeItem?.type === "call_guide" ? (() => {
         const guide = props.callGuides.find((entry) => entry.id === activeItem.callGuideId);
         if (!guide) return <div className="viewer-loading">正在恢复调用链导览…</div>;
         return (

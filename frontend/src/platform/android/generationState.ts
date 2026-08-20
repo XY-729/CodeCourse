@@ -1,17 +1,6 @@
 // Shared generation state logic used by both localProvider and tests.
 // Do NOT copy implementations when testing — import from here.
 
-export type ServiceState = "stopped" | "starting" | "running" | "stopping" | "unknown" | "failed";
-
-export type ServiceSnapshot = {
-  state: ServiceState;
-  sessionId: number;
-  taskId: number;
-  activeTaskCount: number;
-  generationSessionId: number;
-  foregroundTaskId: number;
-};
-
 export const CHECKPOINT_VERSION = 1;
 
 // ---- checkpoint validation ----
@@ -177,16 +166,6 @@ export function buildCompletionLabel(taskType: string, projectName: string, outp
   return `${projectName} · ${h1}已生成`;
 }
 
-// ---- progress throttle ----
-
-export function shouldSendProgress(
-  firstUpdate: boolean, labelChanged: boolean, indeterminateChanged: boolean,
-  isComplete: boolean, stale: boolean, pctChanged: boolean,
-): boolean {
-  if (firstUpdate || labelChanged || indeterminateChanged || isComplete) return true;
-  return stale || pctChanged;
-}
-
 // ---- retry eligibility ----
 
 export function canRetry(status: string): boolean {
@@ -204,17 +183,6 @@ export function buildSlimCheckpoint(taskType: string, inputHash: string, outputP
     outputPath,
     completedAt: new Date().toISOString(),
   };
-}
-
-// ---- service state transitions ----
-
-export function serviceStateTransition(
-  current: ServiceState,
-  target: ServiceState,
-  validTargets: ServiceState[],
-): ServiceState {
-  if (validTargets.includes(current)) return target;
-  return current;
 }
 
 // ---- permission notice ----
@@ -235,31 +203,19 @@ export type PermissionNotice = {
   showSettingsAction: boolean;
 } | null;
 
-export type BatteryNotice = {
-  message: string;
-} | null;
-
-/** Notice channel emitted by the provider; `null` clears both banners. */
+/** Notice channel emitted by the provider; `null` clears the banner. */
 export type ProviderNotice =
   | { kind: "permission"; notice: Exclude<PermissionNotice, null> }
-  | { kind: "battery"; notice: Exclude<BatteryNotice, null> }
   | null;
-
-export function batteryNotice(ignoring: boolean): BatteryNotice {
-  if (ignoring) return null;
-  return {
-    message: "后台生成可能被系统停止。建议在电池设置中允许 CodeCourse 后台运行。",
-  };
-}
 
 export function permissionNotice(result: NotificationPermissionResult): PermissionNotice {
   switch (result.status) {
     case "denied":
-      return { status: "denied", message: "生成仍会继续，但后台进度和完成提醒可能不可见。", showSettingsAction: false };
+      return { status: "denied", message: "生成完成提醒不可见；生成请保持应用在前台。", showSettingsAction: false };
     case "denied_permanently":
-      return { status: "denied_permanently", message: "生成仍会继续，但后台进度和完成提醒可能不可见。", showSettingsAction: true };
+      return { status: "denied_permanently", message: "生成完成提醒不可见；生成请保持应用在前台。", showSettingsAction: true };
     case "notifications_disabled":
-      return { status: "notifications_disabled", message: "系统已关闭 CodeCourse 通知。生成仍会继续，但后台提醒不可见。", showSettingsAction: true };
+      return { status: "notifications_disabled", message: "系统已关闭 CodeCourse 通知，生成完成提醒不可见。", showSettingsAction: true };
     case "no_activity":
     case "error":
     case "not_required":

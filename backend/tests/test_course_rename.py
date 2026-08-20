@@ -43,9 +43,13 @@ class CourseRenameTests(unittest.TestCase):
 
     def test_rename_sub_outline_keeps_graph_edges_and_moves_references(self):
         from app.services.storage import (
+            create_qa_record,
+            create_teaching_handoff,
             create_highlight,
             create_knowledge_edge,
             create_knowledge_node,
+            get_current_teaching_handoff,
+            get_or_create_qa_session,
             upsert_learning_state,
         )
 
@@ -72,6 +76,17 @@ class CourseRenameTests(unittest.TestCase):
         edge = create_knowledge_edge(self.project_id, outline_node.id, lesson_node.id, "parent_of")
         create_highlight(self.project_id, "course", old_name, "term", "yellow")
         upsert_learning_state(self.project_id, "course", old_name, "in_progress", "scroll_ratio", 0.4)
+        session = get_or_create_qa_session(self.project_id)
+        qa_record = create_qa_record(
+            self.project_id, "course", old_name, "Old outline", "如何阅读？", "从入口开始。",
+            "test", "test", session_id=session.id,
+        )
+        create_teaching_handoff(
+            project_id=self.project_id, session_id=session.id, qa_record_id=qa_record.id,
+            engagement="learning", topic="阅读总纲", progress_summary="已经看完入口",
+            established_points=[], unresolved_points=["继续看子模块"], next_actions=[],
+            source_type="course", source_path=old_name, used_prior_context=False,
+        )
 
         response = self.client.patch(
             f"/api/projects/{self.project_id}/course/{old_name}",
@@ -96,6 +111,7 @@ class CourseRenameTests(unittest.TestCase):
             f"/api/projects/{self.project_id}/highlights?source_type=course&source_path={quote(new_name, safe='')}"
         ).json()
         self.assertEqual(len(highlights), 1)
+        self.assertEqual(get_current_teaching_handoff(self.project_id).source_path, new_name)
 
         courses = self.client.get(f"/api/projects/{self.project_id}/course").json()
         renamed_course = next(item for item in courses if item["filename"] == new_name)

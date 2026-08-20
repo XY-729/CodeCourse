@@ -1,20 +1,16 @@
 import { CapacitorHttp, HttpResponse } from "@capacitor/core";
 import { CodeCourseNative, CodeCourseSecureStore } from "../runtime";
-import type { BatteryOptimizationState, NotificationPermissionResult, NotificationPermissionStatus } from "../runtime";
+import type { NotificationPermissionResult, NotificationPermissionStatus } from "../runtime";
 import type { CodeCourseProvider } from "../provider";
 import {
   CHECKPOINT_VERSION as CP_VER,
   parseOutlineCheckpoint, parseDetailedLessonCheckpoint,
   courseGroupForTaskType, buildCompletionLabel,
-  canRetry, buildSlimCheckpoint, permissionNotice, batteryNotice,
+  canRetry, buildSlimCheckpoint, permissionNotice,
   type ProviderNotice,
   type OutlineCheckpoint, type DetailedLessonCheckpoint,
   type LessonPlan as GsLessonPlan,
 } from "./generationState";
-import {
-  GenerationServiceCoordinator,
-  type ProgressSnapshot,
-} from "./generationServiceCoordinator";
 
 // Local aliases matching the original localProvider types
 type LessonPlan = GsLessonPlan;
@@ -24,6 +20,7 @@ import type {
   CourseFile, GenerationTask, HighlightRecord, KnowledgeEdge, KnowledgeGraph, KnowledgeLink, KnowledgeNode,
   LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, OutlinePreflight, OutlineQuestion, OutlineSurveyAnswer, Project, ProjectIndexStatus, ProjectSearchResult,
   QAAskPayload, QARecord, TreeNode,
+  QAThreadSummary, TeachingHandoff,
   PersonalizationConcept, PersonalizationMastery, PersonalizationEvent,
   LearnerPreferences, PersonalizationProfile, LearnerInference,
   KnowledgeStateV2,
@@ -34,6 +31,11 @@ import {
   shouldOfferStyleSurvey,
 } from "../../personalization/preferenceEngine";
 import { composeSystemPrompt } from "../../personalization/promptContracts";
+import {
+  parseHandoffMetadata,
+  renderProjectLearningContext,
+  type ParsedHandoffMetadata,
+} from "../../personalization/continuity";
 import {
   buildTeacherPlannerUserPrompt,
   effectiveTeachingPlan,
@@ -355,6 +357,32 @@ function taskFromRow(row: Row): GenerationTask {
 function qaFromRow(row: Row): QARecord {
   return { ...row, id: Number(row.id), project_id: Number(row.project_id), favorite: bool(row.favorite), selected_text: String(row.selected_text || "") } as QARecord;
 }
+function handoffFromRow(row: Row, sourceAvailable: boolean): TeachingHandoff {
+  const parseList = (value: unknown): unknown[] => {
+    try { const parsed = JSON.parse(String(value || "[]")); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+  };
+  const nextActions = parseList(row.next_actions_json).filter((item) => item && typeof item === "object") as TeachingHandoff["nextActions"];
+  return {
+    id: Number(row.id),
+    projectId: Number(row.project_id),
+    sessionId: row.session_id == null ? null : Number(row.session_id),
+    qaRecordId: Number(row.qa_record_id),
+    engagement: "learning",
+    topic: String(row.topic || ""),
+    progressSummary: String(row.progress_summary || ""),
+    establishedPoints: parseList(row.established_points_json).map(String),
+    unresolvedPoints: parseList(row.unresolved_points_json).map(String),
+    nextActions: sourceAvailable ? nextActions : nextActions.filter((item) => item.kind !== "open_source"),
+    sourceType: (row.source_type || null) as TeachingHandoff["sourceType"],
+    sourcePath: row.source_path == null ? null : String(row.source_path),
+    sourceAvailable,
+    usedPriorContext: bool(row.used_prior_context),
+    isCurrent: bool(row.is_current),
+    dismissedAt: row.dismissed_at == null ? null : String(row.dismissed_at),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
 function learningStateFromRow(row: Row): LearningState {
   return {
     id: Number(row.id),
@@ -385,12 +413,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private runningTasks = new Set<number>();
   private runningIndexes = new Set<number>();
   private promptStates: Record<string, Record<string, unknown>> = {};
-  /** 1s keep-alive ticks per running task; cleared when the task ends. */
-  private heartbeatIntervals = new Map<number, number>();
-  private backgroundRecoveryPromise: Promise<void> | null = null;
-
-  // The coordinator is the only owner of foreground Service state.
-  private readonly serviceCoordinator = new GenerationServiceCoordinator(CodeCourseNative);
+  private recoveryPromise: Promise<void> | null = null;
   private readonly diagnostics = new AndroidDiagnosticService(db, teachingOutcomes, {
     ensureProject: (projectId) => this.getProject(projectId),
     appendEvidence: (projectId, payload, inTransaction) => (
@@ -464,7 +487,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   // ---- notice channel ----
   private onPermissionNotice: ((notice: ProviderNotice) => void) | null = null;
 
-  /** Register a callback for permission/battery UI notices. */
+  /** Register a callback for completion-notification permission notices. */
   setPermissionNoticeHandler(handler: ((notice: ProviderNotice) => void) | null) {
     this.onPermissionNotice = handler;
   }
@@ -483,41 +506,24 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
 
   /** Resume persisted work after the first interactive frame. Safe to call repeatedly. */
-  async startBackgroundRecovery(): Promise<void> {
-    if (this.backgroundRecoveryPromise) return this.backgroundRecoveryPromise;
-    this.backgroundRecoveryPromise = (async () => {
+  async startRecovery(): Promise<void> {
+    if (this.recoveryPromise) return this.recoveryPromise;
+    this.recoveryPromise = (async () => {
       await this.resumeTasks();
-      await this.reconcileGenerationServiceState().catch((error) => {
-        console.warn("Initial generation Service reconcile failed", error);
-      });
       void this.resumeIndexes();
       void this.resumeObserverJobs().catch((error) => {
         console.warn("Observer job resume failed", error);
       });
     })().catch((error) => {
-      this.backgroundRecoveryPromise = null;
+      this.recoveryPromise = null;
       throw error;
     });
-    return this.backgroundRecoveryPromise;
-  }
-
-  // ==================================================================
-  //  Service State Synchronizer
-  // ==================================================================
-
-  private async syncGenerationServiceState(): Promise<void> {
-    await this.serviceCoordinator.sync();
-  }
-
-  async reconcileGenerationServiceState(): Promise<void> {
-    await this.serviceCoordinator.reconcile();
+    return this.recoveryPromise;
   }
 
   // ==================================================================
   //  Notification Permission
   // ==================================================================
-
-  private batteryState: boolean | null = null;
 
   private async ensureNotificationPermission(): Promise<void> {
     if (this.permissionResult) {
@@ -540,35 +546,6 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     this.permissionPromise = null;
   }
 
-  private async ensureBatteryOptimization(): Promise<void> {
-    if (this.batteryState !== null) {
-      this.emitBatteryNotice(this.batteryState);
-      return;
-    }
-    try {
-      const state = await CodeCourseNative.isIgnoringBatteryOptimizations();
-      this.batteryState = state.ignoring;
-      this.emitBatteryNotice(state.ignoring);
-    } catch {
-      // 查询失败时静默跳过，不阻塞生成。
-    }
-  }
-
-  /** Re-check battery exemption after returning from system settings. */
-  invalidateBatteryOptimization() {
-    this.batteryState = null;
-  }
-
-  async getBatteryOptimizationStatus(): Promise<BatteryOptimizationState> {
-    try {
-      const state = await CodeCourseNative.isIgnoringBatteryOptimizations();
-      this.batteryState = state.ignoring;
-      return state;
-    } catch {
-      return { ignoring: this.batteryState ?? false };
-    }
-  }
-
   async getNotificationPermissionStatus(): Promise<NotificationPermissionResult> {
     this.permissionResult = await CodeCourseNative.getNotificationPermissionStatus();
     this.permissionPromise = null;
@@ -589,22 +566,19 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
   }
 
-  private emitBatteryNotice(ignoring: boolean) {
-    const notice = batteryNotice(ignoring);
-    if (notice) this.onPermissionNotice?.({ kind: "battery", notice });
-  }
-
   // ==================================================================
   //  Progress Reporting (per-task)
   // ==================================================================
 
   /**
-   * Throttled per-task progress update to native notification.
-   * Only sends if this task is the current foreground task.
+   * Persist progress for the in-app task panel. Android generation is
+   * intentionally foreground-only; no native service mirrors this state.
    */
   private async reportProgress(taskId: number, stageLabel: string, current: number, total: number, indeterminate: boolean): Promise<void> {
-    const snapshot: ProgressSnapshot = { stageLabel, current, total, indeterminate };
-    await this.serviceCoordinator.reportProgress(taskId, snapshot);
+    await db.run(
+      "UPDATE generation_tasks SET stage_label=?,progress_current=?,progress_total=?,updated_at=? WHERE id=?",
+      [stageLabel, Math.max(0, current), indeterminate ? Math.max(0, total) : Math.max(1, total), now(), taskId],
+    );
   }
 
   // ==================================================================
@@ -615,23 +589,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const rows = await db.query<Row>("SELECT id FROM generation_tasks WHERE status IN ('queued','running')");
     if (!rows.length) return;
 
-    // If a task was backgrounded before it ever made progress, tell the
-    // notification the truth: work resumes now that the app is visible.
-    try {
-      if (await this.serviceCoordinator.hasPendingProgress()) {
-        await this.serviceCoordinator.heartbeatPaused();
-      }
-    } catch {
-      // Best-effort; normal recovery below is unaffected.
-    }
-
     // Reset any lingering running tasks to queued
     for (const row of rows) {
       await db.run("UPDATE generation_tasks SET status='queued',stage_label='resuming' WHERE id=?", [row.id]);
     }
 
-    // Don't start service here — each runTask() will increment runningTasks
-    // from 0→1, and syncGenerationServiceState() will start the service once.
     for (const row of rows) {
       void this.runTask(Number(row.id));
     }
@@ -671,31 +633,15 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         throw new Error("Task payload is corrupted — cannot recover");
       }
 
-      // 4. Register task info (before service start so foreground pick works)
-      this.serviceCoordinator.registerTask({
-        taskId, startedAt: Date.now(), projectId, taskType,
-        projectName: project.name,
-        sourcePath: String(taskRow.source_path || ""),
-      });
-
-      // 5. Permission + service
+      // Completion notifications are optional. Generation itself stays in the
+      // foreground WebView and checkpoints for recovery after interruption.
       await this.ensureNotificationPermission();
-      await this.ensureBatteryOptimization();
-      await this.syncGenerationServiceState();
 
       // Mark running
       await db.run("UPDATE generation_tasks SET status='running',progress_current=0,progress_total=1,stage_label='preparing',updated_at=? WHERE id=?", [now(), taskId]);
       await this.reportProgress(taskId, "preparing", 0, 1, true);
 
-      // Keep the native notification visibly alive while this task is busy
-      // (long LLM calls, retry backoff). Heartbeat only needs a live interval;
-      // the coordinator guards against non-foreground tasks.
-      const heartbeat = window.setInterval(() => {
-        void this.serviceCoordinator.heartbeat(taskId, String(taskRow?.stage_label ?? "正在后台生成学习内容")).catch(() => undefined);
-      }, 1000);
-      this.heartbeatIntervals.set(taskId, heartbeat);
-
-      // 6. Execute with DB inputHash for checkpoint consistency
+      // Execute with DB inputHash for checkpoint consistency.
       let output: TaskOutput;
       if (taskType === "outline") {
         output = await this.generateOutline(projectId, payload, taskId, taskInputHash);
@@ -755,23 +701,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         // Fall through to finally — must not skip Service cleanup
       }
 
-      // Report failure to notification if foreground
-      try {
-        await this.reportProgress(taskId, "failed", 0, 0, true);
-      } catch { /* best-effort */ }
-
     } finally {
-      // CRITICAL: always cleanup
-      const heartbeat = this.heartbeatIntervals.get(taskId);
-      if (heartbeat !== undefined) {
-        window.clearInterval(heartbeat);
-        this.heartbeatIntervals.delete(taskId);
-      }
       this.runningTasks.delete(taskId);
-      this.serviceCoordinator.unregisterTask(taskId);
-
-      // Sync service state (N→0 transition stops the service)
-      await this.syncGenerationServiceState();
     }
   }
 
@@ -870,6 +801,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
     if ((match = path.match(/^\/projects\/(\d+)\/qa\/ask$/))) return this.ask(Number(match[1]), body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/qa$/))) return this.listQA(Number(match[1]), url.searchParams.get("query") || "", url.searchParams.get("favorite")) as Promise<T>;
+    if ((match = path.match(/^\/projects\/(\d+)\/qa\/continuity$/))) return this.getCurrentHandoff(Number(match[1])) as Promise<T>;
+    if ((match = path.match(/^\/projects\/(\d+)\/qa\/continuity\/dismiss$/)) && method === "POST") return this.dismissCurrentHandoff(Number(match[1])) as Promise<T>;
+    if ((match = path.match(/^\/projects\/(\d+)\/qa\/threads$/))) return this.listQAThreads(Number(match[1])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/qa\/sessions\/(\d+)\/tree$/))) return this.sessionTree(Number(match[1]), Number(match[2])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/qa\/(\d+)\/favorite$/))) return this.favoriteQA(Number(match[1]), Number(match[2]), bool(body.favorite)) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/qa\/(\d+)\/understanding$/))) {
@@ -1090,6 +1024,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         }
         await db.runInTx("UPDATE qa_records SET source_path=?,updated_at=? WHERE project_id=? AND source_type='course' AND source_path=?", [newFilename, stamp, projectId, filename]);
         await db.runInTx("UPDATE qa_records SET output_path=?,display_title=?,updated_at=? WHERE project_id=? AND output_path=?", [newFilename, title, stamp, projectId, filename]);
+        await db.runInTx("UPDATE teaching_handoffs SET source_path=?,updated_at=? WHERE project_id=? AND source_type='course' AND source_path=?", [newFilename, stamp, projectId, filename]);
         for (const table of ["highlights", "knowledge_links", "document_terms", "learning_states", "term_impressions", "term_model_scans"]) {
           await db.runInTx(`UPDATE ${table} SET source_path=?,updated_at=? WHERE project_id=? AND source_type IN ('course','qa') AND source_path=?`, [newFilename, stamp, projectId, filename]);
         }
@@ -2257,10 +2192,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const anchors = anchorRows.map((row) => `- ${row.term_text || "个人总结"}：${row.summary}`).join("\n");
     return `来源：${payload.source_type} ${payload.source_path || "项目"}\n\n${selected ? `用户附带上下文：\n${selected}` : `当前文档摘要：\n${compactText(source, 8000)}`}\n\n${anchoredContext}\n\n相关项目证据：\n${evidence || "暂无索引命中"}\n\n学习者已确认的理解：\n${anchors || "暂无"}`;
   }
-  private parseAnswer(raw: string, payload: QAAskPayload): { title: string; answer: string; terms: StructuredTermCandidate[] } {
+  private parseAnswer(raw: string, payload: QAAskPayload): { title: string; answer: string; terms: StructuredTermCandidate[]; handoff: ParsedHandoffMetadata | null } {
     const titleLine = raw.match(/^TITLE:\s*(.+)$/mi)?.[1]?.trim();
     const termsLine = raw.match(/^TERMS:\s*(.+)$/mi)?.[1] || "";
-    const answer = raw.replace(/^TITLE:.*$/mi, "").replace(/^TERMS:.*$/mi, "").trim();
+    const withoutHeader = raw.replace(/^TITLE:.*$/mi, "").replace(/^TERMS:.*$/mi, "").trim();
+    const parsedHandoff = parseHandoffMetadata(withoutHeader, payload.source_type, payload.source_path);
+    const answer = parsedHandoff.visible;
     const selected = String(payload.selected_text || "").trim().split(/\s+/)[0];
     const title = (titleLine || selected || payload.question || "AI 回答").slice(0, 48);
     let parsedTerms: unknown = [];
@@ -2278,7 +2215,91 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         ) === index
       )
       .slice(0, 20);
-    return { title, answer, terms };
+    return { title, answer, terms, handoff: parsedHandoff.metadata };
+  }
+  private async handoffSourceAvailable(row: Row): Promise<boolean> {
+    const sourceType = String(row.source_type || "");
+    const sourcePath = String(row.source_path || "");
+    if (!sourcePath) return false;
+    if (sourceType === "course") {
+      return (await db.query<Row>("SELECT 1 FROM course_files WHERE project_id=? AND filename=? LIMIT 1", [row.project_id, sourcePath])).length > 0;
+    }
+    if (sourceType === "file") {
+      return (await db.query<Row>("SELECT 1 FROM project_files WHERE project_id=? AND path=? LIMIT 1", [row.project_id, sourcePath])).length > 0;
+    }
+    if (sourceType === "qa") {
+      return (await db.query<Row>("SELECT 1 FROM qa_records WHERE project_id=? AND (output_path=? OR CAST(id AS TEXT)=?) LIMIT 1", [row.project_id, sourcePath, sourcePath])).length > 0;
+    }
+    return false;
+  }
+  private async handoffPayload(row: Row): Promise<TeachingHandoff> {
+    return handoffFromRow(row, await this.handoffSourceAvailable(row));
+  }
+  private async getCurrentHandoff(projectId: number): Promise<TeachingHandoff | null> {
+    const row = (await db.query<Row>("SELECT * FROM teaching_handoffs WHERE project_id=? AND is_current=1 AND dismissed_at IS NULL ORDER BY updated_at DESC,id DESC LIMIT 1", [projectId]))[0];
+    return row ? this.handoffPayload(row) : null;
+  }
+  private async getHandoffForQA(projectId: number, qaId: number): Promise<TeachingHandoff | null> {
+    const row = (await db.query<Row>("SELECT * FROM teaching_handoffs WHERE project_id=? AND qa_record_id=? LIMIT 1", [projectId, qaId]))[0];
+    return row ? this.handoffPayload(row) : null;
+  }
+  private async persistHandoff(projectId: number, sessionId: number, qaId: number, payload: QAAskPayload, handoff: ParsedHandoffMetadata | null): Promise<void> {
+    if (!handoff) return;
+    const stamp = now();
+    await db.transaction(async () => {
+      await db.runInTx("UPDATE teaching_handoffs SET is_current=0,updated_at=? WHERE project_id=? AND is_current=1", [stamp, projectId]);
+      await db.runInTx(
+        `INSERT OR IGNORE INTO teaching_handoffs(
+           project_id,session_id,qa_record_id,engagement,topic,progress_summary,
+           established_points_json,unresolved_points_json,next_actions_json,
+           source_type,source_path,used_prior_context,is_current,dismissed_at,created_at,updated_at
+         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,NULL,?,?)`,
+        [projectId, sessionId, qaId, "learning", handoff.topic, handoff.progressSummary,
+          JSON.stringify(handoff.establishedPoints), JSON.stringify(handoff.unresolvedPoints), JSON.stringify(handoff.nextActions),
+          payload.source_type, payload.source_path || null, handoff.usedPriorContext ? 1 : 0, stamp, stamp],
+      );
+      await db.runInTx("UPDATE teaching_handoffs SET is_current=1,dismissed_at=NULL,updated_at=? WHERE project_id=? AND qa_record_id=?", [stamp, projectId, qaId]);
+    });
+  }
+  private async dismissCurrentHandoff(projectId: number): Promise<{ dismissed: boolean; handoffId: number | null }> {
+    const current = await this.getCurrentHandoff(projectId);
+    if (!current) return { dismissed: false, handoffId: null };
+    const stamp = now();
+    await db.run("UPDATE teaching_handoffs SET is_current=0,dismissed_at=?,updated_at=? WHERE id=?", [stamp, stamp, current.id]);
+    return { dismissed: true, handoffId: current.id };
+  }
+  private async listQAThreads(projectId: number): Promise<QAThreadSummary[]> {
+    const records = await this.listQA(projectId, "", null);
+    const handoffRows = await db.query<Row>("SELECT * FROM teaching_handoffs WHERE project_id=? ORDER BY updated_at DESC,id DESC", [projectId]);
+    const handoffBySession = new Map<number, TeachingHandoff>();
+    for (const row of handoffRows) {
+      const handoff = await this.handoffPayload(row);
+      const sessionId = handoff.sessionId || handoff.qaRecordId;
+      if (!handoffBySession.has(sessionId)) handoffBySession.set(sessionId, handoff);
+    }
+    const grouped = new Map<number, QARecord[]>();
+    for (const record of records) {
+      const sessionId = record.session_id || record.id;
+      grouped.set(sessionId, [...(grouped.get(sessionId) || []), record]);
+    }
+    return [...grouped.entries()].map(([sessionId, items]) => {
+      const ordered = [...items].sort((a, b) => a.id - b.id);
+      const latest = [...items].sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id - a.id)[0];
+      const handoff = handoffBySession.get(sessionId);
+      return {
+        sessionId,
+        topic: handoff?.topic || ordered[0].display_title || ordered[0].question,
+        progressSummary: handoff?.progressSummary || "",
+        unresolvedPoints: handoff?.unresolvedPoints || [],
+        turnCount: items.length,
+        latestQaRecordId: latest.id,
+        sourceType: handoff?.sourceType || latest.source_type,
+        sourcePath: handoff?.sourcePath || latest.source_path,
+        isCurrent: Boolean(handoff?.isCurrent && !handoff.dismissedAt),
+        updatedAt: latest.updated_at,
+        records: ordered.map((item) => item.id),
+      };
+    }).sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || b.updatedAt.localeCompare(a.updatedAt));
   }
   private formatQA(record: QARecord): string {
     return `# ${record.display_title || record.question}\n\n## 问题\n\n${record.question}\n\n## 附带上下文\n\n${record.selected_text || "无选区内容"}\n\n## 回答\n\n${record.answer_md}\n\n---\n\n来源：${record.source_type} ${record.source_path || "项目"}  \n模型：${record.model}  \n创建时间：${record.created_at}\n`;
@@ -2503,6 +2524,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       context_text: context,
     });
     const learnerContext = await this.learnerContextForQuestion(projectId, payload);
+    const projectLearningContext = renderProjectLearningContext(await this.getCurrentHandoff(projectId));
     const teacherPlanResult = await this.teacherStrategyForQuestion(projectId, payload);
     const teacherPlan = teacherPlanResult?.rendered ?? "";
     const raw = await this.callLLM([
@@ -2510,13 +2532,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         role: "system",
         content: composeSystemPrompt(prompts["prompt.system"] || "你是项目学习助手。", "qa"),
       },
-      { role: "user", content: `${learnerContext}\n\n${teacherPlan}\n\n${questionPrompt}` },
+      { role: "user", content: `${learnerContext}\n\n${projectLearningContext}\n\n${teacherPlan}\n\n${questionPrompt}` },
     ], { provider: payload.provider, base_url: payload.base_url, model: payload.model });
     const parsed = this.parseAnswer(raw, payload); const stamp = now();
     const id = await db.run(`INSERT INTO qa_records(project_id,session_id,parent_qa_id,relation_type,source_type,source_path,display_title,selected_text,question,answer_md,provider,model,output_path,retrieval_trace,favorite,created_at,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [projectId, payload.session_id || null, payload.parent_qa_id || null, payload.relation_type || "follow_up", payload.source_type, payload.source_path || null, parsed.title, payload.selected_text || "", payload.question, parsed.answer, settings.provider, settings.model, null, JSON.stringify({ source: payload.source_path, context: context.slice(0, 6000) }), 0, stamp, stamp]);
     const sessionId = payload.session_id || id; const outputPath = `selection_answers/qa_${String(id).padStart(4, "0")}.md`;
     await db.run("UPDATE qa_records SET session_id=?,output_path=? WHERE id=?", [sessionId, outputPath, id]);
+    await this.persistHandoff(projectId, sessionId, id, payload, parsed.handoff);
     let record = await this.getQA(projectId, id); await this.upsertCourse(projectId, outputPath, this.formatQA(record), "AI 回答");
     const qaNode = await this.createNode(projectId, { node_type: "qa", title: parsed.title, ref_type: "qa", ref_id: id, ref_path: outputPath, summary: parsed.answer.slice(0, 300) });
     const parent = await this.ensureSourceNode(projectId, payload); if (parent) await this.createEdge(projectId, { source_node_id: parent.id, target_node_id: qaNode.id, relation_type: "explains", label: null });
@@ -2616,7 +2639,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
   private async getQA(projectId: number, qaId: number): Promise<QARecord> {
     const row = (await db.query<Row>("SELECT * FROM qa_records WHERE project_id=? AND id=?", [projectId, qaId]))[0];
-    if (!row) throw new Error("回答不存在。"); return qaFromRow(row);
+    if (!row) throw new Error("回答不存在。");
+    const record = qaFromRow(row);
+    record.teaching_handoff = await this.getHandoffForQA(projectId, qaId);
+    return record;
   }
   private async listQA(projectId: number, query: string, favorite: string | null): Promise<QARecord[]> {
     const values: unknown[] = [projectId]; let sql = "SELECT * FROM qa_records WHERE project_id=?";

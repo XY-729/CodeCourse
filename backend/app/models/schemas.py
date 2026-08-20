@@ -270,6 +270,49 @@ class RetrievalSourceResponse(BaseModel):
     score: float = 0
 
 
+class TeachingNextActionResponse(BaseModel):
+    kind: Literal["follow_up", "open_source", "review"]
+    label: str
+    prompt: Optional[str] = None
+    sourceType: Optional[str] = None
+    sourcePath: Optional[str] = None
+
+
+class TeachingHandoffResponse(BaseModel):
+    id: int
+    projectId: int
+    sessionId: Optional[int] = None
+    qaRecordId: int
+    engagement: Literal["learning"] = "learning"
+    topic: str
+    progressSummary: str
+    establishedPoints: list[str] = Field(default_factory=list)
+    unresolvedPoints: list[str] = Field(default_factory=list)
+    nextActions: list[TeachingNextActionResponse] = Field(default_factory=list)
+    sourceType: Optional[str] = None
+    sourcePath: Optional[str] = None
+    sourceAvailable: bool = False
+    usedPriorContext: bool = False
+    isCurrent: bool = False
+    dismissedAt: Optional[str] = None
+    createdAt: str
+    updatedAt: str
+
+
+class QAThreadSummaryResponse(BaseModel):
+    sessionId: int
+    topic: str
+    progressSummary: str = ""
+    unresolvedPoints: list[str] = Field(default_factory=list)
+    turnCount: int
+    latestQaRecordId: int
+    sourceType: Optional[str] = None
+    sourcePath: Optional[str] = None
+    isCurrent: bool = False
+    updatedAt: str
+    records: list[int] = Field(default_factory=list)
+
+
 class QARecordResponse(BaseModel):
     id: int
     project_id: int
@@ -287,6 +330,7 @@ class QARecordResponse(BaseModel):
     output_path: Optional[str] = None
     retrieval_trace: Optional[str] = None
     retrieval_sources: list[RetrievalSourceResponse] = Field(default_factory=list)
+    teaching_handoff: Optional[TeachingHandoffResponse] = None
     favorite: bool
     created_at: str
     updated_at: str

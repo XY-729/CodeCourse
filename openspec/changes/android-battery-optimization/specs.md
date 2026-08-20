@@ -1,5 +1,7 @@
 # Spec: android-battery-optimization
 
+> **状态：已废弃。** 现行 Android 生成采用前台运行与检查点恢复，不再申请电池优化豁免。
+
 ## REQ-1: 原生电池优化豁免能力
 
 ### 1.1 `isIgnoringBatteryOptimizations()`

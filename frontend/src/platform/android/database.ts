@@ -3,7 +3,7 @@ import { CodeCourseSecureStore } from "../runtime";
 
 const DATABASE = "codecourse_mobile";
 const DATABASE_VERSION = 1;
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 type ColumnMigration = {
   name: string;
@@ -191,6 +191,31 @@ export class MobileDatabase {
           updated_at TEXT NOT NULL,
           FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS teaching_handoffs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id INTEGER NOT NULL,
+          session_id INTEGER,
+          qa_record_id INTEGER NOT NULL UNIQUE,
+          engagement TEXT NOT NULL,
+          topic TEXT NOT NULL,
+          progress_summary TEXT NOT NULL,
+          established_points_json TEXT NOT NULL DEFAULT '[]',
+          unresolved_points_json TEXT NOT NULL DEFAULT '[]',
+          next_actions_json TEXT NOT NULL DEFAULT '[]',
+          source_type TEXT,
+          source_path TEXT,
+          used_prior_context INTEGER NOT NULL DEFAULT 0,
+          is_current INTEGER NOT NULL DEFAULT 0,
+          dismissed_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+          FOREIGN KEY(qa_record_id) REFERENCES qa_records(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_teaching_handoffs_current
+          ON teaching_handoffs(project_id) WHERE is_current = 1;
+        CREATE INDEX IF NOT EXISTS idx_teaching_handoffs_session
+          ON teaching_handoffs(project_id, session_id, updated_at DESC);
         CREATE TABLE IF NOT EXISTS highlights (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           project_id INTEGER NOT NULL,

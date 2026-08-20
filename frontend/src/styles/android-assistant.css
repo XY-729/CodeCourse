@@ -423,3 +423,51 @@ html.platform-android .mobile-assistant-knowledge-view > * { min-width: 0; min-h
     animation: none !important; transition: none !important; scroll-behavior: auto !important;
   }
 }
+
+html.platform-android .teaching-continuity-card {
+  margin: 0; padding: 14px; color: var(--mobile-text);
+  border: 1px solid color-mix(in srgb, var(--mobile-accent) 28%, var(--mobile-line));
+  border-radius: 16px; background: var(--mobile-accent-soft); box-shadow: none;
+}
+
+html.platform-android .teaching-continuity-card header small,
+html.platform-android .teaching-continuity-card > p,
+html.platform-android .teaching-card-section p,
+html.platform-android .teaching-card-section ul { color: var(--mobile-text-secondary); }
+html.platform-android .teaching-continuity-card header strong { font-size: 0.875rem; }
+html.platform-android .teaching-continuity-card header small,
+html.platform-android .teaching-card-section > strong { font-size: 0.75rem; }
+html.platform-android .teaching-card-icon { color: var(--mobile-accent); background: var(--mobile-surface); }
+html.platform-android .teaching-card-dismiss { width: 44px; height: 44px; color: var(--mobile-text-secondary); }
+html.platform-android .teaching-card-unresolved { color: var(--mobile-warning, #8a6418); background: color-mix(in srgb, #f0a929 12%, var(--mobile-surface)); }
+
+html.platform-android .teaching-continuity-card footer button {
+  min-height: 44px; padding: 0 12px; color: var(--mobile-accent-strong);
+  border-color: color-mix(in srgb, var(--mobile-accent) 30%, var(--mobile-line));
+  border-radius: 11px; background: var(--mobile-surface); font-size: 0.75rem;
+}
+
+html.platform-android .teaching-continuity-card footer button.teaching-card-primary {
+  color: white; border-color: var(--mobile-accent); background: var(--mobile-accent);
+}
+
+html.platform-android .mobile-assistant-thread {
+  overflow: hidden; border: 1px solid var(--mobile-line); border-radius: 16px; background: var(--mobile-surface);
+}
+
+html.platform-android .mobile-assistant-thread.current {
+  border-color: color-mix(in srgb, var(--mobile-accent) 52%, var(--mobile-line));
+}
+
+html.platform-android .mobile-assistant-thread > summary {
+  min-height: 70px; padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; gap: 8px; color: var(--mobile-text); cursor: pointer;
+}
+
+html.platform-android .mobile-assistant-thread > summary > span { min-width: 0; display: grid; gap: 4px; }
+html.platform-android .mobile-assistant-thread > summary strong,
+html.platform-android .mobile-assistant-thread > summary small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+html.platform-android .mobile-assistant-thread > summary strong { font-size: 0.875rem; }
+html.platform-android .mobile-assistant-thread > summary small { color: var(--mobile-text-tertiary); font-size: 0.6875rem; }
+html.platform-android .mobile-assistant-thread-records { padding: 0 7px 7px; display: grid; gap: 7px; }
+html.platform-android .mobile-assistant-thread-records .mobile-assistant-history-card { border-radius: 12px; background: var(--mobile-surface-raised); }

@@ -1,11 +1,10 @@
 import { FileArchive, X } from "lucide-react";
-import type { BatteryNotice, PermissionNotice } from "../platform/android/generationState";
+import type { PermissionNotice } from "../platform/android/generationState";
 import TaskFeedback from "./TaskFeedback";
 
 type Props = {
   permissionNotice: PermissionNotice;
   permissionNoticeDismissed: boolean;
-  batteryNotice: BatteryNotice;
   error: string;
   busy: boolean;
   label: string;
@@ -16,8 +15,6 @@ type Props = {
   gestureHint: { id: number; text: string } | null;
   onOpenNotificationSettings: () => void;
   onDismissPermissionNotice: () => void;
-  onOpenBatterySettings: () => void;
-  onDismissBatteryNotice: () => void;
   onDismissError: () => void;
 };
 
@@ -34,19 +31,6 @@ export default function AppFeedbackLayer(props: Props) {
               </button>
             ) : null}
             <button className="icon-button" onClick={props.onDismissPermissionNotice} title="关闭">
-              <X size={14} />
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {props.batteryNotice ? (
-        <div className="permission-notice-banner">
-          <span>{props.batteryNotice.message}</span>
-          <div className="permission-notice-actions">
-            <button className="secondary-button" onClick={props.onOpenBatterySettings}>
-              前往电池设置
-            </button>
-            <button className="icon-button" onClick={props.onDismissBatteryNotice} title="关闭">
               <X size={14} />
             </button>
           </div>

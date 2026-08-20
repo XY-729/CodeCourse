@@ -8,7 +8,6 @@ import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
-import android.os.Bundle;
 import android.provider.Settings;
 
 import androidx.core.app.ActivityCompat;
@@ -24,7 +23,6 @@ import org.json.JSONObject;
 @CapacitorPlugin(name = "CodeCourseNative")
 public class CodeCourseNativePlugin extends Plugin {
 
-    private static final String TAG = "CCNativePlugin";
     private static final int NOTIFICATION_PERMISSION_REQUEST = 3001;
     private static final String PREFS_NAME = "codecourse_prefs";
     private static final String PREF_PERMISSION_REQUESTED = "notification_permission_requested_before";
@@ -44,86 +42,8 @@ public class CodeCourseNativePlugin extends Plugin {
     }
 
     @PluginMethod
-    public void setGenerationActive(PluginCall call) {
-        boolean active = Boolean.TRUE.equals(call.getBoolean("active", false));
-        if (active) {
-            String label = call.getString("label", "");
-            long sessionId = call.getInt("sessionId", 0);
-            int taskId = call.getInt("taskId", 0);
-            int activeCount = call.getInt("activeTaskCount", 0);
-
-            if (sessionId <= 0 || taskId <= 0 || activeCount <= 0 || label == null || label.trim().isEmpty()) {
-                call.reject("Invalid start parameters: sessionId=" + sessionId
-                    + " taskId=" + taskId + " activeTaskCount=" + activeCount);
-                return;
-            }
-
-            Intent intent = CodeCourseGenerationService.createStartIntent(
-                getContext(), label.trim(), sessionId, taskId, activeCount);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                getContext().startForegroundService(intent);
-            } else {
-                getContext().startService(intent);
-            }
-        } else {
-            getContext().stopService(new Intent(getContext(), CodeCourseGenerationService.class));
-        }
-        call.resolve();
-    }
-
-    @PluginMethod
-    public void getGenerationServiceState(PluginCall call) {
-        Bundle state = CodeCourseGenerationService.getGenerationServiceState();
-        try {
-            JSONObject result = new JSONObject();
-            result.put("active", state.getBoolean("active", false));
-            result.put("sessionId", state.getLong("sessionId", 0));
-            result.put("taskId", state.getInt("taskId", 0));
-            call.resolve(JSObject.fromJSONObject(result));
-        } catch (Exception e) { call.resolve(); }
-    }
-
-    @PluginMethod
-    public void updateGenerationProgress(PluginCall call) {
-        CodeCourseGenerationService.updateProgress(
-            getContext(),
-            call.getInt("sessionId", 0),
-            call.getInt("taskId", 0),
-            call.getInt("sequence", 0),
-            call.getInt("current", 0),
-            call.getInt("total", 0),
-            Boolean.TRUE.equals(call.getBoolean("indeterminate", false)),
-            call.getString("stageLabel", ""),
-            call.getInt("activeTaskCount", 1));
-        call.resolve();
-    }
-
-    @PluginMethod
-    public void switchForegroundTask(PluginCall call) {
-        long sessionId = call.getInt("sessionId", 0);
-        int taskId = call.getInt("taskId", 0);
-        boolean switched = CodeCourseGenerationService.switchForegroundTask(sessionId, taskId);
-        Bundle state = CodeCourseGenerationService.getGenerationServiceState();
-        JSObject result = new JSObject();
-        result.put("switched", switched);
-        result.put("sessionId", state.getLong("sessionId", 0));
-        result.put("taskId", state.getInt("taskId", 0));
-        call.resolve(result);
-    }
-
-    @PluginMethod
-    public void updateGenerationHeartbeat(PluginCall call) {
-        CodeCourseGenerationService.updateHeartbeat(
-            getContext(),
-            call.getInt("sessionId", 0),
-            call.getInt("taskId", 0),
-            call.getString("stageLabel", ""));
-        call.resolve();
-    }
-
-    @PluginMethod
     public void notifyCompletion(PluginCall call) {
-        CodeCourseGenerationService.showCompletion(
+        CodeCourseNotifications.showCompletion(
             getContext(),
             call.getInt("taskId", 0),
             call.getInt("projectId", 0),
@@ -229,66 +149,6 @@ public class CodeCourseNativePlugin extends Plugin {
         } catch (Exception e) { call.reject("Cannot open notification settings", e); }
     }
 
-    @PluginMethod
-    public void isIgnoringBatteryOptimizations(PluginCall call) {
-        try {
-            JSObject result = new JSObject();
-            result.put("ignoring", isBatteryOptimizationIgnored());
-            call.resolve(result);
-        } catch (Exception e) {
-            call.reject("Cannot query battery optimization state", e);
-        }
-    }
-
-    /** True while the foreground generation Service has accepted no progress yet. */
-    @PluginMethod
-    public void hasGenerationPendingProgress(PluginCall call) {
-        JSObject result = new JSObject();
-        result.put("pending", CodeCourseGenerationService.hasPendingProgress());
-        call.resolve(result);
-    }
-
-    @PluginMethod
-    public void requestIgnoreBatteryOptimizations(PluginCall call) {
-        try {
-            if (isBatteryOptimizationIgnored()) {
-                JSObject ok = new JSObject();
-                ok.put("granted", true);
-                ok.put("fallback", false);
-                call.resolve(ok);
-                return;
-            }
-            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                Uri.parse("package:" + getContext().getPackageName()));
-            if (getActivity() != null) getActivity().startActivity(intent);
-            else { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); getContext().startActivity(intent); }
-            JSObject result = new JSObject();
-            result.put("granted", false);
-            result.put("fallback", false);
-            call.resolve(result);
-        } catch (Exception e) {
-            // 部分机型拒绝 ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS，回退到应用详情页由用户手动允许。
-            try {
-                Intent detail = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:" + getContext().getPackageName()));
-                detail.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                getContext().startActivity(detail);
-            } catch (Exception ignored) {
-            }
-            JSObject fallback = new JSObject();
-            fallback.put("granted", false);
-            fallback.put("fallback", true);
-            call.resolve(fallback);
-        }
-    }
-
-    private boolean isBatteryOptimizationIgnored() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
-        android.os.PowerManager pm = (android.os.PowerManager) getContext()
-            .getSystemService(Context.POWER_SERVICE);
-        return pm != null && pm.isIgnoringBatteryOptimizations(getContext().getPackageName());
-    }
-
     @Override
     protected void handleRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.handleRequestPermissionsResult(requestCode, permissions, grantResults);
@@ -354,6 +214,10 @@ public class CodeCourseNativePlugin extends Plugin {
         }
         SharedPreferences prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         boolean requestedBefore = prefs.getBoolean(PREF_PERMISSION_REQUESTED, false);
+        if (!requestedBefore) {
+            resolvePermissionStatus(call, false, "denied", true);
+            return;
+        }
         boolean canAskAgain = requestedBefore && getActivity() != null
             && ActivityCompat.shouldShowRequestPermissionRationale(
                 getActivity(), Manifest.permission.POST_NOTIFICATIONS);

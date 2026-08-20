@@ -7,7 +7,7 @@ const sqlite = vi.hoisted(() => ({
   open: vi.fn(async () => undefined),
   execute: vi.fn(async () => undefined),
   query: vi.fn(async ({ statement }: { statement: string }) => {
-    if (statement === "PRAGMA user_version") return { values: [{ user_version: 2 }] };
+    if (statement === "PRAGMA user_version") return { values: [{ user_version: 3 }] };
     if (statement.includes("sqlite_master")) return { values: [{ sql: "CREATE VIRTUAL TABLE code_chunks_fts USING fts5(content)" }] };
     return { values: [] };
   }),

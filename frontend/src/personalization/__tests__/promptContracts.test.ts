@@ -26,6 +26,8 @@ describe("prompt output contracts", () => {
     expect(markdown).not.toContain("TITLE: 简短标题");
     expect(qa).toContain("TITLE: 简短标题");
     expect(qa).toContain("TERMS: [...]");
+    expect(qa).toContain("HANDOFF: {...}");
+    expect(qa).toContain('"engagement":"utility"');
   });
 
   it("always places immutable safety rules before editable text", () => {

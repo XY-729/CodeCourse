@@ -1,16 +1,13 @@
 import { isNativeAndroidRuntime } from "./runtime";
-import type { BatteryOptimizationState, NotificationPermissionResult } from "./runtime";
+import type { NotificationPermissionResult } from "./runtime";
 import type { ProviderNotice } from "./android/generationState";
 
 export interface CodeCourseProvider {
   request<T>(path: string, init?: RequestInit): Promise<T>;
-  startBackgroundRecovery?(): Promise<void>;
-  reconcileGenerationServiceState?(): Promise<void>;
+  startRecovery?(): Promise<void>;
   getNotificationPermissionStatus?(): Promise<NotificationPermissionResult>;
   invalidatePermissionCache?(): void;
   setPermissionNoticeHandler?(handler: ((notice: ProviderNotice) => void) | null): void;
-  getBatteryOptimizationStatus?(): Promise<BatteryOptimizationState>;
-  invalidateBatteryOptimization?(): void;
 }
 
 class HttpProvider implements CodeCourseProvider {

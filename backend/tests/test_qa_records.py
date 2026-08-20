@@ -801,6 +801,8 @@ class QARecordEndpointTests(unittest.TestCase):
         async def fake_stream(*_args, **_kwargs):
             yield "TITLE: FastAPI\nTERMS: []\n\n"
             yield "FastAPI connects routes to Python handlers."
+            yield "\nHAND"
+            yield "OFF: {\"engagement\":\"learning\",\"continuity\":\"update\",\"topic\":\"FastAPI 路由\",\"progress_summary\":\"已经理解路由连接处理器。\",\"established_points\":[\"路由连接 Python 处理器\"],\"unresolved_points\":[],\"next_actions\":[{\"kind\":\"follow_up\",\"label\":\"继续理解依赖\",\"prompt\":\"依赖注入在哪里发生？\"}],\"used_prior_context\":false}"
 
         with (
             patch("app.api.qa.stream_openai_compatible_chat", fake_stream),
@@ -827,9 +829,13 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertIn("event: delta", response.text)
         self.assertIn("event: completed", response.text)
         self.assertIn("FastAPI connects routes", response.text)
+        self.assertNotIn("HANDOFF", response.text)
         self.assertEqual(retrieval.call_count, 1)
         history = self.client.get(f"/api/projects/{self.project.id}/qa").json()
         self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["teaching_handoff"]["topic"], "FastAPI 路由")
+        continuity = self.client.get(f"/api/projects/{self.project.id}/qa/continuity").json()
+        self.assertEqual(continuity["qaRecordId"], history[0]["id"])
 
 
 if __name__ == "__main__":

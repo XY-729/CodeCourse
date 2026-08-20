@@ -15,8 +15,10 @@ from app.models.schemas import (
     QAAskRequest,
     QAFavoriteRequest,
     QARecordResponse,
+    QAThreadSummaryResponse,
     QAUpdateRequest,
     RetrievalSourceResponse,
+    TeachingHandoffResponse,
 )
 from app.services.qa_service import (
     ask_question,
@@ -33,13 +35,69 @@ from app.services.qa_service import (
     _build_default_teaching_trial_draft,
 )
 from app.services.llm_client import stream_openai_compatible_chat
-from app.services.storage import LearningAnchor, QARecord, get_project, get_qa_record
+from app.services.storage import (
+    LearningAnchor,
+    QARecord,
+    dismiss_current_teaching_handoff,
+    get_project,
+    get_qa_record,
+    get_teaching_handoff_for_qa,
+)
+from app.services.continuity_service import (
+    HANDOFF_LINE_RE,
+    current_teaching_handoff_payload,
+    list_qa_thread_summaries,
+    teaching_handoff_payload,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/projects", tags=["qa"])
 _PROJECT_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
 _SESSION_LOCKS: dict[tuple[int, int], asyncio.Lock] = {}
+
+
+class _StreamingHandoffFilter:
+    """Hide HANDOFF metadata without delaying ordinary streamed paragraphs."""
+
+    def __init__(self) -> None:
+        self.pending = ""
+        self.passthrough_line = False
+
+    def push(self, chunk: str) -> list[str]:
+        outputs: list[str] = []
+        remaining = chunk
+        while remaining:
+            newline = remaining.find("\n")
+            if self.passthrough_line:
+                if newline < 0:
+                    outputs.append(remaining)
+                    break
+                outputs.append(remaining[: newline + 1])
+                remaining = remaining[newline + 1 :]
+                self.passthrough_line = False
+                continue
+            if newline >= 0:
+                self.pending += remaining[: newline + 1]
+                remaining = remaining[newline + 1 :]
+                if not HANDOFF_LINE_RE.match(self.pending.rstrip("\r\n")):
+                    outputs.append(self.pending)
+                self.pending = ""
+                continue
+            self.pending += remaining
+            candidate = self.pending.lstrip().upper()
+            if candidate and not ("HANDOFF".startswith(candidate) or candidate.startswith("HANDOFF")):
+                outputs.append(self.pending)
+                self.pending = ""
+                self.passthrough_line = True
+            break
+        return outputs
+
+    def finish(self) -> list[str]:
+        if not self.pending:
+            return []
+        pending, self.pending = self.pending, ""
+        return [] if HANDOFF_LINE_RE.match(pending) else [pending]
 
 
 def _project_semaphore(project_id: int) -> asyncio.Semaphore:
@@ -86,6 +144,7 @@ def _to_response(record: QARecord) -> QARecordResponse:
                 retrieval_sources.append(RetrievalSourceResponse.model_validate(source))
             except Exception:
                 continue
+    handoff = get_teaching_handoff_for_qa(record.project_id, record.id)
     return QARecordResponse(
         id=record.id,
         project_id=record.project_id,
@@ -103,6 +162,10 @@ def _to_response(record: QARecord) -> QARecordResponse:
         output_path=record.output_path,
         retrieval_trace=record.retrieval_trace,
         retrieval_sources=retrieval_sources,
+        teaching_handoff=(
+            TeachingHandoffResponse.model_validate(teaching_handoff_payload(handoff))
+            if handoff else None
+        ),
         favorite=record.favorite,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -171,6 +234,7 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
                         )
                     yield _sse("stage", {"stage": "waiting_model", "label": "等待模型"})
                     chunks: list[str] = []
+                    handoff_filter = _StreamingHandoffFilter()
                     emitted_answer_stage = False
                     async for chunk in stream_openai_compatible_chat(
                         prepared.settings["base_url"],
@@ -183,7 +247,10 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
                             emitted_answer_stage = True
                             yield _sse("stage", {"stage": "answering", "label": "正在回答"})
                         chunks.append(chunk)
-                        yield _sse("delta", {"text": chunk})
+                        for visible_chunk in handoff_filter.push(chunk):
+                            yield _sse("delta", {"text": visible_chunk})
+                    for visible_chunk in handoff_filter.finish():
+                        yield _sse("delta", {"text": visible_chunk})
                     yield _sse("stage", {"stage": "saving", "label": "保存记录"})
                     record = await asyncio.to_thread(
                         finalize_question,
@@ -220,6 +287,29 @@ def list_history(
 ) -> list[QARecordResponse]:
     _require_project(project_id)
     return [_to_response(record) for record in search_records(project_id, query=query, favorite=favorite)]
+
+
+@router.get("/{project_id}/qa/continuity", response_model=Optional[TeachingHandoffResponse])
+def get_continuity(project_id: int) -> Optional[TeachingHandoffResponse]:
+    _require_project(project_id)
+    payload = current_teaching_handoff_payload(project_id)
+    return TeachingHandoffResponse.model_validate(payload) if payload else None
+
+
+@router.post("/{project_id}/qa/continuity/dismiss", response_model=dict)
+def dismiss_continuity(project_id: int) -> dict[str, object]:
+    _require_project(project_id)
+    handoff = dismiss_current_teaching_handoff(project_id)
+    return {"dismissed": handoff is not None, "handoffId": handoff.id if handoff else None}
+
+
+@router.get("/{project_id}/qa/threads", response_model=list[QAThreadSummaryResponse])
+def get_threads(project_id: int) -> list[QAThreadSummaryResponse]:
+    _require_project(project_id)
+    return [
+        QAThreadSummaryResponse.model_validate(item)
+        for item in list_qa_thread_summaries(project_id)
+    ]
 
 
 @router.get("/{project_id}/qa/sessions/{session_id}/tree", response_model=list[QARecordResponse])

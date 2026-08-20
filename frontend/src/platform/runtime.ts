@@ -16,28 +16,6 @@ export type NotificationPermissionResult = {
   canAskAgain: boolean;
 };
 
-export type GenerationServiceState = {
-  active: boolean;
-  sessionId: number;
-  taskId: number;
-};
-
-export type ForegroundTaskSwitchResult = {
-  switched: boolean;
-  sessionId: number;
-  taskId: number;
-};
-
-export type BatteryOptimizationState = {
-  ignoring: boolean;
-};
-
-export type BatteryOptimizationRequestResult = {
-  granted: boolean;
-  fallback: boolean;
-  packageName?: string;
-};
-
 export type CompletionNavigation = {
   projectId: number;
   taskId: number;
@@ -46,33 +24,9 @@ export type CompletionNavigation = {
   navigationId: string;
 };
 
-export type SetGenerationActiveOptions =
-  | {
-      active: true;
-      label: string;
-      sessionId: number;
-      taskId: number;
-      activeTaskCount: number;
-    }
-  | {
-      active: false;
-    };
-
 export const CodeCourseSecureStore = registerPlugin<SecureStorePlugin>("CodeCourseSecureStore");
 export const CodeCourseNative = registerPlugin<{
   openExternal(options: { url: string }): Promise<void>;
-  setGenerationActive(options: SetGenerationActiveOptions): Promise<void>;
-  getGenerationServiceState(): Promise<GenerationServiceState>;
-  updateGenerationProgress(options: {
-    sessionId: number; taskId: number; sequence: number;
-    current: number; total: number; indeterminate?: boolean;
-    stageLabel?: string; activeTaskCount?: number;
-  }): Promise<void>;
-  updateGenerationHeartbeat(options: {
-    sessionId: number; taskId: number; stageLabel?: string;
-  }): Promise<void>;
-  hasGenerationPendingProgress(): Promise<{ pending: boolean }>;
-  switchForegroundTask(options: { sessionId: number; taskId: number }): Promise<ForegroundTaskSwitchResult>;
   notifyCompletion(options: {
     taskId: number; projectId?: number; taskType?: string;
     outputPath?: string; label: string;
@@ -81,8 +35,6 @@ export const CodeCourseNative = registerPlugin<{
   requestNotificationPermission(): Promise<NotificationPermissionResult>;
   getNotificationPermissionStatus(): Promise<NotificationPermissionResult>;
   openNotificationSettings(): Promise<void>;
-  isIgnoringBatteryOptimizations(): Promise<BatteryOptimizationState>;
-  requestIgnoreBatteryOptimizations(): Promise<BatteryOptimizationRequestResult>;
   consumePendingCompletionNavigation(): Promise<CompletionNavigation | null>;
   ackCompletionNavigation(options: { navigationId: string }): Promise<void>;
 }>("CodeCourseNative");

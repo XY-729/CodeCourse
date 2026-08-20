@@ -4,10 +4,11 @@ import {
   Settings as SettingsIcon, Sparkles, Star, Trash2, X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, SourceType } from "../api/client";
+import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, QAThreadSummary, SourceType, TeachingHandoff, TeachingNextAction } from "../api/client";
 import type { AssistantContextSummary, SelectionSummary } from "./ExplainPanel";
 import { DeferredLiftInput, DeferredLiftTextarea, type DeferredLiftTextareaHandle } from "./DeferredLiftText";
 import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
+import { groupQARecordsByThreads, TeachingClosureCard, TeachingResumeCard } from "./TeachingContinuityCards";
 
 export type MobileAssistantView = "ask" | "history" | "knowledge";
 
@@ -24,6 +25,8 @@ type Props = {
   loadingLabel?: string;
   streamContent?: string;
   history: QARecord[];
+  threads?: QAThreadSummary[];
+  continuity?: TeachingHandoff | null;
   historyQuery: string;
   favoriteOnly: boolean;
   selectedRecord: QARecord | null;
@@ -49,6 +52,10 @@ type Props = {
   onDeleteRecord?: (record: QARecord) => void;
   onRenameRecord: (record: QARecord) => void;
   onToggleFavorite: (record: QARecord) => void;
+  onResumeContinuity?: (handoff: TeachingHandoff) => void;
+  onOpenContinuitySource?: (handoff: TeachingHandoff) => void;
+  onDismissContinuity?: (handoff: TeachingHandoff) => void;
+  onTeachingNextAction?: (action: TeachingNextAction, handoff: TeachingHandoff) => void;
   onOpenSettings: () => void;
   onAnswerSurvey?: (choice: string) => void;
   onDismissSurvey?: () => void;
@@ -106,12 +113,12 @@ function buildSuggestions(selection: SelectionSummary | null, context: Assistant
 
 export default function MobileAssistantPanel({
   view, onViewChange, selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, loading, loadingLabel, streamContent,
-  history, historyQuery, favoriteOnly, selectedRecord, selectedRecordReadOnly = false,
+  history, threads = [], continuity = null, historyQuery, favoriteOnly, selectedRecord, selectedRecordReadOnly = false,
   surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError,
   knowledgeContent, knowledgeDisabled = false,
   onQuestionChange, onSelectionTextChange, onClearSelection, onAsk, onNewConversation,
   onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord, onOpenRecord,
-  onDeleteRecord, onRenameRecord, onToggleFavorite, onOpenSettings,
+  onDeleteRecord, onRenameRecord, onToggleFavorite, onResumeContinuity = () => {}, onOpenContinuitySource = () => {}, onDismissContinuity = () => {}, onTeachingNextAction = () => {}, onOpenSettings,
   onAnswerSurvey, onDismissSurvey, onDisableSurveys,
   onAnswerDiagnostic, onDismissDiagnostic, onFlagDiagnostic,
   resetToken,
@@ -125,6 +132,9 @@ export default function MobileAssistantPanel({
    * only hears about the draft on blur/unmount or via an explicit resetToken.
    */
   const [questionDraft, setQuestionDraft] = useState(question);
+  useEffect(() => {
+    setQuestionDraft(question);
+  }, [question, resetToken]);
 
   useEffect(() => {
     setDiagnosticAnswer(null);
@@ -142,6 +152,7 @@ export default function MobileAssistantPanel({
 
   const modelReady = Boolean(settings?.enabled && settings.has_api_key);
   const canAsk = !loading && !selectedRecordReadOnly && modelReady && Boolean(questionDraft.trim());
+  const threadGroups = groupQARecordsByThreads(threads, history);
 
   function chooseSuggestion(value: string) {
     setQuestionDraft(value);
@@ -201,12 +212,21 @@ export default function MobileAssistantPanel({
                 )}
               </section>
             ) : (
-              <section className="mobile-assistant-welcome">
-                <div><Bot size={24} aria-hidden="true" /></div>
-                <strong>关于当前内容提问</strong>
-                <p>我会结合当前项目、文档和你的选区回答。</p>
-              </section>
+              <>
+                {continuity ? (
+                  <TeachingResumeCard handoff={continuity} disabled={loading} onResume={onResumeContinuity} onOpenSource={onOpenContinuitySource} onDismiss={onDismissContinuity} />
+                ) : null}
+                <section className="mobile-assistant-welcome">
+                  <div><Bot size={24} aria-hidden="true" /></div>
+                  <strong>关于当前内容提问</strong>
+                  <p>我会结合当前项目、文档和你的选区回答。</p>
+                </section>
+              </>
             )}
+
+            {!loading && !selectedRecordReadOnly && selectedRecord?.teaching_handoff ? (
+              <TeachingClosureCard handoff={selectedRecord.teaching_handoff} onAction={onTeachingNextAction} />
+            ) : null}
 
             <section className="mobile-assistant-context-card">
               <header>
@@ -347,24 +367,34 @@ export default function MobileAssistantPanel({
             <button type="button" className={favoriteOnly ? "active" : ""} aria-pressed={favoriteOnly} onClick={() => onFavoriteOnlyChange(!favoriteOnly)}><Star size={18} aria-hidden="true" />收藏</button>
           </div>
           <div className="mobile-assistant-history-list">
-            {history.length ? history.map((record) => {
-              const selected = selectedRecord?.id === record.id;
-              return (
-                <article key={record.id} className={`mobile-assistant-history-card ${selected ? "selected" : ""}`}>
-                  <button type="button" className="mobile-assistant-history-main" onClick={() => selectHistoryRecord(record)} disabled={loading}>
-                    <strong>{recordTitle(record)}</strong>
-                    <span>{summarizeMarkdown(record.answer_md) || record.question}</span>
-                    <small>{record.model}{record.updated_at ? ` · ${formatRecordDate(record.updated_at)}` : ""}</small>
-                  </button>
-                  <div className="mobile-assistant-history-actions">
-                    <button type="button" onClick={() => onOpenRecord(record)} disabled={loading} aria-label={`打开 ${recordTitle(record)}`} title="打开完整回答"><ExternalLink size={17} aria-hidden="true" /></button>
-                    <button type="button" className={record.favorite ? "active" : ""} onClick={() => onToggleFavorite(record)} disabled={loading} aria-label={record.favorite ? `取消收藏 ${recordTitle(record)}` : `收藏 ${recordTitle(record)}`} aria-pressed={record.favorite} title={record.favorite ? "取消收藏" : "收藏"}><Star size={17} aria-hidden="true" /></button>
-                    <button type="button" onClick={() => onRenameRecord(record)} disabled={loading} aria-label={`重命名 ${recordTitle(record)}`} title="重命名"><Edit3 size={17} aria-hidden="true" /></button>
-                    {onDeleteRecord ? <button type="button" className="danger" onClick={() => onDeleteRecord(record)} disabled={loading} aria-label={`删除 ${recordTitle(record)}`} title="删除"><Trash2 size={17} aria-hidden="true" /></button> : null}
-                  </div>
-                </article>
-              );
-            }) : (
+            {history.length ? threadGroups.map(({ summary, records }) => (
+              <details className={`mobile-assistant-thread ${summary.isCurrent ? "current" : ""}`} key={summary.sessionId} open={summary.isCurrent || records.some((record) => record.id === selectedRecord?.id)}>
+                <summary>
+                  <span><strong>{`主题 · ${summary.topic}`}</strong>{summary.progressSummary ? <small>{summary.progressSummary}</small> : null}</span>
+                  <small>{summary.turnCount} 轮{summary.sourcePath ? ` · ${fileLabel(summary.sourcePath)}` : ""}{summary.updatedAt ? ` · ${formatRecordDate(summary.updatedAt)}` : ""}</small>
+                </summary>
+                <div className="mobile-assistant-thread-records">
+                  {records.map((record) => {
+                    const selected = selectedRecord?.id === record.id;
+                    return (
+                      <article key={record.id} className={`mobile-assistant-history-card ${selected ? "selected" : ""}`}>
+                        <button type="button" className="mobile-assistant-history-main" onClick={() => selectHistoryRecord(record)} disabled={loading}>
+                          <strong>{recordTitle(record)}</strong>
+                          <span>{summarizeMarkdown(record.answer_md) || record.question}</span>
+                          <small>{record.model}{record.updated_at ? ` · ${formatRecordDate(record.updated_at)}` : ""}</small>
+                        </button>
+                        <div className="mobile-assistant-history-actions">
+                          <button type="button" onClick={() => onOpenRecord(record)} disabled={loading} aria-label={`打开 ${recordTitle(record)}`} title="打开完整回答"><ExternalLink size={17} aria-hidden="true" /></button>
+                          <button type="button" className={record.favorite ? "active" : ""} onClick={() => onToggleFavorite(record)} disabled={loading} aria-label={record.favorite ? `取消收藏 ${recordTitle(record)}` : `收藏 ${recordTitle(record)}`} aria-pressed={record.favorite} title={record.favorite ? "取消收藏" : "收藏"}><Star size={17} aria-hidden="true" /></button>
+                          <button type="button" onClick={() => onRenameRecord(record)} disabled={loading} aria-label={`重命名 ${recordTitle(record)}`} title="重命名"><Edit3 size={17} aria-hidden="true" /></button>
+                          {onDeleteRecord ? <button type="button" className="danger" onClick={() => onDeleteRecord(record)} disabled={loading} aria-label={`删除 ${recordTitle(record)}`} title="删除"><Trash2 size={17} aria-hidden="true" /></button> : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </details>
+            )) : (
               <section className="mobile-assistant-empty-state">
                 <HistoryIcon size={28} aria-hidden="true" />
                 <strong>{historyQuery || favoriteOnly ? "没有符合条件的回答" : "还没有提问记录"}</strong>

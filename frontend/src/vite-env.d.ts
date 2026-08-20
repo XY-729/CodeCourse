@@ -29,3 +29,4 @@ interface Window {
 }
 
 declare const __CODECOURSE_VERSION__: string;
+declare const __ANDROID_BUILD__: boolean;
