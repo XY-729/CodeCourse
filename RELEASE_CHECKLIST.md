@@ -1,6 +1,6 @@
-# CodeCourse post-v0.4.4 verification
+# CodeCourse v0.4.5 release verification
 
-This checklist describes the current development tree. It does not certify a published release or replace device testing.
+This checklist describes the v0.4.5 release candidate. It does not replace device testing.
 
 ## Automated verification
 
