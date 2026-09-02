@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from app.services.personalization_service import render_preference_directives
 from app.services.bibliography import (
+    _resolve_bibliography_path,
     append_validated_bibliography,
     bibliography_markdown,
     validate_bibliography_selections,
@@ -29,6 +31,20 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class PromptQualityTests(unittest.TestCase):
+    def test_bibliography_prefers_pyinstaller_bundle_resource(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle_root = Path(tmpdir)
+            bundled = bundle_root / "shared" / "curated-bibliography.json"
+            bundled.parent.mkdir(parents=True)
+            bundled.write_text("[]", encoding="utf-8")
+
+            resolved = _resolve_bibliography_path(
+                project_root=bundle_root / "missing-source",
+                bundle_root=bundle_root,
+            )
+
+        self.assertEqual(resolved, bundled)
+
     def test_quick_lookup_is_not_forced_into_a_tutorial(self):
         prompt = DEFAULT_QA_ANSWER_PROMPT
         self.assertIn("quick_lookup", prompt)
@@ -227,6 +243,39 @@ class PromptQualityTests(unittest.TestCase):
         self.assertTrue(str(state["current"]).startswith(PROMPT_DEFAULTS[key]))
         self.assertTrue(str(state["current"]).endswith(directive))
         self.assertEqual(state["upgrade_status"], "migrated_with_custom_directives")
+        self.assertEqual(
+            values[f"prompt.schema_version.{key}"],
+            str(PROMPT_SCHEMA_VERSION),
+        )
+        add_revision.assert_called_once()
+
+    def test_known_legacy_questionnaire_default_migrates_from_schema_two(self):
+        key = "prompt.outline.questionnaire"
+        legacy = "旧版固定问卷模板"
+        values = {
+            key: legacy,
+            f"prompt.schema_version.{key}": "2",
+        }
+
+        def get_value(setting_key):
+            return values.get(setting_key)
+
+        def set_value(setting_key, value):
+            values[setting_key] = value
+
+        with (
+            patch("app.services.prompt_store.get_setting", side_effect=get_value),
+            patch("app.services.prompt_store.set_setting", side_effect=set_value),
+            patch("app.services.prompt_store.add_prompt_revision") as add_revision,
+            patch.dict(
+                "app.services.prompt_store.LEGACY_DEFAULT_HASHES",
+                {key: __import__("hashlib").sha256(legacy.encode()).hexdigest()},
+            ),
+        ):
+            state = _resolve_prompt_state(key)
+
+        self.assertEqual(state["current"], PROMPT_DEFAULTS[key])
+        self.assertEqual(state["upgrade_status"], "migrated")
         self.assertEqual(
             values[f"prompt.schema_version.{key}"],
             str(PROMPT_SCHEMA_VERSION),

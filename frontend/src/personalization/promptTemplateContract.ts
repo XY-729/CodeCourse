@@ -13,7 +13,7 @@ export type PromptTemplateMetadata = {
   upgrade_status?: string;
 };
 
-export const PROMPT_SCHEMA_VERSION = 2;
+export const PROMPT_SCHEMA_VERSION = 3;
 
 const DEFINITIONS: Record<string, Omit<PromptTemplateMetadata, "key">> = {
   "prompt.system": {

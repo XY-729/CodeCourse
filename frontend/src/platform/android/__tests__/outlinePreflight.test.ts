@@ -100,6 +100,22 @@ describe("Android outline preflight route contract", () => {
     expect(result.questions[0].question).toBe("偏好？");
   });
 
+  it("accepts an empty questionnaire when the model needs no more information", async () => {
+    const provider = createProvider();
+    provider.callLLM = vi.fn(async () => "[]");
+
+    const result = await request<any>(
+      provider,
+      "/projects/7/outline/generate/preflight",
+      "POST",
+      { scope: { type: "full_project" }, instructions: "" },
+    );
+
+    expect(result.status).not.toBe("error");
+    expect(result.questions).toEqual([]);
+    expect(result.preflight_id).toMatch(/^pf:7:/);
+  });
+
   it("returns error payload instead of throwing when LLM output is invalid", async () => {
     const provider = createProvider();
     provider.callLLM = vi.fn(async () => "not json at all");

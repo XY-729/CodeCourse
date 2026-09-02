@@ -93,9 +93,8 @@ class OutlineQuestionnaireTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             _parse_questions("not json at all")
 
-    def test_parse_questions_rejects_empty(self):
-        with self.assertRaises(RuntimeError):
-            _parse_questions("[]")
+    def test_parse_questions_accepts_empty(self):
+        self.assertEqual(_parse_questions("[]"), [])
 
     def test_parse_questions_filters_invalid_items(self):
         mixed = json.dumps([
@@ -166,8 +165,15 @@ class OutlineQuestionnaireTests(unittest.TestCase):
         self.assertIn("prompt.outline.questionnaire", PROMPT_DEFAULTS)
         self.assertIn("prompt.outline.questionnaire", PROMPT_METADATA)
         prompt = PROMPT_DEFAULTS["prompt.outline.questionnaire"]
-        self.assertIn("prerequisite_level", prompt)
         self.assertIn("question_type", prompt)
+        self.assertIn("自主决定", prompt)
+        self.assertIn("信息缺口", prompt)
+        self.assertIn("返回空数组 []", prompt)
+        self.assertNotIn("prerequisite_level", prompt)
+        self.assertNotIn("course_style", prompt)
+        self.assertNotIn("learning_depth", prompt)
+        self.assertNotIn("偏原理", prompt)
+        self.assertNotIn("偏实战", prompt)
 
 
 if __name__ == "__main__":

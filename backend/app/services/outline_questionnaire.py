@@ -26,7 +26,7 @@ from app.services.storage import (
 )
 
 PREREQUISITE_DIMENSION = "prerequisite_level"
-MAX_QUESTIONS = 8
+MAX_QUESTIONS = 5
 
 
 def _llm_settings_or_error() -> dict[str, str]:
@@ -120,8 +120,6 @@ def _parse_questions(content: str) -> list[dict]:
                 "rationale": item.get("rationale", ""),
             }
         )
-    if not questions:
-        raise RuntimeError("问卷未生成任何有效问题，可跳过问卷直接生成总纲。")
     return questions[:MAX_QUESTIONS]
 
 

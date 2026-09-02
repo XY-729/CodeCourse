@@ -2,13 +2,37 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[3]
-BIBLIOGRAPHY_PATH = ROOT / "shared" / "curated-bibliography.json"
+
+
+def _resolve_bibliography_path(
+    *,
+    project_root: Path = ROOT,
+    bundle_root: Path | None = None,
+) -> Path:
+    """Locate the curated bibliography in source and PyInstaller builds."""
+    if bundle_root is None:
+        frozen_root = getattr(sys, "_MEIPASS", None)
+        bundle_root = Path(frozen_root) if frozen_root else None
+    candidates = [
+        bundle_root / "shared" / "curated-bibliography.json"
+        if bundle_root is not None
+        else None,
+        project_root / "shared" / "curated-bibliography.json",
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.is_file():
+            return candidate
+    return next(candidate for candidate in candidates if candidate is not None)
+
+
+BIBLIOGRAPHY_PATH = _resolve_bibliography_path()
 BIBLIOGRAPHY_LINE_RE = re.compile(
     r"^\s*BIBLIOGRAPHY\s*[:：]\s*(\[.*\])\s*$",
     re.IGNORECASE,

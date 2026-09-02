@@ -20,7 +20,9 @@ a = Analysis(
     [str(BACKEND_ROOT / "desktop_entry.py")],
     pathex=[str(BACKEND_ROOT)],
     binaries=[],
-    datas=[],
+    datas=[
+        (str(ROOT / "shared" / "curated-bibliography.json"), "shared"),
+    ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

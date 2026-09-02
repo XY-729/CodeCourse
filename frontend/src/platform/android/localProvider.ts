@@ -101,9 +101,9 @@ import {
 
 type Row = Record<string, unknown>;
 
-const LEGACY_PROMPT_HASHES: Record<string, string> = {
+const LEGACY_PROMPT_HASHES: Record<string, string | readonly string[]> = {
   "prompt.system": "9492dc15",
-  "prompt.outline": "611b81fc",
+  "prompt.outline": ["611b81fc", "4a775732"],
   "prompt.file_lesson.detailed_expected": "2e09c662",
   "prompt.file_lesson.brief_expected": "43825251",
   "prompt.file_lesson.template": "38c51719",
@@ -111,6 +111,7 @@ const LEGACY_PROMPT_HASHES: Record<string, string> = {
   "prompt.learning_plan.outline": "9398be36",
   "prompt.learning_plan.lesson": "8b080e0b",
   "prompt.qa.answer": "cfa78f24",
+  "prompt.outline.questionnaire": "5b8f38a0",
 };
 const PROMPT_SCHEMA_SETTING_PREFIX = "prompt_schema_version.";
 
@@ -192,13 +193,14 @@ function hashText(value: string): string {
 }
 
 function legacyPromptSuffix(key: string, saved: string): string | null {
-  const legacyHash = LEGACY_PROMPT_HASHES[key];
-  if (!legacyHash) return null;
-  if (hashText(saved) === legacyHash) return "";
+  const configuredHashes = LEGACY_PROMPT_HASHES[key];
+  if (!configuredHashes) return null;
+  const legacyHashes = typeof configuredHashes === "string" ? [configuredHashes] : configuredHashes;
+  if (legacyHashes.includes(hashText(saved))) return "";
   const boundaries = [...saved.matchAll(/\n/g)].map((match) => match.index ?? -1);
   for (const boundary of boundaries.reverse()) {
     const prefix = saved.slice(0, boundary).trimEnd();
-    if (hashText(prefix) === legacyHash) return saved.slice(boundary).trim();
+    if (legacyHashes.includes(hashText(prefix))) return saved.slice(boundary).trim();
   }
   return null;
 }
@@ -1602,8 +1604,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         rationale: String(record.rationale ?? ""),
       });
     }
-    if (!questions.length) throw new Error("问卷未生成任何有效问题");
-    return questions;
+    return questions.slice(0, 5);
   }
 
   private async outlineConfirm(projectId: number, body: Record<string, unknown>): Promise<GenerationTask> {
