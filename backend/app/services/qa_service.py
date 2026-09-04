@@ -519,7 +519,7 @@ def _settings_for_request(payload: QAAskRequest) -> dict[str, str]:
     return {
         "provider": payload.provider.strip() or settings.get("provider", "deepseek"),
         "base_url": payload.base_url.strip().rstrip("/") or settings.get("base_url", "https://api.deepseek.com"),
-        "model": payload.model.strip() or settings.get("model", "deepseek-v4-flash"),
+        "model": payload.model.strip() or settings.get("model", "deepseek-v4-pro"),
         "api_key": settings["api_key"],
     }
 

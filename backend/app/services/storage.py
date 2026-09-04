@@ -4610,14 +4610,14 @@ def get_llm_settings() -> dict[str, str]:
         return {
             "provider": os.getenv("GPL_LLM_PROVIDER") or env_file_values.get("GPL_LLM_PROVIDER") or "deepseek",
             "base_url": os.getenv("DEEPSEEK_BASE_URL") or os.getenv("GPL_LLM_BASE_URL") or env_file_values.get("DEEPSEEK_BASE_URL") or env_file_values.get("GPL_LLM_BASE_URL") or "https://api.deepseek.com",
-            "model": os.getenv("DEEPSEEK_MODEL") or os.getenv("GPL_LLM_MODEL") or env_file_values.get("DEEPSEEK_MODEL") or env_file_values.get("GPL_LLM_MODEL") or "deepseek-v4-flash",
+            "model": os.getenv("DEEPSEEK_MODEL") or os.getenv("GPL_LLM_MODEL") or env_file_values.get("DEEPSEEK_MODEL") or env_file_values.get("GPL_LLM_MODEL") or "deepseek-v4-pro",
             "api_key": env_api_key,
             "enabled": "true",
         }
     return {
         "provider": get_setting("llm.provider") or "deepseek",
         "base_url": get_setting("llm.base_url") or "https://api.deepseek.com",
-        "model": get_setting("llm.model") or "deepseek-v4-flash",
+        "model": get_setting("llm.model") or "deepseek-v4-pro",
         "api_key": get_setting("llm.api_key") or "",
         "enabled": get_setting("llm.enabled") or "false",
     }
@@ -4643,7 +4643,7 @@ def _read_env_file() -> dict[str, str]:
 def save_llm_settings(provider: str, base_url: str, model: str, enabled: bool, api_key: Optional[str], clear_api_key: bool) -> dict[str, str]:
     set_setting("llm.provider", provider.strip() or "deepseek")
     set_setting("llm.base_url", base_url.strip().rstrip("/") or "https://api.deepseek.com")
-    set_setting("llm.model", model.strip() or "deepseek-v4-flash")
+    set_setting("llm.model", model.strip() or "deepseek-v4-pro")
     set_setting("llm.enabled", "true" if enabled else "false")
     if clear_api_key:
         set_setting("llm.api_key", "")

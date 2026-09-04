@@ -295,7 +295,7 @@ export default function LLMSettingsDialog({
                   <input
                     value={settings.model}
                     onChange={(event) => setSettings({ ...settings, model: event.target.value })}
-                    placeholder="deepseek-v4-flash"
+                    placeholder="deepseek-v4-pro"
                   />
                 </label>
                 <label>

@@ -130,7 +130,7 @@ def _portable_settings(conn: sqlite3.Connection) -> dict[str, str]:
     llm: dict[str, Any] = {
         "provider": "deepseek",
         "base_url": "https://api.deepseek.com",
-        "model": "deepseek-v4-flash",
+        "model": "deepseek-v4-pro",
         # Credentials never leave the source device. Imported model settings
         # therefore start disabled until the user confirms a local key.
         "enabled": False,
@@ -488,7 +488,7 @@ def _restore_settings(conn: sqlite3.Connection, settings: dict[str, Any]) -> Non
     if isinstance(parsed, dict):
         normalized["llm.provider"] = str(parsed.get("provider") or "deepseek")
         normalized["llm.base_url"] = str(parsed.get("base_url") or "https://api.deepseek.com")
-        normalized["llm.model"] = str(parsed.get("model") or "deepseek-v4-flash")
+        normalized["llm.model"] = str(parsed.get("model") or "deepseek-v4-pro")
     normalized["llm.enabled"] = "false"
     normalized.pop("llm.api_key", None)
     stamp = _utc_now()

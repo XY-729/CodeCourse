@@ -20,7 +20,7 @@ def _response_from_settings(settings: dict[str, str]) -> LLMSettingsResponse:
     return LLMSettingsResponse(
         provider=settings.get("provider", "deepseek"),
         base_url=settings.get("base_url", "https://api.deepseek.com"),
-        model=settings.get("model", "deepseek-v4-flash"),
+        model=settings.get("model", "deepseek-v4-pro"),
         enabled=settings.get("enabled", "false") == "true",
         has_api_key=bool(api_key),
         masked_api_key=mask_api_key(api_key) if api_key else None,

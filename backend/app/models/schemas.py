@@ -166,7 +166,7 @@ class QAAskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000)
     provider: str = Field(default="deepseek", max_length=80)
     base_url: str = Field(default="https://api.deepseek.com", max_length=500)
-    model: str = Field(default="deepseek-v4-flash", max_length=160)
+    model: str = Field(default="deepseek-v4-pro", max_length=160)
     session_id: Optional[int] = None
     parent_qa_id: Optional[int] = None
     relation_type: Literal["follow_up", "term_explanation", "alternate"] = "follow_up"
@@ -621,7 +621,7 @@ class ProjectActionResponse(BaseModel):
 class LLMSettingsRequest(BaseModel):
     provider: str = "deepseek"
     base_url: str = "https://api.deepseek.com"
-    model: str = "deepseek-v4-flash"
+    model: str = "deepseek-v4-pro"
     api_key: Optional[str] = None
     enabled: bool = False
     clear_api_key: bool = False
