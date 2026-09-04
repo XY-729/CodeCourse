@@ -363,6 +363,7 @@ export default function App() {
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
   const [qaUpperTab, setQAUpperTab] = useState<"history" | "knowledge">("history");
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
+  const [qaFollowUpRecord, setQAFollowUpRecord] = useState<QARecord | null>(null);
   const [qaSessionId, setQASessionId] = useState<number | null>(null);
   const [qaSessionTree, setQASessionTree] = useState<QARecord[]>([]);
   const [terminologyDensity, setTerminologyDensity] = useState(0.5);
@@ -681,7 +682,8 @@ export default function App() {
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
   const isTaskRunning = generationTasks.some(isGenerationTaskRunning);
-  const activeQAKey = qaSessionId ? `session:${qaSessionId}` : `draft:${qaDraftId}`;
+  const activeQASessionId = qaFollowUpRecord?.session_id ?? (mobileRuntime ? null : qaSessionId);
+  const activeQAKey = activeQASessionId ? `session:${activeQASessionId}` : `draft:${qaDraftId}`;
   const activeQAGeneration = qaGenerations[activeQAKey] ?? null;
 
   /*
@@ -714,8 +716,8 @@ export default function App() {
   } = useQAAskController({
     projectId: project?.id ?? null,
     settings: llmSettings,
-    sessionId: qaSessionId,
-    parentQAId: selectedQA?.id ?? null,
+    sessionId: activeQASessionId,
+    parentQAId: qaFollowUpRecord?.id ?? (mobileRuntime ? null : selectedQA?.id ?? null),
     selectionRange: selectionAnchor?.range,
     generationKey: activeQAKey,
     interactionBusy: qaInteractionBusy,
@@ -730,6 +732,8 @@ export default function App() {
     onAnswerComplete: async (record, projectId) => {
       setSelectedQA(record);
       setQASessionId(record.session_id ?? qaSessionId);
+      setQAFollowUpRecord(null);
+      startNewQADraft();
       setQAUpperTab("history");
       setMobileAssistantView("ask");
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
@@ -1078,7 +1082,7 @@ export default function App() {
       window.removeEventListener("codecourse-native-selection-known", handleNativeSelectionKnown);
       window.removeEventListener("codecourse-native-selection-highlight", handleNativeSelectionHighlight);
     };
-  }, [mobileRuntime, project, llmSettings, qaSessionId, selectedQA, activeQAKey, activeTermRawTerms]);
+  }, [mobileRuntime, project, llmSettings, qaSessionId, selectedQA, qaFollowUpRecord, activeQAKey, activeTermRawTerms]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
@@ -2078,6 +2082,7 @@ export default function App() {
       setContextFilePickerOpen(false);
       clearQAQuestionInput();
       setSelectedQA(null);
+      setQAFollowUpRecord(null);
       setQASessionId(null);
       setQASessionTree([]);
       setLearningAnchor(null);
@@ -2140,6 +2145,7 @@ export default function App() {
         setFileContent(recentDocument.fileContent);
         setSelectedCourse(recentDocument.selectedCourse);
         setSelectedQA(recentDocument.selectedQA);
+        setQAFollowUpRecord(null);
         setQASessionId(recentDocument.qaSessionId);
         if (recentDocument.item) {
           setLayout(updateGroup(initialLayout, ROOT_GROUP_ID, (group) => openItem(group, recentDocument.item!)));
@@ -2787,6 +2793,7 @@ export default function App() {
         setSelection(null);
         setQASessionId(null);
         setIndexStatus(null);
+        setQAFollowUpRecord(null);
         setSelectedScopeFiles([]);
         setSelectionAnchor(null);
         setQAHistory([]);
@@ -2833,6 +2840,7 @@ export default function App() {
 
   function handleNewConversation() {
     setSelectedQA(null);
+    setQAFollowUpRecord(null);
     setQASessionId(null);
     setQASessionTree([]);
     setLearningAnchor(null);
@@ -2842,6 +2850,19 @@ export default function App() {
     startNewQADraft();
   }
 
+  function handleFollowUp(record: QARecord) {
+    if (!project || record.project_id !== project.id) {
+      setToast("其他项目的回答只能查看，不能作为当前项目的追问材料");
+      return;
+    }
+    setSelectedQA(record);
+    setQAFollowUpRecord(record);
+    setQASessionId(record.session_id ?? null);
+    clearQAQuestionInput();
+    setQAUpperTab("history");
+    setMobileAssistantView("ask");
+  }
+
   async function handleResumeContinuity(handoff: TeachingHandoff) {
     if (!project || handoff.projectId !== project.id) return;
     try {
@@ -2849,6 +2870,7 @@ export default function App() {
         ?? await getQARecord(project.id, handoff.qaRecordId);
       setSelectedQA(record);
       setQASessionId(record.session_id ?? handoff.sessionId ?? null);
+      setQAFollowUpRecord(record);
       clearQAQuestionInput();
       openAssistant("history");
     } catch (caught) {
@@ -2894,6 +2916,12 @@ export default function App() {
   function handleTeachingNextAction(action: TeachingNextAction, handoff: TeachingHandoff) {
     if (action.kind === "follow_up") {
       const prompt = action.prompt?.trim() || action.label;
+      const parent = qaHistory.find((item) => item.id === handoff.qaRecordId) ?? selectedQA;
+      if (parent && project && parent.project_id === project.id) {
+        setSelectedQA(parent);
+        setQAFollowUpRecord(parent);
+        setQASessionId(parent.session_id ?? handoff.sessionId ?? null);
+      }
       setQAQuestionInput(prompt);
       setQaResetToken((token) => token + 1);
       openAssistant("history");
@@ -3303,6 +3331,7 @@ export default function App() {
     try {
       const updated = await updateQARecord(project.id, record.id, { display_title: nextTitle.trim() });
       setSelectedQA((current) => current?.id === updated.id ? updated : current);
+      setQAFollowUpRecord((current) => current?.id === updated.id ? updated : current);
       setQAHistory((items) => items.map((entry) => (entry.id === updated.id ? updated : entry)));
       updateOpenQARecord(updated);
       await refreshQAHistory(project.id);
@@ -3696,6 +3725,7 @@ export default function App() {
         clearQAQuestionInput();
         setMobileAssistantView("history");
       }
+      if (qaFollowUpRecord?.id === record.id) setQAFollowUpRecord(null);
       setLayout((prev) =>
         updateEveryGroup(prev, (group) => ({
           ...group,
@@ -3856,6 +3886,7 @@ export default function App() {
     try {
       const updated = await setQAFavorite(project.id, id, !favorite);
       setSelectedQA((current) => current?.id === updated.id ? updated : current);
+      setQAFollowUpRecord((current) => current?.id === updated.id ? updated : current);
       setQAHistory((items) => items.map((item) => (item.id === updated.id ? updated : item)));
       updateOpenQARecord(updated);
       await refreshQAHistory(project.id);
@@ -3940,6 +3971,7 @@ export default function App() {
       const updated = await updateQARecord(project.id, recordId, { answer_md: item.content });
       setQAHistory((items) => items.map((entry) => entry.id === updated.id ? updated : entry));
       if (selectedQA?.id === updated.id) setSelectedQA(updated);
+      if (qaFollowUpRecord?.id === updated.id) setQAFollowUpRecord(updated);
       setLayout((previous) => updateGroup(previous, group.id, (currentGroup) => ({
         ...currentGroup,
         items: currentGroup.items.map((entry) => (
@@ -4776,6 +4808,7 @@ export default function App() {
         historyQuery={qaHistoryQuery}
         favoriteOnly={qaFavoriteOnly}
         selectedRecord={selectedQA}
+        followUpRecord={qaFollowUpRecord}
         selectedRecordReadOnly={Boolean(selectedQA && project && selectedQA.project_id !== project.id)}
         surveyCandidate={dynamicSurvey}
         diagnosticItem={diagnosticItem}
@@ -4792,6 +4825,7 @@ export default function App() {
         onHistoryQueryChange={setQAHistoryQuery}
         onFavoriteOnlyChange={setQAFavoriteOnly}
         onSelectRecord={(record) => { setSelectedQA(record); setQASessionId(record.session_id ?? null); }}
+        onFollowUp={handleFollowUp}
         onOpenRecord={(record) => { void openQAInActiveGroup(record); }}
         onDeleteRecord={handleDeleteQA}
         onRenameRecord={handleRenameQA}

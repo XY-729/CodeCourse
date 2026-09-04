@@ -51,9 +51,17 @@ describe("teaching continuity metadata", () => {
       sourceAvailable: true, usedPriorContext: true, isCurrent: true,
       createdAt: "2026-08-20T00:00:00Z", updatedAt: "2026-08-20T00:00:00Z",
     } satisfies TeachingHandoff;
-    const context = renderProjectLearningContext(handoff);
+    const context = renderProjectLearningContext(handoff, ["C++ 新特性", "并发与内存模型", "C++ 新特性"]);
+    expect(context).toContain('<existing_qa_topics>');
+    expect(context).toContain('["C++ 新特性","并发与内存模型"]');
     expect(context).toContain("上次学习主题：请求生命周期");
     expect(context).toContain("仍待弄清：\n- 事务边界");
     expect(context).toContain("不相关时不要提及这些内容");
+  });
+
+  it("still exposes existing topic choices when there is no active handoff", () => {
+    const context = renderProjectLearningContext(null, ["C++ 新特性"]);
+    expect(context).toContain('["C++ 新特性"]');
+    expect(context).toContain("当前项目没有需要承接的教学主题");
   });
 });

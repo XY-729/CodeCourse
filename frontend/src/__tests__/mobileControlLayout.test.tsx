@@ -22,6 +22,7 @@ function renderAssistant(selectedRecord: QARecord | null = null) {
       historyQuery=""
       favoriteOnly={false}
       selectedRecord={selectedRecord}
+      followUpRecord={selectedRecord}
       settings={null}
       panelError=""
       upperTab="history"
@@ -34,6 +35,7 @@ function renderAssistant(selectedRecord: QARecord | null = null) {
       onHistoryQueryChange={noop}
       onFavoriteOnlyChange={noop}
       onSelectRecord={noop}
+      onFollowUp={noop}
       onOpenRecord={noop}
       onRenameRecord={noop}
       onToggleFavorite={noop}
@@ -58,7 +60,7 @@ describe("mobile controls", () => {
     } as QARecord;
     const { getByRole } = renderAssistant(record);
 
-    expect(getByRole("button", { name: "开始新问题" })).toBeTruthy();
+    expect(getByRole("button", { name: "取消追问" })).toBeTruthy();
   });
 
   it("groups project refresh and delete actions without placeholder columns", () => {

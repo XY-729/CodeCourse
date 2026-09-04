@@ -87,6 +87,16 @@ describe("useQAAskController", () => {
     expect(test.endOperation).toHaveBeenCalledWith(test.token);
   });
 
+  it("starts an independent question when no follow-up material was explicitly selected", async () => {
+    const test = setup({ sessionId: null, parentQAId: null, generationKey: "draft:12" });
+    await act(() => test.hook.result.current.ask("新的问题"));
+    expect(test.runStreamingQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: null, parent_qa_id: null }),
+      "draft:12",
+      test.token,
+    );
+  });
+
   it("rejects concurrent work and project mutation synchronously", async () => {
     const test = setup({ beginOperation: vi.fn(() => null), isOperationActive: vi.fn(() => true) });
     await act(() => test.hook.result.current.ask("为什么？"));

@@ -50,4 +50,18 @@ describe("TeachingContinuityCards", () => {
     expect(groups.map((group) => group.summary.topic)).toEqual(["状态管理", "问题 3"]);
     expect(groups[0].records).toEqual([current]);
   });
+
+  it("compacts question-like smart-pointer topics and merges them into one stable category", () => {
+    const shared = { ...record(4, 30), question: "shared_ptr 有什么作用？", display_title: "shared_ptr 有什么作用？" };
+    const unique = { ...record(5, 40), question: "unique_ptr 怎么转移所有权？", display_title: "unique_ptr 怎么转移所有权？" };
+    const threads: QAThreadSummary[] = [shared, unique].map((item) => ({
+      sessionId: item.session_id!, topic: item.question, progressSummary: "", unresolvedPoints: [], turnCount: 1,
+      latestQaRecordId: item.id, sourceType: item.source_type, sourcePath: item.source_path, isCurrent: false,
+      updatedAt: item.updated_at, records: [item.id],
+    }));
+    const groups = groupQARecordsByThreads(threads, [shared, unique]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].summary.topic).toBe("C++ 新特性");
+    expect(groups[0].records.map((item) => item.id)).toEqual([4, 5]);
+  });
 });

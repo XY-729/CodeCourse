@@ -159,6 +159,19 @@ class TeachingContinuityTests(unittest.TestCase):
         self.assertEqual(dismissed.id, handoff.id)
         self.assertIsNone(get_current_teaching_handoff(self.project.id))
 
+    def test_learning_context_lists_existing_topics_for_model_classification(self):
+        from app.services.continuity_service import persist_teaching_handoff, render_project_learning_context
+
+        record = self._record(self.project.id)
+        persist_teaching_handoff(record, {
+            "topic": "C++ 新特性", "progressSummary": "理解智能指针", "establishedPoints": [],
+            "unresolvedPoints": [], "nextActions": [], "usedPriorContext": False,
+        })
+        context = render_project_learning_context(self.project.id)
+        self.assertIn("<existing_qa_topics>", context)
+        self.assertIn('["C++ 新特性"]', context)
+        self.assertIn("语义匹配时优先复用", context)
+
     def test_project_deletion_removes_handoff_rows(self):
         from app.services.continuity_service import persist_teaching_handoff
         from app.services.storage import delete_project, list_teaching_handoffs

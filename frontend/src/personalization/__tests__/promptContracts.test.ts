@@ -28,6 +28,8 @@ describe("prompt output contracts", () => {
     expect(qa).toContain("TERMS: [...]");
     expect(qa).toContain("HANDOFF: {...}");
     expect(qa).toContain('"engagement":"utility"');
+    expect(qa).toContain("优先复用 <existing_qa_topics>");
+    expect(qa).toContain("shared_ptr、unique_ptr、weak_ptr 应归入“C++ 新特性”");
   });
 
   it("always places immutable safety rules before editable text", () => {

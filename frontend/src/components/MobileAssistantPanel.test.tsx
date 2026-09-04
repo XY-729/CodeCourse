@@ -21,14 +21,14 @@ function createProps() {
     contextFiles: [], onOpenFilePicker: vi.fn(), onRemoveContextFile: vi.fn(),
     question: "", loading: false, loadingLabel: "", streamContent: "",
     history: [RECORD], historyQuery: "", favoriteOnly: false,
-    selectedRecord: null, selectedRecordReadOnly: false,
+    selectedRecord: null, followUpRecord: null, selectedRecordReadOnly: false,
     surveyCandidate: null, diagnosticItem: null, diagnosticResult: null,
     settings: SETTINGS, panelError: "",
     knowledgeContent: <div>测试知识网络</div>, knowledgeDisabled: false,
     onQuestionChange: vi.fn(), onSelectionTextChange: vi.fn(), onClearSelection: vi.fn(),
     onAsk: vi.fn(), onNewConversation: vi.fn(),
     onHistoryQueryChange: vi.fn(), onFavoriteOnlyChange: vi.fn(),
-    onSelectRecord: vi.fn(), onOpenRecord: vi.fn(), onDeleteRecord: vi.fn(),
+    onSelectRecord: vi.fn(), onFollowUp: vi.fn(), onOpenRecord: vi.fn(), onDeleteRecord: vi.fn(),
     onRenameRecord: vi.fn(), onToggleFavorite: vi.fn(), onOpenSettings: vi.fn(),
     onAnswerSurvey: vi.fn(), onDismissSurvey: vi.fn(), onDisableSurveys: vi.fn(),
     onAnswerDiagnostic: vi.fn(), onDismissDiagnostic: vi.fn(), onFlagDiagnostic: vi.fn(),
@@ -47,6 +47,7 @@ describe("MobileAssistantPanel", () => {
     const props = createProps();
     render(<MobileAssistantPanel {...props} />);
     const textbox = screen.getByRole("textbox", { name: "输入问题" }) as HTMLTextAreaElement;
+    expect(textbox.placeholder).toBe("请输入问题");
     fireEvent.change(textbox, { target: { value: "立即提交的问题" } });
     expect(textbox.value).toBe("立即提交的问题");
     // The send action is enabled straight away from the local draft (typing
@@ -81,17 +82,26 @@ describe("MobileAssistantPanel", () => {
     expect(props.onSelectRecord).not.toHaveBeenCalled();
   });
 
+  it("starts follow-up only from the explicit history action", () => {
+    const props = { ...createProps(), view: "history" as const };
+    render(<MobileAssistantPanel {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "追问 状态管理" }));
+    expect(props.onFollowUp).toHaveBeenCalledWith(RECORD);
+    expect(props.onViewChange).toHaveBeenCalledWith("ask");
+    expect(props.onSelectRecord).not.toHaveBeenCalled();
+  });
+
   it("renders knowledge without remount navigation", () => {
     const props = { ...createProps(), view: "knowledge" as const };
     render(<MobileAssistantPanel {...props} />);
     expect(screen.getByText("测试知识网络")).toBeTruthy();
   });
 
-  it("disables asking for readonly record", () => {
+  it("allows a new independent question while viewing a readonly record", () => {
     const props = { ...createProps(), question: "继续追问", selectedRecord: RECORD, selectedRecordReadOnly: true };
     render(<MobileAssistantPanel {...props} />);
-    const btn = screen.getByRole("button", { name: "继续追问" }) as HTMLButtonElement;
-    expect(btn.disabled).toBe(true);
+    const btn = screen.getByRole("button", { name: "询问" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
   });
 
   it("shows model configuration when unavailable", () => {
@@ -116,11 +126,11 @@ describe("MobileAssistantPanel", () => {
   });
 
   it("locks session-changing actions while loading", () => {
-    const props = { ...createProps(), loading: true, selectedRecord: RECORD };
+    const props = { ...createProps(), loading: true, selectedRecord: RECORD, followUpRecord: RECORD };
     render(<MobileAssistantPanel {...props} />);
     expect((screen.getByRole("tab", { name: "历史" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("tab", { name: "知识" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "清空会话" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "取消追问" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("disables history actions while loading", () => {

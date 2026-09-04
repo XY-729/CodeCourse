@@ -6,6 +6,36 @@ export type VisibleQAThreadGroup = {
   records: QARecord[];
 };
 
+export function compactTopicLabel(topic: string, records: QARecord[] = []): string {
+  const raw = topic.replace(/\s+/g, " ").trim();
+  const rules: Array<[RegExp, string]> = [
+    [/shared[_\s-]*ptr|unique[_\s-]*ptr|weak[_\s-]*ptr|智能指针|constexpr|consteval|constinit|override|lambda|结构化绑定|concepts?\b|ranges?\b/, "C++ 新特性"],
+    [/std::atomic|\batomic\b|memory[_\s-]*order|内存序|内存模型|并发|线程同步|volatile/, "并发与内存模型"],
+    [/\bcgroup|namespace|seccomp|sandbox|容器隔离|linux\s*沙箱/, "Linux 沙箱"],
+    [/\bclone\b|\bfork\b|子进程|进程栈|进程管理|kchildstacksize/, "进程与执行"],
+    [/react|use(state|effect|memo|callback)/, "React 状态管理"],
+  ];
+  const classify = (value: string) => rules.find(([pattern]) => pattern.test(value.toLowerCase()))?.[1];
+  const directCategory = classify(raw);
+  if (directCategory) return directCategory;
+  if (!raw) return "未分类";
+  const evidence = [raw, ...records.flatMap((record) => [record.display_title || "", record.question])].join(" ");
+  const matchesRecordTitle = records.some((record) => {
+    const question = record.question.replace(/\s+/g, " ").trim();
+    const title = record.display_title?.replace(/\s+/g, " ").trim();
+    return raw === question || raw === title;
+  });
+  if (!matchesRecordTitle && raw.length <= 20 && !/[？?]$/.test(raw)) return raw;
+  const inferredCategory = classify(evidence);
+  if (inferredCategory) return inferredCategory;
+  const simplified = raw
+    .replace(/^(请问|请解释|解释一下|介绍一下|如何理解|为什么|什么是)\s*/i, "")
+    .replace(/[？?。！!]+$/g, "")
+    .split(/[，,；;：:。]/, 1)[0]
+    .trim();
+  return (simplified || raw).slice(0, 20);
+}
+
 export function groupQARecordsByThreads(threads: QAThreadSummary[] = [], records: QARecord[] = []): VisibleQAThreadGroup[] {
   const recordById = new Map(records.map((record) => [record.id, record]));
   const groupedIds = new Set<number>();
@@ -45,7 +75,35 @@ export function groupQARecordsByThreads(threads: QAThreadSummary[] = [], records
       records: ordered,
     });
   }
-  return groups;
+  const merged = new Map<string, VisibleQAThreadGroup>();
+  for (const group of groups) {
+    const topic = compactTopicLabel(group.summary.topic, group.records);
+    const existing = merged.get(topic);
+    if (!existing) {
+      merged.set(topic, { summary: { ...group.summary, topic }, records: [...group.records] });
+      continue;
+    }
+    const records = [...existing.records, ...group.records]
+      .sort((left, right) => left.created_at.localeCompare(right.created_at));
+    const representative = existing.summary.isCurrent && !group.summary.isCurrent
+      ? existing
+      : group.summary.isCurrent && !existing.summary.isCurrent
+        ? group
+        : group.summary.updatedAt > existing.summary.updatedAt ? group : existing;
+    existing.records = records;
+    existing.summary = {
+      ...representative.summary,
+      topic,
+      isCurrent: existing.summary.isCurrent || group.summary.isCurrent,
+      turnCount: records.length,
+      updatedAt: group.summary.updatedAt > existing.summary.updatedAt ? group.summary.updatedAt : existing.summary.updatedAt,
+      records: records.map((record) => record.id),
+    };
+  }
+  return [...merged.values()].sort((left, right) => {
+    if (left.summary.isCurrent !== right.summary.isCurrent) return left.summary.isCurrent ? -1 : 1;
+    return right.summary.updatedAt.localeCompare(left.summary.updatedAt);
+  });
 }
 
 type ResumeCardProps = {

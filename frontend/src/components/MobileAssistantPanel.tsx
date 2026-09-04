@@ -30,6 +30,7 @@ type Props = {
   historyQuery: string;
   favoriteOnly: boolean;
   selectedRecord: QARecord | null;
+  followUpRecord: QARecord | null;
   selectedRecordReadOnly?: boolean;
   surveyCandidate?: DynamicSurveyCandidate | null;
   diagnosticItem?: DiagnosticItem | null;
@@ -48,6 +49,7 @@ type Props = {
   resetToken?: unknown;
   onFavoriteOnlyChange: (value: boolean) => void;
   onSelectRecord: (record: QARecord) => void;
+  onFollowUp: (record: QARecord) => void;
   onOpenRecord: (record: QARecord) => void;
   onDeleteRecord?: (record: QARecord) => void;
   onRenameRecord: (record: QARecord) => void;
@@ -113,11 +115,11 @@ function buildSuggestions(selection: SelectionSummary | null, context: Assistant
 
 export default function MobileAssistantPanel({
   view, onViewChange, selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, loading, loadingLabel, streamContent,
-  history, threads = [], continuity = null, historyQuery, favoriteOnly, selectedRecord, selectedRecordReadOnly = false,
+  history, threads = [], continuity = null, historyQuery, favoriteOnly, selectedRecord, followUpRecord, selectedRecordReadOnly = false,
   surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError,
   knowledgeContent, knowledgeDisabled = false,
   onQuestionChange, onSelectionTextChange, onClearSelection, onAsk, onNewConversation,
-  onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord, onOpenRecord,
+  onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord, onFollowUp, onOpenRecord,
   onDeleteRecord, onRenameRecord, onToggleFavorite, onResumeContinuity = () => {}, onOpenContinuitySource = () => {}, onDismissContinuity = () => {}, onTeachingNextAction = () => {}, onOpenSettings,
   onAnswerSurvey, onDismissSurvey, onDisableSurveys,
   onAnswerDiagnostic, onDismissDiagnostic, onFlagDiagnostic,
@@ -151,7 +153,7 @@ export default function MobileAssistantPanel({
   );
 
   const modelReady = Boolean(settings?.enabled && settings.has_api_key);
-  const canAsk = !loading && !selectedRecordReadOnly && modelReady && Boolean(questionDraft.trim());
+  const canAsk = !loading && modelReady && Boolean(questionDraft.trim());
   const threadGroups = groupQARecordsByThreads(threads, history);
 
   function chooseSuggestion(value: string) {
@@ -170,6 +172,11 @@ export default function MobileAssistantPanel({
 
   function selectHistoryRecord(record: QARecord) {
     onSelectRecord(record);
+    onViewChange("ask");
+  }
+
+  function followUpHistoryRecord(record: QARecord) {
+    onFollowUp(record);
     onViewChange("ask");
   }
 
@@ -266,7 +273,7 @@ export default function MobileAssistantPanel({
               <strong>你可能想问</strong>
               <div>
                 {suggestions.map((suggestion) => (
-                  <button type="button" key={suggestion} onClick={() => chooseSuggestion(suggestion)} disabled={loading || selectedRecordReadOnly}>{suggestion}</button>
+                  <button type="button" key={suggestion} onClick={() => chooseSuggestion(suggestion)} disabled={loading}>{suggestion}</button>
                 ))}
               </div>
             </section>
@@ -330,10 +337,10 @@ export default function MobileAssistantPanel({
 
           <div className="mobile-assistant-composer">
             <div className="mobile-assistant-composer-heading">
-              <span>{selectedRecord ? `继续：${recordTitle(selectedRecord)}` : "新问题"}</span>
-              {selectedRecord ? <button type="button" onClick={onNewConversation} disabled={loading}>清空会话</button> : null}
+              <span>{followUpRecord ? `正在追问：${recordTitle(followUpRecord)}` : "新问题"}</span>
+              {followUpRecord ? <button type="button" onClick={onNewConversation} disabled={loading}>取消追问</button> : null}
             </div>
-            {selectedRecordReadOnly ? <div className="mobile-assistant-readonly-note">这是其他项目中的历史回答，当前只能查看，不能继续追问。</div> : null}
+            {selectedRecordReadOnly ? <div className="mobile-assistant-readonly-note">这是其他项目中的历史回答，只能查看；你仍可发起新的独立问题。</div> : null}
             <DeferredLiftTextarea
               ref={composerRef}
               value={question}
@@ -341,8 +348,8 @@ export default function MobileAssistantPanel({
               onDraftChange={setQuestionDraft}
               resetToken={resetToken}
               onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && canAsk) { event.preventDefault(); handleSend(); } }}
-              placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"}
-              disabled={loading || selectedRecordReadOnly} aria-label="输入问题" rows={3}
+              placeholder="请输入问题"
+              disabled={loading} aria-label="输入问题" rows={3}
             />
             {panelError ? <div className="mobile-assistant-error" role="alert">{panelError}</div> : null}
             <div className="mobile-assistant-composer-actions">
@@ -353,7 +360,7 @@ export default function MobileAssistantPanel({
               )}
               <button type="button" className="mobile-assistant-send" onClick={handleSend} disabled={!canAsk}>
                 {loading ? <Loader2 size={18} className="spin" aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
-                <span>{loading ? loadingLabel || "生成中" : selectedRecord ? "继续追问" : "询问"}</span>
+                <span>{loading ? loadingLabel || "生成中" : followUpRecord ? "继续追问" : "询问"}</span>
               </button>
             </div>
           </div>
@@ -385,6 +392,7 @@ export default function MobileAssistantPanel({
                         </button>
                         <div className="mobile-assistant-history-actions">
                           <button type="button" onClick={() => onOpenRecord(record)} disabled={loading} aria-label={`打开 ${recordTitle(record)}`} title="打开完整回答"><ExternalLink size={17} aria-hidden="true" /></button>
+                          <button type="button" onClick={() => followUpHistoryRecord(record)} disabled={loading} aria-label={`追问 ${recordTitle(record)}`} title="将此问答链作为追问材料"><MessageCircle size={17} aria-hidden="true" /></button>
                           <button type="button" className={record.favorite ? "active" : ""} onClick={() => onToggleFavorite(record)} disabled={loading} aria-label={record.favorite ? `取消收藏 ${recordTitle(record)}` : `收藏 ${recordTitle(record)}`} aria-pressed={record.favorite} title={record.favorite ? "取消收藏" : "收藏"}><Star size={17} aria-hidden="true" /></button>
                           <button type="button" onClick={() => onRenameRecord(record)} disabled={loading} aria-label={`重命名 ${recordTitle(record)}`} title="重命名"><Edit3 size={17} aria-hidden="true" /></button>
                           {onDeleteRecord ? <button type="button" className="danger" onClick={() => onDeleteRecord(record)} disabled={loading} aria-label={`删除 ${recordTitle(record)}`} title="删除"><Trash2 size={17} aria-hidden="true" /></button> : null}

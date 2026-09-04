@@ -2525,7 +2525,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       context_text: context,
     });
     const learnerContext = await this.learnerContextForQuestion(projectId, payload);
-    const projectLearningContext = renderProjectLearningContext(await this.getCurrentHandoff(projectId));
+    const existingTopics = (await this.listQAThreads(projectId)).map((thread) => thread.topic);
+    const projectLearningContext = renderProjectLearningContext(await this.getCurrentHandoff(projectId), existingTopics);
     const teacherPlanResult = await this.teacherStrategyForQuestion(projectId, payload);
     const teacherPlan = teacherPlanResult?.rendered ?? "";
     const raw = await this.callLLM([
