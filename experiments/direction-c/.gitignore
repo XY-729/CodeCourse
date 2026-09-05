@@ -1,0 +1,8 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+artifacts/*.webm
+artifacts/*.mp4
+artifacts/recording/
+artifacts/frames/

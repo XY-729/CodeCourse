@@ -1,0 +1,32 @@
+{
+  "name": "codecourse-direction-c-prototype",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5197 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 5197 --strictPort",
+    "test": "node scripts/test.mjs"
+  },
+  "dependencies": {
+    "@fontsource/barlow-condensed": "5.2.8",
+    "@fontsource/noto-sans-sc": "5.2.8",
+    "framer-motion": "12.23.12",
+    "gsap": "3.13.0",
+    "lucide-react": "0.468.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "overrides": {
+    "motion-dom": "12.23.12",
+    "motion-utils": "12.23.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.0",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2",
+    "typescript": "5.7.2",
+    "vite": "6.0.7"
+  }
+}
