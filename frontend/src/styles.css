@@ -1372,6 +1372,14 @@ button:disabled,
   color: #9aa4b2;
 }
 
+.history-follow-up {
+  position: absolute;
+  right: 52px;
+  top: 9px;
+  color: #9aa4b2;
+}
+
+.history-follow-up:hover,
 .history-rename:hover,
 .history-star:hover {
   color: #155d54;
@@ -2330,7 +2338,7 @@ button:disabled,
 /* ---- History row delete button ---- */
 .history-delete {
   position: absolute;
-  right: 52px;
+  right: 74px;
   top: 9px;
   color: #9aa4b2;
   cursor: pointer;

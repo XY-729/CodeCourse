@@ -4749,6 +4749,7 @@ export default function App() {
         historyQuery={qaHistoryQuery}
         favoriteOnly={qaFavoriteOnly}
         selectedRecord={selectedQA}
+        followUpRecord={qaFollowUpRecord}
         selectedRecordReadOnly={Boolean(selectedQA && project && selectedQA.project_id !== project.id)}
         surveyCandidate={dynamicSurvey}
         diagnosticItem={diagnosticItem}
@@ -4767,6 +4768,7 @@ export default function App() {
         onHistoryQueryChange={setQAHistoryQuery}
         onFavoriteOnlyChange={setQAFavoriteOnly}
         onSelectRecord={(record) => { setSelectedQA(record); setQASessionId(record.session_id ?? null); }}
+        onFollowUp={handleFollowUp}
         onOpenRecord={(record) => { void openQAInActiveGroup(record); }}
         onDeleteRecord={handleDeleteQA}
         onRenameRecord={handleRenameQA}

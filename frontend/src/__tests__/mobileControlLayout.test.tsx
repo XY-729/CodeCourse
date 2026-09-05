@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Project, QARecord } from "../api/client";
 import ExplainPanel from "../components/ExplainPanel";
@@ -8,7 +8,7 @@ import Sidebar from "../components/Sidebar";
 
 const noop = vi.fn();
 
-function renderAssistant(selectedRecord: QARecord | null = null) {
+function renderAssistant(selectedRecord: QARecord | null = null, history: QARecord[] = [], onFollowUp = noop) {
   return render(
     <ExplainPanel
       selection={null}
@@ -18,10 +18,11 @@ function renderAssistant(selectedRecord: QARecord | null = null) {
       onRemoveContextFile={noop}
       question=""
       loading={false}
-      history={[]}
+      history={history}
       historyQuery=""
       favoriteOnly={false}
       selectedRecord={selectedRecord}
+      followUpRecord={selectedRecord}
       settings={null}
       panelError=""
       upperTab="history"
@@ -34,6 +35,7 @@ function renderAssistant(selectedRecord: QARecord | null = null) {
       onHistoryQueryChange={noop}
       onFavoriteOnlyChange={noop}
       onSelectRecord={noop}
+      onFollowUp={onFollowUp}
       onOpenRecord={noop}
       onRenameRecord={noop}
       onToggleFavorite={noop}
@@ -58,7 +60,21 @@ describe("mobile controls", () => {
     } as QARecord;
     const { getByRole } = renderAssistant(record);
 
-    expect(getByRole("button", { name: "开始新问题" })).toBeTruthy();
+    expect(getByRole("button", { name: "取消追问" })).toBeTruthy();
+  });
+
+  it("uses a fixed question placeholder and starts follow-up only from history", () => {
+    const record = {
+      id: 7, project_id: 1, session_id: 3, question: "shared_ptr 有什么作用？", answer_md: "回答",
+      display_title: "shared_ptr 有什么作用？", relation_type: "follow_up", source_type: "file",
+      source_path: "lesson.md", selected_text: "", provider: "test", model: "test", favorite: false,
+      created_at: "2026-09-05T00:00:00Z", updated_at: "2026-09-05T00:00:00Z",
+    } as QARecord;
+    const followUp = vi.fn();
+    const { getByRole } = renderAssistant(null, [record], followUp);
+    expect((getByRole("textbox", { name: "输入问题" }) as HTMLTextAreaElement).placeholder).toBe("请输入问题");
+    fireEvent.click(getByRole("button", { name: "追问 shared_ptr 有什么作用？" }));
+    expect(followUp).toHaveBeenCalledWith(record);
   });
 
   it("groups project refresh and delete actions without placeholder columns", () => {
