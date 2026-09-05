@@ -356,6 +356,7 @@ class TermImpression:
 
 # ---------- Phase 1: Interaction Observer Shadow Tables ----------
 
+@dataclass
 class ObservationRun:
     id: str
     idempotency_key: str
@@ -376,6 +377,7 @@ class ObservationRun:
     updated_at: str
 
 
+@dataclass
 class InteractionObservationRow:
     id: str
     idempotency_key: str
@@ -394,6 +396,7 @@ class InteractionObservationRow:
     created_at: str
 
 
+@dataclass
 class ConceptCapabilityRow:
     concept_id: str
     scope_type: str
@@ -410,6 +413,7 @@ class ConceptCapabilityRow:
     updated_at: str
 
 
+@dataclass
 class LearnerHypothesisRow:
     id: str
     hypothesis_key: str
@@ -427,6 +431,7 @@ class LearnerHypothesisRow:
     updated_at: str
 
 
+@dataclass
 class MisconceptionHypothesisRow:
     id: str
     concept_id: Optional[str]
@@ -1838,6 +1843,8 @@ def init_storage() -> None:
             """CREATE INDEX IF NOT EXISTS idx_call_guides_project_updated
                ON call_guides(project_id, updated_at DESC)"""
         )
+        from app.services.personalization.profile_repair import repair_legacy_profile
+        repair_legacy_profile(conn)
         conn.commit()
 
 
@@ -5266,7 +5273,9 @@ def insert_observer_run(
              input_hash, status, now, now),
         )
         row = c.execute("SELECT * FROM observer_runs WHERE id = ?", (run_id,)).fetchone()
-        return _row_to_observation_run(row)
+        result = _row_to_observation_run(row)
+        c.commit()
+        return result
 
 
 def get_observer_run(idempotency_key: str, *, conn: Optional[sqlite3.Connection] = None) -> Optional[ObservationRun]:
@@ -5302,6 +5311,8 @@ def update_observer_run_status(
     if error_message is not None:
         sets.append("error_message = ?")
         params.append(error_message)
+    elif status in ("running", "completed"):
+        sets.append("error_message = NULL")
     if latency_ms is not None:
         sets.append("latency_ms = ?")
         params.append(latency_ms)
@@ -5318,6 +5329,7 @@ def update_observer_run_status(
     else:
         with _connect() as c:
             c.execute(sql, params)
+            c.commit()
 
 
 def list_observer_runs(
@@ -5390,7 +5402,9 @@ def insert_interaction_observation(
              payload_json, evidence_text, status, now),
         )
         row = c.execute("SELECT * FROM interaction_observations WHERE id = ?", (obs_id,)).fetchone()
-        return _row_to_interaction_observation(row) if row else None
+        result = _row_to_interaction_observation(row) if row else None
+        c.commit()
+        return result
 
 
 def list_interaction_observations(
@@ -5495,6 +5509,8 @@ def persist_applied_teaching_trial(
     target_dimensions_json: str = "[]",
     strategy_rationale: str = "",
     policy_version: str = "teaching-trial-v2.1",
+    fallback_reason: str | None = None,
+    snapshot_id: str | None = None,
 ) -> str:
     import uuid
     trial_id = str(uuid.uuid4())
@@ -5511,10 +5527,10 @@ def persist_applied_teaching_trial(
                 fallback_reason, answer_model, pre_state_json,
                 target_concepts_json, target_dimensions_json,
                 strategy_rationale, policy_version, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (trial_id, project_id, session_id, qa_record_id,
-             planner_run_id, teaching_plan_id, "",
-             effective_context_json, mode, answer_model, pre_state_json,
+             planner_run_id, teaching_plan_id, snapshot_id or "",
+             effective_context_json, mode, fallback_reason, answer_model, pre_state_json,
              target_concepts_json, target_dimensions_json,
              strategy_rationale, policy_version, now),
         )

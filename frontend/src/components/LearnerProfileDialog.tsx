@@ -31,6 +31,7 @@ import {
   type TermScanStatus,
 } from "../api/client";
 import type { TermDisplayDiagnostics } from "../personalization/useDocumentTermsController";
+import { canonicalConceptName } from "../personalization/conceptIdentity";
 
 type Props = {
   open: boolean;
@@ -104,6 +105,7 @@ function dimensionStatusLabel(
 
 function evidenceSummary(evidence: LearningEvidenceV2): string {
   const candidates = [
+    evidence.result.explanation,
     evidence.result.evidenceText,
     evidence.object.evidenceText,
     evidence.context.evidenceText,
@@ -190,8 +192,10 @@ export default function LearnerProfileDialog({
       insufficient: string[];
       likelyPrerequisites: string[];
       updatedAt: string;
+      summary: string;
     }>();
     for (const item of profile.concepts) {
+      if (!canonicalConceptName(item.concept.displayName) && !item.mastery.manualStatus) continue;
       const domainKey = item.concept.domain || "未分类";
       const group = groups.get(domainKey) ?? {
         domainKey,
@@ -200,6 +204,7 @@ export default function LearnerProfileDialog({
         insufficient: [],
         likelyPrerequisites: legacyByKey.get(domainKey)?.likelyPrerequisites ?? [],
         updatedAt: statesByConceptId.get(item.concept.id)?.updatedAt ?? new Date(0).toISOString(),
+        summary: legacyByKey.get(domainKey)?.summary ?? "",
       };
       const state = statesByConceptId.get(item.concept.id);
       const dimensions = state?.dimensions;
@@ -213,6 +218,30 @@ export default function LearnerProfileDialog({
       group[status].push(item.concept.displayName);
       if (state && state.updatedAt > group.updatedAt) group.updatedAt = state.updatedAt;
       groups.set(domainKey, group);
+    }
+    for (const domain of profile.domainProfiles) {
+      if (!groups.has(domain.domainKey)) groups.set(domain.domainKey, {
+        domainKey: domain.domainKey, summary: domain.summary, confirmed: domain.confirmed,
+        learning: domain.learning, insufficient: [], likelyPrerequisites: domain.likelyPrerequisites,
+        updatedAt: domain.updatedAt,
+      });
+    }
+    for (const inference of profile.inferences) {
+      if (inference.subjectType !== "domain" || inference.scopeType !== "project") continue;
+      const group = groups.get(inference.subjectKey) ?? {
+        domainKey: inference.subjectKey, summary: "", confirmed: [], learning: [],
+        insufficient: [], likelyPrerequisites: [], updatedAt: inference.updatedAt,
+      };
+      group.summary = inference.summary;
+      group.updatedAt = inference.updatedAt;
+      groups.set(inference.subjectKey, group);
+    }
+    for (const relation of profile.relations) {
+      if (!groups.has(relation.domain)) groups.set(relation.domain, {
+        domainKey: relation.domain, summary: "仅建立知识联系，尚无掌握证据。",
+        confirmed: [], learning: [], insufficient: [], likelyPrerequisites: [],
+        updatedAt: relation.updatedAt ?? "",
+      });
     }
     return [...groups.values()].sort((left, right) => (
       right.learning.length - left.learning.length || left.domainKey.localeCompare(right.domainKey)
@@ -445,15 +474,28 @@ export default function LearnerProfileDialog({
                 {domainSummaries.length ? domainSummaries.map((domain) => (
                   <article className="domain-profile-row" key={domain.domainKey}>
                     <header>
-                      <div><strong>{domain.domainKey}</strong><span>按可验证证据计算</span></div>
-                      <small>{new Date(domain.updatedAt).toLocaleDateString()}</small>
+                      <div><strong>{domain.domainKey}</strong><span>学习分析与证据边界</span></div>
+                      <small>{domain.updatedAt ? new Date(domain.updatedAt).toLocaleDateString() : "暂无时间"}</small>
                     </header>
+                    {domain.summary ? <p>{domain.summary}</p> : null}
                     <div className="domain-boundaries">
                       <div><CheckCircle2 size={14} /><span>已有证据</span><strong>{domain.confirmed.join("、") || "暂无"}</strong></div>
                       <div><CircleHelp size={14} /><span>正在学习</span><strong>{domain.learning.join("、") || "暂无"}</strong></div>
                       <div><RotateCcw size={14} /><span>证据不足</span><strong>{domain.insufficient.join("、") || "暂无"}</strong></div>
                       <div><Link2 size={14} /><span>可能前置</span><strong>{domain.likelyPrerequisites.join("、") || "暂无"}</strong></div>
                     </div>
+                    {profile.relations.filter((relation) => relation.domain === domain.domainKey).length ? (
+                      <details>
+                        <summary>知识联系（不代表已掌握）</summary>
+                        <ul>{profile.relations.filter((relation) => relation.domain === domain.domainKey).map((relation) => (
+                          <li key={relation.id}>
+                            {relation.sourceName || conceptsById.get(relation.sourceConceptId) || "相关概念"}
+                            {({ is_a: " 属于 ", prerequisite: " 需要先理解 ", component: " 包含 ", application: " 应用于 ", sibling: " 关联 ", alias: " 别名为 " })[relation.relationType]}
+                            {relation.targetName || conceptsById.get(relation.targetConceptId) || "相关概念"}
+                          </li>
+                        ))}</ul>
+                      </details>
+                    ) : null}
                   </article>
                 )) : (
                   <div className="learner-profile-empty">
@@ -490,6 +532,9 @@ export default function LearnerProfileDialog({
                       {" · "}{new Date(evidence.eventTime).toLocaleString()}
                     </small>
                     <p>{evidenceSummary(evidence)}</p>
+                    {typeof evidence.result.explanation === "string" && typeof (evidence.result.evidenceQuote ?? evidence.result.evidenceText) === "string" ? (
+                      <blockquote>依据：{String(evidence.result.evidenceQuote ?? evidence.result.evidenceText)}</blockquote>
+                    ) : null}
                   </button>
                   {!voided && evidence.action !== "void_evidence" ? (
                     <button type="button" className="icon-button" title="撤销这条证据" onClick={() => void undoEvidence(evidence)}>
@@ -504,7 +549,7 @@ export default function LearnerProfileDialog({
               }) : <div className="learner-profile-empty"><RotateCcw size={22} /><span>暂无可查看的判断依据。</span></div>}
               {profile.inferences.length ? (
                 <details className="learner-legacy-evidence">
-                  <summary>查看旧版 Observer 判断 ({profile.inferences.length})</summary>
+                  <summary>查看学习分析与依据 ({profile.inferences.length})</summary>
                   {profile.inferences.map((item) => (
                     <article className={`learner-evidence-row state-${item.state}`} key={item.id}>
                       <button
@@ -516,10 +561,10 @@ export default function LearnerProfileDialog({
                           <strong>{item.subjectType === "concept" ? item.displayName || conceptsById.get(item.subjectKey) || item.subjectKey : item.subjectKey}</strong>
                           <span>{STATE_LABELS[item.state]}</span>
                         </div>
-                        <small>{confidenceLabel(item.confidence)} · 旧版观察记录</small>
+                      <small>{confidenceLabel(item.confidence)} · 学习分析</small>
                         <p>{item.summary}</p>
                       </button>
-                      <button type="button" className="icon-button" title="撤销旧版判断" onClick={() => void undoInference(item)}>
+                      <button type="button" className="icon-button" title="撤销这条分析" onClick={() => void undoInference(item)}>
                         <Undo2 size={15} />
                       </button>
                       {expandedInference === item.id ? (

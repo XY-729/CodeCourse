@@ -444,9 +444,10 @@ def register_document_terms(
         if normalized in seen:
             continue
         seen.add(normalized)
-        concept_id = _resolve_concept(
-            project_id, canonical_name, source, confidence
-        )
+        try:
+            concept_id = _resolve_concept(project_id, canonical_name, source, confidence)
+        except ValueError:
+            continue
         upsert_document_term(
             project_id,
             source_type,

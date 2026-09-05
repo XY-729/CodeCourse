@@ -65,18 +65,28 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _resolve_concept_id(concept_text: str, concept_key: Optional[str], conn: sqlite3.Connection) -> Optional[str]:
+def _resolve_concept_id(concept_text: str, concept_key: Optional[str], conn: sqlite3.Connection, project_id: int) -> Optional[str]:
+    from app.services.personalization.concept_identity import canonical_concept_name
+    clean = canonical_concept_name(concept_text)
+    if not clean:
+        return None
+    if concept_key and concept_key.startswith("project:") and not concept_key.startswith(f"project:{project_id}:"):
+        return None
+    if clean != concept_text:
+        concept_key = None
+    concept_text = clean
     concept_id = None
     if concept_key:
         row = conn.execute(
-            "SELECT id FROM concepts WHERE concept_key = ?", (concept_key,)
+            "SELECT id FROM concepts WHERE concept_key = ? AND (canonical_name = ? OR display_name = ?)",
+            (concept_key, concept_text, concept_text),
         ).fetchone()
         if row:
             concept_id = row[0]
     if concept_id is None:
         row = conn.execute(
-            "SELECT id FROM concepts WHERE canonical_name = ? OR display_name = ?",
-            (concept_text, concept_text),
+            "SELECT id FROM concepts WHERE (canonical_name = ? OR display_name = ?) AND (concept_key NOT LIKE 'project:%' OR concept_key LIKE ?)",
+            (concept_text, concept_text, f"project:{project_id}:%"),
         ).fetchone()
         if row:
             concept_id = row[0]
@@ -293,7 +303,7 @@ def apply_shadow_updates(
             continue
         if ev.direction == "uncertain":
             continue
-        concept_id = _resolve_concept_id(ev.concept_text, ev.concept_key, conn)
+        concept_id = _resolve_concept_id(ev.concept_text, ev.concept_key, conn, project_id)
         if concept_id is None:
             continue
         concept_row = conn.execute(
@@ -351,7 +361,7 @@ def apply_shadow_updates(
     for i, ev in enumerate(observation.possible_misconceptions):
         if ev.confidence < CONFIDENCE_THRESHOLD_MISCONCEPTION:
             continue
-        concept_id = _resolve_concept_id(ev.concept_text, ev.concept_key, conn)
+        concept_id = _resolve_concept_id(ev.concept_text, ev.concept_key, conn, project_id)
         obs_id = f"observer:v1:qa:{project_id}:miscon:{i}"
         _upsert_misconception(
             concept_text=ev.concept_text,

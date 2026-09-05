@@ -80,16 +80,20 @@ def call_openai_compatible_chat_result(
     model: str,
     messages: list[dict[str, str]],
     timeout: int = 30,
+    *,
+    max_attempts: int = _MAX_ATTEMPTS,
+    max_tokens: int = 65536,
 ) -> LLMCallResult:
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "stream": False,
-        "max_tokens": 65536,
+        "max_tokens": max_tokens,
     }
     last_error: BaseException | None = None
-    for attempt in range(_MAX_ATTEMPTS):
+    attempts = max(1, min(_MAX_ATTEMPTS, max_attempts))
+    for attempt in range(attempts):
         started = perf_counter()
         try:
             response = _SYNC_CLIENT.post(
@@ -119,7 +123,8 @@ def call_openai_compatible_chat_result(
             last_error = exc
         except (ValueError, TypeError) as exc:
             raise RuntimeError("LLM response is not valid JSON") from exc
-        _retry_backoff(attempt)
+        if attempt + 1 < attempts:
+            _retry_backoff(attempt)
     if isinstance(last_error, httpx.HTTPStatusError):
         raise RuntimeError(f"LLM HTTP {last_error.response.status_code}: {last_error.response.text[:500]}") from last_error
     raise RuntimeError(f"LLM network error: {last_error}") from last_error

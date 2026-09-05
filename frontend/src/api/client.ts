@@ -1588,7 +1588,10 @@ export type ConceptRelation = {
   id: string;
   sourceConceptId: string;
   targetConceptId: string;
-  relationType: "prerequisite" | "component" | "application" | "sibling" | "alias";
+  relationType: "is_a" | "prerequisite" | "component" | "application" | "sibling" | "alias";
+  sourceName?: string;
+  targetName?: string;
+  updatedAt?: string;
   domain: string;
   confidence: number;
   evidence: Array<Record<string, unknown>>;

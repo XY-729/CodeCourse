@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import uuid4
+from app.services.personalization.concept_identity import canonical_concept_name
 
 from app.services.personalization.observation_schema import InteractionObservation
 
@@ -27,27 +28,43 @@ def _loads(value: Optional[str], fallback):
         return fallback
 
 
-def _concept_row(conn, concept_key: Optional[str], concept_text: str):
+def _concept_row(conn, concept_key: Optional[str], concept_text: str, project_id: int | None = None):
+    if concept_key and concept_key.startswith("project:") and not concept_key.startswith(f"project:{project_id}:"):
+        return None
+    if concept_key and concept_text == concept_key:
+        return conn.execute(
+            "SELECT * FROM concepts WHERE (concept_key=? OR id=?) AND (concept_key NOT LIKE 'project:%' OR concept_key LIKE ?) LIMIT 1",
+            (concept_key, concept_key, f"project:{project_id}:%"),
+        ).fetchone()
+    clean = canonical_concept_name(concept_text)
+    if not clean:
+        return None
+    if clean != concept_text:
+        concept_key = None
+    concept_text = clean
     if concept_key:
         row = conn.execute(
-            "SELECT * FROM concepts WHERE concept_key = ? OR id = ? LIMIT 1",
-            (concept_key, concept_key),
+            "SELECT * FROM concepts WHERE (concept_key = ? OR id = ?) AND (concept_key NOT LIKE 'project:%' OR concept_key LIKE ?) LIMIT 1",
+            (concept_key, concept_key, f"project:{project_id}:%"),
         ).fetchone()
-        if row is not None:
+        if row is not None and clean.casefold() in {str(row["canonical_name"]).casefold(), str(row["display_name"]).casefold()}:
             return row
+        if row is not None:
+            concept_key = None
     row = conn.execute(
         """SELECT * FROM concepts
-           WHERE lower(canonical_name) = lower(?) OR lower(display_name) = lower(?)
+           WHERE (lower(canonical_name) = lower(?) OR lower(display_name) = lower(?))
+             AND (concept_key NOT LIKE 'project:%' OR concept_key LIKE ?)
            ORDER BY CASE WHEN concept_key LIKE 'global:%' THEN 0 ELSE 1 END
            LIMIT 1""",
-        (concept_text, concept_text),
+        (concept_text, concept_text, f"project:{project_id}:%"),
     ).fetchone()
     if row is not None:
         return row
     display_name = str(concept_text or concept_key or "").strip().strip("`")
     if not display_name:
         return None
-    normalized = re.sub(r"[^a-z0-9_\-:.]+", "-", display_name.casefold()).strip("-")
+    normalized = display_name.casefold()
     stable_key = str(concept_key or "").strip()
     if not (stable_key.startswith("global:") or stable_key.startswith("project:")):
         stable_key = f"global:general:{normalized or uuid4().hex[:12]}"
@@ -162,9 +179,11 @@ def _upsert_inference(
     )
 
 
-def _upsert_relation(conn, relation, observer_run_id: str) -> None:
-    source = _concept_row(conn, relation.source_concept_key, relation.source_concept_text)
-    target = _concept_row(conn, relation.target_concept_key, relation.target_concept_text)
+def _upsert_relation(conn, relation, observer_run_id: str, project_id: int) -> None:
+    if float(relation.confidence) < RELATION_CONFIDENCE:
+        return
+    source = _concept_row(conn, relation.source_concept_key, relation.source_concept_text, project_id)
+    target = _concept_row(conn, relation.target_concept_key, relation.target_concept_text, project_id)
     if source is None or target is None or source["id"] == target["id"]:
         return
     if relation.domain and relation.domain != "general":
@@ -372,12 +391,12 @@ def apply_inference_updates(
     conn,
 ) -> None:
     for relation in observation.concept_relations:
-        _upsert_relation(conn, relation, observer_run_id)
+        _upsert_relation(conn, relation, observer_run_id, project_id)
 
     for index, evidence in enumerate(observation.knowledge_evidence):
         if evidence.confidence < DIRECT_CONFIDENCE or evidence.direction == "uncertain":
             continue
-        concept = _concept_row(conn, evidence.concept_key, evidence.concept_text)
+        concept = _concept_row(conn, evidence.concept_key, evidence.concept_text, project_id)
         if concept is None:
             continue
         scope_type, scope_id = _scope_for_concept(concept, project_id)
@@ -442,7 +461,7 @@ def apply_inference_updates(
 
     for index, assessment in enumerate(observation.domain_assessments):
         for concept_key in assessment.concept_keys:
-            concept = _concept_row(conn, concept_key, concept_key)
+            concept = _concept_row(conn, concept_key, concept_key, project_id)
             if concept is not None and assessment.domain_key != "general":
                 conn.execute(
                     """UPDATE concepts SET domain = ?
@@ -462,7 +481,7 @@ def apply_inference_updates(
             }
             if assessment_keys and any(value in assessment_keys for value in candidates if value):
                 return True
-            concept_row = _concept_row(conn, item.concept_key, item.concept_text)
+            concept_row = _concept_row(conn, item.concept_key, item.concept_text, project_id)
             return bool(
                 concept_row is not None
                 and str(concept_row["domain"] or "").strip().casefold()
@@ -492,8 +511,8 @@ def apply_inference_updates(
             conn,
             subject_type="domain",
             subject_key=assessment.domain_key,
-            scope_type="global",
-            scope_id=GLOBAL_SCOPE_ID,
+            scope_type="project",
+            scope_id=str(project_id),
             state=state,
             summary=assessment.summary,
             confidence=assessment.confidence,
@@ -607,13 +626,23 @@ def profile_payload(project_id: int) -> dict[str, Any]:
                 "id": row["id"],
                 "sourceConceptId": row["source_concept_id"],
                 "targetConceptId": row["target_concept_id"],
+                "sourceName": row["source_name"],
+                "targetName": row["target_name"],
+                "updatedAt": row["updated_at"],
                 "relationType": row["relation_type"],
                 "domain": row["domain"],
                 "confidence": float(row["confidence"]),
                 "evidence": _loads(row["evidence_json"], []),
             }
             for row in conn.execute(
-                "SELECT * FROM concept_relations WHERE status = 'active' ORDER BY updated_at DESC LIMIT 200"
+                """SELECT r.*, s.display_name source_name, t.display_name target_name
+                   FROM concept_relations r JOIN concepts s ON s.id=r.source_concept_id
+                   JOIN concepts t ON t.id=r.target_concept_id
+                   WHERE r.status='active'
+                     AND (s.concept_key NOT LIKE 'project:%' OR s.concept_key LIKE ?)
+                     AND (t.concept_key NOT LIKE 'project:%' OR t.concept_key LIKE ?)
+                   ORDER BY r.updated_at DESC LIMIT 200""",
+                (f"project:{project_id}:%", f"project:{project_id}:%"),
             ).fetchall()
         ]
         survey = conn.execute(
@@ -638,11 +667,25 @@ def profile_payload(project_id: int) -> dict[str, Any]:
                 "createdAt": row["created_at"],
             }
             for row in conn.execute(
-                "SELECT * FROM model_call_audit ORDER BY created_at DESC LIMIT 50"
+                "SELECT * FROM model_call_audit WHERE project_id=? ORDER BY created_at DESC LIMIT 50",
+                (project_id,),
             ).fetchall()
         ]
+    # A project summary supplements reusable concept knowledge; it must not
+    # become another project's narrative about what the learner is doing now.
+    by_domain = {item["domainKey"]: item for item in domains}
+    for item in inferences:
+        if item["subjectType"] == "domain" and item["scopeType"] == "project":
+            key = item["subjectKey"]
+            previous = by_domain.get(key, {})
+            by_domain[key] = {
+                "domainKey": key, "summary": item["summary"], "confidence": item["confidence"],
+                "confirmed": previous.get("confirmed", []), "learning": previous.get("learning", []),
+                "likelyPrerequisites": previous.get("likelyPrerequisites", []),
+                "evidence": item["evidence"], "updatedAt": item["updatedAt"],
+            }
     return {
-        "domainProfiles": domains,
+        "domainProfiles": list(by_domain.values()),
         "inferences": inferences,
         "relations": relations,
         "surveyCandidate": None if survey is None else {

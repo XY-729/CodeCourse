@@ -1,4 +1,5 @@
 import { CapacitorHttp, HttpResponse } from "@capacitor/core";
+import { canonicalConceptName, mentionsConcept } from "../../personalization/conceptIdentity";
 import { CodeCourseNative, CodeCourseSecureStore } from "../runtime";
 import type { NotificationPermissionResult, NotificationPermissionStatus } from "../runtime";
 import type { CodeCourseProvider } from "../provider";
@@ -2313,7 +2314,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     sourcePath?: string | null,
   ): Promise<PersonalizationConcept[]> {
     const haystack = `${question}\n${selectedText}`.toLocaleLowerCase();
-    if (selectedText.trim() && selectedText.trim().length <= 80) {
+    if (canonicalConceptName(selectedText)) {
       await this.resolvePersonalizationTerms(projectId, [{
         text: selectedText.trim(),
         source: "rule",
@@ -2323,8 +2324,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const concepts = await this.listPersonalizationConcepts(projectId);
     const matched = new Map<string, PersonalizationConcept>();
     for (const concept of concepts) {
+      if (concept.conceptKey.startsWith("project:") && !concept.conceptKey.startsWith(`project:${projectId}:`)) continue;
+      if (canonicalConceptName(concept.canonicalName) !== concept.canonicalName) continue;
       if ([concept.canonicalName, ...concept.aliases].some(
-        (name) => name.length >= 2 && haystack.includes(name.toLocaleLowerCase()),
+        (name) => mentionsConcept(haystack, name),
       )) {
         matched.set(concept.id, concept);
       }
@@ -2335,7 +2338,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         [projectId, sourceType, sourcePath],
       );
       for (const term of terms) {
-        if (!haystack.includes(String(term.term_text).toLocaleLowerCase())) continue;
+        if (!mentionsConcept(haystack, String(term.term_text))) continue;
         const concept = concepts.find((item) => item.id === String(term.concept_id));
         if (concept) matched.set(concept.id, concept);
       }
@@ -2435,65 +2438,33 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     projectId: number,
     record: QARecord,
   ): Promise<void> {
-    let concepts = await this.relevantConcepts(
+    const concepts = await this.relevantConcepts(
       projectId,
       record.question,
       record.selected_text,
       record.source_type,
       record.source_path,
     );
-    if (!concepts.length && record.parent_qa_id) {
-      const parent = await this.getQA(projectId, record.parent_qa_id).catch(() => null);
-      if (parent) {
-        concepts = await this.relevantConcepts(
-          projectId,
-          parent.question,
-          parent.selected_text,
-          parent.source_type,
-          parent.source_path,
-        );
-      }
-    }
     const isExplicitDefinition = record.relation_type === "term_explanation";
     const eventType = record.parent_qa_id ? "asked_clarification" : isExplicitDefinition ? "asked_definition" : "";
     if (eventType) {
       for (const concept of concepts) {
         const idempotencyKey = `qa-learning:${record.id}:${concept.id}:${eventType}`;
-        const exists = (await db.query<Row>(
-          "SELECT id FROM learning_events WHERE idempotency_key=?",
-          [idempotencyKey],
-        ))[0];
-        if (exists) continue;
-        const scope = await this.scopeForConcept(projectId, concept.id);
-        const stamp = now();
-        await db.run(
-          "INSERT INTO learning_events(id,idempotency_key,schema_version,concept_id,scope_type,scope_id,event_type,direction,strength,source,evidence_text,session_id,qa_record_id,created_at) VALUES(?,?,1,?,?,?,?,?,1,'system_inference',?,?,?,?)",
-          [
-            crypto.randomUUID(),
-            idempotencyKey,
-            concept.id,
-            scope.type,
-            scope.id,
-            eventType,
-            "unknown",
-            record.question.slice(0, 200),
-            record.session_id ? String(record.session_id) : null,
-            record.id,
-            stamp,
-          ],
-        );
-        await this.updateProjection(concept.id, scope.type, scope.id, stamp);
         await this.appendLearningEvidenceV2(projectId, {
           idempotencyKey: `v2:${idempotencyKey}`,
           conceptId: concept.id,
           dimension: "familiarity",
-          direction: "negative",
-          strength: eventType === "asked_definition" ? 0.75 : 0.55,
+          direction: "neutral",
+          strength: 0,
           reliability: 0.8,
           source: "question",
           action: eventType,
           object: { type: "qa", qaRecordId: record.id },
-          result: { evidenceText: record.question.slice(0, 200) },
+          result: {
+            evidenceText: record.question.slice(0, 200),
+            explanation: "本轮提及或询问了该概念；仅凭提问不能判断是否掌握。",
+          },
+          context: { sourceType: record.source_type, sourcePath: record.source_path },
           sessionId: record.session_id ? String(record.session_id) : null,
           qaRecordId: record.id,
         });
@@ -3293,7 +3264,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   ): Promise<{ terms: Array<Record<string, unknown>> }> {
     const terms: Array<Record<string, unknown>> = [];
     for (const candidate of candidates.slice(0, 50)) {
-      const text = String(candidate.text || "").trim().slice(0, 80);
+      const text = canonicalConceptName(String(candidate.text || ""));
       if (!text) continue;
       const source = String(candidate.source || "rule");
       const normalized = normalizeTerm(text);
@@ -3937,11 +3908,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     result: ObserverResult,
     observerRunId: string,
   ): Promise<void> {
-    const userCorpus = `${record.question}\n${record.selected_text}`.toLocaleLowerCase();
+    const userCorpus = record.question.toLocaleLowerCase();
     const acceptedEvidence = result.knowledgeEvidence.filter((item) => {
       if (!isAcceptedDirectEvidence(item)) return false;
       const quote = item.evidenceQuote.trim().toLocaleLowerCase();
-      return Boolean(quote) && userCorpus.includes(quote);
+      return quote.length >= 2 && userCorpus.includes(quote);
     });
 
     for (const [index, evidence] of acceptedEvidence.entries()) {
@@ -4034,12 +4005,15 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
 
     for (const [index, assessment] of result.domainAssessments.entries()) {
+      if (!assessment.evidenceQuotes.length || !assessment.evidenceQuotes.every((quote) => (
+        quote.trim().length >= 2 && userCorpus.includes(quote.trim().toLocaleLowerCase())
+      ))) continue;
       const conservative = conservativeDomainState(assessment, acceptedEvidence);
       await this.upsertLearnerInference(
         "domain",
         assessment.domainKey,
-        "global",
-        "local-user",
+        "project",
+        String(projectId),
         conservative.state,
         assessment.summary,
         assessment.confidence,
@@ -4340,6 +4314,15 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         sourceType: record.source_type,
         sourcePath: record.source_path || undefined,
         sourceExcerpt: compactText(sourceExcerpt, 2200),
+        currentAnswer: record.answer_md,
+        projectHistory: await db.query<Row>(
+          "SELECT question,substr(answer_md,1,1200) answer FROM qa_records WHERE project_id=? AND id<? ORDER BY id DESC LIMIT 8",
+          [projectId, record.id],
+        ),
+        projectSummaries: await db.query<Row>(
+          "SELECT subject_key,summary FROM learner_inferences WHERE scope_type='project' AND scope_id=? AND status='active' ORDER BY updated_at DESC LIMIT 6",
+          [String(projectId)],
+        ),
         previousAppliedTeaching: previousTrial ? {
           qaRecordId: Number(previousTrial.qa_record_id),
           teachingGoal: String(previousTeachingContext.teaching_goal || ""),
@@ -4470,6 +4453,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       const state = stateByConceptId.get(concept.id);
       if (!legacyMastery && !state) continue;
       const familiarity = state?.dimensions.familiarity;
+      if (!legacyMastery?.manualStatus && !familiarity?.manualStatus
+        && canonicalConceptName(concept.canonicalName) !== concept.canonicalName) continue;
       const mastery = legacyMastery ?? {
         id: `v2:${concept.id}`,
         conceptId: concept.id,
@@ -4496,9 +4481,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
           ? "known"
           : familiarity?.status === "learning"
             ? "unfamiliar"
-            : mastery.mastery >= 0.75
+            : !state && mastery.mastery >= 0.75
               ? "known"
-              : mastery.mastery <= 0.35
+              : !state && mastery.mastery <= 0.35
                 ? "unfamiliar"
                 : "uncertain");
       entries.push({ concept, mastery, judgement });
@@ -4520,13 +4505,20 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       [String(projectId)],
     );
     const relationRows = await db.query<Row>(
-      "SELECT * FROM concept_relations WHERE status='active' ORDER BY updated_at DESC LIMIT 200",
+      `SELECT r.*,s.display_name source_name,t.display_name target_name
+       FROM concept_relations r JOIN concepts s ON s.id=r.source_concept_id
+       JOIN concepts t ON t.id=r.target_concept_id WHERE r.status='active'
+         AND (s.concept_key NOT LIKE 'project:%' OR s.concept_key LIKE ?)
+         AND (t.concept_key NOT LIKE 'project:%' OR t.concept_key LIKE ?)
+       ORDER BY r.updated_at DESC LIMIT 200`,
+      [`project:${projectId}:%`, `project:${projectId}:%`],
     );
     const surveyRow = (await db.query<Row>(
       "SELECT * FROM survey_candidates WHERE scope_id='local-user' AND status='pending' ORDER BY created_at DESC LIMIT 1",
     ))[0];
     const callRows = await db.query<Row>(
-      "SELECT * FROM model_call_audit ORDER BY created_at DESC LIMIT 50",
+      "SELECT * FROM model_call_audit WHERE project_id=? ORDER BY created_at DESC LIMIT 50",
+      [projectId],
     );
     const evidenceRows = await db.query<Row>(
       `SELECT * FROM learning_evidence_v2
@@ -4581,6 +4573,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         id: String(row.id),
         sourceConceptId: String(row.source_concept_id),
         targetConceptId: String(row.target_concept_id),
+        sourceName: String(row.source_name),
+        targetName: String(row.target_name),
+        updatedAt: String(row.updated_at),
         relationType: String(row.relation_type) as PersonalizationProfile["relations"][number]["relationType"],
         domain: String(row.domain),
         confidence: Number(row.confidence),

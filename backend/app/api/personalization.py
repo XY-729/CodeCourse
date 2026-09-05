@@ -775,7 +775,10 @@ def get_profile(project_id: int) -> dict:
         item["conceptId"]: item for item in knowledge_states
     }
     entries = []
+    from app.services.personalization.concept_identity import canonical_concept_name
     for concept in list_all_concepts():
+        if concept.concept_key.startswith("project:") and not concept.concept_key.startswith(f"project:{project_id}:"):
+            continue
         scope_type, scope_id = concept_scope(concept, project_id)
         mastery = get_concept_mastery(concept.id, scope_type, scope_id)
         state = knowledge_by_concept.get(concept.id)
@@ -783,16 +786,18 @@ def get_profile(project_id: int) -> dict:
         if mastery is None and state is None:
             continue
         judgement = mastery.manual_status if mastery else familiarity.get("manualStatus")
+        if not judgement and canonical_concept_name(concept.canonical_name) != concept.canonical_name:
+            continue
         if judgement == "unknown":
             judgement = "unfamiliar"
         if not judgement:
             judgement = (
                 "known"
                 if familiarity.get("status") == "confirmed"
-                or (mastery is not None and mastery.mastery >= 0.75)
+                or (state is None and mastery is not None and mastery.mastery >= 0.75)
                 else "unfamiliar"
                 if familiarity.get("status") == "learning"
-                or (mastery is not None and mastery.mastery <= 0.35)
+                or (state is None and mastery is not None and mastery.mastery <= 0.35)
                 else "uncertain"
             )
         entries.append(

@@ -1,5 +1,5 @@
 {
-  "policyVersion": "knowledge-v2.1",
+  "policyVersion": "knowledge-v2.2",
   "conceptId": "golden-concept",
   "scopeType": "global",
   "scopeId": "local-user",

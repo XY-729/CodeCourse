@@ -538,6 +538,7 @@ class PreparedQuestion:
     retrieval_sources: list[dict[str, object]]
     messages: list[dict[str, str]]
     existing_record: Optional[QARecord] = None
+    planner_failure: Optional[str] = None
 
 
 def _saved_retrieval_sources(record: QARecord) -> list[dict[str, object]]:
@@ -718,6 +719,12 @@ def finalize_question(
     )
 
     if trial_draft is not None and trial_draft.should_persist:
+        if prepared.planner_failure:
+            from dataclasses import replace
+            trial_draft = replace(
+                trial_draft, mode="fallback", fallback_reason=prepared.planner_failure,
+                strategy_rationale="教学规划失败，本轮使用已有学习上下文回答。",
+            )
         try:
             from app.services.storage import persist_applied_teaching_trial
             persist_applied_teaching_trial(
@@ -734,6 +741,8 @@ def finalize_question(
                 target_dimensions_json=trial_draft.target_dimensions_json,
                 strategy_rationale=trial_draft.strategy_rationale,
                 policy_version=trial_draft.policy_version,
+                fallback_reason=trial_draft.fallback_reason,
+                snapshot_id=trial_draft.snapshot_id,
             )
         except Exception:
             logger.exception(
@@ -1134,6 +1143,7 @@ def _maybe_plan_teaching(project_id: int, prepared) -> object | None:
             call_result = _call_planner_model_result(messages, settings)
             plan = parse_teaching_plan(call_result.content)
         except Exception as planner_error:
+            prepared.planner_failure = str(planner_error)[:500]
             # Planner is an optional enhancement. Do not retry synchronously:
             # a malformed plan or network timeout must fall through to the
             # original answer path with a bounded first-token delay.

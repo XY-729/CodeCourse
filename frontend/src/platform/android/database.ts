@@ -1,9 +1,10 @@
 import { CapacitorSQLite } from "@capacitor-community/sqlite";
 import { CodeCourseSecureStore } from "../runtime";
+import { repairLegacyProfile } from "../../personalization/profileRepair";
 
 const DATABASE = "codecourse_mobile";
 const DATABASE_VERSION = 1;
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 type ColumnMigration = {
   name: string;
@@ -782,6 +783,21 @@ export class MobileDatabase {
       { name: "policy_eligible", definition: "policy_eligible INTEGER NOT NULL DEFAULT 0" },
       { name: "diagnostic_attempt_id", definition: "diagnostic_attempt_id TEXT" },
     ]);
+    await CapacitorSQLite.execute({ database: DATABASE, statements: "BEGIN IMMEDIATE", transaction: false, readonly: false });
+    try {
+      await repairLegacyProfile({
+        query: async (statement, values = []) => (await CapacitorSQLite.query({
+          database: DATABASE, statement, values, readonly: false,
+        })).values ?? [],
+        run: (statement, values = []) => CapacitorSQLite.run({
+          database: DATABASE, statement, values, transaction: false, readonly: false,
+        }),
+      });
+      await CapacitorSQLite.execute({ database: DATABASE, statements: "COMMIT", transaction: false, readonly: false });
+    } catch (error) {
+      await CapacitorSQLite.execute({ database: DATABASE, statements: "ROLLBACK", transaction: false, readonly: false });
+      throw error;
+    }
   }
 
   async query<T extends Record<string, unknown>>(statement: string, values: unknown[] = []): Promise<T[]> {

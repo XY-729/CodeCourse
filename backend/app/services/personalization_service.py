@@ -6,6 +6,7 @@ import re
 from datetime import datetime, timezone
 from typing import Iterable, Optional
 from uuid import uuid4
+from app.services.personalization.concept_identity import canonical_concept_name, mentions_concept
 
 from app.services.storage import (
     Concept,
@@ -50,7 +51,7 @@ def resolve_concept(
     source: str = "rule",
     confidence: float = 0.7,
 ) -> Concept:
-    clean = re.sub(r"\s+", " ", term.strip())[:80]
+    clean = canonical_concept_name(term)
     if not clean:
         raise ValueError("term is empty")
     folded = clean.casefold()
@@ -299,12 +300,12 @@ def concepts_for_question(
 ) -> list[Concept]:
     haystack = f"{question}\n{selected_text}".casefold()
     resolved: dict[str, Concept] = {}
-    if selected_text.strip() and len(selected_text.strip()) <= 80:
+    if canonical_concept_name(selected_text):
         concept = resolve_concept(project_id, selected_text.strip(), "rule", 0.9)
         resolved[concept.id] = concept
     if source_type in {"course", "qa"} and source_path:
         for term in list_document_terms(project_id, source_type, source_path):
-            if term.term_text.casefold() in haystack:
+            if term.status != "dismissed" and mentions_concept(haystack, term.term_text):
                 concept = (
                     get_concept(term.concept_id)
                     if term.concept_id
@@ -316,15 +317,23 @@ def concepts_for_question(
                     )
                 )
                 if concept:
+                    if concept.concept_key.startswith("project:") and not concept.concept_key.startswith(f"project:{project_id}:"):
+                        continue
+                    if canonical_concept_name(concept.canonical_name) != concept.canonical_name:
+                        concept = resolve_concept(project_id, term.term_text, term.detection_source, term.confidence)
                     resolved[concept.id] = concept
     for concept in list_all_concepts():
+        if concept.concept_key.startswith("project:") and not concept.concept_key.startswith(f"project:{project_id}:"):
+            continue
+        if canonical_concept_name(concept.canonical_name) != concept.canonical_name:
+            continue
         names = [concept.canonical_name]
         try:
             names.extend(json.loads(concept.aliases_json or "[]"))
         except json.JSONDecodeError:
             pass
         if any(
-            isinstance(name, str) and len(name) >= 2 and name.casefold() in haystack
+            isinstance(name, str) and mentions_concept(haystack, name)
             for name in names
         ):
             resolved[concept.id] = concept
@@ -371,8 +380,6 @@ def record_question_learning(project_id: int, qa_record: QARecord) -> None:
         qa_record.source_type,
         qa_record.source_path,
     )
-    if not concepts and qa_record.parent_qa_id:
-        concepts = _parent_concepts(project_id, qa_record)
     from app.services.personalization.knowledge_state_service import append_evidence
     for concept in concepts:
         scope_type, scope_id = concept_scope(concept, project_id)
@@ -384,13 +391,17 @@ def record_question_learning(project_id: int, qa_record: QARecord) -> None:
                 "scopeType": scope_type,
                 "scopeId": scope_id,
                 "dimension": "familiarity",
-                "direction": "negative",
-                "strength": 0.75 if event_type == "asked_definition" else 0.55,
+                "direction": "neutral",
+                "strength": 0,
                 "reliability": 0.8,
                 "source": "question",
                 "action": event_type,
                 "object": {"type": "qa", "qaRecordId": qa_record.id},
-                "result": {"evidenceText": qa_record.question[:200]},
+                "result": {
+                    "evidenceText": qa_record.question[:200],
+                    "explanation": "本轮提及或询问了该概念；仅凭提问不能判断是否掌握。",
+                },
+                "context": {"sourceType": qa_record.source_type, "sourcePath": qa_record.source_path},
                 "sessionId": (
                     str(qa_record.session_id)
                     if qa_record.session_id is not None

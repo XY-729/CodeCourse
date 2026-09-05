@@ -10,7 +10,7 @@ from datetime import datetime
 from math import isfinite
 from typing import Any
 
-POLICY_VERSION = "knowledge-v2.1"
+POLICY_VERSION = "knowledge-v2.2"
 DIMENSIONS = (
     "familiarity",
     "conceptual",
@@ -94,6 +94,10 @@ def resolve_knowledge_state(
 
 
 def _resolve_dimension(events: list[dict[str, Any]], now: str) -> dict[str, Any]:
+    # Contact with a topic is not evidence of knowledge, including recency.
+    events = [event for event in events if event["source"] == "manual" or (
+        event["direction"] != "neutral" and float(event["strength"]) > 0
+    )]
     probability = DEFAULT_BKT["prior"]
     manual_status: str | None = None
     manual_evidence_at: str | None = None

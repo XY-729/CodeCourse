@@ -32,7 +32,7 @@ _QUEUED_KEYS: set[str] = set()
 
 MAX_WORKERS = 1
 MAX_QUEUE_DEPTH = 64
-OBSERVER_TIMEOUT_SECONDS = 20
+OBSERVER_TIMEOUT_SECONDS = 60
 DEFAULT_SAMPLE_RATE = 0.35
 MAX_RETRIES = 1
 
@@ -334,9 +334,8 @@ def _build_observer_messages(
     previous_trial_json_for_msg: str = "",
     source_excerpt: str = "",
 ) -> list[dict[str, str]]:
-    user_prompt = OBSERVER_USER_PROMPT_TEMPLATE.replace(
-        "{previous_applied_teaching}", ""
-    ).format(
+    user_prompt = OBSERVER_USER_PROMPT_TEMPLATE.format(
+        previous_applied_teaching=previous_trial_json_for_msg or "(no previous teaching to evaluate)",
         current_user_message=question[:2000],
         current_selected_text=(selected_text or "")[:1500],
         source_type=source_type or "unknown",
@@ -414,7 +413,14 @@ def _validate_all_evidence(
 
     idx = 0
     cs = observation.current_state.model_dump()
-    _check("current_state", None, cs, "", idx); idx += 1
+    # Session intent is a model interpretation, not a quoted mastery claim.
+    # The schema has no evidence_quote here; applying quote validation rejected
+    # every state and consequently prevented ALL accepted evidence from applying.
+    accepted.append({
+        "obs_type": "current_state", "subject_key": None, "payload": cs,
+        "evidence_text": "", "idx": idx,
+    })
+    idx += 1
 
     if observation.previous_teaching_outcome:
         pto = observation.previous_teaching_outcome.model_dump()
@@ -450,6 +456,8 @@ def _call_observer_model(
         model=settings["model"],
         messages=messages,
         timeout=settings.get("timeout", OBSERVER_TIMEOUT_SECONDS),
+        max_attempts=1,
+        max_tokens=8192,
     )
 
 
@@ -499,17 +507,31 @@ def _execute_observer_run(
             input_hash=_compute_input_hash(project_id, qa_record_id),
             status="running",
         )
-    except Exception:
+        update_observer_run_status(run_key, "running")
+    except Exception as exc:
         logger.exception("Failed to create observer run record")
-        return
+        raise RuntimeError(f"observer_storage_error: {exc}") from exc
 
     try:
+        last_error = None
         settings = _get_observer_settings()
         if not settings.get("api_key") or not settings.get("base_url"):
             update_observer_run_status(run_key, "skipped", error_message="No LLM settings configured")
             return
 
-        recent = list_recent_qa_records(project_id, session_id=qa_record.session_id, limit=4) if qa_record.session_id else []
+        # Project history crosses sessions, but never includes future answers
+        # when replaying older failed jobs.
+        from app.services.storage import _connect, _row_to_qa_record
+        with _connect() as history_conn:
+            recent = [_row_to_qa_record(row) for row in history_conn.execute(
+                "SELECT * FROM qa_records WHERE project_id=? AND id<? ORDER BY id DESC LIMIT 8",
+                (project_id, qa_record_id),
+            ).fetchall()]
+            prior_inferences = [dict(row) for row in history_conn.execute(
+                """SELECT subject_key, summary FROM learner_inferences
+                   WHERE scope_type='project' AND scope_id=? AND status='active'
+                   ORDER BY updated_at DESC LIMIT 6""", (str(project_id),)
+            ).fetchall()]
 
         recent_qa_json = json.dumps(
             [
@@ -558,8 +580,7 @@ def _execute_observer_run(
         }, ensure_ascii=False)
 
         user_message_set = {qa_record.question}
-        if qa_record.selected_text:
-            user_message_set.add(qa_record.selected_text)
+        # Selected source text is context, not the learner's own explanation.
 
         source_excerpt = ""
         if qa_record.source_path:
@@ -590,6 +611,12 @@ def _execute_observer_run(
             manual_unfamiliar=", ".join(manual_unfamiliar) if manual_unfamiliar else "(none)",
             preferences_summary=preferences_summary,
             source_excerpt=source_excerpt,
+        )
+        messages[1]["content"] += (
+            "\n<project_learning_summary>" + json.dumps(prior_inferences, ensure_ascii=False)
+            + "</project_learning_summary>\n<current_answer_for_context>"
+            + (qa_record.answer_md or "")[:3000]
+            + "</current_answer_for_context>\n助手回答只用于概念消歧和知识结构，不是用户掌握证据。"
         )
 
         previous_trial_json = ""
@@ -707,7 +734,11 @@ def _execute_observer_run(
                 possible_misconceptions=[MisObs(**e) for e in m_evs],
                 explicit_user_facts=[ExplicitUserFact(**e) for e in f_evs],
                 concept_relations=observation.concept_relations,
-                domain_assessments=observation.domain_assessments,
+                domain_assessments=[assessment for assessment in observation.domain_assessments
+                    if assessment.evidence_quotes and all(
+                        validate_evidence_quote(quote, user_message_set).valid
+                        for quote in assessment.evidence_quotes
+                    )],
                 survey_candidate=observation.survey_candidate,
                 diagnostic_candidate=observation.diagnostic_candidate,
                 notes=observation.notes,
@@ -759,12 +790,6 @@ def _execute_observer_run(
                 )
 
             if filtered_obs is not None:
-                apply_shadow_updates(
-                    project_id=project_id,
-                    session_id=qa_record.session_id,
-                    observation=filtered_obs,
-                    conn=conn,
-                )
                 from app.services.personalization.learner_inference_service import (
                     apply_inference_updates,
                 )
@@ -772,6 +797,12 @@ def _execute_observer_run(
                     project_id=project_id,
                     qa_record_id=qa_record_id,
                     observer_run_id=run_key,
+                    observation=filtered_obs,
+                    conn=conn,
+                )
+                apply_shadow_updates(
+                    project_id=project_id,
+                    session_id=qa_record.session_id,
                     observation=filtered_obs,
                     conn=conn,
                 )
@@ -797,7 +828,7 @@ def _execute_observer_run(
                         candidate = {}
                     concept_ids: list[str] = []
                     for concept_key in candidate.pop("concept_keys", []):
-                        concept = _concept_row(conn, concept_key, concept_key)
+                        concept = _concept_row(conn, concept_key, concept_key, project_id)
                         if concept is not None:
                             concept_ids.append(str(concept["id"]))
                     candidate["concept_ids"] = concept_ids
@@ -857,7 +888,7 @@ def _execute_observer_run(
 
         run_in_transaction(_write_observations)
 
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Observer run failed",
             extra={
@@ -868,7 +899,7 @@ def _execute_observer_run(
         )
         try:
             update_observer_run_status(run_key, "failed", error_message=str(
-                last_error if last_error else "Unknown observer error"
+                last_error if last_error else exc
             )[:500])
             from app.services.personalization.learner_inference_service import (
                 record_model_call,
@@ -879,7 +910,7 @@ def _execute_observer_run(
                 provider=(locals().get("settings") or {}).get("provider"),
                 model=(locals().get("settings") or {}).get("model"),
                 status="failed",
-                error_message=str(last_error if last_error else "Unknown observer error"),
+                error_message=str(last_error if last_error else exc),
             )
         except Exception:
             pass
@@ -934,6 +965,8 @@ def schedule_interaction_observation(
                 )
             except Exception:
                 _set_observer_job_status(project_id, qa_record_id, "failed", "status_sync_failed")
+        except Exception as exc:
+            _set_observer_job_status(project_id, qa_record_id, "failed", str(exc)[:500])
         finally:
             with _OBSERVER_LOCK:
                 _QUEUED_KEYS.discard(run_key)
@@ -957,6 +990,8 @@ def schedule_interaction_observation(
 def recover_pending_observer_jobs() -> int:
     """Resume jobs left pending/running after an app restart."""
     try:
+        if not _is_observer_enabled():
+            return 0
         from app.services.storage import _connect
         stamp = datetime.now(timezone.utc).isoformat()
         with _connect() as conn:
@@ -993,8 +1028,10 @@ def recover_pending_observer_jobs() -> int:
                         pid,
                         qid,
                         "completed" if status in ("completed", "skipped") else "failed",
-                        None if status in ("completed", "skipped") else "observer_failed",
+                        None if status in ("completed", "skipped") else getattr(run, "error_message", "observer_failed"),
                     )
+                except Exception as exc:
+                    _set_observer_job_status(pid, qid, "failed", str(exc)[:500])
                 finally:
                     with _OBSERVER_LOCK:
                         _QUEUED_KEYS.discard(key)

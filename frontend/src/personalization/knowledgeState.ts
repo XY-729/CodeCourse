@@ -1,4 +1,4 @@
-export const KNOWLEDGE_POLICY_VERSION = "knowledge-v2.1";
+export const KNOWLEDGE_POLICY_VERSION = "knowledge-v2.2";
 
 export const KNOWLEDGE_DIMENSIONS = [
   "familiarity",
@@ -146,6 +146,9 @@ function resolveDimension(
   events: LearningEvidenceV2[],
   now: string,
 ): DimensionKnowledgeState {
+  events = events.filter((event) => event.source === "manual" || (
+    event.direction !== "neutral" && event.strength > 0
+  ));
   let probability = DEFAULT_BKT_PARAMETERS.prior;
   let manualStatus: "known" | "unknown" | null = null;
   let manualEvidenceAt: string | null = null;

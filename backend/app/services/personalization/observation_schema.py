@@ -113,6 +113,7 @@ class ConceptRelationObservation(StrictModel):
     target_concept_text: str = Field(min_length=1, max_length=120)
     target_concept_key: Optional[str] = Field(default=None, max_length=240)
     relation_type: Literal[
+        "is_a",
         "prerequisite",
         "component",
         "application",

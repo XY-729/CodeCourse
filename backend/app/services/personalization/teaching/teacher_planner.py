@@ -113,6 +113,8 @@ def _call_planner_model_result(messages: list[dict[str, str]], settings: dict[st
         model=settings["model"],
         messages=messages,
         timeout=settings.get("timeout", PLANNER_TIMEOUT_SECONDS),
+        max_attempts=1,
+        max_tokens=4096,
     )
 
 
