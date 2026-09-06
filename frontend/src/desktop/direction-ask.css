@@ -1,0 +1,676 @@
+/* Direction C ASK scene.  The reading workbench remains intentionally quiet;
+   this scene carries the high-contrast, game-menu treatment. */
+.direction-ask-stage {
+  --ask-line: #8ce9ff;
+  --ask-paper: #f4fbff;
+  --ask-blue: #0c4fbd;
+  --ask-deep: #031a3a;
+  --ask-panel: #062653;
+  color: var(--ask-paper);
+}
+
+.direction-ask-stage .game-ask {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 30%) minmax(0, 1fr);
+  gap: clamp(18px, 3vw, 42px);
+  overflow: hidden;
+}
+
+.direction-ask-stage .game-ask::before,
+.direction-ask-stage .game-ask::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 0;
+}
+.direction-ask-stage .game-ask::before {
+  left: 29.2%;
+  top: 5%;
+  bottom: 1%;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, var(--ask-line) 14%, var(--ask-line) 87%, transparent);
+  opacity: .78;
+}
+.direction-ask-stage .game-ask::after {
+  right: -4%;
+  bottom: 2%;
+  width: 42%;
+  height: 17%;
+  background: #073a78;
+  clip-path: polygon(16% 0,100% 0,84% 100%,0 100%);
+  opacity: .72;
+}
+
+.direction-ask-stage .game-ask-history,
+.direction-ask-stage .game-ask-main {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Left rail: intentionally dense and calm enough to scan while the answer is
+   being read. */
+.direction-ask-stage .game-ask-history {
+  display: flex;
+  flex-direction: column;
+  padding: 8px clamp(14px, 1.8vw, 26px) 8px 2px;
+  overflow: hidden;
+}
+.direction-ask-stage .game-history-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #c8e8f5;
+  font-size: 11px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+.direction-ask-stage .game-history-heading > span b {
+  color: var(--ask-line);
+  font: 700 24px/1 var(--dir-display);
+}
+.direction-ask-stage .game-history-heading > span i {
+  display: block;
+  width: 38px;
+  height: 1px;
+  background: var(--ask-line);
+}
+.direction-ask-stage .game-history-heading h1 {
+  margin: 7px 0 13px;
+  color: var(--ask-paper);
+  font: 800 italic clamp(48px, 5vw, 76px)/.82 var(--dir-display);
+  letter-spacing: -.035em;
+  transform: rotate(-5deg);
+  transform-origin: left center;
+  text-shadow: 4px 5px 0 #052b62;
+}
+.direction-ask-stage .game-history-heading h1 span { color: var(--ask-line); }
+.direction-ask-stage .game-history-filter {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.direction-ask-stage .game-history-filter label {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  color: #9ccce3;
+  background: #05204a;
+  border-bottom: 1px solid #4d8aba;
+  clip-path: polygon(3% 0,100% 0,96% 100%,0 100%);
+}
+.direction-ask-stage .game-history-filter input {
+  min-width: 0;
+  width: 100%;
+  height: 32px;
+  border: 0;
+  outline: 0;
+  color: var(--ask-paper);
+  background: transparent;
+  font-size: 12px;
+}
+.direction-ask-stage .game-history-filter input::placeholder { color: #79a4bf; }
+.direction-ask-stage .game-history-filter > button {
+  width: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  color: var(--ask-line);
+  background: #05204a;
+  clip-path: polygon(16% 0,100% 0,84% 100%,0 100%);
+  transition: background .12s, color .12s, transform .12s;
+}
+.direction-ask-stage .game-history-filter > button:hover,
+.direction-ask-stage .game-history-filter > button.selected {
+  color: var(--ask-deep);
+  background: var(--ask-line);
+  transform: translateY(-2px);
+}
+.direction-ask-stage .game-history-track {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 1px 7px 6px 0;
+  scrollbar-width: thin;
+  scrollbar-color: #4b95c5 transparent;
+}
+.direction-ask-stage .game-history-thread {
+  margin: 0 0 9px;
+  border-bottom: 1px solid #214b73;
+}
+.direction-ask-stage .game-history-thread summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px 2px;
+  color: #8eb9cf;
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  letter-spacing: .04em;
+}
+.direction-ask-stage .game-history-thread summary::-webkit-details-marker { display: none; }
+.direction-ask-stage .game-history-thread summary strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.direction-ask-stage .game-history-thread summary span {
+  color: var(--ask-line);
+  font: 700 14px var(--dir-display);
+}
+.direction-ask-stage .game-history-record {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  margin: 0 0 4px;
+  background: #062653;
+  clip-path: polygon(2% 0,100% 0,97% 100%,0 100%);
+  transition: background .12s, transform .12s;
+}
+.direction-ask-stage .game-history-record:hover,
+.direction-ask-stage .game-history-record.selected {
+  color: var(--ask-deep);
+  background: var(--ask-paper);
+  transform: translateX(4px);
+}
+.direction-ask-stage .game-history-open {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 28px minmax(0,1fr) 17px;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 4px 9px 11px;
+  color: inherit;
+  text-align: left;
+  border: 0;
+  background: none;
+}
+.direction-ask-stage .game-history-open > b {
+  align-self: start;
+  color: var(--ask-line);
+  font: 700 19px/1 var(--dir-display);
+}
+.direction-ask-stage .game-history-record:hover .game-history-open > b,
+.direction-ask-stage .game-history-record.selected .game-history-open > b { color: #1465c0; }
+.direction-ask-stage .game-history-open > span { min-width: 0; }
+.direction-ask-stage .game-history-open strong,
+.direction-ask-stage .game-history-open small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.direction-ask-stage .game-history-open strong { font-size: 12px; font-weight: 600; }
+.direction-ask-stage .game-history-open small { margin-top: 4px; color: #8eb9cf; font: 10px var(--dir-display); letter-spacing: .05em; }
+.direction-ask-stage .game-history-record:hover .game-history-open small,
+.direction-ask-stage .game-history-record.selected .game-history-open small { color: #416984; }
+.direction-ask-stage .game-history-actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 5px 0 0;
+  opacity: .18;
+  transition: opacity .12s;
+}
+.direction-ask-stage .game-history-record:hover .game-history-actions,
+.direction-ask-stage .game-history-record:focus-within .game-history-actions,
+.direction-ask-stage .game-history-record.selected .game-history-actions { opacity: 1; }
+.direction-ask-stage .game-history-actions button {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+}
+.direction-ask-stage .game-history-actions button:hover { color: #1465c0; background: var(--ask-line); }
+.direction-ask-stage .game-history-empty {
+  padding: 26px 7px;
+  color: #9ccce3;
+  text-align: left;
+}
+.direction-ask-stage .game-history-empty span { color: var(--ask-line); font: 700 20px var(--dir-display); letter-spacing: .28em; }
+.direction-ask-stage .game-history-empty p { margin: 10px 0; font-size: 12px; line-height: 1.7; }
+.direction-ask-stage .game-new-question {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
+/* Right side is a real vertical layout: tools, scrollable answer, composer,
+   controls. Nothing is positioned over another interactive element. */
+.direction-ask-stage .game-ask-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 3px 0 7px;
+}
+.direction-ask-stage .game-ask-tools {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #9ccce3;
+  border-bottom: 1px solid #27547c;
+  font: 700 10px var(--dir-display);
+  letter-spacing: .18em;
+}
+.direction-ask-stage .game-ask-tools > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.direction-ask-stage .game-ask-tools > div { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.direction-ask-stage .game-ask-tools button,
+.direction-ask-stage .game-ask-close {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 9px;
+  border: 0;
+  color: #d6f0fa;
+  background: #052653;
+  clip-path: polygon(7% 0,100% 0,93% 100%,0 100%);
+  font: 600 11px 'Noto Sans SC', sans-serif;
+  letter-spacing: 0;
+  transition: background .12s, color .12s, transform .12s;
+}
+.direction-ask-stage .game-ask-tools button:hover,
+.direction-ask-stage .game-ask-tools button.selected { color: var(--ask-deep); background: var(--ask-line); transform: translateY(-2px); }
+.direction-ask-stage .game-ask-close { background: transparent; color: var(--ask-line); }
+.direction-ask-stage .game-ask-close:hover { color: var(--ask-deep); background: var(--ask-paper); }
+.direction-ask-stage .game-ask-display {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 18px clamp(10px, 1.8vw, 27px) 6px 3px;
+  scrollbar-width: thin;
+  scrollbar-color: #4b95c5 transparent;
+}
+.direction-ask-stage .game-ask-poster {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 16px 4px 20px;
+  isolation: isolate;
+}
+.direction-ask-stage .game-ask-poster::before {
+  content: '05';
+  position: absolute;
+  right: 2%;
+  bottom: -17%;
+  z-index: -1;
+  color: #0a3a74;
+  font: 800 italic min(36vw, 330px)/.7 var(--dir-display);
+  transform: rotate(-8deg);
+  opacity: .8;
+}
+.direction-ask-stage .game-ask-poster::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 23%;
+  width: min(280px, 42%);
+  height: 2px;
+  background: var(--ask-line);
+  box-shadow: 0 9px 0 #1a6ba4, 0 18px 0 #124c7d;
+  transform: skewX(-32deg);
+  transform-origin: left;
+}
+.direction-ask-stage .game-ask-poster > span {
+  color: var(--ask-line);
+  font: 700 clamp(90px, 13vw, 190px)/.68 var(--dir-display);
+  letter-spacing: -.06em;
+  transform: rotate(-7deg);
+  transform-origin: left center;
+  text-shadow: 7px 8px 0 #072f6a;
+}
+.direction-ask-stage .game-ask-poster h2 {
+  margin: 25px 0 0;
+  color: var(--ask-paper);
+  font: 500 clamp(23px, 2.3vw, 38px)/1.5 'Noto Sans SC', sans-serif;
+}
+.direction-ask-stage .game-ask-poster h2 em { color: var(--ask-line); font-style: normal; }
+.direction-ask-stage .game-ask-poster > i {
+  width: 110px;
+  height: 6px;
+  margin-top: 26px;
+  background: var(--ask-paper);
+  clip-path: polygon(0 0,100% 0,83% 100%,0 100%);
+}
+
+.direction-ask-stage .game-context {
+  margin: 0 0 14px;
+  background: #062653;
+  border-left: 3px solid #4e9ed0;
+  clip-path: polygon(1% 0,100% 0,98% 100%,0 100%);
+}
+.direction-ask-stage .game-context.spotlight { border-left-color: var(--ask-line); box-shadow: 7px 7px 0 #0b3a78; }
+.direction-ask-stage .game-context summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px 13px;
+  color: #c9ebf7;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+}
+.direction-ask-stage .game-context summary::-webkit-details-marker { display: none; }
+.direction-ask-stage .game-context summary > span { color: var(--ask-line); flex-shrink: 0; }
+.direction-ask-stage .game-context summary > strong { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f2faff; font-weight: 500; }
+.direction-ask-stage .game-context summary > svg:last-child { transition: transform .15s; }
+.direction-ask-stage .game-context[open] summary > svg:last-child { transform: rotate(90deg); }
+.direction-ask-stage .game-context-quote { display: grid; grid-template-columns: 25px minmax(0,1fr); gap: 5px; padding: 0 13px 12px; }
+.direction-ask-stage .game-context-quote > span { color: var(--ask-line); font: 800 42px/.8 Georgia, serif; }
+.direction-ask-stage .game-context-quote textarea { min-height: 70px; max-height: 150px; resize: vertical; color: #e4f4fb; background: #041b3d; border: 0; border-bottom: 1px solid #3a6f99; padding: 8px; font-size: 12px; line-height: 1.65; }
+.direction-ask-stage .game-context-quote > button { grid-column: 2; justify-self: start; display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 0; color: #9ccce3; background: transparent; font-size: 11px; }
+.direction-ask-stage .game-context-quote > button:hover { color: var(--ask-deep); background: var(--ask-line); }
+.direction-ask-stage .game-context-preview { margin: 0; padding: 0 14px 13px; color: #b8d8e6; font-size: 12px; line-height: 1.7; }
+.direction-ask-stage .game-context-files { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 13px 12px; }
+.direction-ask-stage .game-context-files > span { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 4px 7px; color: #c9ebf7; background: #0b3b73; font-size: 11px; }
+.direction-ask-stage .game-context-files > span > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.direction-ask-stage .game-context-files button { display: grid; place-items: center; padding: 1px; border: 0; color: inherit; background: transparent; }
+
+.direction-ask-stage .game-answer {
+  min-height: 100%;
+  padding: 4px clamp(6px, 1.2vw, 18px) 18px 3px;
+  border-left: 2px solid var(--ask-line);
+  background: #041c40;
+  color: #e9f6fc;
+}
+.direction-ask-stage .game-answer .direction-answer-view { min-height: 0; padding: 16px 18px; background: transparent; border: 0; }
+.direction-ask-stage .game-answer .direction-answer-view > h2 { font-size: clamp(18px, 1.7vw, 25px); line-height: 1.55; }
+.direction-ask-stage .game-answer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #2b567d; }
+.direction-ask-stage .game-answer-actions button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 0; color: #d9f2fb; background: #0b3b73; font-size: 11px; clip-path: polygon(7% 0,100% 0,93% 100%,0 100%); }
+.direction-ask-stage .game-answer-actions button:hover { color: var(--ask-deep); background: var(--ask-line); }
+.direction-ask-stage .game-answer-actions span { color: #ffb3b8; font-size: 11px; }
+
+.direction-ask-stage .game-composer {
+  position: relative;
+  flex-shrink: 0;
+  margin: 8px 0 0;
+  padding: 8px 16px 12px;
+  background: var(--ask-paper);
+  color: var(--ask-deep);
+  clip-path: polygon(1.5% 0,100% 0,98.5% 100%,0 100%);
+  box-shadow: 7px 7px 0 var(--ask-line);
+  transform: rotate(-.35deg);
+  transition: transform .14s, box-shadow .14s;
+}
+.direction-ask-stage .game-composer:focus-within { transform: rotate(0); box-shadow: 4px 5px 0 var(--ask-line); }
+.direction-ask-stage .game-composer.busy { background: #d7eff8; }
+.direction-ask-stage .game-composer-caption { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 19px; color: #275379; font: 700 10px var(--dir-display); letter-spacing: .16em; }
+.direction-ask-stage .game-composer-caption button { display: inline-flex; align-items: center; gap: 4px; border: 0; color: #275379; background: transparent; font: 500 11px 'Noto Sans SC', sans-serif; letter-spacing: 0; }
+.direction-ask-stage .game-composer-caption button:hover { color: #0b4fbd; }
+.direction-ask-stage .game-composer textarea { display: block; width: 100%; min-height: 58px; max-height: 130px; resize: vertical; padding: 7px 0; border: 0; outline: 0; color: var(--ask-deep); background: transparent; font-size: 14px; line-height: 1.7; }
+.direction-ask-stage .game-composer textarea::placeholder { color: #71869a; }
+.direction-ask-stage .game-composer-flash { position: absolute; inset: 0; pointer-events: none; background: #fff; opacity: 0; }
+.direction-ask-stage .game-composer.busy .game-composer-flash { animation: direction-ask-flash .7s ease-out infinite; }
+@keyframes direction-ask-flash { 0%,100% { opacity: 0; transform: translateX(-100%); } 12% { opacity: .34; } 42% { opacity: 0; transform: translateX(100%); } }
+.direction-ask-stage .game-ask-footer { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 8px 0 0; }
+.direction-ask-stage .game-ask-footer > div { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.direction-ask-stage .game-ask-footer button { display: inline-flex; align-items: center; gap: 5px; max-width: 240px; min-height: 30px; padding: 5px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; color: #c8e8f5; background: #052653; clip-path: polygon(7% 0,100% 0,93% 100%,0 100%); font-size: 11px; }
+.direction-ask-stage .game-ask-footer button:hover { color: var(--ask-deep); background: var(--ask-line); }
+.direction-ask-stage .game-ask-action { display: inline-flex; align-items: center; justify-content: center; gap: 10px; border: 0; color: var(--ask-paper); background: var(--ask-blue); clip-path: polygon(8px 0,100% 0,calc(100% - 10px) 100%,0 100%); transition: background .12s, color .12s, transform .12s, filter .12s; }
+.direction-ask-stage .game-ask-action:hover:not(:disabled) { color: var(--ask-deep); background: var(--ask-line); transform: translate(3px,-2px); }
+.direction-ask-stage .game-ask-action:active:not(:disabled) { color: var(--ask-deep); background: #fff; transform: scale(.97); }
+.direction-ask-stage .game-new-question { min-height: 34px; padding: 6px 10px; font-size: 11px; }
+.direction-ask-stage .game-send { flex-shrink: 0; min-width: 138px; min-height: 39px; padding: 8px 14px; font: 700 15px var(--dir-display); }
+.direction-ask-stage .game-send:disabled { opacity: .42; }
+.direction-ask-stage .game-ask-error { flex-shrink: 0; margin-top: 6px; padding: 7px 10px; color: #fff; background: #9e2035; border-left: 3px solid #ffccd0; font-size: 11px; }
+.direction-ask-stage .game-ask-knowledge { min-height: 0; flex: 1; overflow: auto; padding: 12px 0; background: #041c40; border-left: 2px solid var(--ask-line); }
+
+@media (max-width: 1180px) {
+  .direction-ask-stage .game-ask { grid-template-columns: minmax(226px, 31%) minmax(0, 1fr); gap: 20px; }
+  .direction-ask-stage .game-history-actions { display: none; }
+  .direction-ask-stage .game-history-open { grid-template-columns: 24px minmax(0,1fr) 14px; padding-left: 8px; }
+  .direction-ask-stage .game-send { min-width: 118px; }
+}
+@media (max-height: 780px) {
+  .direction-ask-stage .game-history-heading h1 { margin-bottom: 8px; font-size: 53px; }
+  .direction-ask-stage .game-history-filter input { height: 28px; }
+  .direction-ask-stage .game-history-thread { margin-bottom: 5px; }
+  .direction-ask-stage .game-history-open { padding-top: 7px; padding-bottom: 7px; }
+  .direction-ask-stage .game-composer textarea { min-height: 47px; max-height: 84px; }
+  .direction-ask-stage .game-ask-footer { min-height: 39px; padding-top: 5px; }
+  .direction-ask-stage .game-send { min-height: 34px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .direction-ask-stage .game-history-record,
+  .direction-ask-stage .game-history-filter > button,
+  .direction-ask-stage .game-ask-tools button,
+  .direction-ask-stage .game-composer,
+  .direction-ask-stage .game-ask-action { transition: none; }
+  .direction-ask-stage .game-composer.busy .game-composer-flash { animation: none; }
+}
+
+/* Archive rail redesign: an opaque, cut-paper bay keeps the artwork behind it
+   from competing with the history cards. Cards form a shallow wheel; the
+   active card is larger and adjacent cards recede in depth. */
+.direction-ask-stage .game-ask-history {
+  isolation: isolate;
+  padding: 15px clamp(15px, 2vw, 28px) 10px 10px;
+}
+.direction-ask-stage .game-ask-history::before {
+  content: '';
+  position: absolute;
+  inset: -15px 5px -10px -12px;
+  z-index: -1;
+  background: #041b3e;
+  clip-path: polygon(3% 2%, 96% 0, 100% 96%, 0 100%);
+  box-shadow: 10px 0 0 #0a3b76;
+}
+.direction-ask-stage .game-ask-history::after {
+  content: '';
+  position: absolute;
+  top: 4%;
+  right: 4px;
+  bottom: 5%;
+  width: 2px;
+  z-index: -1;
+  background: var(--ask-line);
+  opacity: .82;
+}
+.direction-ask-stage .game-history-heading > span::after {
+  content: 'ARCHIVE';
+  margin-left: auto;
+  color: #6fa5c2;
+  font: 700 10px var(--dir-display);
+  letter-spacing: .18em;
+}
+.direction-ask-stage .game-history-heading h1 {
+  margin-top: 12px;
+  color: #eaf7fd;
+  font-size: clamp(46px, 4.3vw, 68px);
+  text-shadow: 4px 5px 0 #0b447d;
+}
+.direction-ask-stage .game-history-track {
+  margin-right: 2px;
+  padding: 14px 22px 20px 8px;
+  perspective: 900px;
+  overscroll-behavior: contain;
+  scroll-snap-type: y proximity;
+  overflow-x: hidden;
+  isolation: isolate;
+}
+.direction-ask-stage .game-history-thread {
+  position: relative;
+  isolation: isolate;
+  margin-bottom: 18px;
+  border-bottom: 0;
+}
+.direction-ask-stage .game-history-thread summary {
+  position: relative;
+  margin: 0 0 6px;
+  padding: 5px 4px 5px 7px;
+  background: #082c59;
+  clip-path: polygon(4% 0,100% 0,96% 100%,0 100%);
+  color: #b9e0ef;
+}
+.direction-ask-stage .game-history-thread summary::before {
+  content: '';
+  width: 18px;
+  height: 2px;
+  margin-right: 1px;
+  background: var(--ask-line);
+  transform: skewX(-28deg);
+}
+.direction-ask-stage .game-history-record {
+  margin: 10px 6px 16px 0;
+  transform-origin: 42% center;
+  scroll-snap-align: center;
+  will-change: transform;
+  cursor: pointer;
+  border: 1px solid rgba(140, 233, 255, .28);
+  box-shadow: 6px 7px 0 #0a3d78, inset 0 0 0 1px rgba(255,255,255,.04);
+  transition:
+    transform .2s cubic-bezier(.2,.8,.2,1),
+    background-color .14s ease,
+    box-shadow .2s cubic-bezier(.2,.8,.2,1),
+    filter .2s ease;
+}
+.direction-ask-stage .game-history-record.depth-0 { transform: rotate(-1.1deg) scale(1.035); z-index: 4; }
+.direction-ask-stage .game-history-record.depth-1 { transform: translateX(7px) rotate(1.2deg) scale(.95); opacity: .88; z-index: 3; }
+.direction-ask-stage .game-history-record.depth-2 { transform: translateX(15px) rotate(-1.6deg) scale(.87); opacity: .67; z-index: 2; }
+.direction-ask-stage .game-history-record.depth-3 { transform: translateX(21px) rotate(2.1deg) scale(.79); opacity: .46; z-index: 1; }
+.direction-ask-stage .game-history-record.depth-0:hover,
+.direction-ask-stage .game-history-record.depth-1:hover,
+.direction-ask-stage .game-history-record.depth-2:hover,
+.direction-ask-stage .game-history-record.depth-3:hover {
+  transform: translateX(12px) translateY(-5px) rotate(-.7deg) scale(1.075);
+  opacity: 1;
+  z-index: 8;
+  filter: saturate(1.15) brightness(1.08);
+}
+.direction-ask-stage .game-history-record:not(.selected):hover {
+  color: var(--ask-deep);
+  background: #bdefff;
+  border-color: #fff;
+  box-shadow:
+    11px 12px 0 #0a3d78,
+    15px 16px 0 rgba(2, 13, 35, .62),
+    -5px 0 0 #f4fbff,
+    0 0 24px rgba(140, 233, 255, .3),
+    inset 0 0 0 1px rgba(3,26,58,.18);
+}
+.direction-ask-stage .game-history-record:not(.selected)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: #fff;
+  opacity: 0;
+  transform: translateX(-115%) skewX(-24deg);
+}
+.direction-ask-stage .game-history-record:not(.selected)::before {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  pointer-events: none;
+  z-index: 1;
+  border-top: 2px solid rgba(255,255,255,.46);
+  border-left: 1px solid rgba(255,255,255,.24);
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: opacity .14s ease, transform .2s ease;
+  clip-path: polygon(2% 0,100% 0,97% 100%,0 100%);
+}
+.direction-ask-stage .game-history-record:not(.selected):hover::before {
+  opacity: 1;
+  transform: translateX(0);
+}
+.direction-ask-stage .game-history-record:not(.selected):hover::after {
+  animation: direction-history-sheen .42s ease-out both;
+}
+@keyframes direction-history-sheen {
+  0% { opacity: .42; transform: translateX(-115%) skewX(-24deg); }
+  100% { opacity: 0; transform: translateX(115%) skewX(-24deg); }
+}
+.direction-ask-stage .game-history-record.selected {
+  transform: translateX(8px) translateY(-4px) rotate(-1deg) scale(1.095);
+  z-index: 7;
+  color: var(--ask-deep);
+  background: var(--ask-paper);
+  border-color: #fff;
+  box-shadow:
+    12px 13px 0 var(--ask-line),
+    16px 17px 0 rgba(2, 13, 35, .66),
+    -5px 0 0 #fff,
+    0 0 28px rgba(140, 233, 255, .42),
+    inset 0 0 0 1px rgba(20,101,192,.24);
+  filter: saturate(1.08) brightness(1.04);
+}
+.direction-ask-stage .game-history-record.selected:hover {
+  transform: translateX(13px) translateY(-7px) rotate(0) scale(1.125);
+  box-shadow:
+    14px 15px 0 var(--ask-line),
+    19px 20px 0 rgba(2, 13, 35, .72),
+    -6px 0 0 #fff,
+    0 0 34px rgba(140, 233, 255, .56),
+    inset 0 0 0 1px rgba(20,101,192,.32);
+}
+.direction-ask-stage .game-history-record:hover .game-history-open > svg {
+  transform: translate(3px, -2px) scale(1.08);
+}
+.direction-ask-stage .game-history-open > svg {
+  transition: transform .18s cubic-bezier(.2,.8,.2,1);
+}
+.direction-ask-stage .game-history-open:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -4px;
+}
+.direction-ask-stage .game-history-record.selected::after {
+  content: '';
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  bottom: 3px;
+  height: 2px;
+  background: #0b4fbd;
+  transform: skewX(-24deg);
+}
+.direction-ask-stage .game-history-record.selected::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  pointer-events: none;
+  border-top: 2px solid #8ce9ff;
+  border-bottom: 1px solid #a7dff0;
+  clip-path: polygon(2% 0,100% 0,97% 100%,0 100%);
+}
+.direction-ask-stage .game-history-open { padding-top: 10px; padding-bottom: 11px; }
+.direction-ask-stage .game-history-open > b { font-size: 22px; }
+.direction-ask-stage .game-history-actions { position: relative; z-index: 2; }
+.direction-ask-stage .game-new-question { position: relative; z-index: 2; box-shadow: 5px 5px 0 #0a3b76; }
+@media (max-width: 1180px) {
+  .direction-ask-stage .game-history-record.depth-0 { transform: rotate(-1deg) scale(1.02); }
+  .direction-ask-stage .game-history-record.selected { transform: translateX(4px) translateY(-3px) rotate(-1deg) scale(1.06); }
+  .direction-ask-stage .game-history-record.selected:hover { transform: translateX(8px) translateY(-5px) rotate(0) scale(1.085); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .direction-ask-stage .game-history-record.depth-0,
+  .direction-ask-stage .game-history-record.depth-1,
+  .direction-ask-stage .game-history-record.depth-2,
+  .direction-ask-stage .game-history-record.depth-3,
+  .direction-ask-stage .game-history-record.selected { transform: none; }
+  .direction-ask-stage .game-history-record:not(.selected):hover::after { animation: none; display: none; }
+}
