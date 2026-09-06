@@ -1,0 +1,18 @@
+{
+  "extends": null,
+  "appId": "com.codecourse.directionc",
+  "productName": "CodeCourse Direction C",
+  "directories": { "output": "dist-direction-c" },
+  "icon": "resources/direction-c/icon.ico",
+  "afterPack": "scripts/direction-after-pack.cjs",
+  "files": ["electron/**/*", "frontend/dist/**/*", "package.json"],
+  "extraResources": [
+    { "from": "resources/direction-c/icon.ico", "to": "icon.ico" },
+    { "from": "dist-backend/backend", "to": "backend" },
+    { "from": "resources/git", "to": "git" },
+    { "from": "resources/code-intelligence", "to": "code-intelligence" },
+    { "from": "THIRD_PARTY_NOTICES.md", "to": "THIRD_PARTY_NOTICES.md" }
+  ],
+  "win": { "target": ["dir"], "icon": "resources/direction-c/icon.ico", "signAndEditExecutable": false },
+  "publish": null
+}

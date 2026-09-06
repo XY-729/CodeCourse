@@ -13,6 +13,7 @@ build/
 dist/
 dist-backend/
 dist-desktop/
+dist-direction-c/
 dist-desktop-next/
 dist-desktop-fast/
 dist-release/

@@ -143,6 +143,10 @@ import { useWorkbenchResizeController } from "./workbench/useWorkbenchResizeCont
 import { useWorkbenchPersistence } from "./workbench/useWorkbenchPersistence";
 import WorkbenchEditorGroup from "./workbench/WorkbenchEditorGroup";
 import WorkbenchSurface from "./workbench/WorkbenchSurface";
+import type { DesktopScene } from "./desktop/DirectionShell";
+import { useDirectionFocus } from "./desktop/useDirectionFocus";
+import DirectionDocumentSidebar from "./desktop/DirectionDocumentSidebar";
+import DirectionAnswerView from "./desktop/DirectionAnswerView";
 import {
   androidWorkbenchStorageKey,
   hydrateStoredItem as hydratePersistedItem,
@@ -184,7 +188,7 @@ const KnowledgeGraphViewer = lazy(() => import("./components/KnowledgeGraphViewe
 const MobileAssistantPanel = lazy(() => import("./components/MobileAssistantPanel"));
 const MobileGenerationPanel = lazy(() => import("./components/MobileGenerationPanel"));
 const MobileMePanel = lazy(() => import("./components/MobileMePanel"));
-const DesktopToolbar = __ANDROID_BUILD__ ? null : lazy(() => import("./components/DesktopToolbar"));
+const DesktopToolbar = __ANDROID_BUILD__ ? null : lazy(() => import("./desktop/DirectionShell"));
 const GestureGuide = __ANDROID_BUILD__ ? null : lazy(() => import("./components/GestureGuide"));
 const GenerationSheet = __ANDROID_BUILD__ ? null : lazy(() => import("./components/GenerationSheet"));
 
@@ -208,6 +212,8 @@ function getInitialTheme(): ThemeMode {
 
 export default function App() {
   const mobileRuntime = isAndroidRuntime();
+  const [desktopScene, setDesktopScene] = useState<DesktopScene>("project");
+  const [desktopPresentedScene, setDesktopPresentedScene] = useState<DesktopScene>("project");
   const [project, setProject] = useState<Project | null>(null);
   const currentProjectIdRef = useRef<number | null>(null);
   const [tree, setTree] = useState<TreeNode | null>(null);
@@ -227,7 +233,7 @@ export default function App() {
   const [promptEditorDirty, setPromptEditorDirty] = useState(false);
   const [promptEditorSaving, setPromptEditorSaving] = useState(false);
   const [settingsDialogBusy, setSettingsDialogBusy] = useState(false);
-  const [navigationOpen, setNavigationOpen] = useState(() => !isAndroidRuntime());
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [navigationClosing, setNavigationClosing] = useState(false);
   const navigationRender = navigationOpen || navigationClosing;
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
@@ -617,6 +623,7 @@ export default function App() {
     },
     "up-left": () => {
       dismissTransientSurfaces();
+      if (!mobileRuntime) setDesktopScene("reader");
       setAssistantOpen(false);
       setNavigationView("files");
       setNavigationOpen(true);
@@ -629,6 +636,7 @@ export default function App() {
     },
     "down-right": () => {
       dismissTransientSurfaces();
+      if (!mobileRuntime) setDesktopScene("reader");
       setAssistantOpen(false);
       setNavigationView("courses");
       setNavigationOpen(true);
@@ -1085,10 +1093,18 @@ export default function App() {
   }, [mobileRuntime, project, llmSettings, qaSessionId, selectedQA, qaFollowUpRecord, activeQAKey, activeTermRawTerms]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = themeMode;
-    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeMode === "dark" ? "#08111f" : "#edf4f1");
-  }, [themeMode]);
+    const effectiveTheme = mobileRuntime ? themeMode : "dark";
+    document.documentElement.dataset.theme = effectiveTheme;
+    if (mobileRuntime) window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", effectiveTheme === "dark" ? "#08111f" : "#edf4f1");
+  }, [themeMode, mobileRuntime]);
+
+  useEffect(() => {
+    if (mobileRuntime) return;
+    if (generationOpen) setDesktopScene("generate");
+    else if (assistantOpen) setDesktopScene("ask");
+    else setDesktopScene(current => current === "generate" || current === "ask" ? "reader" : current);
+  }, [assistantOpen, generationOpen, mobileRuntime]);
 
   useEffect(() => {
     if (!toast) return;
@@ -1122,7 +1138,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (mobileRuntime || !assistantOpen || !navigationOpen) {
+    if (mobileRuntime || desktopScene === "ask" || !assistantOpen || !navigationOpen) {
       return;
     }
     function keepReaderReadable() {
@@ -1134,7 +1150,7 @@ export default function App() {
     keepReaderReadable();
     window.addEventListener("resize", keepReaderReadable);
     return () => window.removeEventListener("resize", keepReaderReadable);
-  }, [assistantOpen, explainWidth, mobileRuntime, navigationOpen, sidebarWidth]);
+  }, [assistantOpen, desktopScene, explainWidth, mobileRuntime, navigationOpen, sidebarWidth]);
 
   useEffect(() => {
     if (mobileRuntime && assistantOpen && navigationOpen) {
@@ -1177,6 +1193,10 @@ export default function App() {
         setCommandPaletteOpen(false);
         return;
       }
+      if (contextFilePickerOpen) {
+        setContextFilePickerOpen(false);
+        return;
+      }
       if (appDialog) {
         closeAppDialog(null);
         return;
@@ -1199,7 +1219,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [appDialog, commandPaletteOpen, learnerProfileOpen, mobileRuntime, promptEditorDirty, promptEditorOpen, promptEditorSaving, settingsDialogBusy, settingsOpen]);
+  }, [appDialog, commandPaletteOpen, contextFilePickerOpen, learnerProfileOpen, mobileRuntime, promptEditorDirty, promptEditorOpen, promptEditorSaving, settingsDialogBusy, settingsOpen]);
 
   useEffect(() => {
     if (mobileRuntime || !window.codecourseDesktop?.onShortcut) return;
@@ -1613,6 +1633,7 @@ export default function App() {
   }
 
   function openItemInGroup(groupId: string, item: OpenItem) {
+    if (!mobileRuntime) { setDesktopScene("reader"); setAssistantOpen(false); setGenerationOpen(false); }
     setLayout((prev) => updateGroup(prev, groupId, (group) => openItem(group, item)));
     setActiveGroupId(groupId);
     applyActiveItem(item);
@@ -2057,6 +2078,7 @@ export default function App() {
        */
       const finishOpenProject = () => {
         resumeGenerationTracking(freshProject.id, sortedTasks);
+        if (!mobileRuntime) setDesktopScene("reader");
         return true;
       };
       setTree(nextTree);
@@ -4378,6 +4400,7 @@ export default function App() {
 
   function openMobileNavigation(view: NavigationView) {
     if (!mobileRuntime) {
+      setDesktopScene(view === "projects" ? "project" : "reader");
       setNavigationView(view);
       setNavigationOpen(true);
       return;
@@ -4425,6 +4448,8 @@ export default function App() {
       return;
     }
     closeMobileWorkspaceSurfaces("assistant");
+    setGenerationOpen(false);
+    setDesktopScene("ask");
     setQAUpperTab(tab);
     setAssistantOpen(true);
   }
@@ -4698,7 +4723,7 @@ export default function App() {
         learningStates={learningStates}
         onContinueLearning={(filename) => project && void openCourseInActiveGroup(project.id, filename)}
         onDragItem={prefetchDropItem}
-        onViewChange={!embedded && !mobileRuntime ? (nextView) => setNavigationView(nextView) : undefined}
+        onViewChange={!embedded && !mobileRuntime ? setNavigationView : undefined}
       />
     );
   }
@@ -4732,6 +4757,8 @@ export default function App() {
     const showKnowledgeGraph = qaUpperTab === "knowledge" && Boolean(project);
     return (
       <ExplainPanel
+        scenePresentation={!mobileRuntime}
+        answerContent={!mobileRuntime ? <DirectionAnswerView record={selectedQA} loading={qaInteractionBusy} partial={visibleQAGeneration?.partial} onOpenRecord={(record) => { void openQAInActiveGroup(record); }} /> : undefined}
         selection={selection}
         contextSummary={assistantContextSummary}
         contextFiles={contextFiles}
@@ -5036,8 +5063,34 @@ export default function App() {
     );
   }
 
+  function navigateDesktopScene(next: typeof desktopScene) {
+    if (next === "ask") { openAssistant("history"); return; }
+    setDesktopScene(next);
+    setAssistantOpen(false);
+    setGenerationOpen(next === "generate");
+    setSelectionAnchor(null);
+    setTermAction(null);
+  }
+
+  useDirectionFocus(!mobileRuntime,
+    appDialog ? '.direction-overlays .app-dialog:not(.context-file-picker-dialog)' :
+    contextFilePickerOpen ? '.direction-overlays .context-file-picker-dialog' :
+    commandPaletteOpen ? '.direction-overlays .command-palette' :
+    promptEditorOpen ? '.direction-overlays .prompt-editor-modal' :
+    settingsOpen ? '.direction-overlays .settings-modal' :
+    learnerProfileOpen ? '.direction-overlays .learner-profile-backdrop' : null,
+    () => {
+      if (appDialog) closeAppDialog(null);
+      else if (contextFilePickerOpen) setContextFilePickerOpen(false);
+      else if (commandPaletteOpen) setCommandPaletteOpen(false);
+      else if (promptEditorOpen) void requestClosePromptEditor();
+      else if (settingsOpen) closeSettingsDialog();
+      else if (learnerProfileOpen) setLearnerProfileOpen(false);
+    },
+  );
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${!mobileRuntime ? "direction-app" : ""}`} data-scene={!mobileRuntime ? desktopPresentedScene : undefined}>
       <TitleBar />
       <input ref={archiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportArchive(file); }} />
       <input ref={dataArchiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportDataArchive(file); }} />
@@ -5051,6 +5104,10 @@ export default function App() {
       ) : null}
       {!mobileRuntime && DesktopToolbar ? (
         <DesktopToolbar
+          scene={desktopScene}
+          onPresentedSceneChange={setDesktopPresentedScene}
+          onSceneChange={navigateDesktopScene}
+          generationIntent={generationIntent}
           project={project}
           projects={projects}
           activeTitle={activeDocumentTitle}
@@ -5063,7 +5120,6 @@ export default function App() {
           canGenerateFile={canGenerateFileLesson}
           indexLabel={indexBuilding || indexStatus?.status === "building" ? "正在构建索引" : "构建项目索引"}
           indexDisabled={!project || isLearningPlanProject || indexBuilding}
-          themeMode={themeMode}
           onToggleNavigation={() => {
             if (navigationView === "projects") setNavigationView("courses");
             setNavigationOpen((open) => !open);
@@ -5074,16 +5130,15 @@ export default function App() {
           onRegenerateProject={handleRegenerate}
           onDeleteProject={handleDelete}
           onOpenGeneration={openGeneration}
-          onToggleAssistant={() => { setQAUpperTab("history"); setAssistantOpen((open) => !open); }}
+          onToggleAssistant={() => { if (assistantOpen) setAssistantOpen(false); else openAssistant("history"); }}
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
-          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenSettings={openSettings}
           onOpenPreferences={openLearnerProfile}
-          onOpenPrompts={() => setPromptEditorOpen(true)}
+          onOpenPrompts={openPrompts}
           onOpenGestureGuide={() => setGestureGuideOpen(true)}
           onExportDataArchive={() => { void handleExportDataArchive(); }}
           onImportDataArchive={requestDataArchiveImport}
           onBuildIndex={() => void handleBuildIndex()}
-          onToggleTheme={() => setThemeMode((current) => current === "dark" ? "light" : "dark")}
         />
       ) : (
         <MobileTopBar
@@ -5122,21 +5177,25 @@ export default function App() {
         onDismissPermissionNotice={handleDismissPermissionNotice}
         onDismissError={() => setError("")}
       />
-      {GestureGuide ? <GestureGuide open={gestureGuideOpen && !mobileRuntime} onClose={() => setGestureGuideOpen(false)} /> : null}
+      <div style={{ display: "contents" }} className={!mobileRuntime ? "direction-game direction-overlays" : undefined}>
+        {GestureGuide ? <GestureGuide open={gestureGuideOpen && !mobileRuntime} onClose={() => setGestureGuideOpen(false)} /> : null}
+      </div>
+      <div style={mobileRuntime ? { display: "contents" } : undefined} className={!mobileRuntime ? "direction-workspace" : undefined} hidden={!mobileRuntime && desktopPresentedScene !== "reader"} inert={!mobileRuntime && desktopScene !== desktopPresentedScene}>
+      {!mobileRuntime && <DirectionDocumentSidebar open={navigationOpen} width={sidebarWidth} resizing={dragState?.kind === "sidebar-width"} projectName={project?.name} onResizeStart={(clientX) => setDragState({ kind: "sidebar-width", startX: clientX, startWidth: sidebarWidth })} onResize={setSidebarWidth} onClose={() => setNavigationOpen(false)}>{renderSidebar(navigationView === "files" ? "files" : "courses")}</DirectionDocumentSidebar>}
       <WorkbenchSurface
         mobile={mobileRuntime}
         mobilePanelOpen={mobileRuntime && Boolean(navigationOpen || mobileWorkspaceTab)}
         projectAvailable={Boolean(project)}
         projectError={error}
         layout={layout}
-        navigationOpen={navigationOpen}
-        assistantOpen={assistantOpen}
+        navigationOpen={mobileRuntime && navigationOpen}
+        assistantOpen={mobileRuntime && assistantOpen}
         navigationResizing={dragState?.kind === "sidebar-width"}
         assistantResizing={dragState?.kind === "explain-width"}
         sidebarWidth={sidebarWidth}
         assistantWidth={explainWidth}
         navigationContent={renderSidebar(navigationView === "files" ? "files" : "courses")}
-        assistantContent={renderAssistantPanel()}
+        assistantContent={mobileRuntime ? renderAssistantPanel() : <div className="direction-game direction-assistant">{renderAssistantPanel()}</div>}
         renderGroup={renderGroup}
         onCollapseSplit={collapseControlledSplit}
         onStartSplitResize={setDragState}
@@ -5146,11 +5205,14 @@ export default function App() {
         onReturnToProjects={() => {
           setError("");
           setProject(null);
+          if (!mobileRuntime) navigateDesktopScene("project");
           window.localStorage.removeItem("codecourse-last-project");
         }}
         onImportProject={handleImportRequest}
         onCreateLearningPlan={handleCreateLearningPlan}
       />
+      </div>
+      {!mobileRuntime && <div className="direction-game direction-assistant direction-ask-stage" hidden={desktopPresentedScene !== "ask"} inert={desktopScene !== desktopPresentedScene}>{renderAssistantPanel()}</div>}
       {mobileRuntime ? (
         <MobileWorkspaceChrome
           ref={mobileWorkspaceSheetRef}
@@ -5185,6 +5247,7 @@ export default function App() {
           }}
         />
       ) : null}
+      <div style={{ display: "contents" }} className={!mobileRuntime ? "direction-game direction-overlays" : undefined}>
       {!mobileRuntime && GenerationSheet ? (
         <GenerationSheet
           open={generationOpen}
@@ -5256,7 +5319,7 @@ export default function App() {
           onDirtyChange: setPromptEditorDirty,
           onSavingChange: setPromptEditorSaving,
         } : null}
-        selectionBar={!mobileRuntime && selectionAnchor?.selectedText ? {
+        selectionBar={!mobileRuntime && selectionAnchor?.selectedText && desktopPresentedScene === "reader" && !contextFilePickerOpen && !settingsOpen && !promptEditorOpen && !learnerProfileOpen && !commandPaletteOpen && !appDialog && !generationOpen ? {
           canHighlight: selectionAnchor.sourceType === "course" || selectionAnchor.sourceType === "qa",
           highlighted: highlights.some((highlight) => (
             highlight.source_type === selectionAnchor.sourceType
@@ -5310,6 +5373,7 @@ export default function App() {
           onClose: () => setContextFilePickerOpen(false),
         }}
       />
+      </div>
     </div>
   );
 }

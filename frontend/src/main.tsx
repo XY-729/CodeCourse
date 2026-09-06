@@ -19,6 +19,13 @@ import "./styles/android-assistant.css";
 import "./styles/android-me.css";
 import "./styles/android-generation.css";
 import "./styles/call-guide.css";
+import "./desktop/direction.css";
+import "./desktop/direction-surfaces.css";
+import "./desktop/direction-reader.css";
+import "@fontsource/barlow-condensed/700.css";
+import "@fontsource/barlow-condensed/800-italic.css";
+import "@fontsource/noto-sans-sc/400.css";
+import "@fontsource/noto-sans-sc/500.css";
 import { applyPlatformClass } from "./platform/runtime";
 import { initializeAndroidPerformanceMode, markAndroidPerformance } from "./platform/android/performance";
 

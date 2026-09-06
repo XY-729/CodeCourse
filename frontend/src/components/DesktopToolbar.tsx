@@ -38,7 +38,9 @@ type Props = {
   canGenerateFile: boolean;
   indexLabel: string;
   indexDisabled: boolean;
-  themeMode: "light" | "dark";
+  themeMode?: "light" | "dark";
+  onOpenProjects?: () => void;
+  onOpenSystem?: () => void;
   onToggleNavigation: () => void;
   onSelectProject: (project: Project) => void;
   onImport: () => void;
@@ -55,7 +57,7 @@ type Props = {
   onExportDataArchive: () => void;
   onImportDataArchive: () => void;
   onBuildIndex: () => void;
-  onToggleTheme: () => void;
+  onToggleTheme?: () => void;
 };
 
 type MenuName = "projects" | "generate" | "more" | null;
@@ -127,9 +129,10 @@ export default function DesktopToolbar(props: Props) {
         <div className="apple-menu-anchor project-switcher-anchor">
           <button
             className={`apple-project-switcher ${menu === "projects" ? "active" : ""}`}
-            onClick={() => setMenu((current) => current === "projects" ? null : "projects")}
-            aria-haspopup="menu"
-            aria-expanded={menu === "projects"}
+            onClick={() => props.onOpenProjects ? props.onOpenProjects() : setMenu((current) => current === "projects" ? null : "projects")}
+            aria-haspopup={props.onOpenProjects ? undefined : "menu"}
+            aria-expanded={props.onOpenProjects ? undefined : menu === "projects"}
+            aria-label="选择项目"
           >
             <img src="./logo.ico" alt="" />
             <span>{project?.name ?? "选择项目"}</span>
@@ -209,14 +212,16 @@ export default function DesktopToolbar(props: Props) {
           <Bot size={17} />
         </button>
 
-        <button
+        {onToggleTheme ? <button
           className="apple-icon-button"
           onClick={onToggleTheme}
           title={themeMode === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
           aria-label={themeMode === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
         >
           {themeMode === "dark" ? <Sun size={17} /> : <Moon size={17} />}
-        </button>
+        </button> : null}
+
+        {props.onOpenSystem ? <button className="apple-icon-button" onClick={props.onOpenSystem} aria-label="打开系统菜单" title="系统菜单"><Settings2 size={17} /></button> : null}
 
         <div className="apple-menu-anchor">
           <button className={`apple-icon-button ${menu === "more" ? "active" : ""}`} onClick={() => setMenu((current) => current === "more" ? null : "more")} title="更多" aria-label="更多">

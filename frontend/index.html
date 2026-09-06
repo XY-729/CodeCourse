@@ -36,6 +36,7 @@
         var androidWebView = /\bAndroid\b/i.test(navigator.userAgent)
           && (/\bwv\b/i.test(navigator.userAgent) || location.hostname === "localhost");
         if (androidWebView) document.documentElement.classList.add("platform-android");
+        if (!androidWebView) { theme = "dark"; bg = "#031a3a"; }
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.backgroundColor = bg;
         document.body.style.backgroundColor = bg;

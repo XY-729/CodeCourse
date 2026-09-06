@@ -11,6 +11,12 @@
     "test": "vitest run --configLoader runner"
   },
   "dependencies": {
+    "@fontsource/barlow-condensed": "5.2.8",
+    "@fontsource/noto-sans-sc": "5.2.8",
+    "framer-motion": "12.23.12",
+    "gsap": "3.13.0",
+    "motion-dom": "12.23.12",
+    "motion-utils": "12.23.6",
     "@monaco-editor/react": "^4.6.0",
     "@vitejs/plugin-react": "^4.3.4",
     "cytoscape": "^3.30.4",

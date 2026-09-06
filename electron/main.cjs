@@ -6,7 +6,9 @@ const net = require("net");
 const path = require("path");
 const { autoUpdater } = require("electron-updater");
 
-app.setName("CodeCourse");
+app.setName("CodeCourse Direction C");
+app.setAppUserModelId("com.codecourse.directionc");
+if (process.env.CODECOURSE_DIRECTION_DATA) app.setPath("userData", path.resolve(process.env.CODECOURSE_DIRECTION_DATA));
 
 let backendProcess = null;
 let apiBase = "";
@@ -347,6 +349,8 @@ function createTray() {
 }
 
 function setupAutoUpdater() {
+  // This independent direction must never install a release from the main channel.
+  return;
   if (!app.isPackaged) return;
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -622,6 +626,7 @@ app.on("window-all-closed", () => {
 });
 
 ipcMain.handle("codecourse:check-for-updates", async () => {
+  if (app.getName() === "CodeCourse Direction C") return { status: "development", version: app.getVersion() };
   if (!app.isPackaged) return { status: "development", version: app.getVersion() };
   manualUpdateCheck = true;
   const result = await autoUpdater.checkForUpdates();

@@ -9,11 +9,15 @@ import '@fontsource/barlow-condensed/800-italic.css';
 import '@fontsource/noto-sans-sc/400.css';
 import '@fontsource/noto-sans-sc/500.css';
 import './style.css';
+import ReadingPreview from './ReadingPreview';
+import './reading-preview.css';
+
+const readingPreview = new URLSearchParams(location.search).get('preview') === 'reading';
 
 type DesktopScene = 'project' | 'course' | 'source' | 'generate' | 'ask' | 'system';
 type PreviewScene = Extract<DesktopScene, 'project' | 'source' | 'ask'>;
 type Phase = 'idle' | 'leaving' | 'sweeping' | 'entering';
-const scenes: { id: DesktopScene; number: string; label: string; zh: string; available: boolean }[] = [
+const originalScenes: { id: DesktopScene; number: string; label: string; zh: string; available: boolean }[] = [
   { id: 'project', number: '01', label: 'PROJECT', zh: '项目', available: true },
   { id: 'course', number: '02', label: 'COURSE', zh: '课程', available: false },
   { id: 'source', number: '03', label: 'SOURCE', zh: '源码', available: true },
@@ -21,6 +25,13 @@ const scenes: { id: DesktopScene; number: string; label: string; zh: string; ava
   { id: 'ask', number: '05', label: 'ASK', zh: '提问', available: true },
   { id: 'system', number: '06', label: 'SYSTEM', zh: '设置', available: false },
 ];
+// One display registry keeps menu, headings, commands and transition numbers aligned.
+const scenes = readingPreview
+  ? originalScenes.filter(s => s.id !== 'course').map((s, index) => ({
+      ...s, number: String(index + 1).padStart(2, '0'),
+      ...(s.id === 'source' ? { label: 'READ', zh: '阅读' } : {}),
+    }))
+  : originalScenes;
 const projects = [
   { name: 'CodeCourse', subtitle: '从一行代码，走进整个世界。', tag: 'TYPESCRIPT / PYTHON', progress: 68, chapters: '17 / 25', branch: 'main' },
   { name: 'Moonlit Engine', subtitle: '让每一次交互，都有自己的节奏。', tag: 'TYPESCRIPT / WEBGL', progress: 34, chapters: '08 / 24', branch: 'develop' },
@@ -64,7 +75,7 @@ function SceneMenu({ scene, navigate }: { scene: PreviewScene; navigate: (scene:
     const index = items.indexOf(document.activeElement as HTMLButtonElement);
     const offset = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
     if (offset || e.key === 'Home' || e.key === 'End') { e.preventDefault(); items[e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (index + offset + items.length) % items.length]?.focus(); }
-  }}>{scenes.map(s => <button key={s.id} disabled={!s.available} aria-current={scene === s.id ? 'page' : undefined} title={s.available ? s.zh : `${s.zh}：方向确认后接入`} onClick={() => navigate(s.id as PreviewScene)}><span className="nav-number">{s.number}</span><span className="nav-label">{s.label}<small>{s.zh}</small></span><ArrowUpRight size={18}/></button>)}</nav>;
+  }}>{scenes.map(s => <button className={readingPreview && s.id === 'source' ? 'merged-reading-entry' : undefined} key={s.id} disabled={!s.available} aria-current={scene === s.id ? 'page' : undefined} title={s.available ? s.zh : `${s.zh}：方向确认后接入`} onClick={() => navigate(s.id as PreviewScene)}><span className="nav-number">{s.number}</span><span className="nav-label">{s.label}<small>{s.zh}</small></span><ArrowUpRight size={18}/></button>)}</nav>;
 }
 
 function GameModal({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
@@ -214,19 +225,22 @@ function App() {
     const id = q !== undefined && conversation?.question === text ? conversation.id : ++sequence.current;
     setConversation({ id, question: text, count: 0 }); setBusy(true); setQuestion('');
   };
-  const commands = scenes.filter(s => s.available && `${s.label}${s.zh}`.toLowerCase().includes(command.toLowerCase()));
-  return <div ref={root} className={`game-root scene-${scene}`} data-scene={scene} data-phase={phase}>
+  const commands = scenes.filter(s => s.available && `${s.label}${s.zh}${readingPreview && s.id === 'source' ? '课程课件源码' : ''}`.toLowerCase().includes(command.toLowerCase()));
+  return <div ref={root} className={`game-root scene-${scene} ${readingPreview ? 'reading-merge-preview' : ''}`} data-scene={scene} data-phase={phase}>
     <div className="scene-background" aria-hidden="true" style={{ backgroundImage: `url(/candidates/${scene}.png)` }}/><div className="ink-slash" aria-hidden="true"/><div className="floating-shards" aria-hidden="true"><i/><i/><i/></div>
     <div className="application-plane" inert={modal !== null || phase !== 'idle'}>
-      <div className="corner-brand">CODE<span>//</span>COURSE<small>DIRECTION C · 视觉实验</small></div>
+      <div className="corner-brand">CODE<span>//</span>COURSE<small>{readingPreview ? '阅读合并预览 · 内置样本' : 'DIRECTION C · 视觉实验'}</small></div>
       <div className="corner-actions"><button className="icon-button" onClick={() => setModal('commands')} aria-label="打开命令面板"><Search size={19}/></button><button className="icon-button" onClick={() => setModal('controls')} aria-label="查看按钮与反馈样本"><SlidersHorizontal size={19}/></button></div>
       <main ref={view} className="scene-stage" aria-labelledby="scene-heading">
         {scene === 'project' && <ProjectScene selected={selected} select={setSelected} navigate={navigate} openModal={() => setModal('import')}/>}
-        {scene === 'source' && <SourceScene file={file} setFile={setFile} split={split} setSplit={setSplit} navigate={navigate}/>}
+        {!readingPreview && scene === 'source' && <SourceScene file={file} setFile={setFile} split={split} setSplit={setSplit} navigate={navigate}/>}
+        {readingPreview && <div className="reading-preview-host" hidden={scene !== 'source'}>
+          <ReadingPreview sceneNumber={scenes.find(s => s.id === 'source')!.number} active={scene === 'source'} code={code} onAsk={() => navigate('ask')} action={<GameActionButton onClick={() => navigate('ask')}>向 AI 提问</GameActionButton>} />
+        </div>}
         {scene === 'ask' && <AskScene question={question} setQuestion={setQuestion} conversation={conversation} history={history} selectHistory={c => { setBusy(false); setConversation(c); }} send={send} busy={busy} stop={() => { setBusy(false); notify('演示已停止'); }} clear={() => { setBusy(false); setConversation(null); setQuestion(''); }} context={context} setContext={setContext} notify={notify}/>}
       </main><footer className="game-footer"><div className="footer-caption"><span>EXPLORE THE UNKNOWN</span><small><kbd>ESC</kbd> 返回 <i/> <kbd>Ctrl K</kbd> 切换场景</small></div><SceneMenu scene={scene} navigate={navigate}/></footer>
     </div>
-    <div className="transition-cover" ref={cover} aria-hidden="true"><span>{scenes.find(s => s.id === target)?.number}</span><strong>{target.toUpperCase()}</strong><i/></div>
+    <div className="transition-cover" ref={cover} aria-hidden="true"><span>{scenes.find(s => s.id === target)?.number}</span><strong>{scenes.find(s => s.id === target)?.label}</strong><i/></div>
     <AnimatePresence>{modal && <GameModal key={modal} title={modal === 'controls' ? 'FEEL THE ACTION.' : modal === 'commands' ? 'GO SOMEWHERE.' : 'A NEW JOURNEY.'} close={closeModal}>
       {modal === 'controls' ? <><p className="modal-description">按钮与反馈样本。将鼠标移入，或按 Tab 检查键盘焦点。</p><div className="specimen-grid"><GameActionButton onClick={() => notify('确认动作 · 闪白 / 箭头贯穿')}>确认动作</GameActionButton><GameActionButton variant="secondary" onClick={() => notify('次级动作已触发')}>次级动作</GameActionButton><GameActionButton variant="ghost" onClick={() => notify('返回动作已触发')}>轻量操作</GameActionButton><GameActionButton variant="danger" onClick={() => notify('错误反馈演示 · 操作未完成')}>错误演示</GameActionButton><GameActionButton busy>处理中</GameActionButton><GameActionButton disabled>暂不可用</GameActionButton></div><div className="motion-note"><Check size={16}/>{reduce ? '系统减少动态效果已启用' : '跟随系统的减少动态效果设置'}<span>UI 音效：关闭</span></div></> : modal === 'commands' ? <><input className="command-input" autoFocus aria-label="搜索场景" placeholder="去往哪个场景？" value={command} onChange={e => setCommand(e.target.value)} onKeyDown={e => { if (e.key === 'ArrowDown') { e.preventDefault(); document.querySelector<HTMLButtonElement>('.command-list button')?.focus(); } if (e.key === 'Enter' && commands[0]) navigate(commands[0].id as PreviewScene); }}/><div className="command-list" onKeyDown={e => { if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault(); const list = Array.from(e.currentTarget.querySelectorAll('button')); const i = list.indexOf(document.activeElement as HTMLButtonElement); list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length]?.focus(); }}>{commands.map(s => <button key={s.id} onClick={() => { if (s.id === scene) closeModal(); else navigate(s.id as PreviewScene); }}><span>{s.number}</span><strong>{s.label}</strong>{s.zh}<ArrowRight size={18}/></button>)}{!commands.length && <p>没有匹配的演示场景。</p>}</div></> : <><p className="modal-description">此处预演项目入口的弹窗与按钮手感。真实创建、导入和文件选择会在视觉方向确认后接入。</p><div className="specimen-grid"><GameActionButton onClick={() => notify('创建入口演示 · 未创建真实项目')}><Plus size={17}/>创建项目</GameActionButton><GameActionButton variant="secondary" onClick={() => notify('导入入口演示 · 未访问文件')}><Folder size={17}/>导入项目</GameActionButton></div></>}
     </GameModal>}</AnimatePresence>

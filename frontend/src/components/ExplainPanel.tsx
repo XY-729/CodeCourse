@@ -22,6 +22,8 @@ export type AssistantContextSummary = {
 type AssistantTab = "history" | "knowledge";
 
 type Props = {
+  scenePresentation?: boolean;
+  answerContent?: ReactNode;
   selection: SelectionSummary | null;
   contextSummary: AssistantContextSummary | null;
   contextFiles: string[];
@@ -135,6 +137,7 @@ export default function ExplainPanel(props: Props) {
   const mobileAssistant = mobileMode && upperTab === "history";
   const knowledgeOnly = upperTab === "knowledge";
   const threadGroups = groupQARecordsByThreads(threads, history);
+  const ContextSurface = props.scenePresentation ? 'details' : 'div';
 
   function renderHistoryRecord(record: QARecord) {
     return (
@@ -159,7 +162,7 @@ export default function ExplainPanel(props: Props) {
 
   return (
     <aside
-      className={`explain-panel qa-panel ${knowledgeOnly ? "knowledge-only" : ""} ${mobileKnowledge ? "mobile-knowledge-only" : ""} ${mobileAssistant ? "mobile-assistant-only" : ""}`}
+      className={`explain-panel qa-panel ${props.scenePresentation ? "scene-presentation" : ""} ${knowledgeOnly ? "knowledge-only" : ""} ${mobileKnowledge ? "mobile-knowledge-only" : ""} ${mobileAssistant ? "mobile-assistant-only" : ""}`}
     >
       <section className="qa-history-section">
         {!embeddedMobileSheet ? <div className="qa-panel-tabs">
@@ -244,7 +247,9 @@ export default function ExplainPanel(props: Props) {
 
       {!knowledgeOnly && !mobileKnowledge ? <section className="qa-ask-section">
         <div className="qa-ask-scroll">
-          <div className="qa-section selection-card">
+          {props.answerContent}
+          <ContextSurface className="qa-section selection-card">
+            {props.scenePresentation && <summary>当前上下文<span>{contextFiles.length ? `${contextFiles.length} 个参考文件` : selection?.sourcePath?.split('/').pop() || contextSummary?.label || '项目上下文'}</span></summary>}
             <div className="qa-section-title">附带上下文</div>
             {selection ? (
               <>
@@ -268,7 +273,7 @@ export default function ExplainPanel(props: Props) {
               </div>
             ) : null}
             <button type="button" className="secondary-button compact" onClick={onOpenFilePicker} disabled={loading}><FileText size={14} />选择参考文件</button>
-          </div>
+          </ContextSurface>
 
           {!loading && !selectedRecordReadOnly && selectedRecord?.teaching_handoff ? (
             <TeachingClosureCard handoff={selectedRecord.teaching_handoff} onAction={onTeachingNextAction} />
