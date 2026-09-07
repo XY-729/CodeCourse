@@ -172,6 +172,28 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
         self.assertEqual(task["stage_label"], "生成失败")
         self.assertEqual(output_path.read_text(encoding="utf-8"), "# 旧课件\n\n保留我。\n")
 
+    def test_section_term_choices_survive_assembly_without_extra_calls(self):
+        from app.services.storage import list_document_terms, upsert_lesson_files
+        upsert_lesson_files(self.project.id, 1, [("src/main.py", "index")])
+        responses = self._responses()
+        responses[1] = 'TERMS: ["事件循环"]\n' + responses[1] + '\n本次运行涉及事件循环。'
+        with patch("app.services.generation_service.call_openai_compatible_chat", side_effect=responses) as model:
+            created = self.client.post(
+                f"/api/projects/{self.project.id}/lessons/outline",
+                json={"lesson_number": 1, "title": "入口与启动"},
+            )
+        task = self.client.get(f"/api/projects/{self.project.id}/tasks/{created.json()['id']}").json()
+        self.assertEqual(task['status'], 'completed')
+        self.assertEqual(model.call_count, len(responses))
+        content = (self.generated / str(self.project.id) / 'lessons/lesson_01.md').read_text(encoding='utf-8')
+        self.assertNotIn('TERMS:', content)
+        self.assertEqual(content.count('## 启动入口'), 1)
+        terms = list_document_terms(self.project.id, 'course', 'lessons/lesson_01.md')
+        self.assertEqual([item.term_text for item in terms], ['事件循环'])
+        self.assertEqual(terms[0].detection_source, 'model')
+        span = terms[0].source_span
+        self.assertEqual(content[span['start']:span['end']], '事件循环')
+
     def test_evidence_preview_self_heals_empty_lesson_file_list(self):
         preview = self.client.post(
             f"/api/projects/{self.project.id}/lessons/outline/evidence",

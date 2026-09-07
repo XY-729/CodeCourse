@@ -58,7 +58,7 @@ interface VisitContext {
 }
 
 interface TextNodeEntry {
-  node: AstNode & { type: "text"; value: string };
+  node: AstNode & { type: "text" | "inlineCode"; value: string };
   parent: ParentNode;
   childIndex: number;
   nodePath: string;
@@ -68,7 +68,6 @@ interface TextNodeEntry {
 const BLOCK_TYPES = new Set(["paragraph", "heading", "tableCell"]);
 const SKIP_SUBTREE_TYPES = new Set([
   "code",
-  "inlineCode",
   "html",
   "link",
   "linkReference",
@@ -131,6 +130,7 @@ export function prepareTermsForMatching(
     .filter(
       (term) =>
         (term.status === "candidate" || term.status === "linked") &&
+        (term.detection_source === "model" || term.link_origin === "manual") &&
         Boolean(term.term_text?.trim()),
     )
     .sort(
@@ -209,7 +209,7 @@ function collectTextNodeEntries(root: AstNode): {
       nextParagraphIndex += 1;
     }
 
-    if (node.type === "text" && typeof node.value === "string" && parent) {
+    if ((node.type === "text" || node.type === "inlineCode") && typeof node.value === "string" && parent) {
       if (context.paragraphIndex == null) {
         context.paragraphIndex = nextParagraphIndex;
         nextParagraphIndex += 1;
@@ -270,8 +270,8 @@ function sourceForOccurrence(
 ): TermCandidateInput["source"] {
   if (context.isInHeading) return "heading";
   if (context.isInsideLink) return "existing_link";
-  if (context.isInlineCode) return "inline_code";
   if (term.detection_source === "model") return "model";
+  if (context.isInlineCode) return "inline_code";
   if (term.detection_source === "index") return "code_symbol";
   return "unknown";
 }
@@ -285,6 +285,16 @@ function linkOriginOf(
     : "legacy_unknown";
 }
 
+function matchesForEntry(entry: TextNodeEntry, terms: readonly DocumentTerm[]): TextTermMatch[] {
+  // An inline code span can be a term (e.g. `std::vector`) or a complete
+  // statement. Only decorate whole-term spans; do not turn variables or
+  // fragments of an example statement into links.
+  const candidates = entry.context.isInlineCode
+    ? terms.filter((term) => term.term_text === entry.node.value)
+    : terms;
+  return matchTermsInTextNode(entry.node.value, candidates);
+}
+
 export function analyzeMarkdownTermOccurrences(
   markdown: string,
   terms: readonly DocumentTerm[],
@@ -296,7 +306,7 @@ export function analyzeMarkdownTermOccurrences(
   const occurrences: TermOccurrence[] = [];
 
   for (const entry of entries) {
-    const matches = matchTermsInTextNode(entry.node.value, orderedTerms);
+    const matches = matchesForEntry(entry, orderedTerms);
     for (const match of matches) {
       const paragraphIndex = entry.context.paragraphIndex ?? 0;
       const termId = String(match.term.id);
@@ -336,7 +346,7 @@ export function analyzeMarkdownTermOccurrences(
         isInCodeBlock: entry.context.isInCodeBlock,
         isInlineCode: entry.context.isInlineCode,
         isInTable: entry.context.isInTable,
-        manualLink: linkOrigin === "manual" || match.term.status === "linked",
+        manualLink: linkOrigin === "manual",
       });
     }
   }
@@ -394,7 +404,7 @@ export const remarkTermOccurrences: Plugin<[RemarkTermOccurrencesOptions]> =
         const replacements = entries
           .map((entry) => ({
             entry,
-            matches: matchTermsInTextNode(entry.node.value, orderedTerms),
+            matches: matchesForEntry(entry, orderedTerms),
           }))
           .filter((item) => item.matches.length > 0)
           .sort((left, right) => {
@@ -425,7 +435,15 @@ export const remarkTermOccurrences: Plugin<[RemarkTermOccurrencesOptions]> =
               value: entry.node.value.slice(cursor),
             });
           }
-          entry.parent.children.splice(entry.childIndex, 1, ...nextChildren);
+          if (entry.context.isInlineCode) {
+            entry.parent.children.splice(entry.childIndex, 1, {
+              type: "termInlineCode",
+              children: nextChildren,
+              data: { hName: "code" },
+            });
+          } else {
+            entry.parent.children.splice(entry.childIndex, 1, ...nextChildren);
+          }
         }
       } catch (error) {
         // Term links are an enhancement. A malformed term or AST must never

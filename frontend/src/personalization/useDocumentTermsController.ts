@@ -22,12 +22,12 @@ type Params = {
   onError?: (message: string) => void;
 };
 
-function sourceKey(sourceType: SourceType, sourcePath: string): string {
-  return `${sourceType}:${sourcePath}`;
+function sourceKey(projectId: number, sourceType: SourceType, sourcePath: string): string {
+  return `${projectId}:${sourceType}:${sourcePath}`;
 }
 
 export function shouldPollTermScan(status: TermScanStatus | null | undefined): boolean {
-  return Boolean(status && ["idle", "queued", "running"].includes(status.scan_status));
+  return Boolean(status && ["queued", "running"].includes(status.scan_status));
 }
 
 export type DocumentTermsController = {
@@ -59,7 +59,7 @@ export function useDocumentTermsController(params: Params): DocumentTermsControl
     overrideProjectId: number | null = projectId,
   ) => {
     if (!overrideProjectId || !nextSourcePath) return;
-    const key = sourceKey(nextSourceType, nextSourcePath);
+    const key = sourceKey(overrideProjectId, nextSourceType, nextSourcePath);
     const requestId = (activeRequestRef.current.get(key) ?? 0) + 1;
     activeRequestRef.current.set(key, requestId);
     try {
@@ -73,12 +73,12 @@ export function useDocumentTermsController(params: Params): DocumentTermsControl
     }
   }, [onError, projectId]);
 
-  const activeKey = sourceType && sourcePath ? sourceKey(sourceType, sourcePath) : "";
+  const activeKey = projectId && sourceType && sourcePath ? sourceKey(projectId, sourceType, sourcePath) : "";
   const rawTerms = activeKey ? termsBySource[activeKey] ?? EMPTY_DOCUMENT_TERMS : EMPTY_DOCUMENT_TERMS;
   const scanStatus = activeKey ? statusBySource[activeKey] ?? null : null;
   const display = useTermDisplay({
     projectId,
-    sourceKey: activeKey,
+    sourceKey: sourceType && sourcePath ? `${sourceType}:${sourcePath}` : "",
     content,
     rawTerms,
     terminologyDensity,
@@ -110,7 +110,7 @@ export function useDocumentTermsController(params: Params): DocumentTermsControl
   const rescanActiveDocumentTerms = useCallback(async () => {
     if (!projectId || !sourceType || !sourcePath) return;
     const status = await rescanDocumentTerms(projectId, sourceType, sourcePath);
-    setStatusBySource((current) => ({ ...current, [sourceKey(sourceType, sourcePath)]: status }));
+    setStatusBySource((current) => ({ ...current, [sourceKey(projectId, sourceType, sourcePath)]: status }));
     await refreshDocumentTerms(sourceType, sourcePath, projectId);
   }, [projectId, refreshDocumentTerms, sourcePath, sourceType]);
 

@@ -6,6 +6,7 @@ describe("term display profile wire format", () => {
     expect(normalizeTermDisplayProfile({
       concept_key: "global:theory:socket",
       manual_status: "unknown",
+      knowledge_status: "needs_support",
       mastery: 0.25,
       uncertainty: 0.4,
       shadow_familiarity: 0.3,
@@ -15,6 +16,7 @@ describe("term display profile wire format", () => {
     })).toEqual({
       conceptKey: "global:theory:socket",
       manualStatus: "unknown",
+      knowledgeStatus: "needs_support",
       mastery: 0.25,
       uncertainty: 0.4,
       shadowFamiliarity: 0.3,

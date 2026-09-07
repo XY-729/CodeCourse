@@ -1192,13 +1192,26 @@ def term_display_profiles(
     body: dict,
 ) -> dict:
     _require_project(project_id)
-    concept_keys: list[str] = body.get("concept_keys", [])[:200]
+    concept_keys = list(dict.fromkeys(
+        key for key in body.get("concept_keys", [])[:200] if isinstance(key, str)
+    ))
     if not concept_keys:
         return {"profiles": []}
 
     profiles: list[dict] = []
     with _api_db_connect() as conn:
         placeholders = ",".join("?" * len(concept_keys))
+        concepts = conn.execute(
+            f"""SELECT id, concept_key FROM concepts
+                WHERE (id IN ({placeholders}) OR concept_key IN ({placeholders}))
+                  AND (concept_key NOT LIKE 'project:%' OR concept_key LIKE ?)""",
+            (*concept_keys, *concept_keys, f"project:{project_id}:%"),
+        ).fetchall()
+        key_by_request = {value: row[1] for row in concepts for value in (row[0], row[1])}
+        resolved_keys = list(dict.fromkeys(key_by_request.values()))
+        if not resolved_keys:
+            return {"profiles": []}
+        placeholders = ",".join("?" * len(resolved_keys))
 
         mastery_rows = conn.execute(
             f"""SELECT c.concept_key, m.mastery, m.uncertainty, m.manual_status
@@ -1206,8 +1219,9 @@ def term_display_profiles(
                JOIN concepts c ON c.id = m.concept_id
                WHERE ((scope_type = 'global' AND scope_id = 'local-user')
                   OR (scope_type = 'project' AND scope_id = ?))
-               AND c.concept_key IN ({placeholders})""",
-            (str(project_id), *concept_keys),
+               AND c.concept_key IN ({placeholders})
+               ORDER BY (m.scope_type='project'), m.updated_at""",
+            (str(project_id), *resolved_keys),
         ).fetchall()
         mastery_by_id = {
             r[0]: {"mastery": float(r[1]), "uncertainty": float(r[2]), "manual_status": r[3]}
@@ -1220,18 +1234,30 @@ def term_display_profiles(
                JOIN concepts c ON c.id = s.concept_id
                WHERE ((s.scope_type = 'global' AND s.scope_id = 'local-user')
                   OR (s.scope_type = 'project' AND s.scope_id = ?))
-               AND c.concept_key IN ({placeholders})""",
-            (str(project_id), *concept_keys),
+               AND c.concept_key IN ({placeholders})
+               ORDER BY (s.scope_type='project'), s.updated_at""",
+            (str(project_id), *resolved_keys),
         ).fetchall()
-        states_by_key = {row[0]: json.loads(row[1]) for row in state_rows}
+        states_by_key = {}
+        for row in state_rows:
+            try:
+                value = json.loads(row[1])
+                if isinstance(value, dict):
+                    states_by_key[row[0]] = value
+            except (TypeError, ValueError):
+                continue
 
     for key in concept_keys:
-        m = mastery_by_id.get(key)
-        state = states_by_key.get(key)
+        resolved_key = key_by_request.get(key)
+        if resolved_key is None:
+            continue
+        m = mastery_by_id.get(resolved_key)
+        state = states_by_key.get(resolved_key)
         familiarity = (state or {}).get("dimensions", {}).get("familiarity", {})
         profiles.append({
             "concept_key": key,
-            "manual_status": m["manual_status"] if m else None,
+            "manual_status": familiarity.get("manualStatus") or (m["manual_status"] if m else None),
+            "knowledge_status": familiarity.get("status"),
             "mastery": m["mastery"] if m else None,
             "uncertainty": m["uncertainty"] if m else None,
             "shadow_familiarity": familiarity.get("probability"),

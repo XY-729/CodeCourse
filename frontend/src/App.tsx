@@ -3237,6 +3237,16 @@ export default function App() {
     setTermAction({ term, position });
   }
 
+  async function handleRescanCurrentDocumentTerms() {
+    const rescan = rescanActiveDocumentTerms;
+    const ok = await confirmAction(
+      "按当前学情标注术语",
+      "将调用一次模型，结合你的学习档案，为当前课件或回答重新选择需要提示的术语。正文和已保存的解释会保留。",
+      { confirmText: "开始标注" },
+    );
+    if (ok) await rescan();
+  }
+
   async function handleSaveUnderstanding(record: QARecord, summary: string) {
     if (!project) return;
     try {
@@ -4057,6 +4067,8 @@ export default function App() {
         documentTerms={activeTermRawTerms}
         visibleTermCandidateIds={termDisplay.visibleCandidateIds}
         termDisplayTiers={termDisplay.tiersByCandidateId}
+        termScanStatus={group.id === activeGroupId ? activeTermScanStatus : null}
+        onRescanTerms={handleRescanCurrentDocumentTerms}
         selectionAnchor={selectionAnchor}
         qaHighlightDraft={qaHighlightDraft}
         callGuides={callGuides}
@@ -5251,7 +5263,7 @@ export default function App() {
           onConfirm: confirmAction,
           termScanStatus: activeTermScanStatus,
           termDiagnostics: termDisplay.diagnostics,
-          onRescanTerms: rescanActiveDocumentTerms,
+          onRescanTerms: handleRescanCurrentDocumentTerms,
         }}
         promptEditor={promptEditorOpen ? {
           onClose: () => { void requestClosePromptEditor(); },

@@ -9,11 +9,13 @@ import type {
   HighlightRecord,
   KnowledgeLink,
   LearningState,
+  TermScanStatus,
 } from "../api/client";
 import type { SelectionSummary } from "../components/ExplainPanel";
 import type { ViewerSelection } from "../components/CodeViewer";
 import CodeViewer from "../components/CodeViewer";
 import ReaderLearningToolbar from "../components/ReaderLearningToolbar";
+import DocumentTermScanControl from "../components/DocumentTermScanControl";
 import TeachingRationale from "../components/TeachingRationale";
 import type { TermDisplayTier } from "../personalization/termDisplayTypes";
 import EditorPaneFrame from "./EditorPaneFrame";
@@ -48,6 +50,8 @@ type Props = {
   documentTerms: DocumentTerm[];
   visibleTermCandidateIds: ReadonlySet<string>;
   termDisplayTiers: ReadonlyMap<string, TermDisplayTier>;
+  termScanStatus?: TermScanStatus | null;
+  onRescanTerms?: () => Promise<void>;
   selectionAnchor: SelectionAnchor | null;
   qaHighlightDraft: { sourcePath: string; selectedText: string } | null;
   callGuides: CallGuide[];
@@ -151,9 +155,11 @@ function WorkbenchEditorGroupView(props: Props) {
   );
 
   const markdownActions = (compact: boolean) => {
-    if (!activeItem || !hasMarkdownActions) return null;
+    if (!activeItem) return null;
     return (
       <>
+        <DocumentTermScanControl status={props.termScanStatus} onRescan={props.onRescanTerms} compact={compact} />
+        {hasMarkdownActions ? <>
         {activeItem.qaRecordId && projectId ? (
           <TeachingRationale
             projectId={projectId}
@@ -174,6 +180,7 @@ function WorkbenchEditorGroupView(props: Props) {
         >
           {compact ? <Pencil size={17} aria-hidden="true" /> : "编辑"}
         </button>
+        </> : null}
       </>
     );
   };

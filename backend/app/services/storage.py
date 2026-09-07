@@ -4070,7 +4070,11 @@ def upsert_document_term(
             )
             VALUES (?, ?, ?, ?, ?, ?, 'candidate', NULL, ?, ?, ?, ?, ?, 'legacy_unknown', ?, ?)
             ON CONFLICT(project_id, source_type, source_path, term_text) DO UPDATE SET
+                status = CASE WHEN document_terms.status = 'superseded'
+                    THEN CASE WHEN document_terms.qa_record_id IS NOT NULL THEN 'linked' ELSE 'candidate' END
+                    ELSE document_terms.status END,
                 detection_source = CASE
+                    WHEN excluded.detection_source = 'model' THEN 'model'
                     WHEN document_terms.detection_source = 'model' THEN document_terms.detection_source
                     ELSE excluded.detection_source
                 END,
@@ -4290,6 +4294,7 @@ def delete_stale_document_term_candidates(
             WHERE project_id = ? AND source_type = ?
               AND REPLACE(source_path, '\\', '/') = ?
               AND status = 'candidate'
+              AND COALESCE(link_origin, 'legacy_unknown') <> 'manual'
               AND COALESCE(content_hash, '') <> ?
             """,
             (project_id, source_type, normalized, content_hash),

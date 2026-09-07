@@ -9,7 +9,6 @@ from unittest.mock import patch
 from app.services.term_service import (
     _clean_historical_candidates,
     _clean_term,
-    _local_candidates,
     _normalize_source_path,
     get_document_term_status,
     normalize_term_candidate,
@@ -68,7 +67,7 @@ bind 会把套接字绑定到本地地址。"""
         _, terms = parse_term_metadata(raw)
         self.assertEqual(terms, [])
 
-    def test_historical_cleanup_preserves_linked_terms(self):
+    def test_historical_filter_preserves_only_manual_malformed_links(self):
         malformed = "主线程如何安全地等待子线程结束？"
         terms = [
             SimpleNamespace(
@@ -80,6 +79,7 @@ bind 会把套接字绑定到本地地址。"""
                 confidence=0.9,
                 source_span=None,
                 detection_source="model",
+                link_origin="automatic",
             ),
             SimpleNamespace(
                 id=2,
@@ -90,21 +90,14 @@ bind 会把套接字绑定到本地地址。"""
                 confidence=0.9,
                 source_span=None,
                 detection_source="model",
+                link_origin="manual",
             ),
         ]
-        with patch(
-            "app.services.term_service.delete_document_term_candidates_by_id"
-        ) as delete_candidates:
-            kept = _clean_historical_candidates(
-                7,
-                terms,
-                f"正文中保留一条旧链接：{malformed}",
-            )
+        kept = _clean_historical_candidates(7, terms, f"正文中保留一条旧链接：{malformed}")
         self.assertEqual([term.id for term in kept], [2])
-        delete_candidates.assert_called_once_with(7, [1])
 
     def test_status_does_not_poll_when_local_candidates_are_sufficient(self):
-        terms = [SimpleNamespace(confidence=0.9) for _ in range(4)]
+        terms = [SimpleNamespace(confidence=0.9, detection_source="model") for _ in range(4)]
         with (
             patch("app.services.term_service._load_document_content", return_value="FastAPI SQLite React Electron"),
             patch("app.services.term_service.register_document_terms", return_value=terms),
@@ -121,47 +114,45 @@ bind 会把套接字绑定到本地地址。"""
             patch("app.services.term_service._load_document_content", return_value=content),
             patch("app.services.term_service.delete_term_scan_state") as delete_state,
             patch("app.services.term_service.register_document_terms", return_value=[]),
+            patch("app.services.term_service.schedule_term_model_scan") as schedule,
             patch("app.services.term_service.get_document_term_status", return_value={"scan_status": "idle"}),
         ):
             status = rescan_document_terms(3, "course", "lesson.md")
         self.assertEqual(status["scan_status"], "idle")
         delete_state.assert_called_once()
+        schedule.assert_called_once()
 
-    def test_emphasis_rule_rejects_headings_keeps_inline_terms(self):
-        content = (
-            "**一句话大白话**\n\n"
-            "原子变量是一种特殊的变量。\n\n"
-            "**数据竞争**：C++ 标准规定两个线程同时访问同一个非原子变量就是未定义行为。\n"
-        )
-        with patch("app.services.term_service.list_code_chunks", return_value=[]):
-            candidates = _local_candidates(1, content)
-        names = [str(c["display_name"]) for c in candidates]
-        # The inline bold term is kept…
-        self.assertIn("数据竞争", names)
-        # …but the bold section heading on its own line is not a term.
-        self.assertNotIn("一句话大白话", names)
-        self.assertNotIn("原子变量是一种特殊的变量", names)
+    def test_legacy_rule_guesses_are_hidden_even_when_linked(self):
+        terms = [SimpleNamespace(detection_source=source, link_origin="automatic", status="linked")
+                 for source in ("rule", "index", "dictionary", "legacy_unknown")]
+        self.assertEqual(_clean_historical_candidates(1, terms, "anything"), [])
 
-    def test_chinese_tech_rule_keeps_dictionary_words_only(self):
-        content = (
-            "事件循环由中间件驱动，依赖注入是它的关键。"
-            "轮流分给各个进程的时间片由调度器决定。"
-            "每个核有自己的缓存，主线程开了一个子线程。"
-        )
-        with patch("app.services.term_service.list_code_chunks", return_value=[]):
-            candidates = _local_candidates(1, content)
-        names = [str(c["display_name"]) for c in candidates]
-        # The dictionary words themselves are detected…
-        self.assertIn("事件循环", names)
-        self.assertIn("中间件", names)
-        self.assertIn("依赖", names)
-        self.assertIn("进程", names)
-        self.assertIn("缓存", names)
-        self.assertIn("线程", names)
-        # …but whole sentences that merely END in a tech word are not.
-        self.assertNotIn("轮流分给各个进程", names)
-        self.assertNotIn("每个核有自己的缓存", names)
-        self.assertNotIn("主线程开了一个子线程", names)
+    def test_bad_metadata_is_hidden_and_code_examples_are_preserved(self):
+        for header in ('TERMS: [broken', 'TERMS: [\n {"display_name":', 'TERMS: ```json\n[broken\n```'):
+            with self.subTest(header=header):
+                body, terms = parse_term_metadata(header + '\n\n正文介绍 C++。')
+                self.assertEqual(body, '正文介绍 C++。')
+                self.assertEqual(terms, [])
+        literal = '```text\nTERMS: ["example"]\n```'
+        self.assertEqual(parse_term_metadata(literal), (literal, []))
+
+    def test_multiline_metadata_and_section_anchors(self):
+        raw = 'TERMS: [\n {"display_name":"C++","source_span":{"text":"C++"}}\n]\n# 课程\nC++ 支持泛型编程。'
+        body, terms = parse_term_metadata(raw)
+        self.assertEqual([item['display_name'] for item in terms], ['C++'])
+        self.assertNotIn('TERMS', body)
+
+    def test_stream_never_exposes_metadata_across_chunk_boundaries(self):
+        from app.services.metadata_stream import StreamingMetadataFilter
+        raw = 'TITLE: 学习\nTERMS: [\n {"display_name":"C++"}\n]\nHANDOFF: {}\n正文讨论 C++。\n```text\nTERMS: literal\n```\n'
+        expected = '正文讨论 C++。\n```text\nTERMS: literal\n```\n'
+        for step in (1, 2, 7, 21, len(raw)):
+            stream = StreamingMetadataFilter()
+            visible = ''.join(piece for offset in range(0, len(raw), step)
+                              for piece in stream.push(raw[offset:offset + step]))
+            visible += ''.join(stream.finish())
+            self.assertEqual(visible, expected)
+
 
     def test_clean_term_rejects_expressions_glosses_and_heading_phrases(self):
         self.assertEqual(_clean_term("rusage.ru_utime + rusage.ru_stime"), "")

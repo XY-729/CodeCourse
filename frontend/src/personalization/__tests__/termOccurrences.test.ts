@@ -97,12 +97,12 @@ describe("markdown term occurrences", () => {
     const sockets = analysis.occurrences.filter(
       (occurrence) => occurrence.termText === "socket",
     );
-    expect(sockets).toHaveLength(4);
+    expect(sockets).toHaveLength(5);
     expect(sockets.filter((item) => item.isInHeading)).toHaveLength(1);
     expect(sockets.filter((item) => item.isInTable)).toHaveLength(1);
-    expect(sockets.some((item) => item.isInlineCode)).toBe(false);
+    expect(sockets.filter((item) => item.isInlineCode)).toHaveLength(1);
     expect(sockets.some((item) => item.isInCodeBlock)).toBe(false);
-    expect(new Set(sockets.map((item) => item.candidateId)).size).toBe(4);
+    expect(new Set(sockets.map((item) => item.candidateId)).size).toBe(5);
   });
 
   it("keeps mixed terms in source order instead of term-group order", () => {
@@ -116,6 +116,32 @@ describe("markdown term occurrences", () => {
       "bind",
       "socket",
     ]);
+  });
+
+  it("hides historical rule candidates and automatic linked records but preserves manual links", () => {
+    const analysis = analyzeMarkdownTermOccurrences(
+      "禁止编译器偷偷做类型转换。左值引用、移动语义与自定义内容。",
+      [
+        term(1, "禁止编译器偷偷做类型转换", { detection_source: "rule" }),
+        term(2, "左值引用", { detection_source: "index", status: "linked", link_origin: "legacy_unknown" }),
+        term(3, "移动语义", { status: "linked", link_origin: "automatic" }),
+        term(4, "自定义内容", { detection_source: "rule", status: "linked", link_origin: "manual" }),
+      ],
+      "course:lesson.md",
+    );
+    expect(analysis.occurrences.map((item) => [item.termText, item.manualLink])).toEqual([
+      ["移动语义", false], ["自定义内容", true],
+    ]);
+  });
+
+  it("matches a whole inline technical term, not a statement or existing link", () => {
+    const analysis = analyzeMarkdownTermOccurrences(
+      "`std::vector` 和 `std::vector<int> values;`。[`std::vector`](https://example.com)",
+      [term(1, "std::vector")],
+      "course:lesson.md",
+    );
+    expect(analysis.occurrences).toHaveLength(1);
+    expect(analysis.occurrences[0]).toMatchObject({ source: "model", isInlineCode: true });
   });
 
   it("emits the term text as a text child of the occurrence node", () => {

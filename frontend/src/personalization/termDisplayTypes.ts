@@ -3,6 +3,9 @@ export type ManualKnowledgeStatus = "known" | "unknown" | null;
 export type TermDisplayTier = "none" | "subtle" | "prominent";
 
 export type TermDisplayReason =
+  | "model_selected"
+  | "untrusted_candidate"
+  | "confirmed_knowledge"
   | "manual_known"
   | "manual_unknown"
   | "likely_unfamiliar"
@@ -39,6 +42,7 @@ export interface TermCandidateInput {
 export interface TermPersonalizationProfile {
   conceptKey: string;
   manualStatus: ManualKnowledgeStatus;
+  knowledgeStatus?: string | null;
   mastery: number | null;
   uncertainty: number | null;
   shadowFamiliarity: number | null;

@@ -44,11 +44,11 @@ from app.services.storage import (
     get_teaching_handoff_for_qa,
 )
 from app.services.continuity_service import (
-    HANDOFF_LINE_RE,
     current_teaching_handoff_payload,
     list_qa_thread_summaries,
     teaching_handoff_payload,
 )
+from app.services.metadata_stream import StreamingMetadataFilter
 
 logger = logging.getLogger(__name__)
 
@@ -57,47 +57,7 @@ _PROJECT_SEMAPHORES: dict[int, asyncio.Semaphore] = {}
 _SESSION_LOCKS: dict[tuple[int, int], asyncio.Lock] = {}
 
 
-class _StreamingHandoffFilter:
-    """Hide HANDOFF metadata without delaying ordinary streamed paragraphs."""
-
-    def __init__(self) -> None:
-        self.pending = ""
-        self.passthrough_line = False
-
-    def push(self, chunk: str) -> list[str]:
-        outputs: list[str] = []
-        remaining = chunk
-        while remaining:
-            newline = remaining.find("\n")
-            if self.passthrough_line:
-                if newline < 0:
-                    outputs.append(remaining)
-                    break
-                outputs.append(remaining[: newline + 1])
-                remaining = remaining[newline + 1 :]
-                self.passthrough_line = False
-                continue
-            if newline >= 0:
-                self.pending += remaining[: newline + 1]
-                remaining = remaining[newline + 1 :]
-                if not HANDOFF_LINE_RE.match(self.pending.rstrip("\r\n")):
-                    outputs.append(self.pending)
-                self.pending = ""
-                continue
-            self.pending += remaining
-            candidate = self.pending.lstrip().upper()
-            if candidate and not ("HANDOFF".startswith(candidate) or candidate.startswith("HANDOFF")):
-                outputs.append(self.pending)
-                self.pending = ""
-                self.passthrough_line = True
-            break
-        return outputs
-
-    def finish(self) -> list[str]:
-        if not self.pending:
-            return []
-        pending, self.pending = self.pending, ""
-        return [] if HANDOFF_LINE_RE.match(pending) else [pending]
+_StreamingHandoffFilter = StreamingMetadataFilter
 
 
 def _project_semaphore(project_id: int) -> asyncio.Semaphore:

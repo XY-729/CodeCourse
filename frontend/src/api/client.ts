@@ -1680,6 +1680,8 @@ export async function getTermDisplayProfiles(
       concept_key?: string;
       manualStatus?: TermPersonalizationProfile["manualStatus"];
       manual_status?: TermPersonalizationProfile["manualStatus"];
+      knowledgeStatus?: string | null;
+      knowledge_status?: string | null;
       mastery?: number | null;
       uncertainty?: number | null;
       shadowFamiliarity?: number | null;
@@ -1711,6 +1713,8 @@ export function normalizeTermDisplayProfile(profile: {
   concept_key?: string;
   manualStatus?: TermPersonalizationProfile["manualStatus"];
   manual_status?: TermPersonalizationProfile["manualStatus"];
+  knowledgeStatus?: string | null;
+  knowledge_status?: string | null;
   mastery?: number | null;
   uncertainty?: number | null;
   shadowFamiliarity?: number | null;
@@ -1725,6 +1729,7 @@ export function normalizeTermDisplayProfile(profile: {
   return {
     conceptKey: profile.conceptKey ?? profile.concept_key ?? "",
     manualStatus: profile.manualStatus ?? profile.manual_status ?? null,
+    knowledgeStatus: profile.knowledgeStatus ?? profile.knowledge_status ?? null,
     mastery: profile.mastery ?? null,
     uncertainty: profile.uncertainty ?? null,
     shadowFamiliarity: profile.shadowFamiliarity ?? profile.shadow_familiarity ?? null,

@@ -205,12 +205,18 @@ class PersonalizationProfileTests(unittest.TestCase):
     def test_term_display_profile_route_uses_project_scope(self):
         resolved = self._resolve(self.project_a["id"], "WebSocket")
         concept_id = resolved["concept"]["id"]
+        self.client.post(
+            f"/api/projects/{self.project_a['id']}/personalization/mark-unknown",
+            json={"conceptId": concept_id, "idempotencyKey": "term-profile-unknown", "evidenceText": "还不理解"},
+        )
         response = self.client.post(
             f"/api/projects/{self.project_a['id']}/personalization/term-display-profiles",
             json={"concept_keys": [concept_id]},
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["profiles"][0]["concept_key"], concept_id)
+        self.assertEqual(response.json()["profiles"][0]["manual_status"], "unknown")
+        self.assertEqual(response.json()["profiles"][0]["knowledge_status"], "learning")
 
     def test_project_delete_removes_private_concepts_and_intelligence_cache(self):
         symbol = self._resolve(self.project_a["id"], "PrivateRunner", "index")
@@ -414,12 +420,14 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertTrue(_should_use_planner_assist(prepared("再解释一次", relation_type="alternate")))
         self.assertFalse(_should_use_planner_assist(prepared("解释 socket", parent_id=12, relation_type="term_explanation")))
 
-    def test_changed_document_rescans_and_removes_stale_candidates(self):
+    def test_changed_document_requires_model_choices_without_local_guesses(self):
         import app.services.storage as storage
+        from app.services.term_service import register_document_terms
 
         target = storage.GENERATED_ROOT / str(self.project_a["id"]) / "outline.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("这里使用 **FastAPI** 构建接口。", encoding="utf-8")
+        register_document_terms(self.project_a["id"], "course", "outline.md", target.read_text(encoding="utf-8"), ["FastAPI"])
         first = self.client.get(
             f"/api/projects/{self.project_a['id']}/terms",
             params={"source_type": "course", "source_path": "outline.md"},
@@ -432,8 +440,60 @@ class PersonalizationProfileTests(unittest.TestCase):
             params={"source_type": "course", "source_path": "outline.md"},
         ).json()
         terms = {item["term_text"] for item in second}
-        self.assertIn("SQLite", terms)
+        self.assertNotIn("SQLite", terms)
         self.assertNotIn("FastAPI", terms)
+
+    def test_empty_model_selection_stays_empty_without_extra_model_call(self):
+        from unittest.mock import patch
+        from app.services.term_service import register_document_terms, get_document_term_status
+        import app.services.storage as storage
+        project_id = self.project_a["id"]
+        content = "# 课件\n\n**禁止编译器偷偷做类型转换**。`printAge` 和 **FastAPI**。"
+        target = storage.GENERATED_ROOT / str(project_id) / "outline.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        with patch("app.services.term_service.schedule_term_model_scan") as scan:
+            self.assertEqual(register_document_terms(project_id, "course", "outline.md", content, []), [])
+            status = get_document_term_status(project_id, "course", "outline.md")
+        scan.assert_not_called()
+        self.assertEqual(status["scan_status"], "completed")
+        self.assertEqual(status["candidate_count"], 0)
+
+    def test_term_prompt_is_project_scoped_and_resolves_manual_conflicts(self):
+        from app.services.term_service import term_learning_context
+        from app.services.storage import upsert_concept_mastery
+        common = self._resolve(self.project_a["id"], "WebSocket")["concept"]["id"]
+        private = self._resolve(self.project_b["id"], "OtherProjectWidget", source="index")["concept"]["id"]
+        for concept, scope, scope_id, status in (
+            (common, "global", "local-user", "known"),
+            (common, "project", str(self.project_a["id"]), "unknown"),
+            (private, "project", str(self.project_b["id"]), "known"),
+        ):
+            upsert_concept_mastery(f"test:{concept}:{scope}:{scope_id}", concept, scope, scope_id, 1, 1, 0.5, 0.7, manual_status=status)
+        payload = term_learning_context(self.project_a["id"])
+        data = json.loads(payload.split("<term_learning_context>\n", 1)[1].split("\n</term_learning_context>")[0])
+        self.assertIn("WebSocket", data["needs_support"])
+        self.assertNotIn("WebSocket", data["known"])
+        self.assertNotIn("OtherProjectWidget", payload)
+        self.assertIn("未列出的概念只是未知", data["rule"])
+
+    def test_successful_empty_rescan_replaces_choices_but_preserves_history(self):
+        from app.services.term_service import register_document_terms
+        from app.services.storage import list_document_terms, _connect
+        project_id = self.project_a["id"]
+        content = "事件循环使用队列。"
+        first = register_document_terms(project_id, "course", "lesson.md", content, ["事件循环", "队列"])
+        event_id = next(term.id for term in first if term.term_text == "事件循环")
+        with _connect() as conn:
+            conn.execute("UPDATE document_terms SET link_origin='manual' WHERE id=?", (event_id,))
+            conn.commit()
+        kept = register_document_terms(project_id, "course", "lesson.md", content, [])
+        self.assertEqual([term.term_text for term in kept], ["事件循环"])
+        history = list_document_terms(project_id, "course", "lesson.md")
+        self.assertEqual(len(history), 2)
+        self.assertEqual(next(term.status for term in history if term.term_text == "队列"), "superseded")
+        refreshed = register_document_terms(project_id, "course", "lesson.md", content, ["队列"])
+        self.assertEqual({term.term_text for term in refreshed}, {"事件循环", "队列"})
 
     def test_term_model_scan_is_not_queued_twice_for_same_content_hash(self):
         from unittest.mock import patch

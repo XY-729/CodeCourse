@@ -32,6 +32,7 @@ import {
 } from "../api/client";
 import type { TermDisplayDiagnostics } from "../personalization/useDocumentTermsController";
 import { canonicalConceptName } from "../personalization/conceptIdentity";
+import DocumentTermScanControl from "./DocumentTermScanControl";
 
 type Props = {
   open: boolean;
@@ -719,29 +720,9 @@ export default function LearnerProfileDialog({
               <div className="learner-term-diagnostics" aria-label="当前文档术语提示状态">
                 <div>
                   <strong>当前文档术语提示</strong>
-                  <small>
-                    {termScanStatus
-                      ? termScanStatus.scan_status === "local_only"
-                        ? "仅使用本地识别"
-                        : termScanStatus.scan_status === "failed"
-                          ? "智能补扫失败"
-                          : ["queued", "running", "idle"].includes(termScanStatus.scan_status)
-                            ? "正在分析"
-                            : "分析完成"
-                      : "打开课件或回答后可查看"}
-                  </small>
+                  {!termScanStatus ? <small>打开课件或回答后可查看</small> : null}
                 </div>
-                {termDiagnostics ? (
-                  <p>
-                    候选 {termDiagnostics.candidateCount} · 正文匹配 {termDiagnostics.occurrenceCount} · 显示 {termDiagnostics.visibleCount}
-                  </p>
-                ) : null}
-                {termScanStatus?.error_message ? <p className="error-text">{termScanStatus.error_message}</p> : null}
-                {onRescanTerms && termScanStatus ? (
-                  <button type="button" className="secondary-button compact" onClick={() => void onRescanTerms()}>
-                    <RotateCcw size={14} />重新分析
-                  </button>
-                ) : null}
+                <DocumentTermScanControl status={termScanStatus} onRescan={onRescanTerms} showDescription />
               </div>
               <div className="learner-preference-actions">
                 <button type="button" className="secondary-button" disabled={preferencesSaving} onClick={() => void resetPreferences()}>重置为默认</button>

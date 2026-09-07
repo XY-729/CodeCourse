@@ -30,11 +30,6 @@ function documentCap(
   return Math.max(2, Math.min(calculated, hardCap));
 }
 
-function occurrencePreference(decision: PreliminaryTermDecision): number {
-  if (decision.manualUnknown) return 100;
-  return decision.score * 10;
-}
-
 function makeDefault(decision: PreliminaryTermDecision): TermDisplayDecision {
   return {
     candidateId: decision.candidateId,
@@ -61,39 +56,14 @@ export function allocateTermDisplays(params: {
     finalById.set(item.candidateId, makeDefault(item));
   }
 
-  const eligible = preliminary.filter((item) => item.eligible);
-
-  const bestByConcept = new Map<string, PreliminaryTermDecision>();
-  for (const item of eligible) {
-    const existing = bestByConcept.get(item.conceptKey);
-    if (!existing) {
-      bestByConcept.set(item.conceptKey, item);
-      continue;
-    }
-    const itemPref = occurrencePreference(item);
-    const existingPref = occurrencePreference(existing);
-    const shouldReplace =
-      itemPref > existingPref ||
-      (itemPref === existingPref && item.occurrenceIndex < existing.occurrenceIndex);
-    if (shouldReplace) {
-      bestByConcept.set(item.conceptKey, item);
+  // Explicitly created links are user content, not automatic annotations.
+  // They must not disappear or consume the automatic reading-density budget.
+  for (const item of preliminary) {
+    if (item.eligible && item.reason === "explicit_manual_link") {
+      finalById.set(item.candidateId, { ...makeDefault(item), visible: true, tier: item.tier });
     }
   }
-
-  const selectedOccurrenceIds = new Set(
-    [...bestByConcept.values()].map((item) => item.candidateId),
-  );
-
-  for (const item of eligible) {
-    if (!selectedOccurrenceIds.has(item.candidateId)) {
-      finalById.set(item.candidateId, {
-        ...makeDefault(item),
-        reason: "duplicate_concept",
-      });
-    }
-  }
-
-  const ranked = [...bestByConcept.values()].sort((left, right) => {
+  const ranked = preliminary.filter((item) => item.eligible && item.reason !== "explicit_manual_link").sort((left, right) => {
     if (left.manualUnknown !== right.manualUnknown) return left.manualUnknown ? -1 : 1;
     if (right.score !== left.score) return right.score - left.score;
     if (left.occurrenceIndex !== right.occurrenceIndex) return left.occurrenceIndex - right.occurrenceIndex;
@@ -105,9 +75,14 @@ export function allocateTermDisplays(params: {
   const maxVisible = documentCap(paragraphCount, density, profileAvailable);
 
   const paragraphCounts = new Map<string, number>();
+  const displayedConcepts = new Set<string>();
   let visibleCount = 0;
 
   for (const item of ranked) {
+    if (displayedConcepts.has(item.conceptKey)) {
+      finalById.set(item.candidateId, { ...makeDefault(item), reason: "duplicate_concept" });
+      continue;
+    }
     const currentParagraphCount = paragraphCounts.get(item.paragraphId) ?? 0;
     if (currentParagraphCount >= perParagraphCap) {
       finalById.set(item.candidateId, {
@@ -124,6 +99,7 @@ export function allocateTermDisplays(params: {
       continue;
     }
     paragraphCounts.set(item.paragraphId, currentParagraphCount + 1);
+    displayedConcepts.add(item.conceptKey);
     visibleCount += 1;
     finalById.set(item.candidateId, {
       candidateId: item.candidateId,

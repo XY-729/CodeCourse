@@ -50,7 +50,6 @@ const FILE_PATH_RE = /(?:[A-Za-z]:[\\/]|(?:^|[\s`])(?:\.\.?[\\/]|[/\\])|\.(?:py|
 const ERROR_RE = /(?:\b(?:fatal\s+)?error\s*:|\bwarning\s*:|traceback|exception\s*:|unrecognized command line option|undefined reference)/i;
 const MARKDOWN_RE = /(?:```|^\s{0,3}(?:#{1,6}|[-+*>])\s|\[[^\]]*\]\([^)]*\)|!\[[^\]]*\])/m;
 const SENTENCE_PUNCTUATION_RE = /[。！？!?；;，,]\s*$|[。！？!?；;]/;
-const CODE_FENCE_RE = /```[\s\S]*?```/g;
 const MARKDOWN_LINK_RE = /!?\[[^\]\n]+\]\([^)]+\)/g;
 
 function balancedDelimiters(value: string): boolean {
@@ -94,7 +93,21 @@ export function cleanTermText(value: unknown): string {
 
 function excludedRanges(content: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = [];
-  for (const regex of [CODE_FENCE_RE, MARKDOWN_LINK_RE]) {
+  let fence: { marker: string; length: number; start: number } | null = null;
+  let offset = 0;
+  for (const line of content.split("\n")) {
+    const match = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      if (match && match[1][0] === fence.marker && match[1].length >= fence.length
+        && line.slice(match[0].length).trim() === "") {
+        ranges.push([fence.start, offset + line.length]); fence = null;
+      }
+    } else if (match) fence = { marker: match[1][0], length: match[1].length, start: offset };
+    else if (/^ {0,3}#{1,6}\s/.test(line)) ranges.push([offset, offset + line.length]);
+    offset += line.length + 1;
+  }
+  if (fence) ranges.push([fence.start, content.length]);
+  for (const regex of [MARKDOWN_LINK_RE]) {
     regex.lastIndex = 0;
     for (const match of content.matchAll(regex)) {
       const start = match.index ?? -1;
@@ -114,6 +127,10 @@ function visibleSpan(
   requested?: Record<string, unknown>,
 ): TermSourceSpan | null {
   const excluded = excludedRanges(content);
+  const wholeWord = (start: number, end: number) => !(
+    (/[A-Za-z0-9_]/.test(text[0]) && /[A-Za-z0-9_]/.test(content[start - 1] || ""))
+    || (/[A-Za-z0-9_]/.test(text[text.length - 1]) && /[A-Za-z0-9_]/.test(content[end] || ""))
+  );
   if (requested && ("start" in requested || "end" in requested)) {
     const start = Number(requested.start);
     const end = Number(requested.end);
@@ -124,13 +141,14 @@ function visibleSpan(
       || end !== start + text.length
       || content.slice(start, end) !== text
       || !isVisible(start, end, excluded)
+      || !wholeWord(start, end)
     ) return null;
     return { text, start, end };
   }
   let start = content.indexOf(text);
   while (start >= 0) {
     const end = start + text.length;
-    if (isVisible(start, end, excluded)) return { text, start, end };
+    if (isVisible(start, end, excluded) && wholeWord(start, end)) return { text, start, end };
     start = content.indexOf(text, start + 1);
   }
   return null;

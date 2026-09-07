@@ -49,6 +49,7 @@ from app.services.lesson_files import (
 )
 from app.services.llm_client import call_openai_compatible_chat
 from app.services.term_service import parse_term_metadata, register_document_terms, term_metadata_instruction
+from app.services.metadata_stream import StreamingMetadataFilter
 from app.services.scanner import list_key_files, read_text_file, safe_join, scan_tree
 from app.services.storage import (
     create_knowledge_edge,
@@ -356,6 +357,12 @@ def _require_markdown(content: str) -> str:
     if "#" not in normalized and "|" not in normalized and "```" not in normalized:
         raise RuntimeError("模型返回不像 Markdown，已拒绝覆盖旧课件。")
     return normalized + "\n"
+
+
+def _with_term_metadata(content: str, terms: list[dict]) -> str:
+    """Carry section choices through assembly; validate text anchors in the final body."""
+    rebased = [{**term, "source_span": {"text": term["display_name"]}} for term in terms]
+    return "TERMS: " + json.dumps(rebased, ensure_ascii=False) + "\n" + content
 
 
 def _parse_outline_files(content: str) -> tuple[str, str]:
@@ -782,7 +789,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
                     "content": (
                         learning_plan_prompt
                         + bibliography_metadata_instruction()
-                        + term_metadata_instruction()
+                        + term_metadata_instruction(project_id)
                     ),
                 },
             ]
@@ -825,7 +832,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
             scope_text=scope_text,
             user_instructions=user_instructions or "无",
             prompt_input=prompt_input,
-        ) + term_metadata_instruction()
+        ) + term_metadata_instruction(project_id)
 
         messages = [
             {
@@ -988,7 +995,7 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
             model=settings["model"],
             expected=expected,
             prompt_input=prompt_input,
-        ) + term_metadata_instruction()
+        ) + term_metadata_instruction(project_id)
         messages = [
             {
                 "role": "system",
@@ -1223,6 +1230,7 @@ def _run_learning_plan_lesson_task(
     staging_dir = project_course_dir(project_id) / ".tasks" / f"task-{task_id}"
     staging_dir.mkdir(parents=True, exist_ok=True)
     generated_sections = [""] * len(sections)
+    section_terms = [[] for _ in sections]
     completed_count = 0
 
     def _gen_section(idx, sec):
@@ -1233,7 +1241,7 @@ def _run_learning_plan_lesson_task(
         sp += "章节标题：" + sec.get("title", "") + "\n"
         sp += "本章知识项：\n" + ls + "\n\n"
         sp += "输出要求：\n"
-        sp += "- 直接以 `## " + sec.get("title", "") + "` 开始，只输出本章 Markdown。\n"
+        sp += "- 正文（元数据之后）以 `## " + sec.get("title", "") + "` 开始，只输出本章 Markdown。\n"
         sp += "- 每个知识项必须以包含其完整名称的 `###` 小节单独展开。\n"
         sp += "- 围绕知识项解释直觉、机制和必要示例；深度以讲清为准，不设置固定段落或示例数量。\n"
         sp += "- 不要输出本课定位、目标、知识地图、前置知识总表、综合案例、全课练习、自测、常见误区、总结或教材参照；这些由统一整合阶段生成。\n"
@@ -1241,13 +1249,16 @@ def _run_learning_plan_lesson_task(
         sp += "- 不要输出教材原文长引文，不要声称访问了教材全文。\n\n"
         sp += "用户补充要求：" + user_instructions + "\n\n"
         sp += "学习材料：\n" + lesson_input + "\n"
+        sp += term_metadata_instruction(project_id) + "\n本次只选本节最必要的 0-3 个术语。先输出 TERMS 行，然后开始章节正文。"
         if idx == 1:
             _debug_dump("L" + str(lesson_number) + "-section-1-prompt.txt", sp)
         c = call_openai_compatible_chat(
             settings["base_url"], settings["api_key"], settings["model"],
             [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
              {"role": "user", "content": sp}], timeout=240)
-        md = _require_markdown(c)
+        body, model_terms = parse_term_metadata(c)
+        md = _require_markdown(body)
+        section_terms[idx - 1] = model_terms
         if not md.lstrip().startswith("##"):
             md = "## " + sec.get("title", "") + "\n\n" + md
         _atomic_write(staging_dir / ("section-" + str(idx).zfill(2) + ".part"), md)
@@ -1330,11 +1341,12 @@ def _run_learning_plan_lesson_task(
                             load_prompt("prompt.system"), "markdown"
                         ),
                     },
-                    {"role": "user", "content": synthesis_prompt},
+                    {"role": "user", "content": synthesis_prompt + term_metadata_instruction(project_id)},
                 ],
                 timeout=240,
             )
         ).strip()
+        synthesis, synthesis_terms = parse_term_metadata(synthesis)
         _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
         joined_sections = _dedupe_lesson_markdown(
             "\n\n".join([*generated_sections, synthesis])
@@ -1360,7 +1372,7 @@ def _run_learning_plan_lesson_task(
                 _lesson_textbook_markdown(plan),
             ]
         ).strip() + "\n"
-        return resolved_title, lesson
+        return resolved_title, _with_term_metadata(lesson, [term for group in section_terms for term in group] + synthesis_terms)
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
 
@@ -1445,6 +1457,7 @@ def _run_repository_lesson_task(
     staging_dir = project_course_dir(project_id) / ".tasks" / f"task-{task_id}"
     staging_dir.mkdir(parents=True, exist_ok=True)
     generated_sections = [""] * len(sections)
+    section_terms = [[] for _ in sections]
     completed_count = 0
 
     def _gen_section(idx, sec):
@@ -1455,20 +1468,23 @@ def _run_repository_lesson_task(
         sp += "章节标题：" + sec.get("title", "") + "\n"
         sp += "本章知识项：\n" + ls + "\n\n"
         sp += "输出要求：\n"
-        sp += "- 直接以 `## " + sec.get("title", "") + "` 开始，只输出本章 Markdown。\n"
+        sp += "- 正文（元数据之后）以 `## " + sec.get("title", "") + "` 开始，只输出本章 Markdown。\n"
         sp += "- 每个知识项必须以包含其完整名称的 `###` 小节单独展开。\n"
         sp += "- 依据下方课程材料中的真实路径、符号、配置和代码片段讲解，需要时标明 `路径:行号范围`；无法确认的内容明确标注证据不足，不得编造。\n"
         sp += "- 不要输出本课定位、目标、阅读地图、综合案例、全课练习、自测、总结、教材参照或知识地图；这些由统一整合阶段生成。\n"
         sp += "- 不要重复其他章节应负责的知识。\n\n"
         sp += "用户补充要求：" + user_instructions + "\n\n"
         sp += "课程材料：\n" + lesson_input + "\n"
+        sp += term_metadata_instruction(project_id) + "\n本次只选本节最必要的 0-3 个术语。先输出 TERMS 行，然后开始章节正文。"
         if idx == 1:
             _debug_dump("L" + str(lesson_number) + "-repo-section-1-prompt.txt", sp)
         c = call_openai_compatible_chat(
             settings["base_url"], settings["api_key"], settings["model"],
             [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
              {"role": "user", "content": sp}], timeout=240)
-        md = _require_markdown(c)
+        body, model_terms = parse_term_metadata(c)
+        md = _require_markdown(body)
+        section_terms[idx - 1] = model_terms
         if not md.lstrip().startswith("##"):
             md = "## " + sec.get("title", "") + "\n\n" + md
         _atomic_write(staging_dir / ("section-" + str(idx).zfill(2) + ".part"), md)
@@ -1551,11 +1567,12 @@ def _run_repository_lesson_task(
                             load_prompt("prompt.system"), "markdown"
                         ),
                     },
-                    {"role": "user", "content": synthesis_prompt},
+                    {"role": "user", "content": synthesis_prompt + term_metadata_instruction(project_id)},
                 ],
                 timeout=240,
             )
         ).strip()
+        synthesis, synthesis_terms = parse_term_metadata(synthesis)
         _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
         joined_sections = _dedupe_lesson_markdown(
             "\n\n".join([*generated_sections, synthesis])
@@ -1576,7 +1593,7 @@ def _run_repository_lesson_task(
                 joined_sections,
             ]
         ).strip() + "\n"
-        return resolved_title, lesson
+        return resolved_title, _with_term_metadata(lesson, [term for group in section_terms for term in group] + synthesis_terms)
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
 
@@ -1620,8 +1637,9 @@ def run_outline_lesson_task(
             )
             relative_path = _outline_lesson_filename(lesson_number)
             output_path = project_course_dir(project_id) / relative_path
+            lesson, model_terms = parse_term_metadata(lesson)
             _atomic_write(output_path, lesson)
-            register_document_terms(project_id, "course", relative_path, lesson, [])
+            register_document_terms(project_id, "course", relative_path, lesson, model_terms)
             node_title = f"第{lesson_number}课"
             existing = find_knowledge_node(
                 project_id,
@@ -1830,6 +1848,7 @@ async def _stream_and_accumulate(
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream LLM chunks as SSE delta events, appending each chunk to file."""
     chunks: list[str] = []
+    metadata_filter = StreamingMetadataFilter(("TERMS", "术语", "BIBLIOGRAPHY"))
     async for chunk in stream_openai_compatible_chat(
         settings["base_url"],
         settings["api_key"],
@@ -1838,12 +1857,16 @@ async def _stream_and_accumulate(
         timeout=timeout,
     ):
         chunks.append(chunk)
-        _incremental_append(output_path, chunk)
-        yield _sse_event("delta", {"text": chunk})
+        for visible in metadata_filter.push(chunk):
+            _incremental_append(output_path, visible)
+            yield _sse_event("delta", {"text": visible})
+    for visible in metadata_filter.finish():
+        _incremental_append(output_path, visible)
+        yield _sse_event("delta", {"text": visible})
     yield _sse_event("accumulated", {"text": "".join(chunks)})
 
 
-def _learning_plan_lesson_messages(settings: dict[str, str], lesson_number: int, lesson_title: str, lesson_input: str, instructions: str) -> list[dict[str, str]]:
+def _learning_plan_lesson_messages(settings: dict[str, str], lesson_number: int, lesson_title: str, lesson_input: str, instructions: str, project_id: int | None = None) -> list[dict[str, str]]:
     user_instructions = _clean_instructions(instructions) or "无"
     user_prompt = f"""{load_prompt("prompt.learning_plan.lesson")}
 
@@ -1853,7 +1876,7 @@ def _learning_plan_lesson_messages(settings: dict[str, str], lesson_number: int,
 
 学习材料：
 {lesson_input}
-    """ + term_metadata_instruction()
+    """ + term_metadata_instruction(project_id)
     return [
         {
             "role": "system",
@@ -1903,7 +1926,7 @@ async def stream_outline_generation(
         prompt = load_prompt("prompt.learning_plan.outline").format(
             model=settings["model"],
             user_instructions=user_instructions or "无",
-        ) + bibliography_metadata_instruction() + term_metadata_instruction()
+        ) + bibliography_metadata_instruction() + term_metadata_instruction(project_id)
         messages = [
             {
                 "role": "system",
@@ -1921,7 +1944,7 @@ async def stream_outline_generation(
             scope_text=scope_text,
             user_instructions=user_instructions or "无",
             prompt_input=prompt_input,
-        ) + term_metadata_instruction()
+        ) + term_metadata_instruction(project_id)
         messages = [
             {
                 "role": "system",
@@ -2057,7 +2080,7 @@ async def stream_file_lesson_generation(
         model=settings["model"],
         expected=expected,
         prompt_input=prompt_input,
-    ) + term_metadata_instruction()
+    ) + term_metadata_instruction(project_id)
     messages = [
         {
             "role": "system",
@@ -2166,7 +2189,7 @@ async def stream_outline_lesson_generation(
     _incremental_open(streaming_path)
 
     if project.project_type == "learning_plan":
-        messages = _learning_plan_lesson_messages(settings, lesson_number, lesson_title, lesson_input, instructions)
+        messages = _learning_plan_lesson_messages(settings, lesson_number, lesson_title, lesson_input, instructions, project_id)
         task_type = "outline_lesson"
     else:
         prompt = load_prompt("prompt.outline_lesson").format(
@@ -2174,7 +2197,7 @@ async def stream_outline_lesson_generation(
             lesson_title=lesson_title,
             user_instructions=_clean_instructions(instructions) or "无",
             lesson_input=lesson_input,
-        ) + term_metadata_instruction()
+        ) + term_metadata_instruction(project_id)
         messages = [
             {
                 "role": "system",

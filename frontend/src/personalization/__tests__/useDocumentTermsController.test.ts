@@ -18,7 +18,7 @@ function status(scanStatus: string): TermScanStatus {
 
 describe("document term polling", () => {
   it("continues only while a scan can still produce candidates", () => {
-    expect(shouldPollTermScan(status("idle"))).toBe(true);
+    expect(shouldPollTermScan(status("idle"))).toBe(false);
     expect(shouldPollTermScan(status("queued"))).toBe(true);
     expect(shouldPollTermScan(status("running"))).toBe(true);
     expect(shouldPollTermScan(status("completed"))).toBe(false);

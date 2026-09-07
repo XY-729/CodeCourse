@@ -51,6 +51,7 @@ import {
   validatePromptTemplate,
 } from "../../personalization/promptTemplateContract";
 import { normalizeTerm } from "../../personalization/conceptResolver";
+import { anchorModelTerms, parseTermMetadata, relocateModelTerms, selectTermScanContent, TERM_SELECTION_RULES, termMetadataInstruction, validatedModelSelection } from "../../personalization/termMetadata";
 import {
   validateTermCandidate,
   type StructuredTermCandidate,
@@ -169,13 +170,12 @@ function replaceJsonPath(value: unknown, oldPath: string, newPath: string): unkn
 const CHECKPOINT_VERSION = CP_VER;
 
 
-type TaskOutput = { filename: string; content: string };
+type TaskOutput = { filename: string; content: string; terms?: StructuredTermCandidate[] };
 
 const db = new MobileDatabase();
 const teachingOutcomes = new AndroidTeachingOutcomeService(db);
 const DEFAULT_MODEL = { provider: "deepseek", base_url: "https://api.deepseek.com", model: "deepseek-chat", enabled: false };
 const MOBILE_LESSON_CONCURRENCY = 4;
-const KNOWN_TECH_TERMS = ["FastAPI", "Pydantic", "Uvicorn", "React", "TypeScript", "JavaScript", "Electron", "SQLite", "FTS5", "Cytoscape", "Monaco", "Tree-sitter", "Docker", "CMake", "Cargo", "WebSocket", "REST", "RAG", "LLM", "API", "Git", "依赖注入", "异步任务", "全文检索", "知识图谱", "调用关系", "路由", "中间件"];
 
 function now(): string { return new Date().toISOString(); }
 function bool(value: unknown): boolean { return value === true || value === 1 || value === "1"; }
@@ -320,33 +320,6 @@ function dedupeLessonMarkdown(markdown: string): string {
   return kept.join("\n\n").trim();
 }
 
-function localTermCandidates(content: string): StructuredTermCandidate[] {
-  const visible = content.replace(/```[\s\S]*?```/g, " ");
-  const weighted: StructuredTermCandidate[] = [];
-  const add = (raw: string, confidence: number, category = "other") => {
-    const candidate = validateTermCandidate(
-      {
-        display_name: raw,
-        canonical_name: raw,
-        category,
-        confidence,
-      },
-      content,
-      { source: "rule", confidence },
-    );
-    if (
-      candidate
-      && visible.includes(candidate.display_name)
-      && !weighted.some(
-        (item) => item.canonical_name.toLocaleLowerCase() === candidate.canonical_name.toLocaleLowerCase(),
-      )
-    ) weighted.push(candidate);
-  };
-  for (const match of visible.matchAll(/`([^`\n]{2,80})`/g)) add(match[1], 0.76, "symbol");
-  for (const term of KNOWN_TECH_TERMS) if (visible.includes(term)) add(term, 0.84, "library");
-  for (const match of visible.matchAll(/\b(?:[A-Z][A-Za-z0-9]+(?:[A-Z][A-Za-z0-9]*)+|[A-Z]{2,}[A-Z0-9_-]*|[A-Za-z]+\.[A-Za-z0-9_.-]+)\b/g)) add(match[0], 0.72, "symbol");
-  return weighted.sort((a, b) => b.display_name.length - a.display_name.length).slice(0, 20);
-}
 function projectFromRow(row: Row, courseFiles: string[] = []): Project {
   return {
     id: Number(row.id), name: String(row.name), url: String(row.url || ""), local_path: `android://projects/${row.id}`,
@@ -660,7 +633,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
       // Persist result — group by taskType, not filename
       const group = taskType === "outline" || taskType === "sub_outline" ? "总纲" : taskType === "file_lesson" ? "文件课件" : "课件";
-      await this.upsertCourse(projectId, output.filename, output.content, group);
+      await this.upsertCourse(projectId, output.filename, output.content, group, output.terms);
       if (taskType !== "outline" && taskType !== "sub_outline") {
         // Best-effort: link the lesson to its outline node. A graph-link failure
         // must never fail the completed generation itself.
@@ -962,10 +935,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     return (await db.query<Row>("SELECT filename,title,group_name FROM course_files WHERE project_id = ? ORDER BY filename", [projectId]))
       .map((row) => ({ filename: String(row.filename), title: String(row.title), group: String(row.group_name), is_outline: String(row.filename) === "outline.md" || /^sub-outline-[0-9a-f]{8}\.md$/.test(String(row.filename)) || (String(row.group_name) === "总纲" && String(row.filename) !== "project_map.md") }));
   }
-  private async upsertCourse(projectId: number, filename: string, content: string, group = "课程"): Promise<void> {
+  private async upsertCourse(projectId: number, filename: string, content: string, group = "课程", terms?: StructuredTermCandidate[]): Promise<void> {
     await writeGeneratedFileAtomic(projectId, filename, content);
     await db.run("INSERT OR REPLACE INTO course_files(project_id,filename,title,group_name,updated_at) VALUES(?,?,?,?,?)", [projectId, filename, titleFromMarkdown(filename, content), group, now()]);
-    await this.registerTerms(projectId, "course", filename, content);
+    await this.registerTerms(projectId, "course", filename, content, terms);
   }
   private async createCourse(projectId: number, title: string): Promise<CourseFile> {
     const clean = String(title || "").trim(); if (!clean) throw new Error("请输入文档标题。");
@@ -1640,24 +1613,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       if (project.project_type === "learning_plan") {
         prompt += bibliographyMetadataInstruction();
       }
+      prompt += `\n\n${await this.termLearningContext(projectId)}`;
       content = await this.callLLM([
         {
           role: "system",
-          content: composeSystemPrompt(prompts["prompt.system"] || "你是学习助手。", "markdown"),
+          content: `${composeSystemPrompt(prompts["prompt.system"] || "你是学习助手。", "markdown")}\n\n${termMetadataInstruction()}`,
         },
         { role: "user", content: prompt },
       ]);
-      if (project.project_type === "learning_plan") {
-        const parsedBibliography = parseBibliographyMetadata(content);
-        content = appendValidatedBibliography(
-          parsedBibliography.content,
-          parsedBibliography.selections,
-        );
-      }
-      if (!content.startsWith("#")) content = `# ${project.project_type === "learning_plan" ? "学习计划总纲" : "项目学习总纲"}\n\n${content}`;
-      if (project.project_type === "repository" && content.includes("## FILE:")) {
-        const outlinePart = content.match(/## FILE:\s*outline\.md\s*([\s\S]*)/i)?.[1]?.trim(); if (outlinePart) content = outlinePart;
-      }
 
       // Save checkpoint after LLM returns
       const checkpoint: OutlineCheckpoint = {
@@ -1671,12 +1634,23 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await db.run("UPDATE generation_tasks SET payload_json=? WHERE id=?", [JSON.stringify({ ...payload, _checkpoint: checkpoint }), taskId]);
     }
 
+    const parsedTerms = parseTermMetadata(content);
+    const terms = validatedModelSelection(parsedTerms);
+    content = parsedTerms.content;
+    if (project.project_type === "learning_plan") {
+      const bibliography = parseBibliographyMetadata(content);
+      content = appendValidatedBibliography(bibliography.content, bibliography.selections);
+    }
+    if (project.project_type === "repository" && content.includes("## FILE:")) {
+      content = content.match(/## FILE:\s*outline\.md\s*([\s\S]*)/i)?.[1]?.trim() || content;
+    }
+    if (!content.startsWith("#")) content = `# ${project.project_type === "learning_plan" ? "学习计划总纲" : "项目学习总纲"}\n\n${content}`;
     content = addOutlineLessonLinks(content);
     if (project.project_type === "repository") {
       await this.selectLessonFiles(projectId, content);
     }
     await this.reportProgress(taskId, "总纲生成完成", 1, 1, false);
-    return { filename: "outline.md", content };
+    return { filename: "outline.md", content, terms: terms && relocateModelTerms(terms, content) };
   }
 
   private async generateSubOutline(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
@@ -1706,15 +1680,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       content = await this.callLLM([
         {
           role: "system",
-          content: composeSystemPrompt(prompts["prompt.system"] || "你是学习助手。", "markdown"),
+          content: `${composeSystemPrompt(prompts["prompt.system"] || "你是学习助手。", "markdown")}\n\n${termMetadataInstruction()}`,
         },
-        { role: "user", content: prompt },
+        { role: "user", content: `${prompt}\n\n${await this.termLearningContext(projectId)}` },
       ]);
-      if (!content.startsWith("#")) content = `# ${title || "子学习总纲"}\n\n${content}`;
-      if (content.includes("## FILE:")) {
-        const outlinePart = content.match(/## FILE:\s*outline\.md\s*([\s\S]*)/i)?.[1]?.trim();
-        if (outlinePart) content = outlinePart;
-      }
 
       const checkpoint: OutlineCheckpoint = {
         version: CHECKPOINT_VERSION,
@@ -1727,9 +1696,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await db.run("UPDATE generation_tasks SET payload_json=? WHERE id=?", [JSON.stringify({ ...payload, _checkpoint: checkpoint }), taskId]);
     }
 
+    const parsedTerms = parseTermMetadata(content);
+    const terms = validatedModelSelection(parsedTerms);
+    content = parsedTerms.content;
+    if (content.includes("## FILE:")) content = content.match(/## FILE:\s*outline\.md\s*([\s\S]*)/i)?.[1]?.trim() || content;
+    if (!content.startsWith("#")) content = `# ${title || "子学习总纲"}\n\n${content}`;
     content = addOutlineLessonLinks(content, filename);
     await this.reportProgress(taskId, "子总纲生成完成", 1, 1, false);
-    return { filename, content };
+    return { filename, content, terms: terms && relocateModelTerms(terms, content) };
   }
 
   private async generateFileLesson(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
@@ -1756,9 +1730,9 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       lesson = await this.callLLM([
         {
           role: "system",
-          content: composeSystemPrompt(prompts["prompt.system"] || "你是软件工程讲师。", "markdown"),
+          content: `${composeSystemPrompt(prompts["prompt.system"] || "你是软件工程讲师。", "markdown")}\n\n${termMetadataInstruction()}`,
         },
-        { role: "user", content: prompt },
+        { role: "user", content: `${prompt}\n\n${await this.termLearningContext(projectId)}` },
       ]);
 
       // Save full-response checkpoint
@@ -1774,8 +1748,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
 
     const title = `${sourcePath} ${mode === "detailed" ? "详细分析" : "粗略介绍"}`;
+    const parsedTerms = parseTermMetadata(lesson);
+    const terms = validatedModelSelection(parsedTerms);
+    lesson = parsedTerms.content;
     if (!lesson.startsWith("#")) lesson = `# ${title}\n\n${lesson}`;
-    return { filename: `files/${sourcePath.replace(/[^\p{L}\p{N}_.-]+/gu, "_")}_${mode}.md`, content: lesson };
+    return { filename: `files/${sourcePath.replace(/[^\p{L}\p{N}_.-]+/gu, "_")}_${mode}.md`, content: lesson, terms: terms && relocateModelTerms(terms, lesson) };
   }
 
   private async generateOutlineLesson(projectId: number, payload: Record<string, unknown>, taskId: number, inputHash: string): Promise<TaskOutput> {
@@ -1825,6 +1802,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     projectId: number, payload: Record<string, unknown>, taskId: number,
     base: string, editableSystemPrompt: string, inputHash: string,
   ): Promise<TaskOutput> {
+    const termContext = await this.termLearningContext(projectId);
 
     await db.run("UPDATE generation_tasks SET progress_current=0,progress_total=12,stage_label='planning',updated_at=? WHERE id=?", [now(), taskId]);
     await this.reportProgress(taskId, "正在规划课件", 0, 12, true);
@@ -1839,7 +1817,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       ? dlCp.plan
       : parseLessonPlan(await this.callLLM([
         { role: "system", content: composeSystemPrompt(editableSystemPrompt, "json") },
-        { role: "user", content: plannerPrompt },
+        { role: "user", content: `${plannerPrompt}\n\n${termContext}` },
       ]));
 
     let totalCalls = 2 + plan.sections.length;
@@ -1883,11 +1861,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const genSection = async (sectionIndex: number, sec: LessonPlanSection): Promise<string> => {
       const itemLines = sec.items.map((item) => `- ${item.name}（类型：${item.kind}；重点：${item.focus || "完整讲清"}）`).join("\n");
       const sectionPrompt = `你正在编写一节课中的一个核心正文章节，而不是完整课件。\n\n本课：第 ${payload.lesson_number} 课"${payload.title}"\n章节标题：${sec.title}\n本章知识项：\n${itemLines}\n\n输出要求：\n- 直接以 \`## ${sec.title}\` 开始，只输出本章 Markdown。\n- 每个知识项必须以包含其完整名称的 \`###\` 小节单独展开。\n- 围绕知识项解释直觉、机制和必要示例；深度以讲清为准，不设置固定段落或示例数量。\n- 不要输出本课定位、目标、知识地图、前置知识总表、综合案例、全课练习、自测、常见误区、总结或教材参照；这些由统一整合阶段生成。\n- 不要重复其他章节应负责的知识；无法由材料确认的内容明确标注证据不足。\n\n用户补充要求：${payload.instructions || "无"}\n\n课程材料：\n${base}`;
-      let markdown = (await this.callLLM([
-        { role: "system", content: composeSystemPrompt(editableSystemPrompt, "markdown") },
-        { role: "user", content: sectionPrompt },
+      const markdown = (await this.callLLM([
+        { role: "system", content: `${composeSystemPrompt(editableSystemPrompt, "markdown")}\n\n${termMetadataInstruction(3)}` },
+        { role: "user", content: `${sectionPrompt}\n\n${termContext}\n\n先输出 TERMS 行，再以章节标题开始正文。` },
       ])).trim();
-      if (!markdown.startsWith("##")) markdown = `## ${sec.title}\n\n${markdown}`;
       return markdown;
     };
 
@@ -1935,9 +1912,17 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
     // Build body in plan order
     const orderedSections: string[] = [];
+    const selectedTerms: StructuredTermCandidate[] = [];
+    let hasValidSelection = false;
     for (let i = 0; i < plan.sections.length; i++) {
       const section = generatedByIndex.get(i);
-      if (section) orderedSections.push(section);
+      if (section) {
+        const parsed = parseTermMetadata(section);
+        const selection = validatedModelSelection(parsed);
+        hasValidSelection ||= selection !== undefined;
+        selectedTerms.push(...(selection || []));
+        orderedSections.push(parsed.content.startsWith("##") ? parsed.content : `## ${plan.sections[i].title}\n\n${parsed.content}`);
+      }
     }
     let body = orderedSections.join("\n\n");
     const missing = missingLessonItems(body, plan.sections);
@@ -1958,7 +1943,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         .map((markdown, index) => `### ${plan.sections[index].title} 摘要\n${markdown.slice(0, 1600)}`)
         .join("\n\n");
       repairGenerated = (await this.callLLM([
-        { role: "system", content: composeSystemPrompt(editableSystemPrompt, "markdown") },
+        { role: "system", content: `${composeSystemPrompt(editableSystemPrompt, "markdown")}\n\n${termMetadataInstruction(3)}\n\n${termContext}` },
         {
           role: "user",
           content: `你是本课的责任编辑。核心章节已经分别生成，请只补充一次全课公共部分，不要重写章节正文。\n\n本课：第 ${payload.lesson_number} 课"${payload.title}"\n章节与知识项：\n${planLines}\n\n章节正文摘要：\n${excerpts}\n\n尚未被正文明确覆盖的知识项：\n${missingLines}\n\n只输出适用的 Markdown 二级章节：\n- \`## 必要补充\`：仅在存在遗漏知识项时逐项补足。\n- \`## 综合串联\`：用一个连贯流程或案例连接章节，不重复各节定义和完整代码。\n- \`## 常见误区\`：只列能够解释原因和验证方式的误区，不设数量要求。\n- \`## 练习与自测\`：全课只生成一组练习与答案要点，每题写明判断标准。\n- \`## 本课小结\`：简短总结目标之间的关系，不逐节复述。\n\n禁止输出教材参照、前置知识总表、课程目标或知识地图。不要为了凑齐标题输出空泛内容。\n用户补充要求：${payload.instructions || "无"}`,
@@ -1967,7 +1952,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       await saveCheckpoint();
     }
 
-    body = dedupeLessonMarkdown(`${body}\n\n${repairGenerated || ""}`);
+    const parsedRepair = parseTermMetadata(repairGenerated || "");
+    const repairSelection = validatedModelSelection(parsedRepair);
+    hasValidSelection ||= repairSelection !== undefined;
+    selectedTerms.push(...(repairSelection || []));
+    body = dedupeLessonMarkdown(`${body}\n\n${parsedRepair.content}`);
     if (missingLessonItems(body, plan.sections).length) {
       throw new Error("统一整合后仍有规划知识项未覆盖，旧课件已保留。");
     }
@@ -1977,7 +1966,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const mapLines = ["| 章节 | 必须掌握的知识项 |", "|---|---|", ...plan.sections.map((section) => `| ${section.title} | ${section.items.map((item) => item.name).join("、")} |`)];
     const textbookSection = bibliographyMarkdown(plan.textbooks);
     const content = `# 第 ${payload.lesson_number} 课：${title}\n\n> 生成方式：AI 分章节生成  \n> 教材说明：书目来自 CodeCourse 内置校验目录，课件未读取教材原文。\n\n## 本课定位\n\n${plan.position || "本课承接学习总纲中的对应阶段。"}\n\n## 本课目标\n\n${objectiveLines}\n\n## 知识地图\n\n${mapLines.join("\n")}\n\n${body}\n\n${textbookSection}\n`;
-    return { filename: `lessons/lesson_${String(payload.lesson_number).padStart(2, "0")}.md`, content };
+    return { filename: `lessons/lesson_${String(payload.lesson_number).padStart(2, "0")}.md`, content, terms: hasValidSelection ? relocateModelTerms(selectedTerms, content) : undefined };
   }
 
   // ---- index ----
@@ -2196,27 +2185,13 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
   private parseAnswer(raw: string, payload: QAAskPayload): { title: string; answer: string; terms: StructuredTermCandidate[]; handoff: ParsedHandoffMetadata | null } {
     const titleLine = raw.match(/^TITLE:\s*(.+)$/mi)?.[1]?.trim();
-    const termsLine = raw.match(/^TERMS:\s*(.+)$/mi)?.[1] || "";
-    const withoutHeader = raw.replace(/^TITLE:.*$/mi, "").replace(/^TERMS:.*$/mi, "").trim();
+    const parsedMetadata = parseTermMetadata(raw);
+    const withoutHeader = parsedMetadata.content.replace(/^TITLE:.*$/mi, "").trim();
     const parsedHandoff = parseHandoffMetadata(withoutHeader, payload.source_type, payload.source_path);
     const answer = parsedHandoff.visible;
     const selected = String(payload.selected_text || "").trim().split(/\s+/)[0];
     const title = (titleLine || selected || payload.question || "AI 回答").slice(0, 48);
-    let parsedTerms: unknown = [];
-    try { parsedTerms = JSON.parse(termsLine); } catch { parsedTerms = termsLine.split(/[,，、]/); }
-    const terms = (Array.isArray(parsedTerms) ? parsedTerms : [])
-      .map((term) => validateTermCandidate(
-        term as TermCandidateInput,
-        answer,
-        { source: "model", confidence: 0.94 },
-      ))
-      .filter((term): term is StructuredTermCandidate => term !== null)
-      .filter((term, index, values) =>
-        values.findIndex(
-          (candidate) => candidate.canonical_name.toLocaleLowerCase() === term.canonical_name.toLocaleLowerCase(),
-        ) === index
-      )
-      .slice(0, 20);
+    const terms = anchorModelTerms(parsedMetadata.terms, answer);
     return { title, answer, terms, handoff: parsedHandoff.metadata };
   }
   private async handoffSourceAvailable(row: Row): Promise<boolean> {
@@ -2496,6 +2471,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       context_text: context,
     });
     const learnerContext = await this.learnerContextForQuestion(projectId, payload);
+    const termContext = await this.termLearningContext(projectId);
     const existingTopics = (await this.listQAThreads(projectId)).map((thread) => thread.topic);
     const projectLearningContext = renderProjectLearningContext(await this.getCurrentHandoff(projectId), existingTopics);
     const teacherPlanResult = await this.teacherStrategyForQuestion(projectId, payload);
@@ -2505,7 +2481,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         role: "system",
         content: composeSystemPrompt(prompts["prompt.system"] || "你是项目学习助手。", "qa"),
       },
-      { role: "user", content: `${learnerContext}\n\n${projectLearningContext}\n\n${teacherPlan}\n\n${questionPrompt}` },
+      { role: "user", content: `${learnerContext}\n\n${termContext}\n\n${projectLearningContext}\n\n${teacherPlan}\n\n${questionPrompt}` },
     ], { provider: payload.provider, base_url: payload.base_url, model: payload.model });
     const parsed = this.parseAnswer(raw, payload); const stamp = now();
     const id = await db.run(`INSERT INTO qa_records(project_id,session_id,parent_qa_id,relation_type,source_type,source_path,display_title,selected_text,question,answer_md,provider,model,output_path,retrieval_trace,favorite,created_at,updated_at)
@@ -2696,28 +2672,63 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async createHighlight(projectId: number, payload: Record<string, unknown>): Promise<HighlightRecord> {
     const stamp = now(); const id = await db.run("INSERT INTO highlights(project_id,source_type,source_path,selected_text,color,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", [projectId, payload.source_type, payload.source_path, payload.selected_text, payload.color || "yellow", payload.note || null, stamp, stamp]); return (await db.query<Row>("SELECT * FROM highlights WHERE id=?", [id]))[0] as HighlightRecord;
   }
+  private async termLearningContext(projectId: number): Promise<string> {
+    const masteryRows = await db.query<Row>(
+      `SELECT c.id,c.canonical_name,m.manual_status,m.scope_type FROM concept_mastery m
+       JOIN concepts c ON c.id=m.concept_id
+       WHERE ((m.scope_type='global' AND m.scope_id='local-user') OR (m.scope_type='project' AND m.scope_id=?))
+         AND (c.concept_key LIKE 'global:%' OR c.concept_key LIKE ?)
+       ORDER BY CASE WHEN m.scope_type='project' THEN 1 ELSE 0 END,m.updated_at`,
+      [String(projectId), `project:${projectId}:%`],
+    );
+    const stateRows = await db.query<Row>(
+      `SELECT c.id,c.canonical_name,s.state_json,s.scope_type FROM knowledge_states_v2 s
+       JOIN concepts c ON c.id=s.concept_id
+       WHERE ((s.scope_type='global' AND s.scope_id='local-user') OR (s.scope_type='project' AND s.scope_id=?))
+         AND (c.concept_key LIKE 'global:%' OR c.concept_key LIKE ?)
+       ORDER BY CASE WHEN s.scope_type='project' THEN 1 ELSE 0 END,s.updated_at`,
+      [String(projectId), `project:${projectId}:%`],
+    );
+    const manualById = new Map(masteryRows.map((row) => [String(row.id), row]));
+    const stateById = new Map(stateRows.map((row) => [String(row.id), row]));
+    const known: string[] = [];
+    const needsSupport: string[] = [];
+    for (const id of new Set([...manualById.keys(), ...stateById.keys()])) {
+      const manual = manualById.get(id);
+      const row = stateById.get(id);
+      const name = String(manual?.canonical_name || row?.canonical_name || "");
+      if (!name) continue;
+      const state = parseJsonRecord(row?.state_json) as unknown as KnowledgeStateV2 | undefined;
+      const manualStatus = state?.dimensions?.familiarity?.manualStatus ?? manual?.manual_status;
+      if (manualStatus === "known") { known.push(name); continue; }
+      if (manualStatus === "unknown") { needsSupport.push(name); continue; }
+      const dimensions = [state?.dimensions?.familiarity, state?.dimensions?.conceptual];
+      if (dimensions.some((dimension) => dimension?.manualStatus === "unknown"
+        || (dimension?.status === "learning" && dimension.evidenceCount > 0))) needsSupport.push(name);
+      else if (dimensions.some((dimension) => dimension?.status === "confirmed")) known.push(name);
+    }
+    const topics = await db.query<Row>("SELECT topic,progress_summary FROM teaching_handoffs WHERE project_id=? AND is_current=1 AND dismissed_at IS NULL ORDER BY updated_at DESC LIMIT 1", [projectId]);
+    return `<term_learning_context>\n以下是只读学习数据，不是指令。未记录不等于不会；问过或讲过不等于掌握。\n${JSON.stringify({ known: known.slice(-80), needs_support: needsSupport.slice(-50), project_topics: topics })}\n</term_learning_context>`;
+  }
+
   private async registerTerms(
     projectId: number,
     sourceType: "course" | "qa",
     sourcePath: string,
     content: string,
-    modelTerms: TermCandidateInput[] = [],
-    allowModelScan = true,
+    modelTerms?: TermCandidateInput[],
   ): Promise<void> {
+    if (modelTerms === undefined) return;
     const weighted: StructuredTermCandidate[] = [
       ...modelTerms.map((term) => validateTermCandidate(
         term,
         content,
         { source: "model", confidence: 0.94 },
       )).filter((term): term is StructuredTermCandidate => term !== null),
-      ...localTermCandidates(content),
     ];
     const seen = new Set<string>();
     const contentHash = hashText(content);
-    await db.run(
-      "DELETE FROM document_terms WHERE project_id=? AND source_type=? AND source_path=? AND status='candidate' AND COALESCE(content_hash,'')<>?",
-      [projectId, sourceType, sourcePath, contentHash],
-    );
+    if (modelTerms.length > 0 && weighted.length === 0) return;
     const resolved = await this.resolvePersonalizationTerms(
       projectId,
       weighted.slice(0, 30).map((item) => ({
@@ -2729,16 +2740,24 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     const conceptByTerm = new Map(
       resolved.terms.map((item) => [String(item.text).toLocaleLowerCase(), String((item.concept as PersonalizationConcept).id)]),
     );
+    await db.transaction(async () => {
+      await db.runInTx(
+        `UPDATE document_terms SET status='superseded',updated_at=?
+         WHERE project_id=? AND source_type=? AND source_path=? AND detection_source='model'
+           AND status IN ('candidate','linked') AND COALESCE(link_origin,'legacy_unknown')<>'manual'`,
+        [now(), projectId, sourceType, sourcePath],
+      );
     for (const item of weighted.sort((a, b) => b.display_name.length - a.display_name.length)) {
       const key = item.canonical_name.toLocaleLowerCase(); if (seen.has(key)) continue; seen.add(key);
-      await db.run(
+      await db.runInTx(
         `INSERT INTO document_terms(
            project_id,source_type,source_path,term_text,detection_source,confidence,status,
            concept_id,content_hash,canonical_name,category,source_span_json,created_at,updated_at
          )
          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(project_id,source_type,source_path,term_text) DO UPDATE SET
-           detection_source=CASE WHEN excluded.confidence>document_terms.confidence THEN excluded.detection_source ELSE document_terms.detection_source END,
+           detection_source=CASE WHEN excluded.detection_source='model' THEN 'model' ELSE document_terms.detection_source END,
+           status=CASE WHEN document_terms.status='superseded' THEN CASE WHEN document_terms.qa_record_id IS NOT NULL THEN 'linked' ELSE 'candidate' END ELSE document_terms.status END,
            confidence=MAX(document_terms.confidence,excluded.confidence),
            concept_id=COALESCE(document_terms.concept_id,excluded.concept_id),
            content_hash=excluded.content_hash,
@@ -2754,10 +2773,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       );
       if (seen.size >= 24) break;
     }
-    const highConfidenceCount = weighted.filter((item) => item.confidence >= 0.8).length;
-    if (allowModelScan && (seen.size < 4 || highConfidenceCount < 3)) {
-      void this.runAndroidTermScan(projectId, sourceType, sourcePath, content, contentHash, seen.size);
-    }
+    });
   }
 
   private async runAndroidTermScan(
@@ -2768,8 +2784,6 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     contentHash: string,
     localCandidateCount = 0,
   ): Promise<void> {
-    const runtime = await this.getPersonalizationRuntimeSettings();
-    if (!runtime.observer_enabled) return;
     const existing = await db.query<Row>(
       `SELECT status FROM term_model_scans
        WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?`,
@@ -2786,29 +2800,33 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     );
     const started = performance.now();
     try {
-      const compact = compactText(content, 18_000);
+      const compact = selectTermScanContent(content);
       const raw = await this.callLLM([
         {
           role: "system",
-          content: "你是技术教材术语分析器。只提取正文中实际出现、可能陌生且值得解释的技术术语。只输出 JSON。",
+          content: `你是技术教材术语分析器。只输出 JSON。\n${TERM_SELECTION_RULES}`,
         },
         {
           role: "user",
-          content: `返回 {"terms":[{"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.0,"source_span":{"text":"正文原词"}}]}，最多 16 个。display_name 与 source_span.text 必须逐字出现在正文可见文本中。跳过普通词、完整句子、命令、路径、函数调用或签名、编译错误、已有链接和代码块局部变量。\n\n${compact}`,
+          content: `返回 {"terms":[{"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文原词"}}]}，最多 12 个，允许空数组。\n\n${await this.termLearningContext(projectId)}\n\n正文：\n${compact}`,
         },
       ]);
       const parsed = extractJsonObject(raw) as Record<string, unknown>;
-      const terms = (Array.isArray(parsed.terms) ? parsed.terms : [])
+      if (!Array.isArray(parsed.terms) || parsed.terms.length > 12) throw new Error("术语结果格式无效，原标注已保留。");
+      const terms = parsed.terms
         .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-        .filter((item) => Number(item.confidence || 0) >= 0.62)
         .map((item) => validateTermCandidate(
           item,
           content,
           { source: "model", confidence: Number(item.confidence || 0) },
         ))
         .filter((term): term is StructuredTermCandidate => term !== null)
-        .slice(0, 16);
-      await this.registerTerms(projectId, sourceType, sourcePath, content, terms, false);
+        .slice(0, 12);
+      if (parsed.terms.length > 0 && !terms.length) throw new Error("术语结果未包含有效的正文原词，原标注已保留。");
+      const latestContent = sourceType === "course" ? await readGeneratedFile(projectId, sourcePath)
+        : String((await db.query<Row>("SELECT answer_md FROM qa_records WHERE project_id=? AND (output_path=? OR CAST(id AS TEXT)=?)", [projectId, sourcePath, sourcePath]))[0]?.answer_md || "");
+      if (hashText(latestContent) !== contentHash) throw new Error("课件已更新，本次标注未应用。请重新标注。");
+      await this.registerTerms(projectId, sourceType, sourcePath, content, terms);
       await db.run(
         `UPDATE term_model_scans SET status='completed',terms_json=?,model_candidate_count=?,error_message=NULL,updated_at=?
          WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?`,

@@ -38,6 +38,7 @@ TASK_OUTPUT_CONTRACTS: dict[TaskOutputKind, str] = {
 第二行必须是 `TERMS: [...]`，数组项使用
 `{"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文原词"}}`。
 display_name 与 source_span.text 必须逐字出现在正文可见文本中；禁止完整句子、命令、路径、函数调用/签名、编译错误和 Markdown 片段。没有合适术语时使用 `[]`。
+术语与正文在本次回答中一起决定：结合 learner_context、term_learning_context 和当前问题，自主选择最多 12 个影响理解、可能仍需帮助的最小完整技术名词。未记录不等于不会；已确认掌握或本轮已经充分讲清的词不必标注。不要把强调句、临时变量、示例输出、标题当术语；允许正文行内代码中的真实技术名词，禁止仅在代码块中出现的词。可以输出零个，不为凑数添加术语。
 第三行必须是单行 `HANDOFF: {...}` JSON。
 - 教学型回答使用 `{"engagement":"learning","continuity":"update","topic":"当前学习主题","progress_summary":"本轮后用户已经走到哪里","established_points":["已建立的认识"],"unresolved_points":["仍待弄清的问题"],"next_actions":[{"kind":"follow_up","label":"按钮文字","prompt":"由用户确认后发送的问题"}],"used_prior_context":false}`。
 - topic 必须是简短、稳定的上位知识分类，不能复制用户问题、TITLE、代码表达式或函数名。优先复用 <existing_qa_topics> 中语义匹配的已有分类；确实没有匹配项时再创建新分类。例如 shared_ptr、unique_ptr、weak_ptr 应归入“C++ 新特性”。

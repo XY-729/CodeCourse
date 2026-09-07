@@ -180,7 +180,7 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     setStatus("loading");
     void loadProfiles(projectId, conceptKeys, controller.signal)
       .then((loaded) => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || controller.signal.aborted) return;
         if (revisionRef.current !== requestRevision) return;
 
         const map = new Map<string, TermPersonalizationProfile>();
@@ -195,7 +195,7 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
         setStatus("ready");
       })
       .catch(() => {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || controller.signal.aborted) return;
         if (revisionRef.current !== requestRevision) return;
 
         const map = new Map<string, TermPersonalizationProfile>();
@@ -270,6 +270,7 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
       terminologyDensity <= 0
       || markdownAnalysis.failed
       || status === "idle"
+      || status === "loading"
     ) {
       return {
         decisions: new Map() as ReadonlyMap<string, TermDisplayDecision>,

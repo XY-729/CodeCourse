@@ -59,7 +59,7 @@ from app.services.storage import (
     update_document_term_status,
     upsert_learning_anchor,
 )
-from app.services.term_service import parse_term_metadata, register_document_terms
+from app.services.term_service import parse_term_metadata, register_document_terms, term_learning_context
 
 
 TITLE_LINE_RE = re.compile(r"^\s*(?:TITLE|标题)\s*[:：]\s*(.+?)\s*$", re.IGNORECASE)
@@ -603,7 +603,7 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
         payload.source_path,
     )
     project_learning_context = render_project_learning_context(project_id)
-    prompt = f"{learner_context}\n\n{project_learning_context}\n\n{base_prompt}"
+    prompt = f"{learner_context}\n\n{term_learning_context(project_id)}\n\n{project_learning_context}\n\n{base_prompt}"
     return PreparedQuestion(
         project_id=project_id,
         payload=payload,
