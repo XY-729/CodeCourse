@@ -1,14 +1,42 @@
+const fs = require("fs");
+const path = require("path");
+
+// Keep a tiny, dependency-free boot trace outside app.getPath().  If Electron
+// fails before app.whenReady() (or before the normal diagnostic logger is
+// installed), this is the only reliable evidence we get from a packaged EXE.
+const EARLY_LOG_PATHS = [
+  path.join(process.env.LOCALAPPDATA || process.env.TEMP || process.cwd(), "CodeCourse-Direction-C-startup.log"),
+  path.join(process.cwd(), "CodeCourse-Direction-C-startup.log"),
+];
+function earlyLog(scope, value) {
+  const raw = value instanceof Error ? `${value.name}: ${value.message}\n${value.stack || ""}` : String(value ?? "");
+  for (const logPath of EARLY_LOG_PATHS) {
+    try {
+      fs.appendFileSync(logPath, `${new Date().toISOString()} [${scope}] ${raw.slice(0, 12000)}\n`, "utf8");
+    } catch {
+      // Never let diagnostics interfere with application startup.
+    }
+  }
+}
+earlyLog("process:boot", `exec=${process.execPath} cwd=${process.cwd()} argv=${JSON.stringify(process.argv)}`);
+process.on("uncaughtException", (error) => earlyLog("process:uncaught-early", error));
+process.on("unhandledRejection", (error) => earlyLog("process:rejection-early", error));
+
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, screen, shell, Tray } = require("electron");
 const { spawn } = require("child_process");
-const fs = require("fs");
 const http = require("http");
 const net = require("net");
-const path = require("path");
-const { autoUpdater } = require("electron-updater");
+// Direction C is deliberately isolated from the release channel.  Keep the
+// updater dependency out of the main-process boot path; this avoids a native
+// updater load failure preventing the window from opening in a portable build.
+const autoUpdater = null;
+
+earlyLog("electron:loaded", `version=${process.versions.electron} packaged=${app.isPackaged}`);
 
 app.setName("CodeCourse Direction C");
 app.setAppUserModelId("com.codecourse.directionc");
 if (process.env.CODECOURSE_DIRECTION_DATA) app.setPath("userData", path.resolve(process.env.CODECOURSE_DIRECTION_DATA));
+earlyLog("electron:configured", `userData=${process.env.CODECOURSE_DIRECTION_DATA || "<default>"}`);
 
 let backendProcess = null;
 let apiBase = "";
@@ -27,7 +55,9 @@ const DEFAULT_WINDOW_STATE = {
 };
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
+earlyLog("electron:single-instance", `acquired=${hasSingleInstanceLock}`);
 if (!hasSingleInstanceLock) {
+  earlyLog("electron:quit", "single instance lock unavailable");
   app.quit();
 } else {
   app.on("second-instance", showMainWindow);
@@ -98,8 +128,14 @@ function diagnosticLog(scope, value) {
   }
 }
 
-process.on("uncaughtException", (error) => diagnosticLog("main:uncaught", error));
-process.on("unhandledRejection", (error) => diagnosticLog("main:rejection", error));
+process.on("uncaughtException", (error) => {
+  earlyLog("main:uncaught", error);
+  diagnosticLog("main:uncaught", error);
+});
+process.on("unhandledRejection", (error) => {
+  earlyLog("main:rejection", error);
+  diagnosticLog("main:rejection", error);
+});
 
 function loadWindowState() {
   try {
@@ -219,6 +255,7 @@ function waitForHealth(port, child, timeoutMs = 20000) {
 }
 
 async function startBackend() {
+  earlyLog("backend:start", `packaged=${app.isPackaged} dir=${backendDir()}`);
   const port = await getFreePort();
   const cwd = backendDir();
   const userData = app.getPath("userData");
@@ -248,6 +285,7 @@ async function startBackend() {
       child.stdout.pipe(logStream, { end: false });
       child.stderr.pipe(logStream, { end: false });
       await waitForHealth(port, child);
+      earlyLog("backend:ready", `executable=${executable} port=${port}`);
       backendProcess = child;
       apiBase = `http://127.0.0.1:${port}/api`;
       process.env.CODECOURSE_API_BASE = apiBase;
@@ -277,6 +315,7 @@ async function startBackend() {
         setTimeout(resolve, 100);
       });
       await waitForHealth(port, child);
+      earlyLog("backend:ready", `python=${candidate.command} port=${port}`);
       backendProcess = child;
       apiBase = `http://127.0.0.1:${port}/api`;
       process.env.CODECOURSE_API_BASE = apiBase;
@@ -337,7 +376,12 @@ function showMainWindow() {
 
 function createTray() {
   if (tray) return;
-  tray = new Tray(nativeImage.createFromPath(appIconPath()));
+  const icon = nativeImage.createFromPath(appIconPath());
+  if (icon.isEmpty()) {
+    earlyLog("tray:skip", `icon unavailable: ${appIconPath()}`);
+    return;
+  }
+  tray = new Tray(icon);
   tray.setToolTip("CodeCourse");
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "打开 CodeCourse", click: showMainWindow },
@@ -429,6 +473,7 @@ function setupAutoUpdater() {
 }
 
 function createWindow() {
+  earlyLog("window:create", `frontend=${frontendIndex()}`);
   const savedState = loadWindowState();
   const window = new BrowserWindow({
     width: savedState.width,
@@ -565,14 +610,21 @@ function stopBackend() {
 }
 
 app.whenReady().then(async () => {
+  earlyLog("electron:ready", `lock=${hasSingleInstanceLock}`);
   if (!hasSingleInstanceLock) return;
-  createSplashWindow();
-  createTray();
   try {
+    // Keep every first-window operation inside the startup guard.  Tray/icon
+    // failures must become a visible startup error instead of an unhandled
+    // promise rejection that silently closes the EXE.
+    createSplashWindow();
+    createTray();
     await startBackend();
+    earlyLog("backend:complete", apiBase);
     createWindow();
+    earlyLog("window:created", "main window requested");
     setupAutoUpdater();
   } catch (error) {
+    earlyLog("electron:start-failed", error);
     splashWindow?.close();
     isQuitting = true;
     dialog.showErrorBox("CodeCourse 启动失败", error instanceof Error ? error.message : String(error));
