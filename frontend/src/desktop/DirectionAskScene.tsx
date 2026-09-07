@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ComponentProps, type WheelEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentProps, type PointerEvent } from 'react';
+import { useReducedMotion } from 'framer-motion';
 import { ArrowUpRight, ArrowLeft, Plus, Search, Star, Trash2, Pencil, MessageCircle, FileText, X, Network, ChevronRight, Copy, Check } from 'lucide-react';
 import type ExplainPanel from '../components/ExplainPanel';
 import type { QARecord } from '../api/client';
@@ -62,6 +63,8 @@ export default function DirectionAskScene(p: Props) {
   const [copyError, setCopyError] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
   const historyRail = useRef<HTMLDivElement>(null);
+  const historyWheelGesture = useRef({ lastEventAt: -Infinity, direction: 0, distance: 0, selected: false });
+  const reducedMotion = useReducedMotion();
   const composing = useRef(false);
   const askPreview = import.meta.env.DEV && new URLSearchParams(window.location.search).get('preview') === 'ask-answer';
   const [previewRecordId, setPreviewRecordId] = useState(ASK_PREVIEW_RECORD.id);
@@ -84,24 +87,54 @@ export default function DirectionAskScene(p: Props) {
   const historyRecords = useMemo(() => groups.flatMap(group => group.records), [groups]);
   const selectedHistoryIndex = Math.max(0, historyRecords.findIndex(record => record.id === activeRecord?.id));
   const historyIndex = (record: QARecord) => Math.max(0, historyRecords.findIndex(item => item.id === record.id));
-  function handleHistoryWheel(event: WheelEvent<HTMLDivElement>) {
-    if (!historyRecords.length || Math.abs(event.deltaY) < 3 || event.ctrlKey) return;
-    event.preventDefault();
-    const direction = event.deltaY > 0 ? 1 : -1;
-    const current = historyRecords.findIndex(record => record.id === activeRecord?.id);
-    const nextIndex = current < 0
-      ? 0
-      : Math.min(historyRecords.length - 1, Math.max(0, current + direction));
-    const next = historyRecords[nextIndex];
-    if (!next || next.id === activeRecord?.id) return;
-    if (askPreview) {
-      setPreviewRecordId(next.id);
-    } else {
-      p.onUpperTabChange('history');
-      p.onSelectRecord(next);
+  useEffect(() => {
+    const rail = historyRail.current;
+    if (!rail) return;
+    function handleHistoryWheel(event: WheelEvent) {
+      if (event.ctrlKey || event.metaKey || event.shiftKey || !event.deltaY || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      const slots = Array.from(rail!.querySelectorAll<HTMLElement>('[data-history-id]'))
+        .filter(slot => !slot.closest('details:not([open])'));
+      if (!slots.length) return;
+      // React's delegated wheel listener is passive. This native listener owns
+      // vertical scrolling so a gesture cannot both select and scroll past a card.
+      event.preventDefault();
+      const gesture = historyWheelGesture.current;
+      const now = performance.now();
+      const direction = Math.sign(event.deltaY);
+      if (now - gesture.lastEventAt > 160 || gesture.direction !== direction) {
+        gesture.distance = 0;
+        gesture.selected = false;
+      }
+      gesture.lastEventAt = now;
+      gesture.direction = direction;
+      gesture.distance += Math.abs(event.deltaY) * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rail!.clientHeight : 1);
+      if (gesture.selected || gesture.distance < 12) return;
+      // Touchpad inertia belongs to the same gesture, even after React updates.
+      gesture.selected = true;
+      const current = slots.findIndex(slot => Number(slot.dataset.historyId) === activeRecord?.id);
+      const nextIndex = current < 0
+        ? direction > 0 ? 0 : slots.length - 1
+        : Math.min(slots.length - 1, Math.max(0, current + direction));
+      const slot = slots[nextIndex];
+      const next = historyRecords.find(record => record.id === Number(slot.dataset.historyId));
+      if (!next || next.id === activeRecord?.id) return;
+      if (askPreview) {
+        setPreviewRecordId(next.id);
+      } else {
+        p.onUpperTabChange('history');
+        p.onSelectRecord(next);
+      }
+      const railBounds = rail!.getBoundingClientRect();
+      const slotBounds = slot.getBoundingClientRect();
+      const centeredTop = rail!.scrollTop + slotBounds.top - railBounds.top - rail!.clientTop + (slotBounds.height - rail!.clientHeight) / 2;
+      rail!.scrollTo({
+        top: Math.max(0, Math.min(rail!.scrollHeight - rail!.clientHeight, centeredTop)),
+        behavior: reducedMotion ? 'auto' : 'smooth',
+      });
     }
-    requestAnimationFrame(() => historyRail.current?.querySelector<HTMLElement>(`[data-history-id="${String(next.id)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
-  }
+    rail.addEventListener('wheel', handleHistoryWheel, { passive: false });
+    return () => rail.removeEventListener('wheel', handleHistoryWheel);
+  }, [historyRecords, activeRecord?.id, askPreview, reducedMotion, p.onUpperTabChange, p.onSelectRecord]);
   useEffect(() => { setDraft(p.questionInput ?? p.question); }, [p.question, p.questionInput, p.resetToken]);
   useEffect(() => { scroll.current?.scrollTo({ top: 0 }); setCopied(false); setCopyError(false); }, [activeRecord?.id, selectionKey]);
   useEffect(() => {
@@ -114,9 +147,25 @@ export default function DirectionAskScene(p: Props) {
     try { await navigator.clipboard.writeText(activeRecord?.answer_md || p.streamContent || ''); setCopied(true); setCopyError(false); }
     catch { setCopyError(true); }
   }
+  function tiltHistoryCard(event: PointerEvent<HTMLDivElement>) {
+    if (reducedMotion || event.pointerType !== 'mouse') return;
+    // Measure the stationary slot so the lifted card cannot chase the pointer.
+    const slot = event.currentTarget;
+    const bounds = slot.getBoundingClientRect();
+    const x = Math.max(-1, Math.min(1, (event.clientX - bounds.left) / bounds.width * 2 - 1));
+    const y = Math.max(-1, Math.min(1, (event.clientY - bounds.top) / bounds.height * 2 - 1));
+    slot.style.setProperty('--history-tilt-x', `${-y * 2.5}deg`);
+    slot.style.setProperty('--history-tilt-y', `${x * 3}deg`);
+  }
+  function resetHistoryTilt(event: PointerEvent<HTMLDivElement>) {
+    event.currentTarget.style.removeProperty('--history-tilt-x');
+    event.currentTarget.style.removeProperty('--history-tilt-y');
+  }
   function recordRow(record: QARecord) {
     const distance = Math.min(3, Math.abs(historyIndex(record) - selectedHistoryIndex));
-    return <div className={`game-history-record depth-${distance} ${record.id === activeRecord?.id ? 'selected' : ''}`} data-history-id={record.id} key={record.id}>
+    return <div className={`game-history-record depth-${distance} ${record.id === activeRecord?.id ? 'selected' : ''}`} data-history-id={record.id} key={record.id} onPointerMove={tiltHistoryCard} onPointerLeave={resetHistoryTilt} onPointerCancel={resetHistoryTilt}>
+      <div className="game-history-card"><div className="game-history-face">
+      <i className="game-history-sheen" aria-hidden="true"/>
       <button className="game-history-open" onClick={() => { if (askPreview) setPreviewRecordId(record.id); else { p.onUpperTabChange('history'); p.onSelectRecord(record); } }} onDoubleClick={() => { if (!askPreview) p.onOpenRecord(record); }} draggable onDragStart={event => {
         event.dataTransfer.setData('application/codecourse-item', JSON.stringify({ kind: 'qa', qaId: record.id })); event.dataTransfer.effectAllowed = 'copy';
       }} aria-label={`查看回答 ${titleOf(record)}`} aria-pressed={record.id === activeRecord?.id}>
@@ -128,13 +177,14 @@ export default function DirectionAskScene(p: Props) {
         <button onClick={() => p.onRenameRecord(record)} aria-label="重命名记录" title="重命名"><Pencil size={14}/></button>
         <button onClick={() => p.onDeleteRecord?.(record)} aria-label="删除记录" title="删除"><Trash2 size={14}/></button>
       </div>
+      </div></div>
     </div>;
   }
   return <section className="game-ask" aria-label="AI 提问场景">
     <aside className="game-ask-history" aria-label="问答历史">
       <header className="game-history-heading"><span><b>04</b><i/>问答历史</span><h1 tabIndex={-1}>HISTORY<span>.</span></h1></header>
       <div className="game-history-filter"><label><Search size={16}/><DeferredLiftInput value={p.historyQuery} onLift={p.onHistoryQueryChange} liftDelayMs={250} placeholder="检索过往问题" aria-label="搜索历史"/></label><button className={p.favoriteOnly ? 'selected' : ''} onClick={() => p.onFavoriteOnlyChange(!p.favoriteOnly)} aria-label="只看收藏" aria-pressed={p.favoriteOnly}><Star size={17} fill={p.favoriteOnly ? 'currentColor' : 'none'}/></button></div>
-      <div className="game-history-track" ref={historyRail} onWheel={handleHistoryWheel}>
+      <div className="game-history-track" ref={historyRail}>
         {!activeRecord && p.continuity && <TeachingResumeCard handoff={p.continuity} disabled={p.loading} onResume={p.onResumeContinuity!} onOpenSource={p.onOpenContinuitySource!} onDismiss={p.onDismissContinuity!}/>}
         {groups.map(({ summary, records }) => <details className="game-history-thread" key={summary.sessionId} open>
           <summary><ChevronRight size={13}/><strong>{summary.topic}</strong><span>{records.length}</span></summary>

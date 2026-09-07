@@ -175,27 +175,15 @@
 }
 .direction-ask-stage .game-history-record {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: stretch;
-  margin: 0 0 4px;
-  background: #062653;
-  clip-path: polygon(2% 0,100% 0,97% 100%,0 100%);
-  transition: background .12s, transform .12s;
-}
-.direction-ask-stage .game-history-record:hover,
-.direction-ask-stage .game-history-record.selected {
-  color: var(--ask-deep);
-  background: var(--ask-paper);
-  transform: translateX(4px);
+  min-width: 0;
 }
 .direction-ask-stage .game-history-open {
   min-width: 0;
   display: grid;
-  grid-template-columns: 28px minmax(0,1fr) 17px;
+  grid-template-columns: 30px minmax(0,1fr) 17px;
   align-items: center;
   gap: 7px;
-  padding: 9px 4px 9px 11px;
+  padding: 12px 14px 5px 13px;
   color: inherit;
   text-align: left;
   border: 0;
@@ -206,7 +194,7 @@
   color: var(--ask-line);
   font: 700 19px/1 var(--dir-display);
 }
-.direction-ask-stage .game-history-record:hover .game-history-open > b,
+.direction-ask-stage .game-history-record:is(:hover,:has(:focus-visible)) .game-history-open > b,
 .direction-ask-stage .game-history-record.selected .game-history-open > b { color: #1465c0; }
 .direction-ask-stage .game-history-open > span { min-width: 0; }
 .direction-ask-stage .game-history-open strong,
@@ -216,16 +204,27 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.direction-ask-stage .game-history-open strong { font-size: 12px; font-weight: 600; }
+.direction-ask-stage .game-history-open strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  min-height: 36px;
+}
 .direction-ask-stage .game-history-open small { margin-top: 4px; color: #8eb9cf; font: 10px var(--dir-display); letter-spacing: .05em; }
-.direction-ask-stage .game-history-record:hover .game-history-open small,
+.direction-ask-stage .game-history-record:is(:hover,:has(:focus-visible)) .game-history-open small,
 .direction-ask-stage .game-history-record.selected .game-history-open small { color: #416984; }
 .direction-ask-stage .game-history-actions {
   display: flex;
   align-items: center;
-  gap: 0;
-  padding: 0 5px 0 0;
-  opacity: .18;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 0 15px 6px 43px;
+  opacity: .6;
   transition: opacity .12s;
 }
 .direction-ask-stage .game-history-record:hover .game-history-actions,
@@ -234,12 +233,16 @@
 .direction-ask-stage .game-history-actions button {
   display: grid;
   place-items: center;
+  width: 25px;
+  height: 24px;
   padding: 4px;
   border: 0;
   color: inherit;
   background: transparent;
 }
-.direction-ask-stage .game-history-actions button:hover { color: #1465c0; background: var(--ask-line); }
+.direction-ask-stage .game-history-actions button:hover:not(:disabled) { color: #031a3a; background: var(--ask-line); }
+.direction-ask-stage .game-history-actions button:disabled { opacity: .3; cursor: not-allowed; }
+.direction-ask-stage .game-history-actions button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
 .direction-ask-stage .game-history-empty {
   padding: 26px 7px;
   color: #9ccce3;
@@ -441,7 +444,6 @@
 
 @media (max-width: 1180px) {
   .direction-ask-stage .game-ask { grid-template-columns: minmax(226px, 31%) minmax(0, 1fr); gap: 20px; }
-  .direction-ask-stage .game-history-actions { display: none; }
   .direction-ask-stage .game-history-open { grid-template-columns: 24px minmax(0,1fr) 14px; padding-left: 8px; }
   .direction-ask-stage .game-send { min-width: 118px; }
 }
@@ -469,6 +471,8 @@
 .direction-ask-stage .game-ask-history {
   isolation: isolate;
   padding: 15px clamp(15px, 2vw, 28px) 10px 10px;
+  /* Decoration must not turn the whole bay into another scroll container. */
+  overflow: clip;
 }
 .direction-ask-stage .game-ask-history::before {
   content: '';
@@ -505,22 +509,20 @@
 }
 .direction-ask-stage .game-history-track {
   margin-right: 2px;
-  padding: 14px 22px 20px 8px;
-  perspective: 900px;
+  padding: 18px 26px 24px 20px;
   overscroll-behavior: contain;
-  scroll-snap-type: y proximity;
   overflow-x: hidden;
   isolation: isolate;
+  scroll-padding-block: 26px;
 }
 .direction-ask-stage .game-history-thread {
   position: relative;
-  isolation: isolate;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
   border-bottom: 0;
 }
 .direction-ask-stage .game-history-thread summary {
   position: relative;
-  margin: 0 0 6px;
+  margin: 0 0 20px;
   padding: 5px 4px 5px 7px;
   background: #082c59;
   clip-path: polygon(4% 0,100% 0,96% 100%,0 100%);
@@ -534,143 +536,145 @@
   background: var(--ask-line);
   transform: skewX(-28deg);
 }
+
+/* The slot never transforms. Only the inner card lifts, keeping hit targets
+   stable and reserving space for every edge of the largest hover state. */
 .direction-ask-stage .game-history-record {
-  margin: 10px 6px 16px 0;
-  transform-origin: 42% center;
-  scroll-snap-align: center;
-  will-change: transform;
-  cursor: pointer;
-  border: 1px solid rgba(140, 233, 255, .28);
-  box-shadow: 6px 7px 0 #0a3d78, inset 0 0 0 1px rgba(255,255,255,.04);
-  transition:
-    transform .2s cubic-bezier(.2,.8,.2,1),
-    background-color .14s ease,
-    box-shadow .2s cubic-bezier(.2,.8,.2,1),
-    filter .2s ease;
+  --history-scale: .96;
+  --history-angle: -1deg;
+  --history-offset: 0px;
+  --history-edge: #155ca1;
+  --history-face: #092d59;
+  margin: 0 0 24px;
+  scroll-margin-block: 26px;
 }
-.direction-ask-stage .game-history-record.depth-0 { transform: rotate(-1.1deg) scale(1.035); z-index: 4; }
-.direction-ask-stage .game-history-record.depth-1 { transform: translateX(7px) rotate(1.2deg) scale(.95); opacity: .88; z-index: 3; }
-.direction-ask-stage .game-history-record.depth-2 { transform: translateX(15px) rotate(-1.6deg) scale(.87); opacity: .67; z-index: 2; }
-.direction-ask-stage .game-history-record.depth-3 { transform: translateX(21px) rotate(2.1deg) scale(.79); opacity: .46; z-index: 1; }
-.direction-ask-stage .game-history-record.depth-0:hover,
-.direction-ask-stage .game-history-record.depth-1:hover,
-.direction-ask-stage .game-history-record.depth-2:hover,
-.direction-ask-stage .game-history-record.depth-3:hover {
-  transform: translateX(12px) translateY(-5px) rotate(-.7deg) scale(1.075);
-  opacity: 1;
-  z-index: 8;
-  filter: saturate(1.15) brightness(1.08);
-}
-.direction-ask-stage .game-history-record:not(.selected):hover {
+.direction-ask-stage .game-history-record.depth-1 { --history-scale: .92; --history-angle: 1deg; --history-offset: 3px; }
+.direction-ask-stage .game-history-record.depth-2 { --history-scale: .87; --history-angle: -1.4deg; --history-offset: 6px; }
+.direction-ask-stage .game-history-record.depth-3 { --history-scale: .82; --history-angle: 1.7deg; --history-offset: 9px; }
+.direction-ask-stage .game-history-record.selected {
+  --history-scale: 1.01;
+  --history-angle: -1deg;
+  --history-offset: 0px;
+  --history-face: #f4fbff;
+  --history-edge: #8ce9ff;
   color: var(--ask-deep);
-  background: #bdefff;
-  border-color: #fff;
-  box-shadow:
-    11px 12px 0 #0a3d78,
-    15px 16px 0 rgba(2, 13, 35, .62),
-    -5px 0 0 #f4fbff,
-    0 0 24px rgba(140, 233, 255, .3),
-    inset 0 0 0 1px rgba(3,26,58,.18);
+  z-index: 2;
 }
-.direction-ask-stage .game-history-record:not(.selected)::after {
+.direction-ask-stage .game-history-card {
+  position: relative;
+  isolation: isolate;
+  transform-origin: center;
+  transform: translateX(var(--history-offset)) rotate(var(--history-angle)) scale(var(--history-scale));
+  filter: drop-shadow(2px 5px 3px #010b20);
+  transition: transform .2s cubic-bezier(.16,.85,.25,1), filter .18s ease;
+}
+/* Clipping belongs to each paper layer, never to the card that casts shadows. */
+.direction-ask-stage .game-history-card::before,
+.direction-ask-stage .game-history-card::after {
   content: '';
   position: absolute;
   inset: 0;
+  clip-path: polygon(10px 0,100% 0,calc(100% - 12px) 100%,0 100%);
   pointer-events: none;
+  transition: transform .2s cubic-bezier(.16,.85,.25,1), background .14s;
+}
+.direction-ask-stage .game-history-card::before {
+  z-index: -1;
+  background: var(--history-edge);
+  transform: translate(4px,5px);
+}
+.direction-ask-stage .game-history-card::after {
+  z-index: -2;
+  background: #010e26;
+  transform: translate(7px,9px);
+}
+.direction-ask-stage .game-history-face {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  background: var(--history-face);
+  border-top: 1px solid #598bad;
+  clip-path: polygon(10px 0,100% 0,calc(100% - 12px) 100%,0 100%);
+  transition: background .12s, color .12s;
+}
+.direction-ask-stage .game-history-face::after {
+  content: '';
+  position: absolute;
+  inset: 4px 12px;
+  border-top: 1px solid #b4f3ff;
+  border-bottom: 2px solid #135aa3;
+  opacity: .25;
+  pointer-events: none;
+}
+.direction-ask-stage .game-history-record.selected .game-history-face::after { opacity: 1; }
+.direction-ask-stage .game-history-record:is(:hover,:has(:focus-visible)) {
+  --history-face: #bdefff;
+  --history-edge: #f4fbff;
+  color: var(--ask-deep);
+  z-index: 3;
+}
+.direction-ask-stage .game-history-record.selected:is(:hover,:has(:focus-visible)) {
+  --history-face: #fff;
+  --history-edge: #8ce9ff;
+}
+.direction-ask-stage .game-history-record:is(:hover,:has(:focus-visible)) .game-history-card {
+  transform: perspective(700px) translate(0,-6px) rotateX(var(--history-tilt-x,0deg)) rotateY(var(--history-tilt-y,0deg)) scale(1.065);
+  filter: drop-shadow(3px 12px 5px #010b20);
+}
+.direction-ask-stage .game-history-record:is(:hover,:has(:focus-visible)) .game-history-card::before { transform: translate(6px,8px); }
+.direction-ask-stage .game-history-record:is(:hover,:has(:focus-visible)) .game-history-card::after { transform: translate(10px,13px); }
+.direction-ask-stage .game-history-record:is(:hover,:has(:focus-visible)) .game-history-face::after { opacity: 1; }
+.direction-ask-stage .game-history-open > b { font-size: 26px; }
+.direction-ask-stage .game-history-open > svg { transition: transform .16s ease; }
+.direction-ask-stage .game-history-record:is(:hover,:has(:focus-visible)) .game-history-open > svg { transform: translate(3px,-2px); }
+.direction-ask-stage .game-history-open:focus-visible { outline: 2px solid #1254a0; outline-offset: -7px; }
+.direction-ask-stage .game-history-actions { position: relative; z-index: 1; }
+.direction-ask-stage .game-history-sheen {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  clip-path: polygon(0 0,18% 0,44% 100%,26% 100%);
   background: #fff;
   opacity: 0;
-  transform: translateX(-115%) skewX(-24deg);
-}
-.direction-ask-stage .game-history-record:not(.selected)::before {
-  content: '';
-  position: absolute;
-  inset: 1px;
   pointer-events: none;
-  z-index: 1;
-  border-top: 2px solid rgba(255,255,255,.46);
-  border-left: 1px solid rgba(255,255,255,.24);
-  opacity: 0;
-  transform: translateX(-8px);
-  transition: opacity .14s ease, transform .2s ease;
-  clip-path: polygon(2% 0,100% 0,97% 100%,0 100%);
+  transform: translateX(-100%);
 }
-.direction-ask-stage .game-history-record:not(.selected):hover::before {
-  opacity: 1;
-  transform: translateX(0);
-}
-.direction-ask-stage .game-history-record:not(.selected):hover::after {
-  animation: direction-history-sheen .42s ease-out both;
-}
+.direction-ask-stage .game-history-record:hover .game-history-sheen { animation: direction-history-sheen .3s ease-out both; }
 @keyframes direction-history-sheen {
-  0% { opacity: .42; transform: translateX(-115%) skewX(-24deg); }
-  100% { opacity: 0; transform: translateX(115%) skewX(-24deg); }
+  0% { opacity: .7; transform: translateX(-45%); }
+  100% { opacity: 0; transform: translateX(120%); }
 }
-.direction-ask-stage .game-history-record.selected {
-  transform: translateX(8px) translateY(-4px) rotate(-1deg) scale(1.095);
-  z-index: 7;
-  color: var(--ask-deep);
-  background: var(--ask-paper);
-  border-color: #fff;
-  box-shadow:
-    12px 13px 0 var(--ask-line),
-    16px 17px 0 rgba(2, 13, 35, .66),
-    -5px 0 0 #fff,
-    0 0 28px rgba(140, 233, 255, .42),
-    inset 0 0 0 1px rgba(20,101,192,.24);
-  filter: saturate(1.08) brightness(1.04);
+.direction-ask-stage .game-history-record:has(button:active:not(:disabled)) .game-history-card {
+  transform: translate(2px,2px) scale(.99);
+  filter: drop-shadow(1px 2px 1px #010b20);
+  transition-duration: 80ms;
 }
-.direction-ask-stage .game-history-record.selected:hover {
-  transform: translateX(13px) translateY(-7px) rotate(0) scale(1.125);
-  box-shadow:
-    14px 15px 0 var(--ask-line),
-    19px 20px 0 rgba(2, 13, 35, .72),
-    -6px 0 0 #fff,
-    0 0 34px rgba(140, 233, 255, .56),
-    inset 0 0 0 1px rgba(20,101,192,.32);
+.direction-ask-stage .game-history-record:has(button:active:not(:disabled)) .game-history-face { background: #fff; }
+.direction-ask-stage .game-history-record:has(button:active:not(:disabled)) .game-history-card::before { transform: translate(2px,2px); }
+.direction-ask-stage .game-history-record:has(button:active:not(:disabled)) .game-history-card::after { transform: translate(3px,4px); }
+.direction-ask-stage .game-new-question { position: relative; z-index: 1; }
+@media (min-width: 1600px) {
+  .direction-ask-stage .game-history-track { padding-left: 24px; padding-right: 36px; }
 }
-.direction-ask-stage .game-history-record:hover .game-history-open > svg {
-  transform: translate(3px, -2px) scale(1.08);
-}
-.direction-ask-stage .game-history-open > svg {
-  transition: transform .18s cubic-bezier(.2,.8,.2,1);
-}
-.direction-ask-stage .game-history-open:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: -4px;
-}
-.direction-ask-stage .game-history-record.selected::after {
-  content: '';
-  position: absolute;
-  left: 7px;
-  right: 7px;
-  bottom: 3px;
-  height: 2px;
-  background: #0b4fbd;
-  transform: skewX(-24deg);
-}
-.direction-ask-stage .game-history-record.selected::before {
-  content: '';
-  position: absolute;
-  inset: 4px;
-  pointer-events: none;
-  border-top: 2px solid #8ce9ff;
-  border-bottom: 1px solid #a7dff0;
-  clip-path: polygon(2% 0,100% 0,97% 100%,0 100%);
-}
-.direction-ask-stage .game-history-open { padding-top: 10px; padding-bottom: 11px; }
-.direction-ask-stage .game-history-open > b { font-size: 22px; }
-.direction-ask-stage .game-history-actions { position: relative; z-index: 2; }
-.direction-ask-stage .game-new-question { position: relative; z-index: 2; box-shadow: 5px 5px 0 #0a3b76; }
-@media (max-width: 1180px) {
-  .direction-ask-stage .game-history-record.depth-0 { transform: rotate(-1deg) scale(1.02); }
-  .direction-ask-stage .game-history-record.selected { transform: translateX(4px) translateY(-3px) rotate(-1deg) scale(1.06); }
-  .direction-ask-stage .game-history-record.selected:hover { transform: translateX(8px) translateY(-5px) rotate(0) scale(1.085); }
+@media (max-height: 780px) {
+  .direction-ask-stage .game-history-track { padding-top: 12px; }
+  .direction-ask-stage .game-history-thread summary { margin-bottom: 18px; }
+  .direction-ask-stage .game-history-record { margin-bottom: 22px; }
+  .direction-ask-stage .game-history-open { padding-top: 8px; padding-bottom: 4px; }
+  .direction-ask-stage .game-history-actions { padding-bottom: 5px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .direction-ask-stage .game-history-record.depth-0,
-  .direction-ask-stage .game-history-record.depth-1,
-  .direction-ask-stage .game-history-record.depth-2,
-  .direction-ask-stage .game-history-record.depth-3,
-  .direction-ask-stage .game-history-record.selected { transform: none; }
-  .direction-ask-stage .game-history-record:not(.selected):hover::after { animation: none; display: none; }
+  /* Accessibility override must also win against hover, focus and press. */
+  .direction-ask-stage .game-history-record .game-history-card {
+    transform: none !important;
+    filter: drop-shadow(2px 5px 3px #010b20) !important;
+    transition: none !important;
+  }
+  .direction-ask-stage .game-history-record .game-history-card::before { transform: translate(4px,5px) !important; transition: none; }
+  .direction-ask-stage .game-history-record .game-history-card::after { transform: translate(7px,9px) !important; transition: none; }
+  .direction-ask-stage .game-history-record .game-history-face,
+  .direction-ask-stage .game-history-record .game-history-open > svg,
+  .direction-ask-stage .game-history-actions { transition: none; }
+  .direction-ask-stage .game-history-record .game-history-open > svg { transform: none !important; }
+  .direction-ask-stage .game-history-record .game-history-sheen { display: none; animation: none; }
 }
