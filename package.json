@@ -1,9 +1,9 @@
 {
-  "name": "codecourse-desktop",
-  "version": "0.4.6",
+  "name": "codecourse-direction-c-desktop",
+  "version": "0.4.7",
   "packageManager": "pnpm@10.16.1",
   "private": true,
-  "description": "CodeCourse desktop shell for the GitHub project learner.",
+  "description": "CodeCourse Direction C experimental desktop shell.",
   "main": "electron/main.cjs",
   "scripts": {
     "desktop:dev": "node electron/dev-runner.cjs",
@@ -14,7 +14,7 @@
     "desktop:build": "pnpm run frontend:build && pnpm run backend:build && pnpm run git:ensure && pnpm run intelligence:ensure && electron-builder --win portable",
     "desktop:pack": "pnpm run frontend:build && pnpm run backend:build && pnpm run git:ensure && pnpm run intelligence:ensure && electron-builder --dir",
     "desktop:portable": "pnpm run frontend:build && pnpm run backend:build && pnpm run git:ensure && pnpm run intelligence:ensure && electron-builder --win portable",
-    "desktop:release": "pnpm run frontend:build && pnpm run backend:build && pnpm run git:ensure && pnpm run intelligence:ensure && electron-builder --publish never --win portable --config.artifactName=CodeCourse-${version}-portable.${ext} && electron-builder --publish never --win nsis --config.artifactName=CodeCourse-${version}-setup.${ext}",
+    "desktop:release": "pnpm run frontend:build && pnpm run backend:build && pnpm run git:ensure && pnpm run intelligence:ensure && electron-builder --publish never --win portable --config.artifactName=CodeCourse-Direction-C-${version}-portable.${ext} && electron-builder --publish never --win nsis --config.artifactName=CodeCourse-Direction-C-${version}-setup.${ext}",
     "backend:test": "cd backend && PYTHONPATH=.. .venv/bin/python -m unittest discover -s tests -v",
     "frontend:build:android": "pnpm --dir frontend run build:android",
     "mobile:sync": "pnpm run frontend:build:android && cap sync android",
@@ -29,9 +29,9 @@
     "rcedit": "5.0.2"
   },
   "build": {
-    "appId": "com.codecourse.app",
-    "productName": "CodeCourse",
-    "icon": "resources/icon.ico",
+    "appId": "com.codecourse.directionc",
+    "productName": "CodeCourse Direction C",
+    "icon": "resources/direction-c/icon.ico",
     "afterPack": "electron/after-pack.cjs",
     "directories": {
       "output": "dist-desktop"
@@ -50,7 +50,7 @@
     ],
     "extraResources": [
       {
-        "from": "resources/icon.ico",
+      "from": "resources/direction-c/icon.ico",
         "to": "icon.ico"
       },
       {
@@ -74,7 +74,7 @@
       "target": [
         "portable"
       ],
-      "icon": "resources/icon.ico",
+      "icon": "resources/direction-c/icon.ico",
       "signAndEditExecutable": false
     },
     "linux": {

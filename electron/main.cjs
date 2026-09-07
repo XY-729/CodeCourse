@@ -496,12 +496,49 @@ function createWindow() {
   });
 
   mainWindow = window;
-  window.once("ready-to-show", () => {
+  let didRevealWindow = false;
+  const revealWindow = () => {
+    if (didRevealWindow || window.isDestroyed()) return;
+    didRevealWindow = true;
     if (savedState.isMaximized) window.maximize();
     window.show();
     window.focus();
     closeSplashWindow();
+    earlyLog("window:revealed", "main window shown");
+  };
+  const probeRenderer = () => {
+    if (window.isDestroyed()) return;
+    void window.webContents.executeJavaScript(`(() => ({
+      ready: document.readyState,
+      root: document.getElementById('root')?.innerHTML?.slice(0, 1200) || '',
+      rootRect: (() => { const r = document.getElementById('root')?.getBoundingClientRect(); return r ? { width: r.width, height: r.height } : null; })(),
+      bodyClass: document.body.className,
+      htmlClass: document.documentElement.className,
+      appShell: Boolean(document.querySelector('.app-shell')),
+      directionShell: Boolean(document.querySelector('.direction-shell')),
+    }))()`, true).then((info) => diagnosticLog("renderer:probe", info)).catch((error) => diagnosticLog("renderer:probe-error", error));
+  };
+  setTimeout(probeRenderer, 1800);
+  window.webContents.on("did-finish-load", () => {
+    diagnosticLog("renderer:loaded", window.webContents.getURL());
   });
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    diagnosticLog("renderer:load-failed", { errorCode, errorDescription, validatedURL, isMainFrame });
+  });
+  window.webContents.on("render-process-gone", (_event, details) => {
+    diagnosticLog("renderer:gone", details);
+  });
+  window.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (level >= 2) diagnosticLog("renderer:console", { level, message, line, sourceId });
+  });
+  window.once("ready-to-show", () => {
+    revealWindow();
+  });
+  // Some Windows GPU/transparent-window combinations never emit
+  // ready-to-show even though React has rendered.  Reveal on load and keep a
+  // bounded fallback so the user never gets stuck at a blank splash window.
+  window.webContents.once("did-finish-load", () => setTimeout(revealWindow, 80));
+  setTimeout(revealWindow, 4000);
   window.on("move", () => scheduleWindowStateSave(window));
   window.on("resize", () => scheduleWindowStateSave(window));
   window.on("close", (event) => {
@@ -548,7 +585,7 @@ function createWindow() {
 
   const devUrl = process.env.CODECOURSE_FRONTEND_URL;
   if (devUrl) {
-    window.loadURL(devUrl);
+    void window.loadURL(devUrl).catch((error) => diagnosticLog("renderer:load-url-error", error));
   } else {
     const indexPath = frontendIndex();
     if (!fs.existsSync(indexPath)) {
@@ -556,7 +593,7 @@ function createWindow() {
       app.quit();
       return;
     }
-    window.loadFile(indexPath);
+    void window.loadFile(indexPath).catch((error) => diagnosticLog("renderer:load-file-error", error));
   }
 }
 
