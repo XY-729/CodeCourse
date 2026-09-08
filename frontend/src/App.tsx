@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { DragEvent } from "react";
+import type { ComponentProps, DragEvent } from "react";
 import { FolderTree, Loader2, PanelLeft, RefreshCw, Search } from "lucide-react";
 import {
   buildProjectIndex,
@@ -147,6 +147,7 @@ import type { DesktopScene } from "./desktop/DirectionShell";
 import { useDirectionFocus } from "./desktop/useDirectionFocus";
 import DirectionDocumentSidebar from "./desktop/DirectionDocumentSidebar";
 import DirectionAnswerView from "./desktop/DirectionAnswerView";
+import DirectionAskScene from "./desktop/DirectionAskScene";
 import {
   androidWorkbenchStorageKey,
   hydrateStoredItem as hydratePersistedItem,
@@ -4755,63 +4756,64 @@ export default function App() {
 
   function renderAssistantPanel() {
     const showKnowledgeGraph = qaUpperTab === "knowledge" && Boolean(project);
-    return (
-      <ExplainPanel
-        scenePresentation={!mobileRuntime}
-        answerContent={!mobileRuntime ? <DirectionAnswerView record={selectedQA} loading={qaInteractionBusy} partial={visibleQAGeneration?.partial} onOpenRecord={(record) => { void openQAInActiveGroup(record); }} /> : undefined}
-        selection={selection}
-        contextSummary={assistantContextSummary}
-        contextFiles={contextFiles}
-        onOpenFilePicker={() => setContextFilePickerOpen(true)}
-        onRemoveContextFile={(path) => setContextFiles((current) => current.filter((item) => item !== path))}
-        question={qaQuestionInput}
-        questionInput={qaQuestionInput}
-        resetToken={qaResetToken}
-        loading={qaInteractionBusy}
-        loadingLabel={qaBusyLabel}
-        streamContent={visibleQAGeneration?.partial}
-        history={qaHistory}
-        threads={qaThreads}
-        continuity={qaContinuity}
-        historyQuery={qaHistoryQuery}
-        favoriteOnly={qaFavoriteOnly}
-        selectedRecord={selectedQA}
-        selectedRecordReadOnly={Boolean(selectedQA && project && selectedQA.project_id !== project.id)}
-        surveyCandidate={dynamicSurvey}
-        diagnosticItem={diagnosticItem}
-        diagnosticResult={diagnosticResult}
-        settings={llmSettings}
-        panelError={qaPanelError}
-        upperTab={qaUpperTab}
-        onUpperTabChange={setQAUpperTab}
-        knowledgeDisabled={!project}
-        knowledgeContent={showKnowledgeGraph ? renderKnowledgeGraph() : null}
-        onQuestionChange={handleQAQuestionChange}
-        onSelectionTextChange={handleSelectionTextChange}
-        onClearSelection={handleClearSelection}
-        onAsk={handleAsk}
-        onNewConversation={handleNewConversation}
-        onHistoryQueryChange={setQAHistoryQuery}
-        onFavoriteOnlyChange={setQAFavoriteOnly}
-        onSelectRecord={(record) => { setSelectedQA(record); setQASessionId(record.session_id ?? null); }}
-        onOpenRecord={(record) => { void openQAInActiveGroup(record); }}
-        onDeleteRecord={handleDeleteQA}
-        onRenameRecord={handleRenameQA}
-        onToggleFavorite={handleToggleFavorite}
-        onResumeContinuity={(handoff) => { void handleResumeContinuity(handoff); }}
-        onOpenContinuitySource={(handoff) => { void handleOpenContinuitySource(handoff); }}
-        onDismissContinuity={(handoff) => { void handleDismissContinuity(handoff); }}
-        onTeachingNextAction={handleTeachingNextAction}
-        onOpenSettings={openSettings}
-        onAnswerSurvey={(choice) => { void handleDynamicSurveyAnswer(choice); }}
-        onDismissSurvey={() => { void handleDynamicSurveyDismiss(); }}
-        onDisableSurveys={() => { void handleDisableDynamicSurveys(); }}
-        onAnswerDiagnostic={(answer) => { void handleDiagnosticAnswer(answer); }}
-        onDismissDiagnostic={() => { void handleDiagnosticDismiss(); }}
-        onFlagDiagnostic={() => { void handleDiagnosticFlag(); }}
-        onClose={() => setAssistantOpen(false)}
-      />
-    );
+    const panelProps: ComponentProps<typeof ExplainPanel> = {
+      scenePresentation: !mobileRuntime,
+      answerContent: !mobileRuntime ? <DirectionAnswerView record={selectedQA} loading={qaInteractionBusy} partial={visibleQAGeneration?.partial} onOpenRecord={(record) => { void openQAInActiveGroup(record); }} /> : undefined,
+      selection,
+      contextSummary: assistantContextSummary,
+      contextFiles,
+      onOpenFilePicker: () => setContextFilePickerOpen(true),
+      onRemoveContextFile: (path) => setContextFiles((current) => current.filter((item) => item !== path)),
+      question: qaQuestionInput,
+      questionInput: qaQuestionInput,
+      resetToken: qaResetToken,
+      loading: qaInteractionBusy,
+      loadingLabel: qaBusyLabel,
+      streamContent: visibleQAGeneration?.partial,
+      history: qaHistory,
+      threads: qaThreads,
+      continuity: qaContinuity,
+      historyQuery: qaHistoryQuery,
+      favoriteOnly: qaFavoriteOnly,
+      selectedRecord: selectedQA,
+      followUpRecord: qaFollowUpRecord,
+      selectedRecordReadOnly: Boolean(selectedQA && project && selectedQA.project_id !== project.id),
+      surveyCandidate: dynamicSurvey,
+      diagnosticItem,
+      diagnosticResult,
+      settings: llmSettings,
+      panelError: qaPanelError,
+      upperTab: qaUpperTab,
+      onUpperTabChange: setQAUpperTab,
+      knowledgeDisabled: !project,
+      knowledgeContent: showKnowledgeGraph ? renderKnowledgeGraph() : null,
+      onQuestionChange: handleQAQuestionChange,
+      onSelectionTextChange: handleSelectionTextChange,
+      onClearSelection: handleClearSelection,
+      onAsk: handleAsk,
+      onNewConversation: handleNewConversation,
+      onHistoryQueryChange: setQAHistoryQuery,
+      onFavoriteOnlyChange: setQAFavoriteOnly,
+      onSelectRecord: (record) => { setSelectedQA(record); setQASessionId(record.session_id ?? null); },
+      onFollowUp: handleFollowUp,
+      onOpenRecord: (record) => { void openQAInActiveGroup(record); },
+      onDeleteRecord: handleDeleteQA,
+      onRenameRecord: handleRenameQA,
+      onToggleFavorite: handleToggleFavorite,
+      onResumeContinuity: (handoff) => { void handleResumeContinuity(handoff); },
+      onOpenContinuitySource: (handoff) => { void handleOpenContinuitySource(handoff); },
+      onDismissContinuity: (handoff) => { void handleDismissContinuity(handoff); },
+      onTeachingNextAction: handleTeachingNextAction,
+      onOpenSettings: openSettings,
+      onAnswerSurvey: (choice) => { void handleDynamicSurveyAnswer(choice); },
+      onDismissSurvey: () => { void handleDynamicSurveyDismiss(); },
+      onDisableSurveys: () => { void handleDisableDynamicSurveys(); },
+      onAnswerDiagnostic: (answer) => { void handleDiagnosticAnswer(answer); },
+      onDismissDiagnostic: () => { void handleDiagnosticDismiss(); },
+      onFlagDiagnostic: () => { void handleDiagnosticFlag(); },
+      onClose: () => setAssistantOpen(false),
+    };
+    return mobileRuntime ? <ExplainPanel {...panelProps} /> : <DirectionAskScene {...panelProps} />;
   }
 
   function renderMobileAssistantPanel() {
@@ -5255,6 +5257,7 @@ export default function App() {
           project={project}
           scope={scopeType}
           selectedFileCount={selectedScopeFiles.length}
+          activeTitle={activeDocumentTitle}
           instructions={generationInstructions}
           running={generationBusy}
           activeTask={activeTask}

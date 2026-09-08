@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { monacoAssets } from './monacoAssets';
 import { readFileSync } from "node:fs";
 
 const packageVersion = JSON.parse(
@@ -13,8 +14,16 @@ export default defineConfig(({ mode }) => {
   base: "./",
   plugins: [
     react(),
+    ...(!androidBuild ? [monacoAssets()] : []),
     {
       name: "codecourse-platform-entry",
+      generateBundle() {
+        this.emitFile({
+          type: "asset",
+          fileName: "build-platform.json",
+          source: JSON.stringify({ platform: androidBuild ? "android" : "desktop", version: packageVersion }),
+        });
+      },
       transformIndexHtml: {
         order: "pre",
         handler(html) {
@@ -40,6 +49,8 @@ export default defineConfig(({ mode }) => {
     },
   },
   build: {
+    // The desktop payload has its own directory; Android keeps its original output.
+    outDir: androidBuild ? "dist" : "dist-desktop",
     rollupOptions: {
       output: {
         manualChunks(id) {

@@ -19,9 +19,10 @@ export default function DetachedDocumentWindow() {
   }, []);
 
   return (
-    <div className="app-shell detached-document-shell">
+    <div className="app-shell direction-app direction-detached detached-document-shell">
       <TitleBar />
       <header className="detached-document-header">
+        <div className="direction-detached-heading" aria-hidden="true">READ<span> /</span></div>
         <strong>{payload?.title || "正在打开文档"}</strong>
         {payload?.path ? <span>{payload.path}</span> : null}
       </header>

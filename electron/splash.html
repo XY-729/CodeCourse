@@ -1,44 +1,52 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Direction C</title>
     <style>
-      :root { color-scheme: light dark; font-family: "Segoe UI", system-ui, sans-serif; }
+      :root {
+        color-scheme: dark;
+        --ink: #f5fbff;
+        --ice: #7ee6ff;
+        --deep: #031a3a;
+        font-family: "Barlow Condensed", "Arial Narrow", "Segoe UI", sans-serif;
+      }
       * { box-sizing: border-box; }
       html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
-      body {
-        display: grid;
-        place-items: center;
-        color: #17221f;
-        background: #f3f7f5;
-      }
-      main { display: grid; justify-items: center; gap: 14px; }
-      img { width: 82px; height: 82px; object-fit: contain; filter: drop-shadow(0 10px 18px rgba(20, 48, 40, .18)); }
-      h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: 0; }
-      .status { display: flex; align-items: center; gap: 9px; color: #66736f; font-size: 13px; }
-      .spinner {
-        width: 14px;
-        height: 14px;
-        border: 2px solid rgba(27, 107, 88, .2);
-        border-top-color: #1b6b58;
-        border-radius: 50%;
-        animation: spin .8s linear infinite;
-      }
-      @keyframes spin { to { transform: rotate(360deg); } }
-      @media (prefers-color-scheme: dark) {
-        body { color: #edf6f3; background: #0b1422; }
-        .status { color: #8fa3b5; }
-        img { filter: drop-shadow(0 12px 22px rgba(0, 0, 0, .34)); }
-      }
-      @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+      body { position: relative; display: grid; place-items: center; color: var(--ink); background: var(--deep); }
+      body::before { content: ""; position: absolute; inset: 0; opacity: .22; background-image: repeating-linear-gradient(0deg, transparent 0 3px, rgba(126,230,255,.12) 4px, transparent 5px 7px); pointer-events: none; }
+      body::after { content: ""; position: absolute; inset: 0; background: linear-gradient(115deg, transparent 0 44%, rgba(126,230,255,.18) 45%, transparent 46% 100%); transform: translateX(-120%); animation: sweep 1.15s cubic-bezier(.2,.8,.2,1) .18s both; pointer-events: none; }
+      .frame { position: relative; width: 360px; min-height: 224px; padding: 28px 30px 24px; overflow: hidden; background: linear-gradient(138deg, rgba(5,41,90,.96), rgba(3,26,58,.96)); clip-path: polygon(0 0, 92% 0, 100% 14%, 100% 100%, 8% 100%, 0 86%); box-shadow: 0 0 0 1px rgba(126,230,255,.38), 0 18px 50px rgba(0,0,0,.45); animation: frame-in .55s cubic-bezier(.18,.8,.2,1) both; }
+      .frame::before { content: ""; position: absolute; top: 0; right: 0; width: 42%; height: 7px; background: var(--ice); transform: skewX(-36deg) translateX(12%); transform-origin: right; }
+      .frame::after { content: ""; position: absolute; left: -28px; bottom: 18px; width: 150px; height: 2px; background: var(--ice); box-shadow: 0 7px 0 rgba(126,230,255,.32), 0 14px 0 rgba(126,230,255,.13); transform: skewX(-36deg); }
+      .eyebrow { position: relative; z-index: 1; margin-bottom: 8px; color: var(--ice); font-size: 11px; font-weight: 700; letter-spacing: .28em; text-transform: uppercase; animation: rise .42s ease-out .24s both; }
+      h1 { position: relative; z-index: 1; margin: 0; font-size: 43px; line-height: .88; font-weight: 900; letter-spacing: -.03em; text-transform: uppercase; animation: rise .46s cubic-bezier(.2,.8,.2,1) .31s both; }
+      h1 span { color: var(--ice); }
+      .number { position: absolute; right: 18px; top: 22px; color: rgba(126,230,255,.13); font-size: 108px; line-height: .8; font-weight: 900; letter-spacing: -.08em; transform: skewX(-12deg); user-select: none; animation: number-in .6s cubic-bezier(.1,.8,.2,1) .08s both; }
+      .status-row { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; margin-top: 28px; color: rgba(245,251,255,.74); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; animation: rise .42s ease-out .54s both; }
+      .pulse { width: 8px; height: 8px; background: var(--ice); box-shadow: 0 0 0 0 rgba(126,230,255,.65); animation: pulse 1.15s ease-out infinite; }
+      .progress { position: relative; z-index: 1; width: 182px; height: 5px; margin-top: 13px; overflow: hidden; background: rgba(0,0,0,.38); transform: skewX(-30deg); animation: rise .42s ease-out .6s both; }
+      .progress i { display: block; width: 48%; height: 100%; background: var(--ice); box-shadow: 0 0 15px rgba(126,230,255,.8); animation: progress 1.3s cubic-bezier(.2,.7,.2,1) .56s infinite alternate; }
+      .corner { position: absolute; right: 22px; bottom: 21px; color: rgba(245,251,255,.48); font-size: 9px; letter-spacing: .18em; }
+      @keyframes sweep { to { transform: translateX(120%); } }
+      @keyframes frame-in { from { opacity: 0; transform: translateY(10px) skewX(-4deg) scale(.97); } to { opacity: 1; transform: none; } }
+      @keyframes rise { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: none; } }
+      @keyframes number-in { from { opacity: 0; transform: translateX(35px) skewX(-12deg); } to { opacity: 1; transform: translateX(0) skewX(-12deg); } }
+      @keyframes progress { from { transform: translateX(-110%); } to { transform: translateX(190%); } }
+      @keyframes pulse { 70% { box-shadow: 0 0 0 7px rgba(126,230,255,0); } 100% { box-shadow: 0 0 0 0 rgba(126,230,255,0); } }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transform: none !important; } }
     </style>
   </head>
   <body>
-    <main>
-      <img src="../frontend/dist/logo.ico" alt="" />
-      <h1>CodeCourse</h1>
-      <div class="status"><span class="spinner"></span><span>正在启动后端...</span></div>
+    <main class="frame" aria-label="CodeCourse Direction C is starting">
+      <div class="number" aria-hidden="true">00</div>
+      <div class="eyebrow">INITIALIZING COURSE SYSTEM</div>
+      <h1>CODE<span>//</span>COURSE</h1>
+      <div class="status-row"><i class="pulse" aria-hidden="true"></i><span>DIRECTION C · DESKTOP</span></div>
+      <div class="progress" aria-hidden="true"><i></i></div>
+      <div class="corner">SYS / 0.4.8</div>
     </main>
   </body>
 </html>

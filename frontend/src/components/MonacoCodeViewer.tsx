@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import Editor from "@monaco-editor/react";
+import Editor, { loader } from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import type { CodeJumpRequest, ViewerRange, ViewerSelection } from "./CodeViewer";
+import { DIRECTION_EDITOR_THEME, registerDirectionEditorTheme } from "../desktop/directionEditorTheme";
+
+loader.config({ paths: { vs: new URL(import.meta.env.DEV ? '/monaco/vs' : './monaco/vs', document.baseURI).href } });
 
 type Props = {
   path: string | null;
@@ -31,7 +34,7 @@ function saveCodeFontSize(size: number) {
 }
 
 function currentEditorTheme() {
-  return document.documentElement.dataset.theme === "dark" ? "vs-dark" : "vs";
+  return document.documentElement.dataset.theme === "dark" ? DIRECTION_EDITOR_THEME : "vs";
 }
 
 export default function MonacoCodeViewer({
@@ -123,5 +126,5 @@ export default function MonacoCodeViewer({
     });
   };
 
-  return <div className="viewer code-viewer"><div className="viewer-header"><span>{path ?? "代码"}</span><strong>{language}</strong></div><Editor height="100%" language={language} value={content} theme={editorTheme} onMount={handleMount} options={{ readOnly: true, minimap: { enabled: false }, fontSize: codeFontSize, mouseWheelZoom: true, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, renderValidationDecorations: "off", quickSuggestions: false, suggestOnTriggerCharacters: false }} /></div>;
+  return <div className="viewer code-viewer"><div className="viewer-header"><span>{path ?? "代码"}</span><strong>{language}</strong></div><Editor height="100%" language={language} value={content} theme={editorTheme} beforeMount={registerDirectionEditorTheme} onMount={handleMount} options={{ readOnly: true, minimap: { enabled: false }, fontSize: codeFontSize, mouseWheelZoom: true, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, renderValidationDecorations: "off", quickSuggestions: false, suggestOnTriggerCharacters: false }} /></div>;
 }

@@ -1,0 +1,241 @@
+/* Direction C's shared desktop chrome. Keep Android's separate entry untouched.
+   Set tokens at the document boundary too: floating menus and detached readers
+   must not fall back to the release application's glass/green theme. */
+html:not(.platform-android)[data-theme] {
+  color-scheme: dark;
+  --dir-white: #f4fbff;
+  --dir-ice: #8ce9ff;
+  --dir-ink: #031a3a;
+  --dir-display: 'Barlow Condensed', sans-serif;
+  --apple-canvas: #031a3a;
+  --apple-canvas-top: #041d43;
+  --apple-sidebar: #041d43;
+  --apple-toolbar: #041d43;
+  --apple-surface: #041d43;
+  --apple-surface-raised: #082b5b;
+  --apple-surface-muted: #05295a;
+  --apple-surface-sunken: #021731;
+  --apple-fill: #0b3768;
+  --apple-fill-hover: #125080;
+  --apple-separator: #275379;
+  --apple-separator-strong: #5488ab;
+  --apple-text: #f2faff;
+  --apple-text-secondary: #bddcec;
+  --apple-text-tertiary: #91b9d5;
+  --apple-blue: #8ce9ff;
+  --apple-blue-hover: #b5f3ff;
+  --apple-blue-soft: #10416c;
+  --apple-green: #8ee5c1;
+  --apple-red: #ff9aaa;
+  --apple-orange: #ffd08b;
+  --apple-accent-secondary: #a9c8ff;
+  --apple-code-bg: #06192d;
+  --apple-code-border: #24405a;
+  --apple-code-text: #d8e6f1;
+  --apple-inline-code-bg: #113450;
+  --apple-inline-code-text: #bceeff;
+  --apple-radius: 0px;
+  --apple-radius-sm: 0px;
+  --apple-inner-highlight: inset 0 0 0 transparent;
+  --apple-glass-border: #275379;
+  --apple-shadow-xs: none;
+  --apple-shadow-sm: none;
+  --apple-shadow-md: 4px 4px 0 #02152f;
+  --apple-shadow-lg: 8px 8px 0 #02152f;
+  --apple-shadow-popover: 8px 8px 0 #02152f;
+  --apple-shadow-sheet: 8px 8px 0 #02152f;
+  --cc-text: var(--apple-text);
+  --cc-text-secondary: var(--apple-text-secondary);
+  --cc-border: var(--apple-separator);
+  --cc-hover: var(--apple-fill-hover);
+  --cc-surface: var(--apple-surface);
+  --cc-surface-secondary: var(--apple-surface-muted);
+  font-family: 'Noto Sans SC', 'Segoe UI', sans-serif;
+}
+
+html:not(.platform-android) .direction-app {
+  color: var(--apple-text);
+  background: var(--dir-ink);
+  --surface-base: var(--apple-surface);
+  --surface-raised: var(--apple-surface-raised);
+  --border-subtle: var(--apple-separator);
+  --accent: var(--dir-ice);
+  --text-primary: var(--apple-text);
+  --text-secondary: var(--apple-text-secondary);
+  --shadow-sm: none;
+  --shadow-md: var(--apple-shadow-md);
+  --surface-canvas: var(--dir-ink);
+  --surface-1: var(--apple-surface);
+  --surface-2: var(--apple-surface-muted);
+  --surface-3: var(--apple-surface-sunken);
+  --surface-hover: var(--apple-fill-hover);
+  --accent-soft: var(--apple-blue-soft);
+  --shadow-1: none;
+  --code-bg: var(--apple-code-bg);
+  --warning-text: var(--apple-orange);
+  --text-tertiary: var(--apple-text-tertiary);
+}
+
+/* Utility views and anchored menus use the same flat, high-contrast chrome. */
+html:not(.platform-android) .direction-app .call-guide-viewer:not(:has(.call-guide-notice)) { grid-template-rows: auto minmax(0, 1fr); }
+html:not(.platform-android) .direction-app :is(.call-guide-route,.call-guide-code,.pane-workspace-menu,.teaching-rationale-popover) { border-radius: 0; box-shadow: none; backdrop-filter: none; }
+html:not(.platform-android) .direction-app :is(.call-guide-detail-heading button,.call-guide-stepper button,.call-guide-explain,.term-feedback-action) { border: 1px solid #5488ab; background: #0b3768; color: #d7efff; font: inherit; font-size: 12px; cursor: pointer; }
+html:not(.platform-android) .direction-app :is(.call-guide-detail-heading button,.call-guide-stepper button,.call-guide-explain,.term-feedback-action):hover:not(:disabled) { color: #031a3a; background: #8ce9ff; }
+html:not(.platform-android) .direction-app :is(.call-guide-stepper button,.term-feedback-action):disabled { opacity: .45; cursor: default; }
+html:not(.platform-android) .direction-app .pane-workspace-menu { background: #041d43; border-color: #5488ab; border-top: 2px solid #8ce9ff; box-shadow: 5px 5px 0 #02152f; }
+html:not(.platform-android) .direction-app .pane-workspace-menu button.danger { color: #ff9aaa; }
+html:not(.platform-android) .direction-app .teaching-rationale-popover { background: #041d43; border-color: #5488ab; }
+html:not(.platform-android) .direction-overlays :is(.context-file-picker-search,.context-file-picker-list,.picker-current-badge,.outline-question-multi-hint,.outline-questionnaire-progress-track,.outline-question-option.multi .outline-question-option-glyph) { border-radius: 0; box-shadow: none; }
+html:not(.platform-android) .direction-overlays .context-file-picker-list { max-height: none; min-height: 0; }
+html:not(.platform-android) .direction-overlays .context-file-picker-search { background: #021731; border-color: #5488ab; color: #bddcec; }
+html:not(.platform-android) .direction-overlays .context-file-picker-search:focus-within { border-color: #8ce9ff; outline: 2px solid #8ce9ff; outline-offset: 2px; box-shadow: none; }
+html:not(.platform-android) .direction-overlays .context-file-picker-search input { background: transparent; border: 0; outline: none; box-shadow: none; }
+html:not(.platform-android) .direction-overlays .context-file-picker-item { border-color: #275379; }
+html:not(.platform-android) .direction-overlays .context-file-picker-item.selected :is(.picker-file-name,.picker-file-path) { color: #031a3a; }
+html:not(.platform-android) .direction-overlays .outline-questionnaire-skip.link-button { border: 0; background: transparent; color: #bddcec; cursor: pointer; }
+html:not(.platform-android) .direction-overlays .outline-questionnaire-skip.link-button:hover { color: #8ce9ff; }
+html:not(.platform-android) .direction-app :is(.term-action-popover,.term-feedback-popover) { width: min(360px, calc(100vw - 24px)); max-height: calc(100dvh - 64px); overflow: auto; overflow-wrap: anywhere; }
+html:not(.platform-android) .direction-app .term-feedback-popover { padding: 16px; font-size: 13px; line-height: 1.6; }
+html:not(.platform-android) .direction-app .term-feedback-header { display: flex; align-items: flex-start; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid #5488ab; }
+html:not(.platform-android) .direction-app .term-feedback-header strong { flex: 1; min-width: 0; color: #8ce9ff; }
+html:not(.platform-android) .direction-app :is(.term-feedback-header,.term-action-popover > header) .icon-button { flex-shrink: 0; }
+html:not(.platform-android) .direction-app .term-feedback-definition { color: #bddcec; max-height: 32dvh; overflow: auto; }
+html:not(.platform-android) .direction-app .term-feedback-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+html:not(.platform-android) .direction-app .term-feedback-action { min-height: 34px; padding: 6px 12px; }
+html:not(.platform-android) .direction-app .term-feedback-popover .success { color: #8ee5c1; }
+html:not(.platform-android) .direction-app .term-feedback-popover .error { color: #ff9aaa; }
+
+/* Application and detached-window title bars share the same identity. */
+html:not(.platform-android) .direction-app .apple-titlebar {
+  background: #02152f;
+  color: #bddcec;
+  border-bottom: 1px solid #275379;
+  backdrop-filter: none;
+}
+.direction-titlebar-brand {
+  position: absolute;
+  left: 14px;
+  top: 0;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  color: #e3f4ff;
+  font: 700 13px var(--dir-display);
+  letter-spacing: .08em;
+}
+.direction-titlebar-brand span { color: #8ce9ff; }
+html:not(.platform-android) .direction-app .apple-titlebar-actions button { border-radius: 0; color: inherit; }
+html:not(.platform-android) .direction-app .apple-titlebar-actions button:hover { background: #8ce9ff; color: #031a3a; }
+html:not(.platform-android) .direction-app .apple-titlebar-actions .apple-titlebar-close:hover { background: #a52d45; color: white; }
+
+/* A single visual and stacking contract for every modal, including legacy
+   components whose actual class names differ from their component names. */
+html:not(.platform-android) .direction-overlays :is(.modal-backdrop,.command-palette-layer,.gesture-guide-layer) {
+  inset: var(--dir-window-height) 0 0;
+  padding: 24px;
+  background: #010f32db;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  z-index: var(--dir-layer-modal);
+}
+html:not(.platform-android) .direction-overlays .modal-backdrop:has(.app-dialog:not(.context-file-picker-dialog)) { z-index: var(--dir-layer-confirm); }
+html:not(.platform-android) .direction-overlays :is(.app-dialog,.settings-modal,.command-palette,.gesture-guide-card,.learner-profile-sheet) {
+  border: 1px solid #275379;
+  border-top: 3px solid #8ce9ff;
+  border-radius: 0;
+  color: var(--apple-text);
+  background: #041d43;
+  box-shadow: 8px 8px 0 #02152f;
+  max-height: calc(100dvh - var(--dir-window-height) - 48px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: direction-panel-in 220ms ease-out both;
+}
+html:not(.platform-android) .direction-overlays :is(.modal-title,.app-dialog-title,.learner-profile-header,.gesture-guide-card > header,.command-palette-search) {
+  color: #f4fbff;
+  background: #082b5b;
+  border-bottom: 1px solid #275379;
+}
+html:not(.platform-android) .direction-overlays :is(.settings-actions,.app-dialog-actions,.gesture-guide-card > footer) {
+  border-top: 1px solid #275379;
+  background: #05295a;
+  flex-shrink: 0;
+}
+html:not(.platform-android) .direction-app :is(button,input,textarea,select,kbd) { border-radius: 0; }
+html:not(.platform-android) .direction-app :is(input,textarea,select) { accent-color: #8ce9ff; }
+html:not(.platform-android) .direction-app :is(button,input,textarea,select,summary):focus-visible { outline: 2px solid #8ce9ff; outline-offset: 2px; }
+html:not(.platform-android) .direction-app :is(.primary-button,.apple-primary-button) { color: #031a3a; background: #8ce9ff; border-color: #8ce9ff; box-shadow: none; }
+html:not(.platform-android) .direction-app :is(.secondary-button,.apple-secondary-button) { color: #d7efff; background: #0b3768; border-color: #5488ab; box-shadow: none; }
+html:not(.platform-android) .direction-app :is(.primary-button,.secondary-button,.apple-primary-button,.apple-secondary-button):hover:not(:disabled) { color: #031a3a; background: #f4fbff; border-color: #f4fbff; }
+html:not(.platform-android) .direction-app :is(.primary-button,.secondary-button).danger { color: #ffdce3; background: #64243c; border-color: #b95872; }
+html:not(.platform-android) .direction-app :is(.primary-button,.secondary-button).danger:hover:not(:disabled) { color: white; background: #963550; border-color: #ff9aaa; }
+
+/* Settings previously kept hard-coded white cards and almost-black headings. */
+html:not(.platform-android) .direction-overlays .settings-section { padding: 18px 20px 6px; border-color: #275379; }
+html:not(.platform-android) .direction-overlays .settings-section h3 { color: #8ce9ff; font-size: 13px; letter-spacing: .04em; }
+html:not(.platform-android) .direction-overlays .settings-toggle-card { border: 1px solid #275379; border-radius: 0; background: #05295a; }
+html:not(.platform-android) .direction-overlays .settings-toggle-card strong { color: #f4fbff; }
+html:not(.platform-android) .direction-overlays :is(.settings-toggle-card small,.settings-grid label small,.settings-note,.settings-platform-note) { color: #bddcec; }
+html:not(.platform-android) .direction-overlays .settings-platform-note { background: #05295a; border-radius: 0; border-left: 2px solid #8ce9ff; }
+html:not(.platform-android) .direction-overlays :is(.settings-grid input:not([type=checkbox]),.settings-grid select,.app-dialog-field input,.prompt-editor-textarea) { background: #021731; color: #e6f4ff; border-color: #5488ab; box-shadow: none; }
+html:not(.platform-android) .direction-overlays :is(.prompt-tabs-shell,.prompt-tabs) { background: #031a3a; border-color: #275379; border-radius: 0; box-shadow: none; }
+html:not(.platform-android) .direction-overlays :is(.prompt-tab,.learner-profile-tabs button) { border-radius: 0; box-shadow: none; }
+html:not(.platform-android) .direction-overlays :is(.prompt-tab.active,.learner-profile-tabs button.active) { background: #f4fbff; color: #031a3a; box-shadow: none; }
+html:not(.platform-android) .direction-overlays :is(.prompt-preview,.prompt-preview-message,.prompt-history,.prompt-history-row,.prompt-validation,.prompt-placeholders code) { border-radius: 0; border-color: #275379; }
+
+/* Learning record: a framed drawer and flat evidence cards. */
+html:not(.platform-android) .direction-overlays .learner-profile-backdrop { display: flex; justify-content: flex-end; align-items: stretch; }
+html:not(.platform-android) .direction-overlays .learner-profile-sheet { width: min(760px,100%); height: 100%; min-height: 0; }
+html:not(.platform-android) .direction-overlays .learner-profile-header { min-height: 76px; }
+html:not(.platform-android) .direction-overlays .learner-profile-tabs { display: flex; max-width: calc(100% - 36px); overflow-x: auto; flex-shrink: 0; padding: 0; gap: 4px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+html:not(.platform-android) .direction-overlays .learner-profile-tabs button { min-height: 36px; background: #0b3768; }
+html:not(.platform-android) .direction-overlays .learner-profile-tabs button.active { background: #f4fbff; }
+html:not(.platform-android) .direction-app :is(.learner-profile-icon,.learner-survey-card,.learner-preference-row,.learner-term-diagnostics,.domain-profile-row,.concept-state-row,.model-call-row,.learner-evidence-card,.learner-evidence-summary article,.domain-boundaries > div,.domain-rank-badge,.qa-readonly-note,.assistant-survey-card,.assistant-diagnostic-card,.diagnostic-result,.teaching-rationale,.teaching-continuity-card) { border-radius: 0; box-shadow: none; }
+html:not(.platform-android) .direction-overlays :is(.learner-preference-hint,.learner-preference-row small) { color: #bddcec; }
+
+/* Search, questionnaire, context picker and terminology menus. */
+html:not(.platform-android) .direction-overlays :is(.command-palette-results button,.command-section,.command-palette kbd,.context-file-picker-item,.context-file-picker-filters,.context-file-picker-summary,.outline-question-card,.outline-question-option,.outline-question-index,.app-dialog-choice) { border-radius: 0; box-shadow: none; }
+html:not(.platform-android) .direction-overlays :is(.command-palette-results button.active,.outline-question-option.selected,.context-file-picker-item.selected) { background: #e6f6ff; color: #031a3a; border-color: #8ce9ff; }
+html:not(.platform-android) .direction-overlays .command-palette-results button.active :is(small,.command-section,kbd) { color: #275379; }
+html:not(.platform-android) .direction-overlays .outline-question-option.selected :is(.outline-question-option-label,.outline-question-option-glyph) { color: #031a3a; }
+html:not(.platform-android) .direction-overlays .context-file-picker-dialog { max-height: none; height: 100%; }
+html:not(.platform-android) .direction-app :is(.term-action-layer,.preferences-layer) { z-index: var(--dir-layer-modal); }
+html:not(.platform-android) .direction-app :is(.term-action-popover,.term-feedback-popover,.selection-quick-bar) { border: 1px solid #5488ab; border-top: 2px solid #8ce9ff; border-radius: 0; color: #f4fbff; background: #05295a; box-shadow: 5px 5px 0 #02152f; backdrop-filter: none; -webkit-backdrop-filter: none; }
+html:not(.platform-android) .direction-app .term-action-list > button:hover { background: #10416c; }
+html:not(.platform-android) .direction-app .gesture-guide-card { overflow: auto; }
+html:not(.platform-android) .direction-app .gesture-guide-grid .gesture-guide-center { background: #10416c; }
+
+/* Reading utility surfaces retain typography and canvas geometry. */
+html:not(.platform-android) .direction-app :is(.viewer-header,.reader-learning-toolbar,.knowledge-inspector,.knowledge-search,.knowledge-search-results,.call-guide-section,.call-guide-card,.continue-learning-card,.assistant-empty-card,.selection-card,.qa-thread-group) { border-radius: 0; box-shadow: none; }
+html:not(.platform-android) .direction-app :is(.knowledge-search,.knowledge-search-results,.knowledge-inspector) { background: #041d43; border-color: #275379; color: #d8e6f1; }
+html:not(.platform-android) .direction-app .generation-sheet { box-shadow: 8px 8px 0 #02152f; }
+html:not(.platform-android) .direction-app :is(.generation-sheet-status,.generation-sheet-progress,.generation-sheet-progress i,.learning-progress-track,.apple-feedback-progress,.apple-feedback-progress i) { border-radius: 0; }
+html:not(.platform-android) .direction-app .apple-feedback { border-radius: 0; box-shadow: 4px 4px 0 #02152f; }
+html:not(.platform-android) .direction-app .apple-feedback.success { color: #123c36; background: #c7f3e4; }
+html:not(.platform-android) .direction-app .apple-feedback.busy { color: #031a3a; background: #e6f6ff; }
+html:not(.platform-android) .direction-app :is(.permission-notice-banner,.data-transfer-lock-card,.desktop-import-drop,.gesture-hint) { border: 1px solid #5488ab; border-radius: 0; background: #05295a; color: #f4fbff; box-shadow: 6px 6px 0 #02152f; backdrop-filter: none; }
+html:not(.platform-android) .direction-app .data-transfer-lock { background: #010f32e8; backdrop-filter: none; }
+
+/* Detached documents used to bypass Direction C altogether. */
+html:not(.platform-android) .direction-detached { grid-template-rows: auto minmax(0,1fr); background: #031a3a; padding: var(--dir-window-height) 20px 20px; }
+html:not(.platform-android) .direction-detached .detached-document-header { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; column-gap: 18px; min-height: 94px; padding: 18px 4px; border: 0; background: transparent; }
+.direction-detached-heading { grid-row: 1 / 3; color: #8ce9ff; font: 800 italic 38px/.9 var(--dir-display); letter-spacing: -.02em; }
+html:not(.platform-android) .direction-detached .detached-document-header strong { font-size: 15px; color: #e6f6ff; }
+html:not(.platform-android) .direction-detached .detached-document-header > span:last-child { color: #91b9d5; font-size: 12px; }
+html:not(.platform-android) .direction-detached .detached-document-body { min-height: 0; border: 1px solid #275379; border-top: 3px solid #8ce9ff; background: #081d32; box-shadow: 6px 6px 0 #02152f; }
+.direction-window-loading { height: 100dvh; display: grid; place-content: center; gap: 12px; background: #031a3a; color: #bddcec; }
+.direction-window-loading strong { color: #8ce9ff; font: 800 italic 48px var(--dir-display); }
+html:not(.platform-android) .direction-app .context-file-picker-search input:focus-visible { outline: none; box-shadow: none; }
+html:not(.platform-android) .direction-app .picker-checkbox { border-radius: 0; }
+html:not(.platform-android) .direction-app .picker-checkbox.checked { color: #031a3a; }
+
+@media (max-height: 780px) {
+  html:not(.platform-android) .direction-overlays :is(.modal-backdrop,.command-palette-layer,.gesture-guide-layer) { padding: 16px; }
+  html:not(.platform-android) .direction-overlays :is(.app-dialog,.settings-modal,.command-palette,.gesture-guide-card,.learner-profile-sheet) { max-height: calc(100dvh - var(--dir-window-height) - 32px); }
+  html:not(.platform-android) .direction-overlays .context-file-picker-dialog { max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not(.platform-android) .direction-overlays :is(.app-dialog,.settings-modal,.command-palette,.gesture-guide-card,.learner-profile-sheet) { animation: none; }
+}

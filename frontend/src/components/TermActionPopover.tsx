@@ -1,6 +1,8 @@
 import { BookOpen, CircleHelp, EyeOff, Sparkles, X } from "lucide-react";
 import type { DocumentTerm } from "../api/client";
 import { isAndroidRuntime } from "../platform/runtime";
+import { useRef } from "react";
+import { usePopoverPosition } from "../hooks/usePopoverPosition";
 
 type Props = {
   term: DocumentTerm;
@@ -22,6 +24,8 @@ export default function TermActionPopover({
   onClose,
 }: Props) {
   const android = isAndroidRuntime();
+  const popoverRef = useRef<HTMLElement | null>(null);
+  usePopoverPosition(popoverRef, position, !android);
   const style = android || !position
     ? undefined
     : {
@@ -31,6 +35,7 @@ export default function TermActionPopover({
   return (
     <div className={`term-action-layer ${android ? "android" : "desktop"}`} onMouseDown={onClose}>
       <section
+        ref={popoverRef}
         className="term-action-popover"
         style={style}
         role="dialog"

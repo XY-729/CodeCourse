@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, Bot, Edit3, FileText, Loader2, Search, Send, Star, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, Edit3, FileText, Loader2, MessageCircle, Search, Send, Star, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, QAThreadSummary, SourceType, TeachingHandoff, TeachingNextAction } from "../api/client";
 import { DeferredLiftInput, DeferredLiftTextarea } from "./DeferredLiftText";
@@ -40,6 +40,7 @@ type Props = {
   historyQuery: string;
   favoriteOnly: boolean;
   selectedRecord: QARecord | null;
+  followUpRecord: QARecord | null;
   selectedRecordReadOnly?: boolean;
   surveyCandidate?: DynamicSurveyCandidate | null;
   diagnosticItem?: DiagnosticItem | null;
@@ -62,6 +63,7 @@ type Props = {
   resetToken?: unknown;
   onFavoriteOnlyChange: (value: boolean) => void;
   onSelectRecord: (record: QARecord) => void;
+  onFollowUp: (record: QARecord) => void;
   onOpenRecord: (record: QARecord) => void;
   onDeleteRecord?: (record: QARecord) => void;
   onRenameRecord: (record: QARecord) => void;
@@ -103,9 +105,9 @@ function recordTitle(record: QARecord) {
 export default function ExplainPanel(props: Props) {
   const {
     selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, questionInput, loading, loadingLabel, streamContent, history, threads = [], continuity = null, historyQuery, favoriteOnly,
-    selectedRecord, selectedRecordReadOnly = false, surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError, upperTab, mobileMode = false, embeddedMobileSheet = false, onUpperTabChange, knowledgeContent,
+    selectedRecord, followUpRecord, selectedRecordReadOnly = false, surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError, upperTab, mobileMode = false, embeddedMobileSheet = false, onUpperTabChange, knowledgeContent,
     knowledgeDisabled, onQuestionChange, onSelectionTextChange, onClearSelection,
-    onAsk, onNewConversation, onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord,
+    onAsk, onNewConversation, onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord, onFollowUp,
     onOpenRecord, onDeleteRecord, onRenameRecord, onToggleFavorite, onResumeContinuity = () => {}, onOpenContinuitySource = () => {}, onDismissContinuity = () => {}, onTeachingNextAction = () => {}, onOpenSettings,
     onAnswerSurvey, onDismissSurvey, onDisableSurveys,
     onAnswerDiagnostic, onDismissDiagnostic, onFlagDiagnostic, onClose,
@@ -156,6 +158,7 @@ export default function ExplainPanel(props: Props) {
         <Trash2 size={14} className="history-delete" role="button" tabIndex={0} aria-label="删除记录" onClick={(event) => { event.stopPropagation(); onDeleteRecord?.(record); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onDeleteRecord?.(record); } }} />
         <Edit3 size={14} className="history-rename" role="button" tabIndex={0} aria-label="重命名记录" onClick={(event) => { event.stopPropagation(); onRenameRecord(record); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onRenameRecord(record); } }} />
         <Star size={14} className={record.favorite ? "history-star starred" : "history-star"} role="button" tabIndex={0} aria-label={record.favorite ? "取消收藏" : "收藏"} onClick={(event) => { event.stopPropagation(); onToggleFavorite(record); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onToggleFavorite(record); } }} />
+        <MessageCircle size={14} className="history-follow-up" role="button" tabIndex={0} aria-label={`追问 ${recordTitle(record)}`} onClick={(event) => { event.stopPropagation(); if (!loading) onFollowUp(record); }} onKeyDown={(event) => { if (event.key === "Enter" && !loading) { event.stopPropagation(); onFollowUp(record); } }} />
       </button>
     );
   }
@@ -372,21 +375,21 @@ export default function ExplainPanel(props: Props) {
 
         <div className="qa-section ask-box">
           <div className="ask-box-toolbar">
-            <span>{selectedRecord ? `继续：${recordTitle(selectedRecord)}` : "新问题"}</span>
-            {selectedRecord ? (
-              <button className="assistant-new-question-button" type="button" onClick={onNewConversation}>
-                开始新问题
+            <span>{followUpRecord ? `正在追问：${recordTitle(followUpRecord)}` : "新问题"}</span>
+            {followUpRecord ? (
+              <button className="assistant-new-question-button" type="button" onClick={onNewConversation} disabled={loading}>
+                取消追问
               </button>
             ) : null}
           </div>
-          {selectedRecordReadOnly ? <div className="qa-readonly-note">这是其他项目中的此前解释。当前以只读方式打开。</div> : null}
+          {selectedRecordReadOnly ? <div className="qa-readonly-note">这是其他项目中的此前解释，只能查看；你仍可发起新的独立问题。</div> : null}
           <DeferredLiftTextarea
             value={questionInput ?? question}
             onLift={onQuestionChange}
             onDraftChange={setQuestionDraft}
             resetToken={resetToken}
-            placeholder={selectedRecord ? `继续追问"${recordTitle(selectedRecord)}"` : "问项目、文件、课件或选中内容"}
-            disabled={loading || selectedRecordReadOnly}
+            placeholder="请输入问题"
+            disabled={loading}
             aria-label="输入问题"
             onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && questionDraft.trim()) { event.preventDefault(); onAsk(questionDraft.trim()); } }}
           />
@@ -403,8 +406,8 @@ export default function ExplainPanel(props: Props) {
               <button type="button" className="secondary-button compact" onClick={onOpenSettings}>配置模型</button>
             </div>
           )}
-          <button className="primary-button" onClick={() => { if (questionDraft.trim()) onAsk(questionDraft.trim()); }} disabled={loading || selectedRecordReadOnly || !modelReady || !questionDraft.trim()}>
-            {loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}{loading ? (loadingLabel || "生成中...") : selectedRecord ? "继续追问" : "询问"}
+          <button className="primary-button" onClick={() => { if (questionDraft.trim()) onAsk(questionDraft.trim()); }} disabled={loading || !modelReady || !questionDraft.trim()}>
+            {loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}{loading ? (loadingLabel || "生成中...") : followUpRecord ? "继续追问" : "询问"}
           </button>
         </div>
       </section> : null}

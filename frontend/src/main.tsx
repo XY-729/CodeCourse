@@ -22,6 +22,9 @@ import "./styles/call-guide.css";
 import "./desktop/direction.css";
 import "./desktop/direction-surfaces.css";
 import "./desktop/direction-reader.css";
+import "./desktop/direction-ask.css";
+import "./desktop/direction-interface.css";
+import "./desktop/direction-generation.css";
 import "@fontsource/barlow-condensed/700.css";
 import "@fontsource/barlow-condensed/800-italic.css";
 import "@fontsource/noto-sans-sc/400.css";
@@ -47,7 +50,7 @@ const DetachedDocumentWindow = lazy(() => import("./components/DetachedDocumentW
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     {detachedWindow
-      ? <Suspense fallback={<div className="viewer-loading">正在打开文档…</div>}><DetachedDocumentWindow /></Suspense>
+      ? <Suspense fallback={<div className="direction-window-loading"><strong>READ</strong><span>正在打开文档…</span></div>}><DetachedDocumentWindow /></Suspense>
       : <><App /><GestureLayer /></>}
   </React.StrictMode>,
 );

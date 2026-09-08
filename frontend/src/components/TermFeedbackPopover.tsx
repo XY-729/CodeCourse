@@ -5,6 +5,8 @@
  * All operations are idempotent (duplicate clicks = no-op).
  */
 import { useState, useEffect, useRef, type CSSProperties } from "react";
+import { usePopoverPosition } from "../hooks/usePopoverPosition";
+import { isAndroidRuntime } from "../platform/runtime";
 import type { PersonalizationMastery, PersonalizationMarkResult } from "../api/client";
 import {
   markConceptKnown,
@@ -49,6 +51,7 @@ export default function TermFeedbackPopover({
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const popoverRef = useRef<HTMLDivElement>(null);
+  usePopoverPosition(popoverRef, position, !isAndroidRuntime());
 
   // Auto-dismiss on outside click
   useEffect(() => {
@@ -125,7 +128,7 @@ export default function TermFeedbackPopover({
     position: "fixed",
     left: Math.max(12, Math.min(position.x, window.innerWidth - 272)),
     top: Math.max(12, Math.min(position.y, window.innerHeight - 220)),
-    zIndex: 1000,
+    zIndex: "var(--dir-layer-modal, 1000)",
     pointerEvents: "auto",
   };
 

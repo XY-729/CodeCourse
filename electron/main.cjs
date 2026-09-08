@@ -98,13 +98,13 @@ function addBundledGitToPath(env) {
 }
 
 function frontendIndex() {
-  return path.join(projectRoot(), "frontend", "dist", "index.html");
+  return path.join(projectRoot(), "frontend", "dist-desktop", "index.html");
 }
 
 function appIconPath() {
   return app.isPackaged
     ? path.join(process.resourcesPath, "icon.ico")
-    : path.join(projectRoot(), "resources", "icon.ico");
+    : path.join(projectRoot(), "resources", "direction-c", "icon.ico");
 }
 
 function windowStatePath() {
@@ -117,7 +117,8 @@ function diagnosticLogPath() {
 
 function diagnosticLog(scope, value) {
   try {
-    const raw = value instanceof Error ? `${value.name}: ${value.message}\n${value.stack || ""}` : String(value || "");
+    const raw = value instanceof Error ? `${value.name}: ${value.message}\n${value.stack || ""}`
+      : typeof value === "object" ? JSON.stringify(value) : String(value || "");
     const safe = raw
       .replace(/(api[_ -]?key|authorization)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
       .slice(0, 12_000);
@@ -337,7 +338,8 @@ function createSplashWindow() {
     show: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0b1422" : "#f3f7f5",
+    // Direction C owns its startup surface; keep it dark before the renderer exists.
+    backgroundColor: "#031a3a",
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
   splashWindow.loadFile(path.join(__dirname, "splash.html"));
@@ -487,7 +489,7 @@ function createWindow() {
     icon: appIconPath(),
     frame: false,
     titleBarStyle: "hidden",
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1c1c1e" : "#f5f5f7",
+    backgroundColor: "#031a3a",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -510,7 +512,6 @@ function createWindow() {
     if (window.isDestroyed()) return;
     void window.webContents.executeJavaScript(`(() => ({
       ready: document.readyState,
-      root: document.getElementById('root')?.innerHTML?.slice(0, 1200) || '',
       rootRect: (() => { const r = document.getElementById('root')?.getBoundingClientRect(); return r ? { width: r.width, height: r.height } : null; })(),
       bodyClass: document.body.className,
       htmlClass: document.documentElement.className,
@@ -534,9 +535,7 @@ function createWindow() {
   window.once("ready-to-show", () => {
     revealWindow();
   });
-  // Some Windows GPU/transparent-window combinations never emit
-  // ready-to-show even though React has rendered.  Reveal on load and keep a
-  // bounded fallback so the user never gets stuck at a blank splash window.
+  // Reveal on load as well as first paint; a slow paint should not hide the UI.
   window.webContents.once("did-finish-load", () => setTimeout(revealWindow, 80));
   setTimeout(revealWindow, 4000);
   window.on("move", () => scheduleWindowStateSave(window));
@@ -589,7 +588,7 @@ function createWindow() {
   } else {
     const indexPath = frontendIndex();
     if (!fs.existsSync(indexPath)) {
-      dialog.showErrorBox("前端未构建", "未找到 frontend/dist/index.html，请先运行 npm --prefix frontend run build。");
+      dialog.showErrorBox("前端未构建", "未找到 frontend/dist-desktop/index.html，请先运行 npm --prefix frontend run build。");
       app.quit();
       return;
     }
@@ -617,7 +616,7 @@ function createDetachedWindow(payload) {
     icon: appIconPath(),
     frame: false,
     titleBarStyle: "hidden",
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#08111f" : "#edf4f1",
+    backgroundColor: "#031a3a",
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

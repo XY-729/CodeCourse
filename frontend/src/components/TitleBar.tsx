@@ -24,6 +24,7 @@ export default function TitleBar() {
   return (
     <div className="apple-titlebar">
       <div className="apple-titlebar-drag" />
+      <div className="direction-titlebar-brand" aria-hidden="true">CODECOURSE <span>DIRECTION C</span></div>
       <div className="apple-titlebar-actions">
         <button onClick={() => api.windowMinimize()} title="最小化" aria-label="最小化">
           <Minus size={13} strokeWidth={2} />
