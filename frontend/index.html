@@ -32,15 +32,17 @@
           : window.matchMedia("(prefers-color-scheme: dark)").matches
             ? "dark"
             : "light";
-        var bg = theme === "dark" ? "#08111f" : "#edf4f1";
         var androidWebView = /\bAndroid\b/i.test(navigator.userAgent)
           && (/\bwv\b/i.test(navigator.userAgent) || location.hostname === "localhost");
+        var bg = androidWebView
+          ? (theme === "dark" ? "#08111f" : "#edf4f1")
+          : (theme === "dark" ? "#141725" : "#f0f1f8");
         if (androidWebView) document.documentElement.classList.add("platform-android");
         document.documentElement.dataset.theme = theme;
         document.documentElement.style.backgroundColor = bg;
         document.body.style.backgroundColor = bg;
         var mc = document.querySelector('meta[name="theme-color"]');
-        if (mc) mc.setAttribute("content", theme === "dark" ? "#08111f" : "#edf4f1");
+        if (mc) mc.setAttribute("content", bg);
       })();
     </script>
     <div id="root"><div class="android-startup-shell" aria-label="CodeCourse 正在启动"><header>CodeCourse <small id="android-startup-project"></small></header><main><i aria-hidden="true"></i></main><nav></nav></div></div>

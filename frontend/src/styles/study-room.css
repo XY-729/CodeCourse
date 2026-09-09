@@ -1,0 +1,314 @@
+/* Personal learning island. Desktop scope protects the native Android reading layout.
+   This is the final desktop theme layer; legacy shell selectors remain API-compatible. */
+html:not(.platform-android) {
+  --apple-canvas: #f0f1f8;
+  --apple-canvas-top: #f8f9fd;
+  --apple-sidebar: #f5f6fc;
+  --apple-toolbar: #f8f9fd;
+  --apple-surface: #fff;
+  --apple-surface-raised: #fff;
+  --apple-surface-muted: #f5f6fb;
+  --apple-surface-sunken: #edeff7;
+  --apple-fill: #e9ecf5;
+  --apple-fill-hover: #e1e5f3;
+  --apple-text: #252a43;
+  --apple-text-secondary: #626a82;
+  --apple-text-tertiary: #747d95;
+  --apple-separator: #dfe3ee;
+  --apple-separator-strong: #c3cadc;
+  --apple-blue: #5556cf;
+  --apple-blue-hover: #4143b4;
+  --apple-blue-soft: #eaeafd;
+  --apple-green: #20765b;
+  --apple-code-bg: #f6f7fc;
+  --apple-code-border: #dfe3ef;
+  --apple-inline-code-bg: #eef0f9;
+  --apple-glass-border: #e2e5f0;
+  --apple-shadow-xs: 0 2px 6px #20284705;
+  --apple-shadow-sm: 0 4px 16px #20284708;
+  --apple-shadow-md: 0 8px 32px #20284710;
+  --apple-shadow-lg: 0 18px 64px #20284722;
+  --apple-inner-highlight: inset 0 1px 0 #ffffff70;
+  --apple-radius: 14px;
+  --apple-radius-sm: 9px;
+  --room-star: #93620a;
+  --room-star-bg: #fff0c8;
+  --room-peach: #ffeadb;
+  --room-on-accent: #fff;
+  --reader-font-size: 17px;
+  --reader-code-font-size: .88em;
+  --reader-line-height: 1.9;
+  --room-measure: 860px;
+}
+html:not(.platform-android)[data-theme="dark"] {
+  --apple-canvas: #141725;
+  --apple-canvas-top: #1a1e30;
+  --apple-sidebar: #1c2032;
+  --apple-toolbar: #181c2c;
+  --apple-surface: #202538;
+  --apple-surface-raised: #292f46;
+  --apple-surface-muted: #252b40;
+  --apple-surface-sunken: #181c2d;
+  --apple-fill: #30374d;
+  --apple-fill-hover: #3a425b;
+  --apple-text: #edf0fc;
+  --apple-text-secondary: #b2bad2;
+  --apple-text-tertiary: #9aa4bf;
+  --apple-separator: #353d56;
+  --apple-separator-strong: #505c7a;
+  --apple-blue: #b0acff;
+  --apple-blue-hover: #c7c4ff;
+  --apple-blue-soft: #383653;
+  --apple-green: #87dcb4;
+  --apple-code-bg: #191e2e;
+  --apple-code-border: #3c455f;
+  --apple-inline-code-bg: #343b54;
+  --apple-glass-border: #363f58;
+  --apple-shadow-xs: 0 2px 8px #0000000c;
+  --apple-shadow-sm: 0 4px 16px #00000018;
+  --apple-shadow-md: 0 8px 32px #00000028;
+  --apple-shadow-lg: 0 18px 64px #00000058;
+  --apple-inner-highlight: inset 0 1px 0 #ffffff05;
+  --room-star: #f3cb72;
+  --room-star-bg: #463b27;
+  --room-peach: #43352f;
+  --room-on-accent: #1c2032;
+}
+html:not(.platform-android) .app-shell:not(:has(.apple-titlebar)) { padding-top: 0; }
+html:not(.platform-android) .apple-titlebar { box-shadow: none; }
+html:not(.platform-android) .apple-toolbar {
+  min-height: 64px; height: auto; padding: 10px 20px; gap: 16px;
+  grid-template-columns: minmax(160px, 1fr) minmax(0, .9fr) auto;
+  box-shadow: none; border-bottom: 0; backdrop-filter: none;
+}
+html:not(.platform-android) .apple-project-switcher { height: 38px; max-width: 235px; font-size: 14px; gap: 10px; }
+html:not(.platform-android) .apple-project-switcher img { width: 29px; height: 29px; border-radius: 10px; }
+html:not(.platform-android) .apple-icon-button { min-width: 34px; width: 34px; height: 34px; }
+html:not(.platform-android) .apple-toolbar-button,
+html:not(.platform-android) .apple-search-button { height: 36px; font-size: 13px; }
+html:not(.platform-android) .apple-document-identity { flex-direction: column; align-items: center; gap: 3px; }
+html:not(.platform-android) .apple-document-identity strong { max-width: 100%; font-size: 13px; font-weight: 500; }
+html:not(.platform-android) .apple-document-identity span { font-size: 12px; color: var(--apple-text-secondary); }
+html:not(.platform-android) .apple-search-button kbd { font-size: 11px; }
+
+html:not(.platform-android) .workbench { padding: 0 14px 14px; gap: 0; background: var(--apple-canvas); }
+html:not(.platform-android) .navigation-panel { background: transparent; border: 0; box-shadow: none; backdrop-filter: none; animation: none; }
+html:not(.platform-android) .navigation-panel-header { padding: 8px 12px 8px 0; }
+html:not(.platform-android) .sidebar-scroll.compact { padding: 8px 12px 16px 0; }
+html:not(.platform-android) .navigation-segmented { border-radius: 12px; background: var(--apple-fill); }
+html:not(.platform-android) .navigation-segmented button { min-height: 34px; font-size: 13px; }
+html:not(.platform-android) .center-pane,
+html:not(.platform-android) .reader-workspace { min-width: 0; background: transparent; }
+html:not(.platform-android) .reader-pane { border: 1px solid var(--apple-separator); border-radius: 18px; overflow: hidden; box-shadow: var(--apple-shadow-sm); }
+html:not(.platform-android) .reader-pane.active { outline: none; box-shadow: var(--apple-shadow-sm); }
+html:not(.platform-android) .pane-tabs { min-height: 44px; padding: 6px 8px; background: var(--apple-surface-muted); box-shadow: none; border-bottom: 1px solid var(--apple-separator); }
+html:not(.platform-android) .pane-tab { border-radius: 9px; font-size: 13px; }
+html:not(.platform-android) .pane-tab-main { font-size: 13px; }
+html:not(.platform-android) .pane-name { display: none; }
+html:not(.platform-android) .sliding-selection-indicator { border-radius: 9px; box-shadow: var(--apple-shadow-xs); }
+html:not(.platform-android) .assistant-drawer { margin-left: 4px; border: 1px solid var(--apple-separator); border-radius: 18px; box-shadow: none; backdrop-filter: none; overflow: hidden; }
+html:not(.platform-android) .resize-handle { border-radius: 8px; background: transparent; }
+html:not(.platform-android) .resize-handle:hover { background: var(--apple-blue-soft); }
+html:not(.platform-android) .course-group-header { min-height: 34px; margin-top: 8px; color: var(--apple-text-secondary); font-size: 12px; }
+html:not(.platform-android) .course-row { min-height: 39px; border-radius: 10px; font-size: 13px; }
+html:not(.platform-android) .course-row.selected { color: var(--apple-blue); font-weight: 600; }
+html:not(.platform-android) .course-row-wrapper { position: relative; }
+html:not(.platform-android) .course-row-actions { position: absolute; right: 3px; z-index: 2; gap: 2px; padding: 2px; opacity: 0; pointer-events: none; border-radius: 8px; background: var(--apple-surface); box-shadow: var(--apple-shadow-xs); }
+html:not(.platform-android) .course-row-wrapper:hover .course-row-actions,
+html:not(.platform-android) .course-row-wrapper:focus-within .course-row-actions { opacity: 1; pointer-events: auto; }
+html:not(.platform-android) .course-row-wrapper .course-row-actions .icon-button.compact { width: 28px; height: 28px; opacity: 1; }
+html:not(.platform-android) .course-state.completed { color: var(--room-star); }
+html:not(.platform-android) .tree-row { min-height: 32px; font-size: 13px; }
+html:not(.platform-android) .study-island-heading { display: flex; align-items: center; gap: 0; padding: 6px 5px 16px; }
+html:not(.platform-android) .study-island-heading > div { flex: 1; min-width: 0; }
+html:not(.platform-android) .study-island-heading span { color: var(--apple-text-secondary); font-size: 10px; font-weight: 650; letter-spacing: .02em; white-space: nowrap; }
+html:not(.platform-android) .study-island-heading h2 { min-height: 0; border: 0; padding: 0; background: none; margin: 7px 0 0; font-size: 24px; letter-spacing: -.055em; font-weight: 750; color: var(--apple-text); white-space: nowrap; }
+.learning-island-art { width: 260px; height: 180px; color: var(--apple-blue); flex-shrink: 0; }
+.learning-island-art.is-small { width: 80px; height: 68px; margin-right: -6px; }
+html:not(.platform-android) .learning-empty-state { border: 1px solid var(--apple-separator); border-radius: 20px; margin: 0; background: var(--apple-surface); }
+html:not(.platform-android) .learning-empty-state h1 { margin-top: 14px; font-size: 30px; font-weight: 700; letter-spacing: -.04em; }
+html:not(.platform-android) .learning-empty-state p { font-size: 14px; line-height: 1.8; }
+html:not(.platform-android) .island-reader-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 36px 20px; color: var(--apple-text-secondary); }
+.island-reader-empty h2 { color: var(--apple-text); margin: 12px 0 0; font-size: 24px; }
+.island-reader-empty p { font-size: 14px; line-height: 1.8; }
+html:not(.platform-android) .continue-learning-card { margin: 0 0 14px; padding: 17px 14px 13px; border: 1px solid color-mix(in srgb, var(--apple-blue) 18%, var(--apple-separator)); border-radius: 16px; background: var(--apple-blue-soft); box-shadow: none; }
+html:not(.platform-android) .continue-learning-kicker { color: var(--apple-blue); font-size: 12px; }
+html:not(.platform-android) .continue-learning-copy strong { margin-top: 4px; font-size: 14px; }
+html:not(.platform-android) .continue-learning-action { border: 0; border-radius: 10px; background: var(--apple-surface); box-shadow: var(--apple-shadow-xs); color: var(--apple-blue); }
+html:not(.platform-android) .continue-learning-card small { color: var(--apple-text-secondary); font-size: 12px; }
+html:not(.platform-android) .learning-progress-track { height: 5px; border-radius: 8px; background: color-mix(in srgb, var(--apple-blue) 15%, transparent); }
+html:not(.platform-android) .learning-progress-track > span { border-radius: 8px; transition: transform 220ms var(--apple-ease-out); }
+html:not(.platform-android) .continue-learning-card.is-complete { background: var(--room-star-bg); border-color: color-mix(in srgb, var(--room-star) 30%, transparent); }
+.learning-constellation { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 7px 0 3px; }
+.learning-constellation > span { display: grid; place-items: center; width: 27px; height: 30px; color: color-mix(in srgb, var(--apple-blue) 48%, var(--apple-surface)); }
+.learning-constellation > span:nth-child(even) { transform: translateY(-3px); }
+.learning-constellation .is-collected { color: var(--room-star); background: var(--room-star-bg); border-radius: 8px; }
+.learning-constellation small { color: var(--apple-text-secondary); }
+
+html:not(.platform-android) .reader-learning-toolbar { min-height: 48px; padding: 7px 18px; background: var(--apple-surface); box-shadow: none; gap: 12px; flex-direction: row; align-items: center; }
+html:not(.platform-android) .reader-learning-actions { width: auto; max-width: 100%; flex-shrink: 0; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+.lesson-station { font-size: 13px; font-weight: 650; color: var(--apple-blue); }
+.lesson-station-total { font-size: 12px; color: var(--apple-text-secondary); }
+.lesson-celebration { margin-left: 12px; color: var(--room-star); font-size: 12px; }
+html:not(.platform-android) .complete-button { min-height: 32px; border: 1px solid var(--apple-blue); background: var(--apple-blue-soft); color: var(--apple-blue); border-radius: 10px; font-size: 12px; white-space: nowrap; }
+html:not(.platform-android) .complete-button.completed { background: var(--room-star-bg); color: var(--room-star); border-color: color-mix(in srgb, var(--room-star) 35%, transparent); }
+.reader-learning-toolbar.is-celebrating .complete-button svg { animation: room-star-pop 280ms var(--apple-ease-out); }
+.reader-learning-toolbar.is-celebrating .lesson-celebration { animation: room-discovery 180ms var(--apple-ease-out); }
+html:not(.platform-android) .reader-progress-bar { height: 2px; background: var(--apple-surface-muted); }
+html:not(.platform-android) .reader-progress-fill { background: var(--apple-blue); }
+html:not(.platform-android) .markdown-scroll-viewport { background: var(--apple-surface); }
+html:not(.platform-android) .reader-pane > .pane-body > .markdown-viewer:not(.embedded) > .markdown-scroll-viewport > .markdown-body { width: min(var(--room-measure), 100%); max-width: var(--room-measure); padding: 44px clamp(24px, 5vw, 70px) 100px; border: 0; box-shadow: none; background: transparent; }
+html:not(.platform-android) .markdown-body h1 { font-size: 1.85em; line-height: 1.45; letter-spacing: -.04em; }
+html:not(.platform-android) .markdown-body h2 { position: relative; margin-top: 2.2em; font-size: 1.35em; line-height: 1.55; }
+html:not(.platform-android) .markdown-body p { line-height: var(--reader-line-height); }
+html:not(.platform-android) .markdown-body pre { border: 1px solid var(--apple-code-border); border-radius: 12px; box-shadow: none; padding: 20px 22px; }
+html:not(.platform-android) .markdown-body blockquote { background: var(--apple-blue-soft); border-left: 3px solid var(--apple-blue); border-radius: 0 12px 12px 0; padding: 12px 18px; }
+html:not(.platform-android) .markdown-body :not(pre) > code { border-radius: 5px; padding: 2px 5px; }
+html:not(.platform-android) .viewer-header { box-shadow: none; background: var(--apple-surface); font-size: 12px; }
+html:not(.platform-android) .viewer-header .viewer-actions > strong { display: none; }
+html:not(.platform-android) .qa-ask-section { box-shadow: none; }
+html:not(.platform-android) .qa-panel-tabs { box-shadow: none; }
+html:not(.platform-android) .qa-ask-section .ask-box textarea { border-radius: 12px; }
+html:not(.platform-android) .apple-popover { padding: 7px; border-radius: 15px; background: var(--apple-surface-raised); backdrop-filter: none; }
+html:not(.platform-android) .apple-popover > button { min-height: 39px; font-size: 13px; border-radius: 9px; }
+html:not(.platform-android) .apple-popover > button:hover:not(:disabled) { color: var(--apple-blue); background: var(--apple-blue-soft); }
+html:not(.platform-android) .apple-popover > button small { font-size: 12px; }
+html:not(.platform-android) .project-popover-main { min-height: 42px; }
+html:not(.platform-android) .project-popover-main span { font-size: 13px; }
+html:not(.platform-android) .project-popover-main small { font-size: 11px; }
+html:not(.platform-android) .command-palette { border-radius: 20px; box-shadow: var(--apple-shadow-lg); }
+html:not(.platform-android) .command-palette-search { min-height: 56px; }
+html:not(.platform-android) .command-palette-search:focus-within { box-shadow: inset 0 -2px 0 var(--apple-blue); }
+html:not(.platform-android) .command-palette-search input:focus-visible { outline: none; }
+html:not(.platform-android) .command-palette-search input { font-size: 16px; }
+html:not(.platform-android) .command-palette-results button.active { color: var(--apple-text); background: var(--apple-blue-soft); transform: none; box-shadow: inset 2px 0 0 var(--apple-blue); }
+html:not(.platform-android) .command-palette-results button.active small,
+html:not(.platform-android) .command-palette-results button.active .command-section { color: var(--apple-text-secondary); }
+html:not(.platform-android) .primary-button,
+html:not(.platform-android) .apple-primary-button { color: var(--room-on-accent); }
+html:not(.platform-android) .app-dialog { border-radius: 20px; }
+html:not(.platform-android) .selection-quick-bar { border-radius: 12px; }
+html:not(.platform-android) .settings-modal { border-radius: 20px; }
+html:not(.platform-android) .settings-section { border-radius: 13px; }
+/* Settings share the reader's palette, including legacy hard-coded labels. */
+html:not(.platform-android) .settings-modal { box-shadow: var(--apple-shadow-lg); }
+html:not(.platform-android) .settings-modal > .modal-title {
+  flex: 0 0 auto; min-height: 58px; padding-inline: 22px;
+}
+html:not(.platform-android) .settings-scroll { padding: 16px; background: var(--apple-canvas); }
+html:not(.platform-android) .settings-section {
+  padding: 18px 18px 4px; margin-bottom: 12px;
+  border: 1px solid var(--apple-separator); background: var(--apple-surface);
+}
+html:not(.platform-android) .settings-section:last-child { margin-bottom: 0; border-bottom: 1px solid var(--apple-separator); }
+html:not(.platform-android) .settings-section h3 { color: var(--apple-text); font-size: 14px; line-height: 1.5; }
+html:not(.platform-android) .settings-section h3 > svg { color: var(--apple-blue); }
+html:not(.platform-android) .settings-grid label small,
+html:not(.platform-android) .settings-note,
+html:not(.platform-android) .settings-loading { color: var(--apple-text-secondary); line-height: 1.65; }
+html:not(.platform-android) .settings-platform-note {
+  color: var(--apple-text-secondary); background: var(--apple-surface-muted); border-radius: 10px;
+}
+html:not(.platform-android) .settings-grid input:not([type="checkbox"]),
+html:not(.platform-android) .settings-grid select {
+  min-width: 0; height: 40px; border-radius: 9px; background: var(--apple-surface-muted);
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+html:not(.platform-android) .settings-grid input::placeholder { color: var(--apple-text-tertiary); opacity: 1; }
+html:not(.platform-android) .settings-grid input[type="checkbox"] { accent-color: var(--apple-blue); }
+html:not(.platform-android) .settings-secret-row .settings-paste-button { height: 40px; }
+html:not(.platform-android) .settings-toggle-card,
+html:not(.platform-android) .settings-toggle-card:hover,
+html:not(.platform-android) .settings-toggle-card:active {
+  border-radius: 11px; box-shadow: none; transform: none;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+html:not(.platform-android) .settings-toggle-card:has(input:checked) { background: var(--apple-blue-soft); }
+html:not(.platform-android) .settings-grid .settings-toggle-card > input[type="checkbox"]:checked::before { background: var(--room-on-accent); }
+html:not(.platform-android) .settings-grid .settings-toggle-card > input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--apple-blue); outline-offset: 3px;
+}
+html:not(.platform-android) .settings-actions { flex: 0 0 auto; flex-wrap: wrap; padding: 16px 22px; }
+html:not(.platform-android) .settings-actions > button { min-height: 38px; border-radius: 10px; }
+html:not(.platform-android) .settings-message { margin: 0; padding: 14px 22px; border-radius: 0; overflow-wrap: anywhere; }
+html:not(.platform-android) .apple-popover > button:hover small { color: var(--apple-text-secondary); }
+html:not(.platform-android) .apple-popover > button:focus-visible { outline-offset: -2px; background: var(--apple-blue-soft); }
+html:not(.platform-android) .command-empty { padding: 28px 20px; color: var(--apple-text-secondary); line-height: 1.65; }
+@media (max-width: 560px) {
+  html:not(.platform-android) .settings-scroll { padding: 10px; }
+  html:not(.platform-android) .settings-section { padding: 14px 12px 2px; }
+  html:not(.platform-android) .settings-grid { grid-template-columns: minmax(0, 1fr); }
+  html:not(.platform-android) .settings-modal > .modal-title,
+  html:not(.platform-android) .settings-actions { padding-inline: 16px; }
+}
+html:not(.platform-android) .apple-sheet { border-radius: 20px 0 0 20px; background: var(--apple-surface); backdrop-filter: none; box-shadow: var(--apple-shadow-lg); }
+html:not(.platform-android) .apple-sheet-layer { inset: 96px 0 0; }
+html:not(.platform-android) .app-shell:not(:has(.apple-titlebar)) .apple-sheet-layer { top: 64px; }
+html:not(.platform-android) .assistant-empty-card { gap: 12px; padding: 28px 20px; }
+html:not(.platform-android) .assistant-empty-card > svg { width: 38px; height: 38px; padding: 7px; color: var(--apple-blue); background: var(--apple-blue-soft); border-radius: 13px; transform: rotate(-6deg); }
+html:not(.platform-android) .assistant-empty-card > strong { font-size: 16px; }
+html:not(.platform-android) .assistant-empty-card > span { font-size: 13px; line-height: 1.7; }
+html:not(.platform-android) .assistant-empty-card .secondary-button { margin: 3px; min-height: 33px; padding: 6px 11px; border-radius: 11px; border-color: var(--apple-separator); background: var(--apple-surface-muted); color: var(--apple-text-secondary); text-align: left; font-size: 12px; }
+html:not(.platform-android) .assistant-empty-card .secondary-button:hover { color: var(--apple-blue); border-color: var(--apple-blue); background: var(--apple-blue-soft); }
+html:not(.platform-android) .sidebar-scroll,
+html:not(.platform-android) .markdown-scroll-viewport,
+html:not(.platform-android) .qa-history,
+html:not(.platform-android) .settings-scroll { scrollbar-width: thin; scrollbar-color: var(--apple-separator-strong) transparent; }
+/* Emil Kowalski's frequency rule: repeated navigation stays immediate. */
+html:not(.platform-android) .command-palette-layer,
+html:not(.platform-android) .command-palette,
+html:not(.platform-android) .command-palette-results > button,
+html:not(.platform-android) .pane-body > .viewer,
+html:not(.platform-android) .pane-body > .knowledge-viewer,
+html:not(.platform-android) .qa-upper-view,
+html:not(.platform-android) .assistant-drawer.open .qa-ask-section { animation: none; transition: none; }
+html:not(.platform-android) .sliding-selection-indicator[data-ready="true"] { transition: none; will-change: auto; }
+html:not(.platform-android) .course-row:hover,
+html:not(.platform-android) .tree-row:hover,
+html:not(.platform-android) .project-row:hover,
+html:not(.platform-android) .qa-history-row:hover,
+html:not(.platform-android) .course-group-header:hover { transform: none; }
+html:not(.platform-android) .apple-menu-anchor:has(> button:focus-visible) .apple-popover,
+html:not(.platform-android) .reader-learning-toolbar:has(.complete-button:focus-visible) .complete-button svg,
+html:not(.platform-android) .reader-learning-toolbar:has(.complete-button:focus-visible) .lesson-celebration { animation: none; }
+html:not(.platform-android) .apple-icon-button,
+html:not(.platform-android) .apple-toolbar-button,
+html:not(.platform-android) .complete-button { transition: transform 140ms var(--apple-ease-out), background-color 140ms ease, color 140ms ease, border-color 140ms ease; }
+html:not(.platform-android) button:focus-visible:active { transform: none; }
+@keyframes room-star-pop { 0% { transform: scale(.92) rotate(-12deg); } 55% { transform: scale(1.18) rotate(8deg); } 100% { transform: scale(1) rotate(0); } }
+@keyframes room-discovery { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 1100px) {
+  html:not(.platform-android) .apple-toolbar { grid-template-columns: minmax(160px, 1fr) auto; padding-inline: 12px; gap: 8px; }
+  html:not(.platform-android) .apple-document-identity { display: none; }
+  html:not(.platform-android) .apple-search-button kbd { display: none; }
+  html:not(.platform-android) .reader-learning-toolbar { flex-wrap: wrap; padding-inline: 12px; }
+  .lesson-celebration { display: none; }
+}
+@media (max-width: 760px) {
+  html:not(.platform-android) .apple-toolbar { display: flex; flex-wrap: wrap; }
+  html:not(.platform-android) .apple-toolbar-leading { flex: 1; }
+  html:not(.platform-android) .apple-toolbar-actions { flex-wrap: wrap; }
+  html:not(.platform-android) .workbench { padding: 0 6px 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html:not(.platform-android) .app-shell * { animation: none !important; transition-property: color, background-color, border-color !important; transition-duration: 100ms !important; scroll-behavior: auto !important; }
+  html:not(.platform-android) .app-shell button:active { transform: none !important; }
+}
+@media (prefers-contrast: more) {
+  html:not(.platform-android) { --apple-separator: currentColor; --apple-separator-strong: currentColor; }
+}
+/* The old activity rail no longer exists. Narrow desktop windows use overlays,
+   so neither panel may leave behind a 48px rail or a reserved grid column. */
+@media (max-width: 820px) {
+  html:not(.platform-android) .workbench,
+  html:not(.platform-android) .workbench.navigation-open { grid-template-columns: minmax(0, 1fr) !important; }
+  html:not(.platform-android) .workbench > .center-pane { grid-column: 1 / -1; }
+  html:not(.platform-android) .workbench > .navigation-panel,
+  html:not(.platform-android) .workbench > .assistant-drawer { top: 8px; bottom: 12px; position: absolute; max-width: calc(100% - 24px); border: 1px solid var(--apple-separator); border-radius: 16px; box-shadow: var(--apple-shadow-lg); }
+  html:not(.platform-android) .workbench > .navigation-panel { left: 12px; width: min(310px, calc(100% - 24px)); padding-left: 12px; background: var(--apple-sidebar); }
+  html:not(.platform-android) .workbench > .assistant-drawer { right: 12px; width: min(390px, calc(100% - 24px)) !important; }
+}
+@media (hover: none) {
+  html:not(.platform-android) .course-row-actions { position: static; opacity: 1; pointer-events: auto; }
+  html:not(.platform-android) .app-shell button:hover { transform: none; }
+}

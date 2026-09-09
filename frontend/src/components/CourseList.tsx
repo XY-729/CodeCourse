@@ -1,6 +1,7 @@
 import { BookOpen, Check, ChevronDown, ChevronRight, Circle, Pencil, Trash2 } from "lucide-react";
 import { memo, useMemo, useState, type CSSProperties } from "react";
 import type { CourseFile, LearningState } from "../api/client";
+import { isLessonPath } from "../app/appUtils";
 import { setCodeCourseDragImage } from "../utils/dragImage";
 
 type Props = {
@@ -57,7 +58,7 @@ function CourseList({ files, selected, onSelect, onDragItem, onDelete, onRename,
           {!collapsedGroups.has(group) &&
             groupFiles.map((file, index) => {
               const state = stateByPath.get(file.filename);
-              const lesson = /^lessons\/lesson_\d+\.md$/i.test(file.filename);
+              const lesson = isLessonPath(file.filename);
               const stateClass = state?.status === "completed" ? "completed" : state ? "in-progress" : "not-started";
               return (
               <div key={file.filename} className={`course-row-wrapper ${lesson ? `lesson ${stateClass}` : "reference"}`} style={{ "--course-order": Math.min(index, 8) } as CSSProperties}>

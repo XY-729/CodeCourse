@@ -18,6 +18,8 @@ import ReaderLearningToolbar from "../components/ReaderLearningToolbar";
 import DocumentTermScanControl from "../components/DocumentTermScanControl";
 import TeachingRationale from "../components/TeachingRationale";
 import type { TermDisplayTier } from "../personalization/termDisplayTypes";
+import { isLessonPath } from "../app/appUtils";
+import LearningIslandArt from "../components/LearningIslandArt";
 import EditorPaneFrame from "./EditorPaneFrame";
 import type { EditorGroup, OpenItem } from "./layout";
 
@@ -108,8 +110,8 @@ type Props = {
 
 function lessonFiles(courses: CourseFile[]) {
   return courses
-    .filter((file) => /(^|\/)lesson-\d+.*\.md$/i.test(file.filename))
-    .sort((a, b) => a.filename.localeCompare(b.filename));
+    .filter((file) => isLessonPath(file.filename))
+    .sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }));
 }
 
 function WorkbenchEditorGroupView(props: Props) {
@@ -278,6 +280,7 @@ function WorkbenchEditorGroupView(props: Props) {
       {editorMountDeferred || activeItemLoading ? <div className="viewer-loading deferred-editor-loading">正在准备工作区…</div> : null}
       {!mobile && activeItem?.type === "course" && lessonIndex >= 0 ? (
         <ReaderLearningToolbar
+          key={activeItem.path}
           title={activeItem.title}
           index={lessonIndex}
           total={lessons.length}
@@ -285,6 +288,7 @@ function WorkbenchEditorGroupView(props: Props) {
           onPrevious={lessonIndex > 0 ? () => props.onOpenCourse(lessons[lessonIndex - 1].filename) : undefined}
           onNext={lessonIndex < lessons.length - 1 ? () => props.onOpenCourse(lessons[lessonIndex + 1].filename) : undefined}
           onToggleComplete={() => props.onToggleLessonComplete(activeItem.path)}
+          actions={markdownActions(false)}
         />
       ) : null}
 
@@ -332,6 +336,7 @@ function WorkbenchEditorGroupView(props: Props) {
             sourceType={activeItem.qaRecordId ? "qa" : "course"}
             content={activeItem.content}
             embedded={mobile}
+            hideHeader={!mobile && lessonIndex >= 0}
             termSourceKey={props.activeTermSourceKey}
             highlights={highlights.filter((highlight) => (
               highlight.source_type === (activeItem.qaRecordId ? "qa" : "course")
@@ -430,7 +435,7 @@ function WorkbenchEditorGroupView(props: Props) {
         );
       })() : null}
 
-      {!activeItem ? <div className="empty-state">点击或拖拽文件/课件到这里阅读</div> : null}
+      {!activeItem ? <div className={`empty-state ${mobile ? "" : "island-reader-empty"}`}>{!mobile ? <><LearningIslandArt /><h2>下一页，由你决定</h2></> : null}<p>点击或拖拽文件/课件到这里阅读</p></div> : null}
 
       {!editorMountDeferred && !activeItemLoading && activeItem?.type === "knowledge_graph" && projectId ? (
         <Suspense fallback={<div className="viewer-loading">正在加载知识网络…</div>}>

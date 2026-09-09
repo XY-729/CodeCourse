@@ -1087,8 +1087,13 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
-    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeMode === "dark" ? "#08111f" : "#edf4f1");
-  }, [themeMode]);
+    const canvas = mobileRuntime
+      ? (themeMode === "dark" ? "#08111f" : "#edf4f1")
+      : (themeMode === "dark" ? "#141725" : "#f0f1f8");
+    document.documentElement.style.backgroundColor = canvas;
+    document.body.style.backgroundColor = canvas;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", canvas);
+  }, [mobileRuntime, themeMode]);
 
   useEffect(() => {
     if (!toast) return;

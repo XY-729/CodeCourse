@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { AlertCircle, BookOpen, Download } from "lucide-react";
 import WorkbenchLayoutTree, { type SplitResizeStart } from "./WorkbenchLayoutTree";
 import type { EditorGroup, LayoutNode } from "./layout";
+import LearningIslandArt from "../components/LearningIslandArt";
 
 export type WorkbenchSurfaceProps = {
   mobile: boolean;
@@ -85,9 +86,9 @@ export default function WorkbenchSurface(props: WorkbenchSurfaceProps) {
           </section>
         ) : (
           <section className="learning-empty-state">
-            <div className="learning-empty-mark"><BookOpen size={24} /></div>
-            <h1>从一个项目开始学习</h1>
-            <p>导入 GitHub 仓库，或先创建一个自定义学习计划。</p>
+            {mobile ? <div className="learning-empty-mark"><BookOpen size={24} /></div> : <LearningIslandArt />}
+            <h1>{mobile ? "从一个项目开始学习" : "今天，想弄懂什么？"}</h1>
+            <p>导入一个项目，或从你感兴趣的主题开始。</p>
             <div>
               <button className="primary-button" onClick={props.onImportProject}><Download size={15} />导入仓库</button>
               <button className="secondary-button" onClick={props.onCreateLearningPlan}>新建学习计划</button>
