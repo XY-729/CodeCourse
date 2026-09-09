@@ -4,7 +4,6 @@ import { isLessonPath } from "../app/appUtils";
 import CourseList from "./CourseList";
 import FileTree from "./FileTree";
 import SlidingSelectionIndicator from "./SlidingSelectionIndicator";
-import LearningIslandArt from "./LearningIslandArt";
 
 export type NavigationView = "projects" | "courses" | "files";
 
@@ -149,7 +148,6 @@ export default function Sidebar({
         ) : null}
       </header> : null}
       <div className="sidebar-scroll compact">
-        {!embedded ? <div className="study-island-heading"><div><span>CODECOURSE · PERSONAL</span><h2>我的学习岛</h2></div><LearningIslandArt small /></div> : null}
         {(() => {
           const lessons = courses.filter((file) => isLessonPath(file.filename));
           const completed = lessons.filter((file) => learningStates.some((entry) => entry.source_type === "course" && entry.source_path === file.filename && entry.status === "completed")).length;

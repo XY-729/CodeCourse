@@ -19,7 +19,6 @@ import DocumentTermScanControl from "../components/DocumentTermScanControl";
 import TeachingRationale from "../components/TeachingRationale";
 import type { TermDisplayTier } from "../personalization/termDisplayTypes";
 import { isLessonPath } from "../app/appUtils";
-import LearningIslandArt from "../components/LearningIslandArt";
 import EditorPaneFrame from "./EditorPaneFrame";
 import type { EditorGroup, OpenItem } from "./layout";
 
@@ -435,7 +434,7 @@ function WorkbenchEditorGroupView(props: Props) {
         );
       })() : null}
 
-      {!activeItem ? <div className={`empty-state ${mobile ? "" : "island-reader-empty"}`}>{!mobile ? <><LearningIslandArt /><h2>下一页，由你决定</h2></> : null}<p>点击或拖拽文件/课件到这里阅读</p></div> : null}
+      {!activeItem ? <div className="empty-state">点击或拖拽文件/课件到这里阅读</div> : null}
 
       {!editorMountDeferred && !activeItemLoading && activeItem?.type === "knowledge_graph" && projectId ? (
         <Suspense fallback={<div className="viewer-loading">正在加载知识网络…</div>}>

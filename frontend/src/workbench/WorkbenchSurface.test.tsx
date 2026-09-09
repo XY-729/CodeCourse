@@ -34,7 +34,7 @@ describe("WorkbenchSurface", () => {
   it("renders a quiet start state without mounting editor groups", () => {
     const value = props();
     const html = renderToStaticMarkup(<WorkbenchSurface {...value} />);
-    expect(html).toContain("今天，想弄懂什么？");
+    expect(html).toContain("从一个项目开始学习");
     expect(value.renderGroup).not.toHaveBeenCalled();
   });
 
