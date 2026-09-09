@@ -32,9 +32,7 @@ if (document.documentElement.classList.contains("platform-android")) {
 // Sync theme-color as a fallback in case the meta tag moved.
 const observedTheme = document.documentElement.dataset.theme;
 if (observedTheme === "dark" || observedTheme === "light") {
-  const canvas = getComputedStyle(document.documentElement).getPropertyValue("--apple-canvas").trim()
-    || (observedTheme === "dark" ? "#08111f" : "#edf4f1");
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", canvas);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", observedTheme === "dark" ? "#08111f" : "#edf4f1");
 }
 
 const detachedWindow = new URLSearchParams(window.location.search).has("detached");

@@ -1,5 +1,7 @@
 # CodeCourse 界面优化记录 · 2026-09-09
 
+> 后续用户纠正：撤回本轮主题配色、工作区尺寸与响应式布局覆盖。原始主题及启动处理恢复至 `997e770`，保留课程完成修复与局部界面细节。下文为历史改动记录，不代表上述已撤回项目仍有效。主题配色和拖动工作区大小行为已列入根目录 `AGENTS.md` 的禁改要求。
+
 本轮围绕个人使用的轻松学习氛围调整桌面前端，保留现有功能。参考 [Emil Kowalski 的设计工程指南](https://github.com/emilkowalski/skills/blob/main/skills/emil-design-eng/SKILL.md)，重点采用高频操作即时响应、克制动效、清晰状态和键盘可访问性原则。
 
 | Before | After | Why |
