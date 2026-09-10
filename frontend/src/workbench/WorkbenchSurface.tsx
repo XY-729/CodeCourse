@@ -87,7 +87,7 @@ export default function WorkbenchSurface(props: WorkbenchSurfaceProps) {
           <section className="learning-empty-state">
             <div className="learning-empty-mark"><BookOpen size={24} /></div>
             <h1>从一个项目开始学习</h1>
-            <p>导入一个项目，或从你感兴趣的主题开始。</p>
+            <p>导入 GitHub 仓库，或先创建一个自定义学习计划。</p>
             <div>
               <button className="primary-button" onClick={props.onImportProject}><Download size={15} />导入仓库</button>
               <button className="secondary-button" onClick={props.onCreateLearningPlan}>新建学习计划</button>

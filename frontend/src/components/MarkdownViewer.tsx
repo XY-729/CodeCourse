@@ -60,7 +60,6 @@ type Props = {
   onGenerateLesson?: (lessonNumber: number, title: string, outlinePath?: string) => void;
   headerActions?: ReactNode;
   embedded?: boolean;
-  hideHeader?: boolean;
   immersiveReading?: boolean;
   onScrollRatioChange?: (ratio: number) => void;
   initialScrollRatio?: number;
@@ -353,7 +352,6 @@ export default function MarkdownViewer({
   onGenerateLesson,
   headerActions,
   embedded = false,
-  hideHeader = false,
   immersiveReading = false,
   initialScrollRatio,
   onScrollRatioChange,
@@ -892,7 +890,7 @@ export default function MarkdownViewer({
 
   return (
     <div className={`viewer markdown-viewer ${embedded ? "embedded" : ""}`}>
-      {!embedded && !hideHeader ? <div className="viewer-header">
+      {!embedded ? <div className="viewer-header">
         <span>{title ?? "课件"}</span>
         <div className="viewer-actions">
           {headerActions}

@@ -14,11 +14,11 @@ import type {
 import type { SelectionSummary } from "../components/ExplainPanel";
 import type { ViewerSelection } from "../components/CodeViewer";
 import CodeViewer from "../components/CodeViewer";
+import { isLessonPath } from "../app/appUtils";
 import ReaderLearningToolbar from "../components/ReaderLearningToolbar";
 import DocumentTermScanControl from "../components/DocumentTermScanControl";
 import TeachingRationale from "../components/TeachingRationale";
 import type { TermDisplayTier } from "../personalization/termDisplayTypes";
-import { isLessonPath } from "../app/appUtils";
 import EditorPaneFrame from "./EditorPaneFrame";
 import type { EditorGroup, OpenItem } from "./layout";
 
@@ -279,7 +279,6 @@ function WorkbenchEditorGroupView(props: Props) {
       {editorMountDeferred || activeItemLoading ? <div className="viewer-loading deferred-editor-loading">正在准备工作区…</div> : null}
       {!mobile && activeItem?.type === "course" && lessonIndex >= 0 ? (
         <ReaderLearningToolbar
-          key={activeItem.path}
           title={activeItem.title}
           index={lessonIndex}
           total={lessons.length}
@@ -287,7 +286,6 @@ function WorkbenchEditorGroupView(props: Props) {
           onPrevious={lessonIndex > 0 ? () => props.onOpenCourse(lessons[lessonIndex - 1].filename) : undefined}
           onNext={lessonIndex < lessons.length - 1 ? () => props.onOpenCourse(lessons[lessonIndex + 1].filename) : undefined}
           onToggleComplete={() => props.onToggleLessonComplete(activeItem.path)}
-          actions={markdownActions(false)}
         />
       ) : null}
 
@@ -335,7 +333,6 @@ function WorkbenchEditorGroupView(props: Props) {
             sourceType={activeItem.qaRecordId ? "qa" : "course"}
             content={activeItem.content}
             embedded={mobile}
-            hideHeader={!mobile && lessonIndex >= 0}
             termSourceKey={props.activeTermSourceKey}
             highlights={highlights.filter((highlight) => (
               highlight.source_type === (activeItem.qaRecordId ? "qa" : "course")
