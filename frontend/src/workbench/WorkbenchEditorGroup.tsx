@@ -14,7 +14,6 @@ import type {
 import type { SelectionSummary } from "../components/ExplainPanel";
 import type { ViewerSelection } from "../components/CodeViewer";
 import CodeViewer from "../components/CodeViewer";
-import { isLessonPath } from "../app/appUtils";
 import ReaderLearningToolbar from "../components/ReaderLearningToolbar";
 import DocumentTermScanControl from "../components/DocumentTermScanControl";
 import TeachingRationale from "../components/TeachingRationale";
@@ -109,8 +108,8 @@ type Props = {
 
 function lessonFiles(courses: CourseFile[]) {
   return courses
-    .filter((file) => isLessonPath(file.filename))
-    .sort((a, b) => a.filename.localeCompare(b.filename, undefined, { numeric: true }));
+    .filter((file) => /(^|\/)lesson-\d+.*\.md$/i.test(file.filename))
+    .sort((a, b) => a.filename.localeCompare(b.filename));
 }
 
 function WorkbenchEditorGroupView(props: Props) {

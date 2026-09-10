@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 
 export type CommandPaletteItem = {
@@ -33,37 +33,36 @@ function score(item: CommandPaletteItem, query: string): number {
 export default function CommandPalette({ open, items, onClose }: Props) {
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [present, setPresent] = useState(open);
+  const [visible, setVisible] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const closeRef = useRef<HTMLButtonElement | null>(null);
-  const resultsRef = useRef<HTMLDivElement | null>(null);
-  const listId = useId();
   const filtered = useMemo(
     () => items.map((item) => ({ item, score: score(item, query) })).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score).slice(0, 60),
     [items, query],
   );
 
-  useLayoutEffect(() => {
-    if (!open) return;
-    const previousFocus = document.activeElement;
-    const input = inputRef.current;
-    setQuery("");
-    setActiveIndex(0);
-    input?.focus({ preventScroll: true });
+  useEffect(() => {
+    let frame = 0;
+    let timer = 0;
+    if (open) {
+      setPresent(true);
+      setQuery("");
+      setActiveIndex(0);
+      frame = window.requestAnimationFrame(() => setVisible(true));
+      timer = window.setTimeout(() => inputRef.current?.focus(), 40);
+    } else if (present) {
+      setVisible(false);
+      timer = window.setTimeout(() => setPresent(false), 190);
+    }
     return () => {
-      if (previousFocus instanceof HTMLElement && previousFocus.isConnected
-        && (document.activeElement === input || document.activeElement === closeRef.current || document.activeElement === document.body)) {
-        previousFocus.focus({ preventScroll: true });
-      }
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
     };
-  }, [open]);
+  }, [open, present]);
 
   useEffect(() => setActiveIndex(0), [query]);
-  useLayoutEffect(() => {
-    if (!open) return;
-    resultsRef.current?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest", behavior: "instant" });
-  }, [open, activeIndex, filtered]);
 
-  if (!open) return null;
+  if (!present) return null;
 
   function run(item: CommandPaletteItem) {
     if (item.disabled) return;
@@ -81,15 +80,8 @@ export default function CommandPalette({ open, items, onClose }: Props) {
   }
 
   return (
-    <div className="command-palette-layer is-open" onMouseDown={onClose}>
-      <section className="command-palette" role="dialog" aria-modal="true" aria-label="命令面板" onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => {
-        if (event.key === "Escape" && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); onClose(); }
-        if (event.key === "Tab") {
-          event.preventDefault();
-          if (document.activeElement === inputRef.current) closeRef.current?.focus();
-          else inputRef.current?.focus();
-        }
-      }}>
+    <div className={`command-palette-layer ${visible ? "is-open" : "is-closing"}`} onMouseDown={onClose}>
+      <section className="command-palette" role="dialog" aria-modal="true" aria-label="命令面板" onMouseDown={(event) => event.stopPropagation()}>
         <div className="command-palette-search">
           <Search size={17} />
           <input
@@ -98,13 +90,8 @@ export default function CommandPalette({ open, items, onClose }: Props) {
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索课程、源码、回答或命令"
             aria-label="搜索命令"
-            role="combobox"
-            aria-expanded="true"
-            aria-autocomplete="list"
-            aria-controls={listId}
-            aria-activedescendant={filtered[activeIndex] ? `${listId}-${activeIndex}` : undefined}
             onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Escape") onClose();
               if (event.key === "ArrowDown") {
                 event.preventDefault();
                 setActiveIndex((index) => nextEnabled(index, 1));
@@ -119,16 +106,14 @@ export default function CommandPalette({ open, items, onClose }: Props) {
               }
             }}
           />
-          <button ref={closeRef} className="command-palette-close" type="button" onClick={onClose} title="关闭搜索" aria-label="关闭搜索">
+          <button className="command-palette-close" type="button" onClick={onClose} title="关闭搜索" aria-label="关闭搜索">
             <X size={17} />
           </button>
         </div>
-        <div ref={resultsRef} id={listId} className="command-palette-results" role="listbox" aria-label="搜索结果">
+        <div className="command-palette-results" role="listbox">
           {filtered.map(({ item }, index) => (
             <button
               key={item.id}
-              id={`${listId}-${index}`}
-              tabIndex={-1}
               className={`${index === activeIndex ? "active" : ""} ${item.disabled ? "is-disabled" : ""}`}
               onMouseEnter={() => setActiveIndex(index)}
               onClick={() => run(item)}

@@ -219,7 +219,7 @@ export default function DesktopToolbar(props: Props) {
         </button>
 
         <div className="apple-menu-anchor">
-          <button className={`apple-icon-button ${menu === "more" ? "active" : ""}`} onClick={() => setMenu((current) => current === "more" ? null : "more")} title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded={menu === "more"}>
+          <button className={`apple-icon-button ${menu === "more" ? "active" : ""}`} onClick={() => setMenu((current) => current === "more" ? null : "more")} title="更多" aria-label="更多">
             <MoreHorizontal size={18} />
           </button>
           {menu === "more" ? (

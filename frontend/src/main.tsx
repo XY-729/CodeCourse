@@ -19,7 +19,6 @@ import "./styles/android-assistant.css";
 import "./styles/android-me.css";
 import "./styles/android-generation.css";
 import "./styles/call-guide.css";
-import "./styles/study-room.css";
 import { applyPlatformClass } from "./platform/runtime";
 import { initializeAndroidPerformanceMode, markAndroidPerformance } from "./platform/android/performance";
 
