@@ -11,6 +11,7 @@ class StreamingMetadataFilter:
     """
 
     def __init__(self, names: tuple[str, ...] = ("TITLE", "TERMS", "HANDOFF", "术语")) -> None:
+        names = tuple(dict.fromkeys((*names, "TEACHING", "REUSE")))
         self.names = names
         self.metadata_re = re.compile(r"^\s*(?:" + "|".join(names) + r")\s*[:：]", re.I)
         self.pending = ""
@@ -53,7 +54,7 @@ class StreamingMetadataFilter:
         for part in chunk.splitlines(keepends=True):
             ends_line = part.endswith("\n")
             if self.hidden:
-                self.pending = (self.pending + part)[:16000]
+                self.pending = (self.pending + part)[:250000]
                 if ends_line:
                     self._complete_line(self.pending)
                     self.pending = ""

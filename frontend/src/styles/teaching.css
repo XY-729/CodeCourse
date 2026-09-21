@@ -1,0 +1,15 @@
+.understanding-feedback { padding: 10px 14px; border-top: 1px solid var(--border-color, #80808040); font-size: 12px; }
+.understanding-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.understanding-feedback button, .teaching-reference-dialog button { color: inherit; background: transparent; border: 1px solid var(--border-color, #80808060); border-radius: 5px; padding: 4px 8px; cursor: pointer; }
+.understanding-feedback button:disabled { opacity: .5; cursor: default; }
+.understanding-feedback details { margin-top: 8px; }
+.understanding-feedback label, .understanding-feedback small { display: block; margin-top: 6px; }
+.course-understanding { font-size: 10px; margin-left: auto; white-space: nowrap; opacity: .8; }
+.course-understanding[data-status="understood"], .course-understanding[data-status="mastered"] { font-weight: 700; opacity: 1; }
+.teaching-reference-backdrop { z-index: 1200; }
+.teaching-reference-dialog { display: flex; flex-direction: column; width: min(960px, 94vw); height: 85vh; background: var(--cc-surface, #fff); color: var(--cc-text, #18212f); border-radius: 8px; padding: 14px; }
+.teaching-reference-dialog > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.teaching-reference-dialog > .viewer { min-height: 0; flex: 1; }
+.teaching-jump-target { outline: 2px solid currentColor; outline-offset: 4px; border-radius: 3px; }
+
+.course-row .course-understanding-mark { flex: 0 0 4px; width: 4px; height: 18px; min-width: 4px; margin-left: auto; border-radius: 2px; background: var(--success-text, #218967); }

@@ -284,6 +284,7 @@ def void_evidence(
     evidence_id: str,
     idempotency_key: str,
     reason: str = "",
+    conn=None,
 ) -> dict[str, Any]:
     def transaction(conn):
         target = conn.execute(
@@ -310,7 +311,7 @@ def void_evidence(
             conn=conn,
         )
 
-    return run_in_transaction(transaction)
+    return transaction(conn) if conn is not None else run_in_transaction(transaction)
 
 
 def record_manual_feedback_v2(

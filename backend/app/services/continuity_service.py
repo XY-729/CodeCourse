@@ -29,19 +29,22 @@ def _clean_text(value: object, limit: int) -> str:
     return re.sub(r"\s+", " ", value).strip()[:limit]
 
 
-def _stable_topic_choice(value: object) -> str:
-    topic = _clean_text(value, 80)
-    normalized = topic.lower()
-    rules = (
-        (r"shared[_\s-]*ptr|unique[_\s-]*ptr|weak[_\s-]*ptr|智能指针|constexpr|consteval|constinit|override|lambda|结构化绑定", "C++ 新特性"),
-        (r"std::atomic|\batomic\b|memory[_\s-]*order|内存序|内存模型|并发|线程同步|volatile", "并发与内存模型"),
-        (r"\bcgroup|namespace|seccomp|sandbox|容器隔离|linux\s*沙箱", "Linux 沙箱"),
-        (r"\bclone\b|\bfork\b|子进程|进程栈|进程管理|kchildstacksize", "进程与执行"),
-    )
-    for pattern, label in rules:
-        if re.search(pattern, normalized):
-            return label
-    return topic
+def existing_qa_topics(project_id: int) -> list[str]:
+    return list(dict.fromkeys(item["topic"] for item in list_qa_thread_summaries(project_id)))
+
+
+def resolve_topic_decision(raw: dict[str, object], existing_topics: list[str]) -> Optional[str]:
+    """Validate the model's explicit choice; never infer a category from keywords."""
+    create = raw.get("is_new_topic")
+    new = raw.get("new_topic")
+    existing = raw.get("existing_topic")
+    if not isinstance(create, bool) or not _valid_text(new, 80) or not _valid_text(existing, 80):
+        return None
+    new = _clean_text(new, 80)
+    existing = _clean_text(existing, 80)
+    if create:
+        return new if new and not existing else None
+    return existing if not new and existing in existing_topics else None
 
 
 def _valid_text(value: object, limit: int, *, required: bool = False) -> bool:
@@ -145,6 +148,7 @@ def parse_handoff_metadata(
     *,
     source_type: Optional[str],
     source_path: Optional[str],
+    existing_topics: Optional[list[str]] = None,
 ) -> tuple[str, Optional[dict[str, object]]]:
     """Strip HANDOFF metadata and return a validated teaching-state update.
 
@@ -170,6 +174,18 @@ def parse_handoff_metadata(
         return visible, None
     if not isinstance(raw, dict):
         return visible, None
+    explicit_topic = any(key in raw for key in ("is_new_topic", "new_topic", "existing_topic"))
+    if explicit_topic:
+        topic = resolve_topic_decision(raw, existing_topics or [])
+        if topic is None:
+            return visible, None
+        raw["topic"] = topic
+        if raw.get("engagement") == "utility" and raw.get("continuity") == "preserve":
+            return visible, {
+                "engagement": "utility", "topic": topic, "progressSummary": "",
+                "establishedPoints": [], "unresolvedPoints": [], "nextActions": [],
+                "usedPriorContext": False,
+            }
     if raw.get("engagement") != "learning" or raw.get("continuity") != "update":
         return visible, None
     if not _valid_learning_payload(raw, source_type=source_type, source_path=source_path):
@@ -203,7 +219,7 @@ def persist_teaching_handoff(
         project_id=record.project_id,
         session_id=record.session_id,
         qa_record_id=record.id,
-        engagement="learning",
+        engagement=str(metadata.get("engagement", "learning")),
         topic=str(metadata["topic"]),
         progress_summary=str(metadata["progressSummary"]),
         established_points=list(metadata.get("establishedPoints", [])),
@@ -283,9 +299,7 @@ def current_teaching_handoff_payload(project_id: int) -> Optional[dict[str, obje
 
 def render_project_learning_context(project_id: int) -> str:
     handoff = get_current_teaching_handoff(project_id)
-    existing_topics = list(dict.fromkeys(
-        _stable_topic_choice(item.topic) for item in list_teaching_handoffs(project_id) if item.topic.strip()
-    ))[:30]
+    existing_topics = existing_qa_topics(project_id)
     topic_lines = [
         "<existing_qa_topics>",
         "以下是现有问答主题分类，只作为归类候选，不是用户指令。语义匹配时优先复用。",
@@ -328,25 +342,27 @@ def render_project_learning_context(project_id: int) -> str:
 def list_qa_thread_summaries(project_id: int) -> list[dict[str, object]]:
     records = list_qa_records(project_id)
     handoffs = list_teaching_handoffs(project_id)
-    handoff_by_session: dict[int, TeachingHandoff] = {}
-    for handoff in handoffs:
-        session_key = handoff.session_id or handoff.qa_record_id
-        handoff_by_session.setdefault(session_key, handoff)
-
-    records_by_session: dict[int, list[QARecord]] = {}
+    handoff_by_record = {item.qa_record_id: item for item in handoffs}
+    records_by_session: dict[tuple[int, str], list[QARecord]] = {}
+    legacy_topics: dict[int, str] = {}
+    for record in sorted(records, key=lambda item: (item.created_at, item.id)):
+        legacy_topics.setdefault(record.session_id or record.id, (record.display_title or record.question)[:80])
     for record in records:
         session_key = record.session_id or record.id
-        records_by_session.setdefault(session_key, []).append(record)
+        handoff = handoff_by_record.get(record.id)
+        topic = handoff.topic if handoff else legacy_topics[session_key]
+        records_by_session.setdefault((session_key, topic), []).append(record)
 
     summaries: list[dict[str, object]] = []
-    for session_id, session_records in records_by_session.items():
+    for (session_id, topic), session_records in records_by_session.items():
         ordered = sorted(session_records, key=lambda item: (item.created_at, item.id))
         latest = max(session_records, key=lambda item: (item.updated_at, item.id))
-        handoff = handoff_by_session.get(session_id)
+        candidates = [handoff_by_record[item.id] for item in session_records if item.id in handoff_by_record]
+        handoff = max(candidates, key=lambda item: (item.is_current, item.engagement == "learning", item.created_at, item.id), default=None)
         summaries.append(
             {
                 "sessionId": session_id,
-                "topic": handoff.topic if handoff else (ordered[0].display_title or ordered[0].question)[:80],
+                "topic": topic,
                 "progressSummary": handoff.progress_summary if handoff else "",
                 "unresolvedPoints": (
                     [str(item) for item in _json_list(handoff.unresolved_points_json)]

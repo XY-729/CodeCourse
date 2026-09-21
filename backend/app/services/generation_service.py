@@ -12,6 +12,7 @@ from typing import Any, AsyncIterator, Optional
 from urllib.parse import quote
 
 from app.core.config import GENERATED_ROOT, PROMPT_VERSION
+from app.services.lesson_preview import LessonPreview
 from app.services.llm_client import stream_openai_compatible_chat
 
 import datetime as _dt
@@ -366,7 +367,14 @@ def _with_term_metadata(content: str, terms: list[dict]) -> str:
 
 
 def _parse_outline_files(content: str) -> tuple[str, str]:
-    normalized = _require_markdown(content)
+    from app.services.teaching_index import COMMENT
+    coverage = []
+    for match in COMMENT.finditer(content):
+        try:
+            coverage.extend(json.loads(match[1]))
+        except ValueError:
+            pass
+    normalized = _require_markdown(COMMENT.sub("", content))
     pattern = re.compile(r"^## FILE:\s*(project_map\.md|outline\.md)\s*$", re.MULTILINE)
     matches = list(pattern.finditer(normalized))
     sections: dict[str, str] = {}
@@ -376,6 +384,11 @@ def _parse_outline_files(content: str) -> tuple[str, str]:
         sections[match.group(1)] = normalized[start:end].strip() + "\n"
     if "outline.md" not in sections or "project_map.md" not in sections:
         raise RuntimeError("模型未按 project_map.md / outline.md 双文件格式返回，已拒绝覆盖旧课件。")
+    if coverage:
+        for name, body in sections.items():
+            selected = [item for item in coverage if isinstance(item, dict) and item.get("quote") and body.count(item["quote"]) == 1]
+            encoded = json.dumps(selected, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e")
+            sections[name] = body + f"\n<!-- codecourse-teaching: {encoded} -->\n"
     return sections["project_map.md"], sections["outline.md"]
 
 
@@ -808,7 +821,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
                 progress_total=4,
                 stage_label="正在解析与归档",
             )
-            content, model_terms = parse_term_metadata(content)
+            content, model_terms = parse_term_metadata(content, project_id, instructions)
             content, bibliography = parse_bibliography_metadata(content)
             outline = append_validated_bibliography(
                 _require_markdown(content), bibliography
@@ -859,7 +872,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
             progress_total=4,
             stage_label="正在解析与归档",
         )
-        content, model_terms = parse_term_metadata(content)
+        content, model_terms = parse_term_metadata(content, project_id, instructions)
         project_map, outline = _parse_outline_files(content)
         output_dir = project_course_dir(project_id)
         if scope.type == "files":
@@ -1011,7 +1024,7 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
             stage_label="正在生成课件",
         )
         content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=180)
-        content, model_terms = parse_term_metadata(content)
+        content, model_terms = parse_term_metadata(content, project_id, instructions)
         lesson = _require_markdown(content)
         if not lesson.lstrip().startswith("#"):
             title = "粗略介绍" if mode == "brief" else "详细分析"
@@ -1155,14 +1168,17 @@ def _run_learning_plan_lesson_task(
     lesson_input: str,
     instructions: str,
     settings: dict[str, str],
+    preview: Optional[LessonPreview] = None,
 ) -> tuple[str, str]:
+    preview = preview or LessonPreview(project_course_dir(project_id), task_id, {})
+    preview.phase("planning")
     lesson_policy = load_prompt("prompt.learning_plan.lesson")
     user_instructions = _clean_instructions(instructions) or "无"
     update_generation_task(
         task_id,
         "running",
         progress_current=0,
-        progress_total=12,
+        progress_total=0,
         stage_label="正在规划课件",
     )
     planner_prompt = f"""你是一位课程设计师。现在要根据一份学习计划，为其中一课制定详细的章节规划。
@@ -1218,7 +1234,7 @@ def _run_learning_plan_lesson_task(
     plan = _parse_lesson_plan(plan_content)
     _debug_dump("L" + str(lesson_number) + "-plan-response.json", json.dumps(plan, ensure_ascii=False, indent=2))
     sections: list[dict] = plan["sections"]
-    total_calls = 2 + len(sections)
+    total_calls = 3 + len(sections)
     update_generation_task(
         task_id,
         "running",
@@ -1232,6 +1248,8 @@ def _run_learning_plan_lesson_task(
     generated_sections = [""] * len(sections)
     section_terms = [[] for _ in sections]
     completed_count = 0
+    preview.phase("sections")
+    preview.sections(lesson_title, generated_sections)
 
     def _gen_section(idx, sec):
         ls = "\n".join("-" + it.get("name", "") + "（类型：" + it.get("kind", "") + "；重点：" + (it.get("focus") or "完整讲清") + "）" for it in sec.get("items", []))
@@ -1256,7 +1274,7 @@ def _run_learning_plan_lesson_task(
             settings["base_url"], settings["api_key"], settings["model"],
             [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
              {"role": "user", "content": sp}], timeout=240)
-        body, model_terms = parse_term_metadata(c)
+        body, model_terms = parse_term_metadata(c, project_id, instructions)
         md = _require_markdown(body)
         section_terms[idx - 1] = model_terms
         if not md.lstrip().startswith("##"):
@@ -1275,17 +1293,19 @@ def _run_learning_plan_lesson_task(
                 idx, md = future.result()
                 generated_sections[idx - 1] = md
                 completed_count += 1
+                preview.sections(lesson_title, generated_sections)
                 st = sections[idx - 1].get("title", "")
                 update_generation_task(task_id, "running",
                     progress_current=1 + completed_count, progress_total=total_calls,
                     stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
 
+        preview.phase("synthesis")
         joined_sections = "\n\n".join(generated_sections)
         missing = _missing_lesson_items(joined_sections, sections)
         update_generation_task(
             task_id,
             "running",
-            progress_current=total_calls - 1,
+            progress_current=total_calls - 2,
             progress_total=total_calls,
             stage_label="正在统一整合课件",
         )
@@ -1346,7 +1366,7 @@ def _run_learning_plan_lesson_task(
                 timeout=240,
             )
         ).strip()
-        synthesis, synthesis_terms = parse_term_metadata(synthesis)
+        synthesis, synthesis_terms = parse_term_metadata(synthesis, project_id, instructions)
         _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
         joined_sections = _dedupe_lesson_markdown(
             "\n\n".join([*generated_sections, synthesis])
@@ -1385,14 +1405,17 @@ def _run_repository_lesson_task(
     lesson_input: str,
     instructions: str,
     settings: dict[str, str],
+    preview: Optional[LessonPreview] = None,
 ) -> tuple[str, str]:
+    preview = preview or LessonPreview(project_course_dir(project_id), task_id, {})
+    preview.phase("planning")
     lesson_policy = load_prompt("prompt.outline_lesson")
     user_instructions = _clean_instructions(instructions) or "无"
     update_generation_task(
         task_id,
         "running",
         progress_current=0,
-        progress_total=12,
+        progress_total=0,
         stage_label="正在规划课件",
     )
     planner_prompt = f"""你是一位严谨的软件工程讲师。现在要把项目学习总纲中的“第 {lesson_number} 课”拆分为可并发编写的详细课件章节规划。
@@ -1445,7 +1468,7 @@ def _run_repository_lesson_task(
     plan = _parse_lesson_plan(plan_content)
     _debug_dump("L" + str(lesson_number) + "-repo-plan-response.json", json.dumps(plan, ensure_ascii=False, indent=2))
     sections: list[dict] = plan["sections"]
-    total_calls = 2 + len(sections)
+    total_calls = 3 + len(sections)
     update_generation_task(
         task_id,
         "running",
@@ -1459,6 +1482,8 @@ def _run_repository_lesson_task(
     generated_sections = [""] * len(sections)
     section_terms = [[] for _ in sections]
     completed_count = 0
+    preview.phase("sections")
+    preview.sections(lesson_title, generated_sections)
 
     def _gen_section(idx, sec):
         ls = "\n".join("-" + it.get("name", "") + "（类型：" + it.get("kind", "") + "；重点：" + (it.get("focus") or "完整讲清") + "）" for it in sec.get("items", []))
@@ -1482,7 +1507,7 @@ def _run_repository_lesson_task(
             settings["base_url"], settings["api_key"], settings["model"],
             [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
              {"role": "user", "content": sp}], timeout=240)
-        body, model_terms = parse_term_metadata(c)
+        body, model_terms = parse_term_metadata(c, project_id, instructions)
         md = _require_markdown(body)
         section_terms[idx - 1] = model_terms
         if not md.lstrip().startswith("##"):
@@ -1501,17 +1526,19 @@ def _run_repository_lesson_task(
                 idx, md = future.result()
                 generated_sections[idx - 1] = md
                 completed_count += 1
+                preview.sections(lesson_title, generated_sections)
                 st = sections[idx - 1].get("title", "")
                 update_generation_task(task_id, "running",
                     progress_current=1 + completed_count, progress_total=total_calls,
                     stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
 
+        preview.phase("synthesis")
         joined_sections = "\n\n".join(generated_sections)
         missing = _missing_lesson_items(joined_sections, sections)
         update_generation_task(
             task_id,
             "running",
-            progress_current=total_calls - 1,
+            progress_current=total_calls - 2,
             progress_total=total_calls,
             stage_label="正在统一整合课件",
         )
@@ -1572,7 +1599,7 @@ def _run_repository_lesson_task(
                 timeout=240,
             )
         ).strip()
-        synthesis, synthesis_terms = parse_term_metadata(synthesis)
+        synthesis, synthesis_terms = parse_term_metadata(synthesis, project_id, instructions)
         _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
         joined_sections = _dedupe_lesson_markdown(
             "\n\n".join([*generated_sections, synthesis])
@@ -1611,9 +1638,13 @@ def run_outline_lesson_task(
         update_generation_task(task_id, "failed", error_message="Project not found")
         return
     repo_root = Path(project.local_path).resolve()
+    preview = LessonPreview(project_course_dir(project_id), task_id, {
+        "lesson_number": lesson_number, "requested_title": requested_title,
+        "instructions": instructions, "outline_path": outline_path,
+    })
     try:
         settings = _llm_settings_or_error()
-        update_generation_task(task_id, "running")
+        update_generation_task(task_id, "running", progress_current=0, progress_total=0, stage_label="正在准备材料")
         lesson_title, lesson_input, _ = build_outline_lesson_input(
             project_id,
             repo_root,
@@ -1634,10 +1665,14 @@ def run_outline_lesson_task(
                 lesson_input,
                 instructions,
                 settings,
+                preview,
             )
+            preview.phase("saving")
+            current_task = get_generation_task(task_id)
+            update_generation_task(task_id, "running", progress_current=max(0, current_task.progress_total - 1) if current_task else 0, stage_label="正在保存课件")
             relative_path = _outline_lesson_filename(lesson_number)
             output_path = project_course_dir(project_id) / relative_path
-            lesson, model_terms = parse_term_metadata(lesson)
+            lesson, model_terms = parse_term_metadata(lesson, project_id, instructions)
             _atomic_write(output_path, lesson)
             register_document_terms(project_id, "course", relative_path, lesson, model_terms)
             node_title = f"第{lesson_number}课"
@@ -1670,6 +1705,7 @@ def run_outline_lesson_task(
                 progress_current=current_task.progress_total if current_task else 0,
                 stage_label="生成完成",
             )
+            preview.finish("completed")
             return
         lesson_title, lesson = _run_repository_lesson_task(
             project_id,
@@ -1679,8 +1715,12 @@ def run_outline_lesson_task(
             lesson_input,
             instructions,
             settings,
+            preview,
         )
-        content, model_terms = parse_term_metadata(lesson)
+        preview.phase("saving")
+        current_task = get_generation_task(task_id)
+        update_generation_task(task_id, "running", progress_current=max(0, current_task.progress_total - 1) if current_task else 0, stage_label="正在保存课件")
+        content, model_terms = parse_term_metadata(lesson, project_id, instructions)
         relative_path = _outline_lesson_filename(lesson_number)
         output_path = project_course_dir(project_id) / relative_path
         _atomic_write(output_path, content)
@@ -1715,7 +1755,9 @@ def run_outline_lesson_task(
             progress_current=current_task.progress_total if current_task else 0,
             stage_label="生成完成",
         )
+        preview.finish("completed")
     except Exception as exc:  # noqa: BLE001
+        preview.finish("failed")
         update_generation_task(task_id, "failed", error_message=str(exc), stage_label="生成失败")
 
 
@@ -1999,7 +2041,7 @@ async def stream_outline_generation(
             else:
                 yield event
 
-        content, model_terms = parse_term_metadata(full_text)
+        content, model_terms = parse_term_metadata(full_text, project_id, instructions)
 
         if scope.type == "learning_plan":
             content, bibliography = parse_bibliography_metadata(content)
@@ -2124,7 +2166,7 @@ async def stream_file_lesson_generation(
             else:
                 yield event
 
-        content, model_terms = parse_term_metadata(full_text)
+        content, model_terms = parse_term_metadata(full_text, project_id, instructions)
         lesson = _require_markdown(content)
         if not lesson.lstrip().startswith("#"):
             title = "粗略介绍" if mode == "brief" else "详细分析"
@@ -2236,7 +2278,7 @@ async def stream_outline_lesson_generation(
             else:
                 yield event
 
-        content, model_terms = parse_term_metadata(full_text)
+        content, model_terms = parse_term_metadata(full_text, project_id, instructions)
         lesson = _require_markdown(content)
         if not lesson.lstrip().startswith("#"):
             lesson = f"# 第 {lesson_number} 课：{lesson_title}\n\n{lesson}"

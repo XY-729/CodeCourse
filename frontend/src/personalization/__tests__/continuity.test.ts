@@ -65,3 +65,33 @@ describe("teaching continuity metadata", () => {
     expect(context).toContain("当前项目没有需要承接的教学主题");
   });
 });
+
+
+describe("explicit AI topic routing", () => {
+  const parse = (fields: Record<string, unknown>, topics = ["std"]) => parseHandoffMetadata(
+    `正文\nHANDOFF: ${JSON.stringify(metadata(fields))}`, "file", "main.ts", topics,
+  );
+  it("uses the named existing topic even when legacy topic disagrees", () => {
+    expect(parse({ is_new_topic: false, new_topic: "", existing_topic: "std" }).metadata?.topic).toBe("std");
+  });
+  it("creates a topic without keyword-based renaming", () => {
+    expect(parse({ is_new_topic: true, new_topic: "shared_ptr", existing_topic: "" }, []).metadata?.topic).toBe("shared_ptr");
+  });
+  it("rejects nonexistent destinations and contradictory or incomplete choices without losing the answer", () => {
+    for (const fields of [
+      { is_new_topic: false, new_topic: "", existing_topic: "unknown" },
+      { is_new_topic: true, new_topic: "new", existing_topic: "std" },
+      { is_new_topic: "false", new_topic: "", existing_topic: "std" },
+      { is_new_topic: true, new_topic: "", existing_topic: "" },
+      { is_new_topic: false, existing_topic: "std" },
+    ]) expect(parse(fields)).toEqual({ visible: "正文", metadata: null });
+  });
+  it("classifies utility answers separately from teaching progress", () => {
+    expect(parse({ engagement: "utility", continuity: "preserve", is_new_topic: false, new_topic: "", existing_topic: "std" }).metadata)
+      .toMatchObject({ engagement: "utility", topic: "std", progressSummary: "", nextActions: [] });
+  });
+  it("sends every topic unchanged, including more than thirty choices", () => {
+    const topics = ["shared_ptr", ...Array.from({ length: 40 }, (_, index) => `主题${index}`)];
+    expect(renderProjectLearningContext(null, topics)).toContain(JSON.stringify(topics));
+  });
+});

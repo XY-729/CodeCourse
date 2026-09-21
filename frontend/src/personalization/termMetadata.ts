@@ -1,3 +1,4 @@
+import { teachingMetadata, TEACHING_CONTRACT } from "./teachingMetadata";
 import { validateTermCandidate, type StructuredTermCandidate, type TermCandidateInput } from "./termCandidate";
 
 export const TERM_SELECTION_RULES = `陌生术语由你结合当前学习画像、问题和正文语境自主选择。
@@ -6,12 +7,12 @@ export const TERM_SELECTION_RULES = `陌生术语由你结合当前学习画像�
 正文原词必须逐字出现在普通正文或行内代码中，不能仅出现在标题、已有链接或代码块。不要为了凑数量选择术语，允许 0 个。`;
 
 export function termMetadataInstruction(limit = 12): string {
-  return `<term_output_contract>\n${TERM_SELECTION_RULES}\n在 Markdown 正文前输出单行 TERMS: [...]，最多 ${limit} 项，数组项为 {"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文原词"}}。没有合适术语时输出 TERMS: []。元数据后再输出正文标题，正文中不要重复元数据。\n</term_output_contract>`;
+  return TEACHING_CONTRACT + `<term_output_contract>\n${TERM_SELECTION_RULES}\n在 Markdown 正文前输出单行 TERMS: [...]，最多 ${limit} 项，数组项为 {"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文原词"}}。没有合适术语时输出 TERMS: []。元数据后再输出正文标题，正文中不要重复元数据。\n</term_output_contract>`;
 }
 
 /** Strip reserved metadata outside code examples, even when its JSON is invalid. */
 export function parseTermMetadata(raw: string): { content: string; terms: TermCandidateInput[]; valid: boolean } {
-  const lines = raw.split(/\r?\n/);
+  const lines = teachingMetadata(raw).split(/\r?\n/);
   const visible: string[] = [];
   const terms: TermCandidateInput[] = [];
   let valid = false;

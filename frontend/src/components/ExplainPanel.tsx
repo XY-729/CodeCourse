@@ -1,3 +1,5 @@
+import UnderstandingFeedback from "./UnderstandingFeedback";
+import { normalizeOutputPath } from "../app/appUtils";
 import { ArrowDown, ArrowUp, Bot, Edit3, FileText, Loader2, MessageCircle, Search, Send, Star, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, QAThreadSummary, SourceType, TeachingHandoff, TeachingNextAction } from "../api/client";
@@ -220,7 +222,7 @@ export default function ExplainPanel(props: Props) {
               </div>
               <div className="qa-history">
                 {history.length ? threadGroups.map(({ summary, records }) => (
-                  <details className={`qa-thread-group ${summary.isCurrent ? "current" : ""}`} key={summary.sessionId} open={summary.isCurrent || records.some((record) => record.id === selectedRecord?.id)}>
+                  <details className={`qa-thread-group ${summary.isCurrent ? "current" : ""}`} key={summary.topic} open={summary.isCurrent || records.some((record) => record.id === selectedRecord?.id)}>
                     <summary>
                       <span><strong>{`主题 · ${summary.topic}`}</strong>{summary.progressSummary ? <small>{summary.progressSummary}</small> : null}</span>
                       <small>{summary.turnCount} 轮{summary.sourcePath ? ` · ${fileLabel(summary.sourcePath)}` : ""}</small>
@@ -273,6 +275,7 @@ export default function ExplainPanel(props: Props) {
             <button type="button" className="secondary-button compact" onClick={onOpenFilePicker} disabled={loading}><FileText size={14} />选择参考文件</button>
           </div>
 
+          {!loading && !selectedRecordReadOnly && selectedRecord ? <UnderstandingFeedback projectId={selectedRecord.project_id} sourceType="qa" sourcePath={normalizeOutputPath(selectedRecord.output_path, selectedRecord.id, selectedRecord.project_id)} /> : null}
           {!loading && !selectedRecordReadOnly && selectedRecord?.teaching_handoff ? (
             <TeachingClosureCard handoff={selectedRecord.teaching_handoff} onAction={onTeachingNextAction} />
           ) : null}
@@ -394,14 +397,14 @@ export default function ExplainPanel(props: Props) {
           {panelError ? <div className="qa-local-error" role="alert">{panelError}</div> : null}
           {modelReady ? (
             <div className="model-row">
-              <select value="configured" disabled aria-label="当前模型"><option>{configuredModelLabel(settings)}</option></select>
+              <button type="button" className="text-button" onClick={onOpenSettings} title="模型设置">{settings?.model}</button>
             </div>
           ) : (
             <div className="model-row">
               <button type="button" className="secondary-button compact" onClick={onOpenSettings}>配置模型</button>
             </div>
           )}
-          <button className="primary-button" onClick={() => { if (questionDraft.trim()) onAsk(questionDraft.trim()); }} disabled={loading || !modelReady || !questionDraft.trim()}>
+          <button className="primary-button" aria-busy={loading} onClick={() => { if (questionDraft.trim()) onAsk(questionDraft.trim()); }} disabled={loading || !modelReady || !questionDraft.trim()}>
             {loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}{loading ? (loadingLabel || "生成中...") : followUpRecord ? "继续追问" : "询问"}
           </button>
         </div>

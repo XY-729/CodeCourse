@@ -16,6 +16,9 @@ vi.mock("../database", () => ({
   MobileDatabase: class {
     run = dbMock.run;
     query = dbMock.query;
+    queryInTx = dbMock.query;
+    runInTx = dbMock.run;
+    transaction = async <T,>(work: () => Promise<T>) => work();
   },
 }));
 

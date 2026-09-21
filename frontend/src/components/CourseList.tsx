@@ -1,10 +1,14 @@
+import { getCourseUnderstanding, TEACHING_CHANGED, type TeachingDocument } from "../personalization/teachingApi";
+import "../styles/teaching.css";
+import TeachingIndexControl from "./TeachingIndexControl";
 import { BookOpen, Check, ChevronDown, ChevronRight, Circle, Pencil, Trash2 } from "lucide-react";
-import { memo, useMemo, useState, type CSSProperties } from "react";
+import { memo, useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { CourseFile, LearningState } from "../api/client";
 import { setCodeCourseDragImage } from "../utils/dragImage";
 
 type Props = {
   files: CourseFile[];
+  projectId?: number | null;
   selected: string | null;
   onSelect: (filename: string) => void;
   onDragItem?: (kind: "course", filename: string) => void;
@@ -25,9 +29,31 @@ function groupFiles(files: CourseFile[]): Map<string, CourseFile[]> {
   return map;
 }
 
-function CourseList({ files, selected, onSelect, onDragItem, onDelete, onRename, learningStates = [] }: Props) {
+function CourseList({ projectId, files, selected, onSelect, onDragItem, onDelete, onRename, learningStates = [] }: Props) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
+  const [understanding, setUnderstanding] = useState<TeachingDocument[]>([]);
+  useEffect(() => {
+    let sequence = 0;
+    let active = true;
+    const refresh = (event?: Event) => {
+      const detail = (event as CustomEvent<{ projectId: number; document?: TeachingDocument }> | undefined)?.detail;
+      if (detail && detail.projectId !== projectId) return;
+      if (detail?.document) {
+        const next = detail.document;
+        setUnderstanding((current) => [...current.filter((item) => item.sourcePath !== next.sourcePath), next]);
+      }
+      if (!projectId) return;
+      const token = ++sequence;
+      void getCourseUnderstanding(projectId).then((states) => {
+        if (active && token === sequence) setUnderstanding(states);
+      }).catch(() => { /* Keep the last confirmed state when background refresh fails. */ });
+    };
+    refresh();
+    window.addEventListener(TEACHING_CHANGED, refresh);
+    return () => { active = false; window.removeEventListener(TEACHING_CHANGED, refresh); };
+  }, [projectId, files]);
+  useEffect(() => { setUnderstanding([]); }, [projectId]);
   const groups = useMemo(() => groupFiles(files), [files]);
   const stateByPath = useMemo(() => new Map(
     learningStates.filter((entry) => entry.source_type === "course").map((entry) => [entry.source_path, entry]),
@@ -57,6 +83,9 @@ function CourseList({ files, selected, onSelect, onDragItem, onDelete, onRename,
           {!collapsedGroups.has(group) &&
             groupFiles.map((file, index) => {
               const state = stateByPath.get(file.filename);
+              const knowledge = understanding.find((item) => item.sourcePath === file.filename);
+              const marked = state?.status === "completed" || knowledge?.documentConfirmed || knowledge?.status === "understood" || knowledge?.status === "mastered";
+              const markLabel = state?.status === "completed" ? "学习已完成" : knowledge?.status === "mastered" ? "已掌握" : "已理解";
               const lesson = /^lessons\/lesson_\d+\.md$/i.test(file.filename);
               const stateClass = state?.status === "completed" ? "completed" : state ? "in-progress" : "not-started";
               return (
@@ -80,6 +109,7 @@ function CourseList({ files, selected, onSelect, onDragItem, onDelete, onRename,
                     state?.status === "completed" ? <Check className="course-state completed" size={14} /> : state ? <Circle className="course-state in-progress" size={11} /> : <Circle className="course-state" size={11} />
                   ) : <BookOpen size={14} />}
                   <span>{file.title}</span>
+                  {marked ? <span className="course-understanding-mark" role="img" aria-label={markLabel} title={markLabel} /> : null}
                 </button>
                 <div className="course-row-actions">
                 {onRename && file.filename !== "outline.md" && file.filename !== "project_map.md" ? (
@@ -114,6 +144,7 @@ function CourseList({ files, selected, onSelect, onDragItem, onDelete, onRename,
             })}
         </div>
       ))}
+      {projectId ? <details className="course-maintenance"><summary>课程管理</summary><TeachingIndexControl key={projectId} projectId={projectId} /></details> : null}
     </div>
   );
 }

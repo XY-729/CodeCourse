@@ -480,6 +480,8 @@ def init_storage() -> None:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=15000")
         conn.execute("PRAGMA synchronous=NORMAL")
+        from app.services.teaching_index import initialize as initialize_teaching_index
+        initialize_teaching_index(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS projects (
@@ -2193,6 +2195,8 @@ def update_project_status(project_id: int, status: str) -> Optional[ProjectRecor
 
 def delete_project(project_id: int) -> bool:
     with _connect() as conn:
+        from app.services.teaching_index import remove_documents
+        remove_documents(conn, project_id)
         project_concept_ids = [
             row["id"]
             for row in conn.execute(
@@ -2807,10 +2811,11 @@ def create_teaching_handoff(
         ).fetchone()
         if existing is not None:
             return _row_to_teaching_handoff(existing)
-        conn.execute(
-            "UPDATE teaching_handoffs SET is_current = 0, updated_at = ? WHERE project_id = ? AND is_current = 1",
-            (now, project_id),
-        )
+        if engagement == "learning":
+            conn.execute(
+                "UPDATE teaching_handoffs SET is_current = 0, updated_at = ? WHERE project_id = ? AND is_current = 1",
+                (now, project_id),
+            )
         cursor = conn.execute(
             """
             INSERT INTO teaching_handoffs (
@@ -2819,7 +2824,7 @@ def create_teaching_handoff(
                 unresolved_points_json, next_actions_json, source_type,
                 source_path, used_prior_context, is_current, dismissed_at,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
             """,
             (
                 project_id,
@@ -2834,6 +2839,7 @@ def create_teaching_handoff(
                 source_type,
                 source_path,
                 1 if used_prior_context else 0,
+                1 if engagement == "learning" else 0,
                 now,
                 now,
             ),
@@ -2865,7 +2871,7 @@ def get_current_teaching_handoff(project_id: int) -> Optional[TeachingHandoff]:
 def get_teaching_handoff_for_qa(project_id: int, qa_record_id: int) -> Optional[TeachingHandoff]:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM teaching_handoffs WHERE project_id = ? AND qa_record_id = ? LIMIT 1",
+            "SELECT * FROM teaching_handoffs WHERE project_id = ? AND qa_record_id = ? AND engagement = 'learning' LIMIT 1",
             (project_id, qa_record_id),
         ).fetchone()
         return _row_to_teaching_handoff(row) if row else None
@@ -3582,6 +3588,8 @@ def delete_qa_record(project_id: int, record_id: int) -> bool:
             (project_id, record_id),
         ).fetchone()
         if qa_record and qa_record["output_path"]:
+            from app.services.teaching_index import remove_documents
+            remove_documents(conn, project_id, qa_record["output_path"])
             conn.execute(
                 "DELETE FROM learning_states WHERE project_id = ? AND source_type = 'qa' AND source_path = ?",
                 (project_id, qa_record["output_path"]),
@@ -3769,6 +3777,8 @@ def delete_knowledge_node(project_id: int, node_id: int) -> bool:
 
 def cleanup_course_artifacts(project_id: int, source_path: str) -> None:
     with _connect() as conn:
+        from app.services.teaching_index import remove_documents
+        remove_documents(conn, project_id, source_path)
         conn.execute(
             "DELETE FROM learning_states WHERE project_id = ? AND source_type = 'course' AND source_path = ?",
             (project_id, source_path),
@@ -3859,7 +3869,7 @@ def rename_course_references(
             "WHERE project_id = ? AND source_type = 'course' AND source_path = ?",
             (new_path, now, project_id, old_path),
         )
-        for table in ("highlights", "knowledge_links", "document_terms", "learning_states", "term_impressions", "term_model_scans"):
+        for table in ("highlights", "knowledge_links", "document_terms", "learning_states", "term_impressions", "term_model_scans", "teaching_documents"):
             conn.execute(
                 f"UPDATE {table} SET source_path = ?, updated_at = ? WHERE project_id = ? AND source_type IN ('course', 'qa') AND source_path = ?",
                 (new_path, now, project_id, old_path),
@@ -4622,14 +4632,14 @@ def get_llm_settings() -> dict[str, str]:
         return {
             "provider": os.getenv("GPL_LLM_PROVIDER") or env_file_values.get("GPL_LLM_PROVIDER") or "deepseek",
             "base_url": os.getenv("DEEPSEEK_BASE_URL") or os.getenv("GPL_LLM_BASE_URL") or env_file_values.get("DEEPSEEK_BASE_URL") or env_file_values.get("GPL_LLM_BASE_URL") or "https://api.deepseek.com",
-            "model": os.getenv("DEEPSEEK_MODEL") or os.getenv("GPL_LLM_MODEL") or env_file_values.get("DEEPSEEK_MODEL") or env_file_values.get("GPL_LLM_MODEL") or "deepseek-v4-pro",
+            "model": os.getenv("DEEPSEEK_MODEL") or os.getenv("GPL_LLM_MODEL") or env_file_values.get("DEEPSEEK_MODEL") or env_file_values.get("GPL_LLM_MODEL") or "deepseek-flash",
             "api_key": env_api_key,
             "enabled": "true",
         }
     return {
         "provider": get_setting("llm.provider") or "deepseek",
         "base_url": get_setting("llm.base_url") or "https://api.deepseek.com",
-        "model": get_setting("llm.model") or "deepseek-v4-pro",
+        "model": get_setting("llm.model") or "deepseek-flash",
         "api_key": get_setting("llm.api_key") or "",
         "enabled": get_setting("llm.enabled") or "false",
     }
@@ -4655,7 +4665,7 @@ def _read_env_file() -> dict[str, str]:
 def save_llm_settings(provider: str, base_url: str, model: str, enabled: bool, api_key: Optional[str], clear_api_key: bool) -> dict[str, str]:
     set_setting("llm.provider", provider.strip() or "deepseek")
     set_setting("llm.base_url", base_url.strip().rstrip("/") or "https://api.deepseek.com")
-    set_setting("llm.model", model.strip() or "deepseek-v4-pro")
+    set_setting("llm.model", model.strip() or "deepseek-flash")
     set_setting("llm.enabled", "true" if enabled else "false")
     if clear_api_key:
         set_setting("llm.api_key", "")

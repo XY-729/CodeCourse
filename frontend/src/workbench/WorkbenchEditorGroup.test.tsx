@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CallGuide, CourseFile } from "../api/client";
 import WorkbenchEditorGroup from "./WorkbenchEditorGroup";
@@ -20,8 +20,8 @@ vi.mock("../components/TeachingRationale", () => ({
 }));
 
 vi.mock("../components/MarkdownViewer", () => ({
-  default: ({ title, content }: { title: string; content: string }) => (
-    <div data-testid="markdown-viewer">{title}:{content}</div>
+  default: ({ title, content, headerActions }: { title: string; content: string; headerActions?: ReactNode }) => (
+    <div data-testid="markdown-viewer">{headerActions}{title}:{content}</div>
   ),
 }));
 
@@ -34,9 +34,9 @@ vi.mock("../components/KnowledgeGraphViewer", () => ({
 }));
 
 vi.mock("./EditorPaneFrame", () => ({
-  default: ({ children, mobileActions }: { children: ReactNode; mobileActions?: ReactNode }) => (
+  default: ({ children, mobileActions, mobile }: { children: ReactNode; mobileActions?: ReactNode; mobile?: boolean }) => (
     <section>
-      <div data-testid="mobile-actions">{mobileActions}</div>
+      <div data-testid="mobile-actions">{mobile ? mobileActions : null}</div>
       {children}
     </section>
   ),
@@ -139,20 +139,22 @@ describe("WorkbenchEditorGroup", () => {
     expect(screen.getByTestId("code-viewer").textContent).toContain("src/main.ts:export const main = true;");
   });
 
-  it("renders a lesson with its reading toolbar", async () => {
+  it.each(["lesson-01.md", "lessons/lesson_01.md"])("completes lesson %s from its header", async (path) => {
     const item: OpenItem = {
       id: "course:lesson-01.md",
       type: "course",
-      path: "lesson-01.md",
+      path,
       title: "第一课",
       content: "# 第一课",
     };
-    const courses: CourseFile[] = [{ filename: "lesson-01.md", title: "第一课", group: "课程" }];
+    const courses: CourseFile[] = [{ filename: path, title: "第一课", group: "课程" }];
 
-    render(<WorkbenchEditorGroup {...baseProps(groupWith(item), { courses })} />);
+    const onToggleLessonComplete = vi.fn();
+    render(<WorkbenchEditorGroup {...baseProps(groupWith(item), { courses, onToggleLessonComplete })} />);
 
     expect((await screen.findByTestId("markdown-viewer")).textContent).toContain("第一课:# 第一课");
-    expect(screen.getByTestId("reader-toolbar").textContent).toContain("第一课");
+    fireEvent.click(screen.getByRole("button", { name: "学习完成" }));
+    expect(onToggleLessonComplete).toHaveBeenCalledWith(path);
   });
 
   it("keeps QA editing and selection callbacks wired", () => {
@@ -209,7 +211,7 @@ describe("WorkbenchEditorGroup", () => {
     expect((await screen.findByTestId("call-guide-viewer")).textContent).toContain("run 调用链");
   });
 
-  it("exposes mobile course save and cancel actions without desktop controls", () => {
+  it("exposes mobile course save and cancel actions without desktop controls", async () => {
     const item: OpenItem = {
       id: "course:lesson-02.md",
       type: "course",
@@ -228,7 +230,7 @@ describe("WorkbenchEditorGroup", () => {
       onCancelEditedCourse,
     })} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "保存当前文档" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "保存当前文档" })));
     fireEvent.click(screen.getByRole("button", { name: "取消编辑" }));
 
     expect(onSaveEditedCourse).toHaveBeenCalledWith(group, item);

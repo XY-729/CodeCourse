@@ -274,8 +274,10 @@ def normalize_term_candidate(
     }
 
 
-def parse_term_metadata(raw_content: str) -> tuple[str, list[dict[str, object]]]:
+def parse_term_metadata(raw_content: str, project_id: int | None = None, intent: str = "") -> tuple[str, list[dict[str, object]]]:
     """Remove TERMS metadata and validate candidates against the remaining body."""
+    from app.services.teaching_index import prepare_metadata
+    raw_content = prepare_metadata(raw_content, project_id, intent)
     raw_terms: list[object] = []
     kept: list[str] = []
     fence = ""
@@ -425,7 +427,9 @@ def term_learning_context(project_id: int) -> str:
 
 
 def term_metadata_instruction(project_id: int | None = None) -> str:
-    return """
+    from app.services.teaching_index import teaching_context, metadata_instruction
+    coverage = teaching_context(project_id) if project_id is not None else metadata_instruction()
+    return coverage + """
 
 术语元数据要求：
 - 在正文第一行之前输出一行：
@@ -462,6 +466,8 @@ def register_document_terms(
     allow_model_scan: bool = False,
 ) -> list[DocumentTerm]:
     source_path = _normalize_source_path(source_path)
+    from app.services.teaching_index import index_document
+    index_document(project_id, source_type, source_path, content)
     content_hash = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
     delete_stale_document_term_candidates(
         project_id,

@@ -31,7 +31,7 @@ export default function DocumentTermScanControl({ status, onRescan, compact = fa
   const busy = pending || ["queued", "running"].includes(status.scan_status);
   const unavailable = status.scan_status === "missing_source" || !status.model_scan_authorized;
   const description = termScanDescription(status);
-  const actionLabel = busy ? "正在标注术语" : "按当前学情标注术语";
+  const actionLabel = busy ? "正在标注术语" : "标注陌生术语";
 
   async function rescan() {
     if (pendingRef.current || busy || unavailable) return;
@@ -55,11 +55,12 @@ export default function DocumentTermScanControl({ status, onRescan, compact = fa
         type="button"
         className={compact ? "mobile-reader-action-button" : "secondary-button compact"}
         disabled={busy || unavailable}
+        aria-busy={busy}
         aria-label={actionLabel}
         title={unavailable ? "请先在设置中启用并配置模型，才能标注术语" : `${description}。${actionLabel}（调用一次模型）`}
         onClick={(event) => { event.stopPropagation(); void rescan(); }}
       >
-        {busy ? <LoaderCircle size={compact ? 17 : 14} aria-hidden="true" /> : <Sparkles size={compact ? 17 : 14} aria-hidden="true" />}
+        {busy ? <LoaderCircle className="spin" size={compact ? 17 : 14} aria-hidden="true" /> : <Sparkles size={compact ? 17 : 14} aria-hidden="true" />}
         {!compact ? busy ? "标注中…" : status.scan_status === "failed" ? "重试术语标注" : "标注术语" : null}
       </button>
       {showDescription ? <p>点击后会调用一次模型，结合当前学情更新这篇内容的术语提示。</p> : null}

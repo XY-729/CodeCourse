@@ -1,3 +1,5 @@
+import UnderstandingFeedback from "./UnderstandingFeedback";
+import { normalizeOutputPath } from "../app/appUtils";
 import {
   ArrowDown, ArrowUp, Bot, BrainCircuit, Edit3, ExternalLink, FileText,
   History as HistoryIcon, Loader2, MessageCircle, Search, Send,
@@ -278,6 +280,7 @@ export default function MobileAssistantPanel({
               </div>
             </section>
 
+            {!loading && selectedRecord && !selectedRecordReadOnly ? <UnderstandingFeedback projectId={selectedRecord.project_id} sourceType="qa" sourcePath={normalizeOutputPath(selectedRecord.output_path, selectedRecord.id, selectedRecord.project_id)} /> : null}
             {!loading && surveyCandidate ? (
               <section className="mobile-assistant-survey-card">
                 <header><strong>帮我更了解你的习惯</strong></header>

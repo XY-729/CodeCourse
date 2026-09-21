@@ -10,10 +10,11 @@ import {
   type Project,
 } from "../api/client";
 import { isGenerationTaskRunning, sortGenerationTasks } from "../components/generationTaskModel";
-import { taskLabel } from "../app/appUtils";
+import { resolveCourseFilename, taskLabel } from "../app/appUtils";
 
 type Options = {
   project: Project | null;
+  autoOpenCompleted?: boolean;
   getCurrentProjectId: () => number | null;
   acquireStartLock: () => boolean;
   releaseStartLock: () => void;
@@ -94,10 +95,10 @@ export function useGenerationTrackingController(options: Options) {
         completed.onCompleted("CodeCourse 生成完成", `${taskLabel(nextTask)}已经可以阅读。`);
         const outputPath = nextTask.output_path ?? (nextTask.task_type === "outline" ? "outline.md" : null);
         const preferred = outputPath
-          ? courses.find((item) => item.filename === outputPath || outputPath.endsWith(`/${item.filename}`))
+          ? resolveCourseFilename(outputPath, courses.map((item) => item.filename), projectId)
           : null;
-        if (preferred) {
-          await completed.onOpenCourse(projectId, preferred.filename);
+        if (preferred && completed.autoOpenCompleted !== false) {
+          await completed.onOpenCourse(projectId, preferred);
           completed.onDismissMobileGeneration();
         }
         completed.onKnowledgeChanged();

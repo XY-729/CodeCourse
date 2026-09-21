@@ -11,6 +11,7 @@ type Props = {
   progressCurrent?: number;
   progressTotal?: number;
   toast: string;
+  toastKind?: "info" | "success";
   desktopDropActive: boolean;
   gestureHint: { id: number; text: string } | null;
   onOpenNotificationSettings: () => void;
@@ -43,6 +44,7 @@ export default function AppFeedbackLayer(props: Props) {
         progressCurrent={props.progressCurrent}
         progressTotal={props.progressTotal}
         toast={props.toast}
+        toastKind={props.toastKind}
         onDismissError={props.onDismissError}
       />
       {props.desktopDropActive ? (

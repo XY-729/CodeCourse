@@ -38,6 +38,9 @@ export const PORTABLE_TABLES = [
   "observer_jobs",
   "teaching_trials",
   "teaching_outcomes",
+  "teaching_documents",
+  "teaching_passages",
+  "understanding_feedback",
 ] as const;
 
 export type PortableTableName = (typeof PORTABLE_TABLES)[number];

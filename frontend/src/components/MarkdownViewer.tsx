@@ -9,6 +9,7 @@ import { isAndroidRuntime } from "../platform/runtime";
 import { normalizeHighlightLanguage } from "../utils/highlightLanguages";
 import type { Annotation } from "../types";
 import { COLOR_VALUES } from "../types";
+import { splitRecordInformation } from "../utils/recordInformation";
 import type { ViewerSelection } from "./CodeViewer";
 
 function HighlightedCode({ className, code }: { className: string; code: string }) {
@@ -59,6 +60,8 @@ type Props = {
   onTermAction?: (term: DocumentTerm, position?: { x: number; y: number }) => void;
   onGenerateLesson?: (lessonNumber: number, title: string, outlinePath?: string) => void;
   headerActions?: ReactNode;
+  footer?: ReactNode;
+  jumpLine?: number;
   embedded?: boolean;
   immersiveReading?: boolean;
   onScrollRatioChange?: (ratio: number) => void;
@@ -351,12 +354,26 @@ export default function MarkdownViewer({
   onTermAction,
   onGenerateLesson,
   headerActions,
+  footer,
+  jumpLine,
   embedded = false,
   immersiveReading = false,
   initialScrollRatio,
   onScrollRatioChange,
 }: Props) {
+  const recordContent = useMemo(() => sourceType === "qa" || /^(qa|selection_answers)\//.test(sourcePath ?? "")
+    ? splitRecordInformation(content) : { body: content, information: "" }, [content, sourceType, sourcePath]);
   const articleRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!jumpLine) return;
+    const elements = Array.from(articleRef.current?.querySelectorAll<HTMLElement>("[data-source-line]") ?? []);
+    const target = elements.filter((el) => Number(el.dataset.sourceLine) <= jumpLine).at(-1) ?? elements[0];
+    if (!target) return;
+    target.scrollIntoView?.({ block: "center" });
+    target.classList.add("teaching-jump-target");
+    const timer = window.setTimeout(() => target.classList.remove("teaching-jump-target"), 3500);
+    return () => { window.clearTimeout(timer); target.classList.remove("teaching-jump-target"); };
+  }, [jumpLine, content]);
   const progressFillRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const restoredSourceRef = useRef<string | null>(null);
@@ -716,7 +733,7 @@ export default function MarkdownViewer({
       }
       return <code>{children}</code>;
     },
-    pre: ({ children }: { children?: ReactNode }) => <pre>{children}</pre>,
+    pre: ({ children, node }: { children?: ReactNode; node?: { position?: { start: { line: number } } } }) => <pre data-source-line={node?.position?.start.line}>{children}</pre>,
     a: ({ href, children }: { href?: string; children?: ReactNode }) => {
       const match = href?.match(/^https:\/\/codecourse\.local\/generate-lesson\/(\d+)\?title=(.*)$/);
       if (match && onGenerateLesson) {
@@ -731,6 +748,8 @@ export default function MarkdownViewer({
           </button>
         );
       }
+      const teachingReference = href?.match(/^https:\/\/codecourse\.local\/teaching\/([a-zA-Z0-9-]+)$/);
+      if (teachingReference) return <button type="button" className="knowledge-inline-link" onClick={() => window.dispatchEvent(new CustomEvent("codecourse-open-teaching", { detail: teachingReference[1] }))}>{children}</button>;
       const qaReference = href?.match(/^https:\/\/codecourse\.local\/qa\/(\d+)\/(\d+)$/);
       if (qaReference && onOpenQAReference) {
         return (
@@ -842,29 +861,29 @@ export default function MarkdownViewer({
         </button>
       );
     },
-    p: ({ children }: { children?: ReactNode }) => (
-      <p>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</p>
+    p: ({ children, node }: { children?: ReactNode; node?: { position?: { start: { line: number } } } }) => (
+      <p data-source-line={node?.position?.start.line}>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</p>
     ),
-    li: ({ children }: { children?: ReactNode }) => (
-      <li>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</li>
+    li: ({ children, node }: { children?: ReactNode; node?: { position?: { start: { line: number } } } }) => (
+      <li data-source-line={node?.position?.start.line}>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</li>
     ),
-    td: ({ children }: { children?: ReactNode }) => (
-      <td>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</td>
+    td: ({ children, node }: { children?: ReactNode; node?: { position?: { start: { line: number } } } }) => (
+      <td data-source-line={node?.position?.start.line}>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</td>
     ),
-    th: ({ children }: { children?: ReactNode }) => (
-      <th>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</th>
+    th: ({ children, node }: { children?: ReactNode; node?: { position?: { start: { line: number } } } }) => (
+      <th data-source-line={node?.position?.start.line}>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</th>
     ),
-    h1: ({ children }: { children?: ReactNode }) => (
-      <h1>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h1>
+    h1: ({ children, node }: { children?: ReactNode; node?: { position?: { start: { line: number } } } }) => (
+      <h1 data-source-line={node?.position?.start.line}>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h1>
     ),
-    h2: ({ children }: { children?: ReactNode }) => (
-      <h2>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h2>
+    h2: ({ children, node }: { children?: ReactNode; node?: { position?: { start: { line: number } } } }) => (
+      <h2 data-source-line={node?.position?.start.line}>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h2>
     ),
-    h3: ({ children }: { children?: ReactNode }) => (
-      <h3>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h3>
+    h3: ({ children, node }: { children?: ReactNode; node?: { position?: { start: { line: number } } } }) => (
+      <h3 data-source-line={node?.position?.start.line}>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h3>
     ),
-    h4: ({ children }: { children?: ReactNode }) => (
-      <h4>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h4>
+    h4: ({ children, node }: { children?: ReactNode; node?: { position?: { start: { line: number } } } }) => (
+      <h4 data-source-line={node?.position?.start.line}>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</h4>
     ),
     strong: ({ children }: { children?: ReactNode }) => (
       <strong>{highlightChildren(children, highlights, knowledgeLinks, annotations, effectiveTempSelectedText ?? null, onOpenKnowledgeLink)}</strong>
@@ -894,7 +913,6 @@ export default function MarkdownViewer({
         <span>{title ?? "课件"}</span>
         <div className="viewer-actions">
           {headerActions}
-          <strong>Markdown</strong>
         </div>
       </div> : null}
       <div className="reader-progress-bar" aria-hidden="true">
@@ -908,9 +926,11 @@ export default function MarkdownViewer({
       >
         <div ref={bodyRef} className="markdown-body">
           <ReactMarkdown remarkPlugins={markdownRemarkPlugins} components={highlightedComponents}>
-            {content}
+            {recordContent.body}
           </ReactMarkdown>
+          {recordContent.information ? <details className="document-record-information"><summary>文档信息</summary><ReactMarkdown>{recordContent.information}</ReactMarkdown></details> : null}
         </div>
+        {footer}
       </article>
     </div>
   );

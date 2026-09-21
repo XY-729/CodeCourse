@@ -1,0 +1,42 @@
+/* Action state only: retain the existing theme and workspace geometry. */
+button[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.85;
+}
+button[data-action-state]:not(.mobile-reader-action-button) {
+  min-inline-size: 78px;
+}
+button[data-action-state="success"] {
+  color: var(--apple-green, currentColor);
+}
+.document-open-feedback {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  max-width: calc(100% - 24px);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border: 1px solid var(--apple-separator);
+  border-radius: 8px;
+  background: var(--apple-surface);
+  color: var(--apple-text);
+  box-shadow: var(--apple-shadow-sm);
+  font-size: 12px;
+  pointer-events: none;
+}
+.document-open-feedback span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.document-open-feedback svg { flex-shrink: 0; }
+.document-record-information { margin-top: 28px; font-size: 12px; color: var(--apple-text-secondary); }
+.document-record-information summary, .course-maintenance > summary { cursor: pointer; }
+.course-maintenance { padding: 12px 8px; color: var(--apple-text-secondary); font-size: 12px; }
+.course-maintenance .teaching-index-control { margin-top: 8px; }
+.desktop-generation-description { align-items: center; }
+.understanding-single-action button { min-inline-size: 86px; }
+html:not(.platform-android) .apple-feedback > span { white-space: normal; overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) {
+  button[aria-busy="true"] .spin, .document-open-feedback .spin { animation: none; }
+}

@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 
-from app.services.llm_client import call_openai_compatible_chat_result, stream_openai_compatible_chat
+from app.services.llm_client import (
+    call_openai_compatible_chat_result,
+    stream_openai_compatible_chat,
+    use_system_proxy,
+    _new_async_client,
+    _new_sync_client,
+)
 
 
 def _ok_response(message: dict) -> MagicMock:
@@ -177,6 +184,38 @@ class RetryTests(unittest.TestCase):
         asyncio.run(consume())
         self.assertEqual("".join(collected), "好")
         self.assertEqual(client.stream.call_count, 2)
+
+
+class ProxyPolicyTests(unittest.TestCase):
+    """系统代理默认关闭：国内 API 经代理出海会撞中间人自签证书（见 openspec/changes/llm-bypass-system-proxy）。"""
+
+    def test_default_does_not_use_system_proxy(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(use_system_proxy())
+            sync_client = _new_sync_client()
+            async_client = _new_async_client()
+            try:
+                self.assertIs(sync_client.trust_env, False)
+                self.assertIs(async_client.trust_env, False)
+            finally:
+                sync_client.close()
+
+    def test_env_flag_restores_system_proxy(self) -> None:
+        for value in ("1", "true", "YES", " On "):
+            with self.subTest(value=value), patch.dict(os.environ, {"GPL_LLM_USE_SYSTEM_PROXY": value}):
+                self.assertTrue(use_system_proxy())
+                sync_client = _new_sync_client()
+                async_client = _new_async_client()
+                try:
+                    self.assertIs(sync_client.trust_env, True)
+                    self.assertIs(async_client.trust_env, True)
+                finally:
+                    sync_client.close()
+
+    def test_falsy_env_flag_keeps_system_proxy_off(self) -> None:
+        for value in ("", "0", "false", "no", "off"):
+            with self.subTest(value=value), patch.dict(os.environ, {"GPL_LLM_USE_SYSTEM_PROXY": value}):
+                self.assertFalse(use_system_proxy())
 
 
 def _status_response(status_code: int) -> MagicMock:

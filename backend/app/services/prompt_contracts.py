@@ -40,9 +40,12 @@ TASK_OUTPUT_CONTRACTS: dict[TaskOutputKind, str] = {
 display_name 与 source_span.text 必须逐字出现在正文可见文本中；禁止完整句子、命令、路径、函数调用/签名、编译错误和 Markdown 片段。没有合适术语时使用 `[]`。
 术语与正文在本次回答中一起决定：结合 learner_context、term_learning_context 和当前问题，自主选择最多 12 个影响理解、可能仍需帮助的最小完整技术名词。未记录不等于不会；已确认掌握或本轮已经充分讲清的词不必标注。不要把强调句、临时变量、示例输出、标题当术语；允许正文行内代码中的真实技术名词，禁止仅在代码块中出现的词。可以输出零个，不为凑数添加术语。
 第三行必须是单行 `HANDOFF: {...}` JSON。
-- 教学型回答使用 `{"engagement":"learning","continuity":"update","topic":"当前学习主题","progress_summary":"本轮后用户已经走到哪里","established_points":["已建立的认识"],"unresolved_points":["仍待弄清的问题"],"next_actions":[{"kind":"follow_up","label":"按钮文字","prompt":"由用户确认后发送的问题"}],"used_prior_context":false}`。
-- topic 必须是简短、稳定的上位知识分类，不能复制用户问题、TITLE、代码表达式或函数名。优先复用 <existing_qa_topics> 中语义匹配的已有分类；确实没有匹配项时再创建新分类。例如 shared_ptr、unique_ptr、weak_ptr 应归入“C++ 新特性”。
-- 快速查词、单纯修复、一次性任务或与此前主线无关的回答必须使用 `{"engagement":"utility","continuity":"preserve","topic":"","progress_summary":"","established_points":[],"unresolved_points":[],"next_actions":[],"used_prior_context":false}`，不得覆盖项目学习主线。
+- 教学型回答使用 `{"engagement":"learning","continuity":"update","topic":"当前学习主题","is_new_topic":true,"new_topic":"当前学习主题","existing_topic":"","progress_summary":"本轮后用户已经走到哪里","established_points":["已建立的认识"],"unresolved_points":["仍待弄清的问题"],"next_actions":[{"kind":"follow_up","label":"按钮文字","prompt":"由用户确认后发送的问题"}],"used_prior_context":false}`。
+- 每次回答（包括 utility）都必须在 HANDOFF 中附加 is_new_topic、new_topic、existing_topic 三个字段。优先复用 <existing_qa_topics> 中语义匹配的已有主题；没有匹配项时才新建。主题由你依据问题和上下文判断，不按固定关键词分类。
+- 加入已有主题："is_new_topic":false,"new_topic":"","existing_topic":"已有主题原名"；existing_topic 必须逐字选择列表中的名称。
+- 新建主题："is_new_topic":true,"new_topic":"简短稳定的主题名称","existing_topic":""。列表为空时必须新建；不要新建同名或同义主题。topic 填写最终选中的名称，与上述决定一致。
+- 主题归类与教学主线独立：utility 也要归类，但仍保持 continuity=preserve，不覆盖学习进展。示例中的主题及新建决定仅为格式演示，必须按本次实际判断填写。
+- 快速查词、单纯修复、一次性任务或与此前主线无关的回答必须使用 `{"engagement":"utility","continuity":"preserve","topic":"已有主题原名","is_new_topic":false,"new_topic":"","existing_topic":"已有主题原名","progress_summary":"","established_points":[],"unresolved_points":[],"next_actions":[],"used_prior_context":false}`，不得覆盖项目学习主线。
 - next_actions 最多 2 项，kind 只能是 `follow_up`、`open_source` 或 `review`；不要声称系统会自动发送问题或自动改变课程。
 之后输出 Markdown 正文。不要在正文重复 TITLE、TERMS 或 HANDOFF。
 </task_output_contract>""",

@@ -51,7 +51,10 @@ export function useLearningStateController({
   const pendingUpdates = useRef<Map<string, LearningStateUpdate>>(new Map());
   const updateSequences = useRef<Map<string, number>>(new Map());
   const inFlightSequences = useRef<Map<string, number>>(new Map());
-  const inFlightPromises = useRef<Map<string, Promise<void>>>(new Map());
+  const inFlightPromises = useRef<Map<string, Promise<boolean>>>(new Map());
+  const completionRequests = useRef(new Set<string>());
+  const currentProjectId = useRef(projectId);
+  currentProjectId.current = projectId;
 
   useEffect(() => {
     statesRef.current = states;
@@ -81,14 +84,14 @@ export function useLearningStateController({
     key: string,
     payload: LearningStateUpdate,
     sequence: number,
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const existing = inFlightPromises.current.get(key);
     if (inFlightSequences.current.get(key) === sequence && existing) return existing;
     inFlightSequences.current.set(key, sequence);
     const operation = (async () => {
       try {
         const saved = await updateLearningState(targetProjectId, payload);
-        if (updateSequences.current.get(key) !== sequence) return;
+        if (currentProjectId.current !== targetProjectId || updateSequences.current.get(key) !== sequence) return false;
         const previous = statesRef.current.find(
           (entry) => stateKey(entry.source_type, entry.source_path) === key,
         );
@@ -109,8 +112,10 @@ export function useLearningStateController({
         ) {
           setStates(next);
         }
+        return true;
       } catch (error) {
-        onError(error instanceof Error ? error.message : "保存学习位置失败");
+        if (currentProjectId.current === targetProjectId) onError(error instanceof Error ? error.message : "保存学习位置失败");
+        return false;
       } finally {
         if (inFlightSequences.current.get(key) === sequence) {
           inFlightSequences.current.delete(key);
@@ -134,6 +139,7 @@ export function useLearningStateController({
     immediate = false,
   ) => {
     if (!projectId || !sourcePath) return;
+    if (completionRequests.current.has(`${projectId}:${stateKey(sourceType, sourcePath)}`)) return;
     // A course that is still being streamed has no published file yet; the
     // backend would reject the save with 404. Drop the update (schedule it
     // again once the file exists).
@@ -181,7 +187,7 @@ export function useLearningStateController({
 
   const flushAll = useCallback(async () => {
     if (!projectId) return;
-    const saves: Promise<void>[] = [];
+    const saves: Promise<boolean>[] = [];
     for (const key of pendingUpdates.current.keys()) {
       const separator = key.indexOf(":");
       if (separator <= 0) continue;
@@ -208,23 +214,33 @@ export function useLearningStateController({
   }, [findState, queueUpdate]);
 
   const toggleLessonComplete = useCallback(async (filename: string) => {
-    if (!projectId) return;
-    if (streamingPaths?.().has(filename)) return;
+    if (!projectId || streamingPaths?.().has(filename)) return false;
+    const key = stateKey("course", filename);
+    const requestKey = `${projectId}:${key}`;
+    if (completionRequests.current.has(requestKey)) return false;
+    completionRequests.current.add(requestKey);
+    saveScheduler.current.cancel(key);
+    pendingUpdates.current.delete(key);
+    try {
+    // Let an older scroll save settle before the explicit completion update.
+    await inFlightPromises.current.get(key);
+    if (currentProjectId.current !== projectId) return false;
     const existing = findState("course", filename);
     const nextStatus = existing?.status === "completed"
       ? "in_progress"
       : "completed";
-    const key = stateKey("course", filename);
     const sequence = (updateSequences.current.get(key) ?? 0) + 1;
     updateSequences.current.set(key, sequence);
-    await persist(projectId, key, {
+    const saved = await persist(projectId, key, {
       source_type: "course",
       source_path: filename,
       status: nextStatus,
       position_kind: "scroll_ratio",
       position_value: existing?.position_value ?? 0,
     }, sequence);
-    onStatus(nextStatus === "completed" ? "本课已完成" : "已恢复为学习中");
+    if (saved) onStatus(nextStatus === "completed" ? "本课已完成" : "已恢复为学习中");
+    return saved;
+    } finally { completionRequests.current.delete(requestKey); }
   }, [findState, onStatus, persist, projectId, streamingPaths]);
 
   const reset = useCallback(async () => {

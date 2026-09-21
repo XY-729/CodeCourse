@@ -138,3 +138,32 @@ export function normalizeOutputPath(
   }
   return `qa/${recordId}`;
 }
+
+/**
+ * 把任务的 output_path 对到课程列表里的相对文件名。
+ *
+ * 后端存的是绝对路径，Windows 上还是反斜杠；课程列表里的 filename 是正斜杠相对
+ * 路径。两者直接比较永远不相等，会把绝对路径当文件名发给后端而 404。这里先统一
+ * 分隔符，再按 完整路径 → 后缀 → 文件名 三级匹配，最后退回 generated/<id>/ 之后
+ * 的相对段；对不上时返回 null，调用方不要拿原始绝对路径去发请求。
+ */
+export function resolveCourseFilename(
+  outputPath: string | null | undefined,
+  courseFilenames: string[],
+  projectId: number,
+): string | null {
+  const normalized = (outputPath ?? "").replace(/\\/g, "/").trim();
+  if (!normalized) return null;
+  const candidates = courseFilenames.map((filename) => filename.replace(/\\/g, "/").trim()).filter(Boolean);
+  const exact = candidates.find((filename) => filename === normalized);
+  if (exact) return exact;
+  const bySuffix = candidates.find((filename) => normalized.endsWith(`/${filename}`));
+  if (bySuffix) return bySuffix;
+  const basename = normalized.split("/").filter(Boolean).pop() ?? "";
+  const byName = candidates.find((filename) => filename.split("/").filter(Boolean).pop() === basename);
+  if (byName) return byName;
+  const marker = `generated/${projectId}/`;
+  const markerIndex = normalized.lastIndexOf(marker);
+  if (markerIndex !== -1) return normalized.slice(markerIndex + marker.length);
+  return null;
+}

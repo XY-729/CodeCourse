@@ -564,6 +564,12 @@ def reset_profile(
 
     def do_tx(conn):
         if scope == "all":
+            conn.execute("DELETE FROM understanding_feedback")
+        else:
+            target_type = "global" if scope == "global" else "project"
+            target_scope = GLOBAL_SCOPE_ID if target_type == "global" else str(project_id)
+            conn.execute("DELETE FROM understanding_feedback WHERE evidence_id IN (SELECT id FROM learning_evidence_v2 WHERE scope_type=? AND scope_id=?)", (target_type, target_scope))
+        if scope == "all":
             deleted_mastery = delete_where(conn, "concept_mastery")
             deleted_events = delete_where(conn, "learning_events")
             deleted_preferences = delete_where(conn, "learner_preferences")

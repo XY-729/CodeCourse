@@ -124,8 +124,8 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
         task_id = created.json()["id"]
         task = self.client.get(f"/api/projects/{self.project.id}/tasks/{task_id}").json()
         self.assertEqual(task["status"], "completed")
-        self.assertEqual(task["progress_current"], 6)
-        self.assertEqual(task["progress_total"], 6)
+        self.assertEqual(task["progress_current"], 7)
+        self.assertEqual(task["progress_total"], 7)
         self.assertEqual(task["stage_label"], "生成完成")
         self.assertEqual(mocked.call_count, 6)
 

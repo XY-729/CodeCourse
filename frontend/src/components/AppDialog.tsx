@@ -1,4 +1,5 @@
-import type { FormEvent } from "react";
+import { useId, useRef, type FormEvent } from "react";
+import { useModalFocus } from "../hooks/useModalFocus";
 
 export type ConfirmDialogState = {
   kind: "confirm";
@@ -49,13 +50,16 @@ type Props = {
 };
 
 export default function AppDialog({ state, value, onValueChange, onCancel, onConfirm, skipChecked, onSkipChange }: Props) {
+  const dialogRef = useRef<HTMLFormElement>(null);
+  const messageId = useId();
+  useModalFocus(dialogRef, !!state);
   if (!state) {
     return null;
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onConfirm();
+    if (!confirmDisabled) onConfirm();
   }
 
   const confirmText = state.confirmText ?? "确定";
@@ -63,10 +67,21 @@ export default function AppDialog({ state, value, onValueChange, onCancel, onCon
   const confirmDisabled = state.kind === "input" ? !value.trim() : state.kind === "choice" ? !value : false;
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={state.title}>
-      <form className="app-dialog" onSubmit={submit}>
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={state.title} aria-describedby={state.message ? messageId : undefined}>
+      <form ref={dialogRef} className="app-dialog" onSubmit={submit} onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing || event.keyCode === 229) {
+          event.stopPropagation();
+          if (event.key === "Enter") event.preventDefault();
+          return;
+        }
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          event.preventDefault();
+          onCancel();
+        }
+      }}>
         <div className="app-dialog-title">{state.title}</div>
-        {"message" in state && state.message ? <p className="app-dialog-message">{state.message}</p> : null}
+        {"message" in state && state.message ? <p id={messageId} className="app-dialog-message">{state.message}</p> : null}
 
         {state.kind === "confirm" && onSkipChange ? (
           <label className="app-dialog-skip">
@@ -79,7 +94,7 @@ export default function AppDialog({ state, value, onValueChange, onCancel, onCon
           <label className="app-dialog-field">
             <span>{state.label ?? "名称"}</span>
             <input
-              autoFocus
+              data-modal-initial-focus
               value={value}
               onChange={(event) => onValueChange(event.target.value)}
               placeholder={state.placeholder}
@@ -108,7 +123,7 @@ export default function AppDialog({ state, value, onValueChange, onCancel, onCon
         ) : null}
 
         <div className="app-dialog-actions">
-          <button type="button" className="secondary-button" onClick={onCancel}>
+          <button data-modal-initial-focus={state.kind === "confirm" ? "" : undefined} type="button" className="secondary-button" onClick={onCancel}>
             {cancelText}
           </button>
           <button type="submit" className={state.kind === "confirm" && state.danger ? "primary-button danger" : "primary-button"} disabled={confirmDisabled}>

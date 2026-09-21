@@ -75,7 +75,14 @@ export default function MonacoCodeViewer({
     }] : []);
   }
 
-  useEffect(() => { setPersistentSelection(selectedRange ?? null); }, [selectedRange, content, path]);
+  useEffect(() => {
+    setPersistentSelection(selectedRange ?? null);
+    if (!selectedRange) {
+      const editor = editorRef.current;
+      const position = editor?.getPosition();
+      if (position && !editor?.getSelection()?.isEmpty()) editor?.setPosition(position);
+    }
+  }, [selectedRange, content, path]);
   const consumedJumpIdsRef = useRef(new Set<string>());
 
   useEffect(() => {

@@ -187,8 +187,9 @@ class LearningPlanProjectTests(unittest.TestCase):
         task_id = created.json()["id"]
         task = self.client.get(f"/api/projects/{project['id']}/tasks/{task_id}").json()
         self.assertEqual(task["status"], "completed")
-        self.assertEqual(task["progress_current"], 6)
-        self.assertEqual(task["progress_total"], 6)
+        # Progress includes publishing the finished document, not just LLM calls.
+        self.assertEqual(task["progress_current"], task["progress_total"])
+        self.assertGreaterEqual(task["progress_total"], mocked.call_count)
         self.assertEqual(task["stage_label"], "生成完成")
         self.assertLessEqual(mocked.call_count, 12)
         self.assertEqual(mocked.call_count, 6)

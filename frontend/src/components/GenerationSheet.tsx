@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { Sparkles, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { FolderOpen, Loader2, Sparkles, X } from "lucide-react";
+import { useModalFocus } from "../hooks/useModalFocus";
 import type { GenerationTask, Project } from "../api/client";
 import type { GenerationIntent } from "./DesktopToolbar";
 import { DeferredLiftTextarea } from "./DeferredLiftText";
@@ -21,6 +22,8 @@ type Props = {
   onScopeChange: (scope: GenerationScope) => void;
   onInstructionsChange: (value: string) => void;
   onOpenPrompts: () => void;
+  onOpenFiles?: () => void;
+  pickerOpen?: boolean;
   onGenerate: (instructions: string) => void;
 };
 
@@ -55,6 +58,9 @@ export default function GenerationSheet(props: Props) {
    * it directly when the user taps the generate action.
    */
   const [instructionsDraft, setInstructionsDraft] = useState(instructions);
+  const sheetRef = useRef<HTMLElement>(null);
+  useModalFocus(sheetRef, open && !props.pickerOpen);
+  useEffect(() => { if (open) setInstructionsDraft(instructions); }, [open, intent, project?.id]);
   useEffect(() => {
     document.body.classList.toggle("has-sheet", open);
     return () => document.body.classList.remove("has-sheet");
@@ -63,20 +69,22 @@ export default function GenerationSheet(props: Props) {
   if (!open) return null;
   const copy = labels[intent];
   const learningPlan = project?.project_type === "learning_plan";
+  const requiresGoal = intent === "outline" && (learningPlan || scope === "learning_plan");
+  const requiresFiles = intent === "outline" && !learningPlan && scope === "files";
+  const invalid = requiresGoal && !instructionsDraft.trim() || requiresFiles && !selectedFileCount;
   const progress = activeTask ? generationTaskProgress(activeTask) : null;
 
   return (
     <div className="apple-sheet-layer" onMouseDown={onClose}>
-      <section className="apple-sheet generation-sheet" onMouseDown={(event) => event.stopPropagation()} aria-label={copy.title}>
+      <section ref={sheetRef} className="apple-sheet generation-sheet" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} aria-label={copy.title} onKeyDown={event => { if (event.key === "Escape" && !props.pickerOpen) { event.stopPropagation(); onClose(); } }}>
         <header className="apple-sheet-header">
           <div>
             <strong>{copy.title}</strong>
-            <small>仅在确认后调用模型 API</small>
+            <small>生成会使用当前模型额度</small>
           </div>
           <button className="apple-icon-button" onClick={onClose} title="关闭" aria-label="关闭"><X size={17} /></button>
         </header>
         <div className="apple-sheet-body">
-          <p className="generation-sheet-intro">{copy.help}</p>
           {intent === "outline" ? (
             <label className="apple-field">
               <span>学习范围</span>
@@ -93,24 +101,26 @@ export default function GenerationSheet(props: Props) {
                 {learningPlan || scope === "learning_plan"
                   ? "根据学习目标生成课程路线，不读取仓库文件。"
                   : scope === "files"
-                    ? selectedFileCount ? `已选择 ${selectedFileCount} 个文件。` : "请先从左侧源码导航中选择文件。"
+                    ? selectedFileCount ? `已选 ${selectedFileCount} 个文件` : "请选择要学习的文件"
                     : "结合 README、目录结构和关键文件生成。"}
               </small>
             </label>
           ) : null}
+          {requiresFiles ? <button type="button" className="secondary-button compact" disabled={running} onClick={props.onOpenFiles}><FolderOpen size={14} />{selectedFileCount ? "调整文件" : "选择文件"}</button> : null}
           <label className="apple-field">
-            <span>补充要求</span>
+            <span>{requiresGoal ? "学习目标" : "补充要求（选填）"}</span>
             <DeferredLiftTextarea
               value={instructions}
               onLift={onInstructionsChange}
               onDraftChange={setInstructionsDraft}
               liftDelayMs={250}
-              placeholder="例如：面向初学者，优先解释请求如何流经后端"
+              placeholder={requiresGoal ? "想学什么？例如：掌握 C++ 智能指针与移动语义" : "例如：优先解释请求如何流经后端"}
               disabled={!project || running}
             />
+            {requiresGoal && !instructionsDraft.trim() ? <small>填写学习目标后即可生成</small> : null}
           </label>
           <button className="apple-text-button" onClick={onOpenPrompts}>编辑生成提示词</button>
-          {taskMessage ? (
+          {taskMessage && (running || activeTask?.status === "failed") ? (
             <div className={`generation-sheet-status ${activeTask?.status === "failed" ? "failed" : ""}`}>
               <span>{taskMessage}</span>
               {progress != null ? (
@@ -123,8 +133,8 @@ export default function GenerationSheet(props: Props) {
         </div>
         <footer className="apple-sheet-footer">
           <button className="apple-secondary-button" onClick={onClose}>取消</button>
-          <button className="apple-primary-button" onClick={() => onGenerate(instructionsDraft)} disabled={!project || running}>
-            <Sparkles size={15} />{running ? "生成中…" : copy.action}
+          <button className="apple-primary-button" onClick={() => onGenerate(instructionsDraft)} disabled={!project || running || invalid} aria-busy={running}>
+            {running ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}{running ? "生成中…" : copy.action}
           </button>
         </footer>
       </section>

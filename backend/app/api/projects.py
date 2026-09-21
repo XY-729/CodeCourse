@@ -4,6 +4,7 @@ import asyncio
 import json as json_module
 import logging
 from pathlib import Path
+from threading import Lock
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,7 @@ from app.models.schemas import (
     GenerateOutlineLessonRequest,
     GenerateOutlineRequest,
     GenerationTaskResponse,
+    GenerationPreviewResponse,
     ImportLocalProjectRequest,
     ImportProjectRequest,
     OutlineConfirmRequest,
@@ -29,6 +31,7 @@ from app.services.generation_service import (
     create_or_reuse_outline_lesson_task,
     create_or_reuse_outline_task,
     generate_rule_course,
+    project_course_dir,
     list_project_course_files,
     preview_outline_lesson_evidence,
     run_file_lesson_task,
@@ -38,6 +41,7 @@ from app.services.generation_service import (
     stream_file_lesson_generation,
     stream_outline_lesson_generation,
 )
+from app.services.lesson_preview import read_preview, write_preview
 from app.services.git_service import clone_or_reuse, repo_name_from_url, validate_git_url
 from app.services.local_import_service import import_local_archive, import_local_directory
 from app.services.index_service import build_project_index
@@ -61,12 +65,14 @@ from app.services.storage import (
     list_generation_tasks,
     list_projects,
     update_project_status,
+    update_generation_task,
     upsert_project,
 )
 
 router = APIRouter(prefix="/api", tags=["projects"])
 
 logger = logging.getLogger(__name__)
+_retry_lock = Lock()
 
 
 def _project_root(project_id: int) -> Path:
@@ -98,6 +104,7 @@ def _to_project_response(project) -> ProjectResponse:
 
 
 def _to_task_response(task: GenerationTask) -> GenerationTaskResponse:
+    preview = read_preview(project_course_dir(task.project_id), task.id)
     return GenerationTaskResponse(
         id=task.id,
         project_id=task.project_id,
@@ -115,6 +122,13 @@ def _to_task_response(task: GenerationTask) -> GenerationTaskResponse:
         stage_label=task.stage_label,
         created_at=task.created_at,
         updated_at=task.updated_at,
+        progress_phase=preview.get("phase"),
+        total_sections=preview.get("total_sections", 0),
+        completed_sections=preview.get("completed_sections", 0),
+        readable_sections=preview.get("readable_sections", 0),
+        started_at=preview.get("started_at"),
+        finished_at=preview.get("finished_at"),
+        retry_available=bool(preview.get("request", {}).get("lesson_number")),
     )
 
 
@@ -446,6 +460,38 @@ def get_task(project_id: int, task_id: int) -> GenerationTaskResponse:
     if task is None or task.project_id != project_id:
         raise HTTPException(status_code=404, detail="Task not found")
     return _to_task_response(task)
+
+
+@router.get("/projects/{project_id}/tasks/{task_id}/preview", response_model=GenerationPreviewResponse)
+def get_task_preview(project_id: int, task_id: int) -> GenerationPreviewResponse:
+    _project_root(project_id)
+    task = get_generation_task(task_id)
+    if task is None or task.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+    data = read_preview(project_course_dir(project_id), task_id)
+    return GenerationPreviewResponse(task_id=task_id, status=task.status, **{
+        key: data[key] for key in ("version", "total_sections", "completed_sections", "readable_sections", "markdown") if key in data
+    })
+
+
+@router.post("/projects/{project_id}/tasks/{task_id}/retry", response_model=GenerationTaskResponse)
+def retry_task(project_id: int, task_id: int, background_tasks: BackgroundTasks) -> GenerationTaskResponse:
+    with _retry_lock:
+        _project_root(project_id)
+        task = get_generation_task(task_id)
+        if task is None or task.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task.status not in {"failed", "cancelled"} or any(t.status in {"running", "queued"} for t in list_generation_tasks(project_id)):
+            raise HTTPException(status_code=409, detail="Task cannot be retried while generation is active")
+        data = read_preview(project_course_dir(project_id), task_id)
+        request = data.get("request", {})
+        if task.task_type != "outline_lesson" or not request.get("lesson_number"):
+            raise HTTPException(status_code=409, detail="请从课程入口重新生成此旧任务")
+        # Keep the request durable across a restart, but never expose the previous attempt as new content.
+        write_preview(project_course_dir(project_id), task_id, {"request": request})
+        task = update_generation_task(task_id, "queued", progress_current=0, progress_total=0, stage_label="等待重试")
+        background_tasks.add_task(run_outline_lesson_task, project_id, task_id, **request)
+        return _to_task_response(task)
 
 
 @router.delete("/projects/{project_id}", response_model=ProjectActionResponse)

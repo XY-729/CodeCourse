@@ -32,6 +32,7 @@ type Options = {
     operationToken: QAOperationToken,
   ) => Promise<QARecord>;
   buildContext: () => AskContext;
+  onAskSubmitted?: () => void;
   confirm: (
     title: string,
     message: string,
@@ -84,6 +85,10 @@ export function useQAAskController(options: Options) {
     }
 
     try {
+      // Snapshot the request before clearing the visible selection or awaiting confirmation.
+      const context = current.buildContext();
+      const range = current.selectionRange;
+      current.onAskSubmitted?.();
       const confirmed = await current.confirm(
         "AI 助手询问",
         `将调用模型 API 使用 ${current.settings.model} 回答当前问题，可能消耗 token。是否继续？`,
@@ -92,8 +97,6 @@ export function useQAAskController(options: Options) {
       if (!confirmed) return;
 
       current.onPanelError("");
-      const context = current.buildContext();
-      const range = current.selectionRange;
       const record = await current.runStreamingQuestion(
         {
           source_type: context.source_type,

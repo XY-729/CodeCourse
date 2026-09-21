@@ -1,6 +1,8 @@
-import { lazy, memo, Suspense, useMemo, useRef } from "react";
+import UnderstandingFeedback from "../components/UnderstandingFeedback";
+import AsyncActionButton from "../components/AsyncActionButton";
+import { lazy, memo, Suspense, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
-import { Pencil, Save, Star, X } from "lucide-react";
+import { Check, Loader2, Pencil, Save, Star, X } from "lucide-react";
 import type {
   CallGuide,
   CallGuideNode,
@@ -16,7 +18,6 @@ import type { ViewerSelection } from "../components/CodeViewer";
 import CodeViewer from "../components/CodeViewer";
 import ReaderLearningToolbar from "../components/ReaderLearningToolbar";
 import DocumentTermScanControl from "../components/DocumentTermScanControl";
-import TeachingRationale from "../components/TeachingRationale";
 import type { TermDisplayTier } from "../personalization/termDisplayTypes";
 import EditorPaneFrame from "./EditorPaneFrame";
 import type { EditorGroup, OpenItem } from "./layout";
@@ -33,6 +34,7 @@ type SelectionAnchor = SelectionSummary & {
 type KnowledgeFocusRef = { ref_type: string; ref_path?: string; ref_id?: number } | null;
 
 type Props = {
+  openingTitle?: string;
   group: EditorGroup;
   activeGroupId: string;
   mobile: boolean;
@@ -74,9 +76,9 @@ type Props = {
   onDrop: (event: DragEvent<HTMLElement>) => void;
   onMobileCodeSearch: () => void;
   onOpenCourse: (path: string) => void;
-  onToggleLessonComplete: (path: string) => void;
+  onToggleLessonComplete: (path: string) => unknown | Promise<unknown>;
   onSetEditingCourse: (itemId: string | null) => void;
-  onSaveEditedCourse: (group: EditorGroup, item: OpenItem) => void;
+  onSaveEditedCourse: (group: EditorGroup, item: OpenItem) => unknown | Promise<unknown>;
   onCancelEditedCourse: (group: EditorGroup, item: OpenItem) => void;
   onUpdateItemContent: (groupId: string, itemId: string, content: string) => void;
   onSelectionChange: (selection: ViewerSelection) => void;
@@ -85,7 +87,7 @@ type Props = {
   onLearningPosition: (sourceType: LearningState["source_type"], path: string, positionKind: "line" | "scroll_ratio", value: number) => void;
   onToggleFavorite: (item: OpenItem) => void;
   onCreateHighlight: (sourceType: "course" | "qa", sourcePath: string, selectedText: string) => void;
-  onSaveQA: (groupId: string, item: OpenItem) => void;
+  onSaveQA: (groupId: string, item: OpenItem) => unknown | Promise<unknown>;
   onPersonalizationChanged: () => void;
   onOpenKnowledgeLink: (term: string, links: KnowledgeLink[]) => void;
   onOpenQAReference: (projectId: number, qaRecordId: number) => void;
@@ -108,7 +110,7 @@ type Props = {
 
 function lessonFiles(courses: CourseFile[]) {
   return courses
-    .filter((file) => /(^|\/)lesson-\d+.*\.md$/i.test(file.filename))
+    .filter((file) => /(^|\/)lesson[-_]\d+.*\.md$/i.test(file.filename))
     .sort((a, b) => a.filename.localeCompare(b.filename));
 }
 
@@ -129,6 +131,9 @@ function WorkbenchEditorGroupView(props: Props) {
     selectionAnchor,
   } = props;
   const activeItem = group.items.find((item) => item.id === group.activeItemId) ?? null;
+  const [savingItemId, setSavingItemId] = useState<string | null>(null);
+  const saving = Boolean(activeItem && savingItemId === activeItem.id);
+  const onSavePending = (pending: boolean) => setSavingItemId(current => pending ? activeItem?.id ?? null : current === activeItem?.id ? null : current);
   const activeItemLoading = activeItem?.hydrated === false;
   const lessons = lessonFiles(courses);
   const lessonIndex = activeItem?.type === "course"
@@ -159,15 +164,16 @@ function WorkbenchEditorGroupView(props: Props) {
     return (
       <>
         <DocumentTermScanControl status={props.termScanStatus} onRescan={props.onRescanTerms} compact={compact} />
-        {hasMarkdownActions ? <>
-        {activeItem.qaRecordId && projectId ? (
-          <TeachingRationale
-            projectId={projectId}
-            qaRecordId={activeItem.qaRecordId}
-            onChanged={props.onPersonalizationChanged}
-            compact={compact}
-          />
+        {!hasMarkdownActions && (!compact || lessonIndex < 0) && !props.isOutlineCourse(activeItem.path) ? (
+          <AsyncActionButton key={`complete:${activeItem.id}`} className={`secondary-button compact complete-button ${learningState?.status === "completed" ? "completed" : ""}`}
+            aria-pressed={learningState?.status === "completed"}
+            title={learningState?.status === "completed" ? "已完成，点击取消" : "标记本课学习完成"}
+            action={() => props.onToggleLessonComplete(activeItem.path)}>
+            <Check size={14} />{learningState?.status === "completed" ? "已完成" : "学习完成"}
+          </AsyncActionButton>
         ) : null}
+        {hasMarkdownActions ? <>
+        {projectId ? <UnderstandingFeedback simple projectId={projectId} sourceType="qa" sourcePath={activeItem.path} revision={activeItem.content} /> : null}
         <button
           type="button"
           className={compact ? "mobile-reader-action-button" : "secondary-button compact"}
@@ -189,18 +195,22 @@ function WorkbenchEditorGroupView(props: Props) {
     ? editingCourseItemId === activeItem.id
       ? (
           <>
-            <button
+            <AsyncActionButton
+              key={`save:${activeItem.id}`}
               type="button"
               className="mobile-reader-action-button"
-              onClick={() => props.onSaveEditedCourse(group, activeItem)}
+              action={() => props.onSaveEditedCourse(group, activeItem)}
+              onPendingChange={onSavePending}
+              pendingLabel=""
               disabled={!activeItem.dirty}
               aria-label="保存当前文档"
               title="保存"
-            ><Save size={18} aria-hidden="true" /></button>
+            ><Save size={18} aria-hidden="true" /></AsyncActionButton>
             <button
               type="button"
               className="mobile-reader-action-button"
               onClick={() => props.onCancelEditedCourse(group, activeItem)}
+              disabled={saving}
               aria-label="取消编辑"
               title="取消编辑"
             ><X size={18} aria-hidden="true" /></button>
@@ -211,7 +221,7 @@ function WorkbenchEditorGroupView(props: Props) {
       ? (
           <>
             {projectId && activeItem.qaRecordId ? (
-              <TeachingRationale projectId={projectId} qaRecordId={activeItem.qaRecordId} onChanged={props.onPersonalizationChanged} compact />
+              <UnderstandingFeedback simple projectId={projectId} sourceType="qa" sourcePath={activeItem.path} revision={activeItem.content} />
             ) : null}
             <button
               type="button"
@@ -231,14 +241,17 @@ function WorkbenchEditorGroupView(props: Props) {
               aria-label="标记选中的回答内容"
               title="标记选中内容"
             ><Pencil size={17} aria-hidden="true" /></button>
-            <button
+            <AsyncActionButton
+              key={`save:${activeItem.id}`}
               type="button"
               className="mobile-reader-action-button"
-              onClick={() => props.onSaveQA(group.id, activeItem)}
+              action={() => props.onSaveQA(group.id, activeItem)}
+              onPendingChange={onSavePending}
+              pendingLabel=""
               disabled={!activeItem.dirty}
               aria-label="保存当前回答"
               title="保存"
-            ><Save size={18} aria-hidden="true" /></button>
+            ><Save size={18} aria-hidden="true" /></AsyncActionButton>
           </>
         )
       : undefined;
@@ -275,17 +288,15 @@ function WorkbenchEditorGroupView(props: Props) {
       onDragLeave={props.onDragLeave}
       onDrop={props.onDrop}
     >
-      {editorMountDeferred || activeItemLoading ? <div className="viewer-loading deferred-editor-loading">正在准备工作区…</div> : null}
+      {props.openingTitle ? <div className="document-open-feedback" role="status"><Loader2 size={14} className="spin" aria-hidden="true" /><span>正在打开 {props.openingTitle}</span></div> : null}
+      {editorMountDeferred || activeItemLoading ? <div className="viewer-loading deferred-editor-loading">正在打开文档…</div> : null}
+
       {!mobile && activeItem?.type === "course" && lessonIndex >= 0 ? (
-        <ReaderLearningToolbar
-          title={activeItem.title}
-          index={lessonIndex}
-          total={lessons.length}
-          completed={learningState?.status === "completed"}
+        <ReaderLearningToolbar title={activeItem.title} index={lessonIndex} total={lessons.length}
+          completed={learningState?.status === "completed"} showCompletion={false}
           onPrevious={lessonIndex > 0 ? () => props.onOpenCourse(lessons[lessonIndex - 1].filename) : undefined}
           onNext={lessonIndex < lessons.length - 1 ? () => props.onOpenCourse(lessons[lessonIndex + 1].filename) : undefined}
-          onToggleComplete={() => props.onToggleLessonComplete(activeItem.path)}
-        />
+          onToggleComplete={() => props.onToggleLessonComplete(activeItem.path)} />
       ) : null}
 
       {!editorMountDeferred && !activeItemLoading && activeItem?.type === "file" ? (
@@ -313,13 +324,14 @@ function WorkbenchEditorGroupView(props: Props) {
               <div className="viewer-header">
                 <span>{activeItem.title} - 编辑 Markdown</span>
                 <div className="viewer-actions">
-                  <button className="secondary-button compact" onClick={() => props.onSaveEditedCourse(group, activeItem)}><Save size={14} />保存</button>
-                  <button className="secondary-button compact" onClick={() => props.onCancelEditedCourse(group, activeItem)}>取消</button>
+                  <AsyncActionButton key={`save:${activeItem.id}`} className="secondary-button compact" disabled={!activeItem.dirty} action={() => props.onSaveEditedCourse(group, activeItem)} onPendingChange={onSavePending} successLabel="已保存"><Save size={14} />保存</AsyncActionButton>
+                  <button className="secondary-button compact" disabled={saving} onClick={() => props.onCancelEditedCourse(group, activeItem)}>取消</button>
                 </div>
               </div>
             ) : null}
             <textarea
               className="qa-workspace-editor"
+              readOnly={saving}
               value={activeItem.content}
               onChange={(event) => props.onUpdateItemContent(group.id, activeItem.id, event.target.value)}
             />
@@ -360,6 +372,7 @@ function WorkbenchEditorGroupView(props: Props) {
               "scroll_ratio",
               ratio,
             )}
+            footer={projectId && !hasMarkdownActions ? <UnderstandingFeedback projectId={projectId} sourceType={activeItem.qaRecordId ? "qa" : "course"} sourcePath={activeItem.path} revision={activeItem.content} /> : undefined}
             headerActions={mobile ? undefined : markdownActions(false)}
           />
         )
@@ -372,9 +385,9 @@ function WorkbenchEditorGroupView(props: Props) {
               <span>{activeItem.dirty ? `${activeItem.title} *` : activeItem.title}</span>
               <div className="viewer-actions">
                 {projectId && activeItem.qaRecordId ? (
-                  <TeachingRationale projectId={projectId} qaRecordId={activeItem.qaRecordId} onChanged={props.onPersonalizationChanged} />
+                  <UnderstandingFeedback simple projectId={projectId} sourceType="qa" sourcePath={activeItem.path} revision={activeItem.content} />
                 ) : null}
-                <button className="icon-button" onClick={() => props.onToggleFavorite(activeItem)} title="收藏/取消收藏">
+                <button className="icon-button" onClick={() => props.onToggleFavorite(activeItem)} title={activeItem.favorite ? "取消收藏" : "收藏"} aria-label={activeItem.favorite ? "取消收藏" : "收藏"} aria-pressed={Boolean(activeItem.favorite)}>
                   <Star size={14} className={activeItem.favorite ? "starred" : ""} />
                 </button>
                 <button
@@ -384,14 +397,15 @@ function WorkbenchEditorGroupView(props: Props) {
                   }}
                   disabled={!props.qaHighlightDraft || props.qaHighlightDraft.sourcePath !== activeItem.path}
                 >标记</button>
-                <button className="secondary-button compact" onClick={() => props.onSaveQA(group.id, activeItem)} disabled={!activeItem.dirty}>
+                <AsyncActionButton key={`save:${activeItem.id}`} className="secondary-button compact" action={() => props.onSaveQA(group.id, activeItem)} disabled={!activeItem.dirty} onPendingChange={onSavePending} successLabel="已保存">
                   <Save size={14} />保存
-                </button>
+                </AsyncActionButton>
               </div>
             </div>
           ) : null}
           <textarea
             className="qa-workspace-editor"
+            readOnly={saving}
             value={activeItem.content}
             onChange={(event) => props.onUpdateItemContent(group.id, activeItem.id, event.target.value)}
             onSelect={(event) => {

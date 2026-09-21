@@ -1,0 +1,54 @@
+.desktop-generation-status {
+  position: fixed;
+  z-index: 55;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--apple-separator);
+  border-radius: 12px;
+  background: var(--apple-surface);
+  color: var(--apple-text);
+  box-shadow: var(--apple-shadow-sm);
+  font-size: 12px;
+}
+.desktop-generation-description { display: flex; flex-wrap: wrap; gap: 10px; }
+.desktop-generation-status progress { width: 120px; height: 8px; accent-color: var(--apple-blue); }
+.desktop-generation-status button, .lesson-preview button {
+  border: 1px solid var(--apple-separator);
+  border-radius: 6px;
+  background: var(--apple-fill);
+  color: var(--apple-text);
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.lesson-preview {
+  position: fixed;
+  z-index: 56;
+  inset: 76px 24px 82px auto;
+  width: min(760px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--apple-separator);
+  border-radius: 14px;
+  background: var(--apple-surface);
+  color: var(--apple-text);
+  box-shadow: var(--apple-shadow-md);
+  overflow: hidden;
+}
+.lesson-preview header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px; border-bottom: 1px solid var(--apple-separator); }
+.lesson-preview header span { flex: 1; font-size: 12px; color: var(--apple-text-secondary); }
+.lesson-preview-speeds { display: inline-flex; align-items: center; gap: 4px; }
+.lesson-preview-speeds button { padding: 3px 8px; font-size: 11px; }
+.lesson-preview-speeds button[aria-pressed="true"] { border-color: var(--apple-blue); color: var(--apple-blue); }
+.lesson-preview > p { padding: 0 18px; font-size: 13px; }
+.lesson-preview-content { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; padding: 20px 28px 40px; line-height: 1.8; overflow-wrap: anywhere; }
+.lesson-preview-content pre { overflow-x: auto; padding: 12px; background: var(--apple-fill); }
+.lesson-preview-content table { display: block; overflow-x: auto; border-collapse: collapse; }
+.lesson-preview-content td, .lesson-preview-content th { padding: 5px 10px; border: 1px solid var(--apple-separator); }

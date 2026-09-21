@@ -128,6 +128,16 @@ class DataTransferTests(unittest.TestCase):
         self.source_db, self.source_repos, self.source_generated = _init_workspace(self.source_root)
         _seed_source(self.source_db, self.source_repos, self.source_generated)
 
+        from app.services import teaching_index as index
+        quote = '闭包会保留定义时的词法作用域。'
+        content = index.prepare_metadata('TEACHING: ' + json.dumps([{
+            'concept': '闭包', 'aspect': '词法作用域', 'kind': 'explained', 'core': True, 'quote': quote
+        }]) + '\n\n' + quote)
+        (self.source_generated / '7' / 'lesson.md').write_text(content, encoding='utf-8')
+        state = index.document_state(7, 'course', 'lesson.md')
+        self.passage_id = state['passages'][0]['id']
+        index.save_feedback(7, 'course', 'lesson.md', 'understood', [self.passage_id], state['contentHash'], 'portable-feedback')
+
         from app.services.data_transfer import export_data_archive
 
         self.payload, self.filename = export_data_archive(
@@ -191,6 +201,16 @@ class DataTransferTests(unittest.TestCase):
             self.assertEqual(settings["llm.api_key"], "target-secret")
             self.assertEqual(settings["reader.font_size"], "18")
             self.assertEqual(settings["llm.enabled"], "false")
+
+    def test_teaching_index_and_feedback_round_trip(self):
+        from app.services.data_transfer import import_data_archive
+        from app.services import teaching_index as index
+        target_db, _repos, target_generated = _init_workspace(self.target_root)
+        import_data_archive(self.payload, db_path=target_db, workspace_root=self.target_root, generated_root=target_generated)
+        state = index.document_state(7, 'course', 'lesson.md')
+        self.assertEqual(state['status'], 'understood')
+        self.assertEqual(state['passages'][0]['id'], self.passage_id)
+        self.assertEqual(index.resolve_reference(7, self.passage_id)['line'], 1)
 
     def test_rejects_path_traversal_and_unsupported_version(self):
         from app.services.data_transfer import DataTransferError, import_data_archive

@@ -25,6 +25,7 @@ from app.services.personalization.teaching.planner_scheduler import (
     schedule_teacher_plan,
 )
 from app.services.continuity_service import (
+    existing_qa_topics,
     parse_handoff_metadata,
     persist_teaching_handoff,
     render_project_learning_context,
@@ -519,7 +520,7 @@ def _settings_for_request(payload: QAAskRequest) -> dict[str, str]:
     return {
         "provider": payload.provider.strip() or settings.get("provider", "deepseek"),
         "base_url": payload.base_url.strip().rstrip("/") or settings.get("base_url", "https://api.deepseek.com"),
-        "model": payload.model.strip() or settings.get("model", "deepseek-v4-pro"),
+        "model": payload.model.strip() or settings.get("model", "deepseek-flash"),
         "api_key": settings["api_key"],
     }
 
@@ -603,6 +604,8 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
         payload.source_path,
     )
     project_learning_context = render_project_learning_context(project_id)
+    from app.services.teaching_index import teaching_context
+    project_learning_context += teaching_context(project_id, question + "\n" + selected_text)
     prompt = f"{learner_context}\n\n{term_learning_context(project_id)}\n\n{project_learning_context}\n\n{base_prompt}"
     return PreparedQuestion(
         project_id=project_id,
@@ -642,8 +645,9 @@ def finalize_question(
         raw_answer,
         source_type=payload.source_type,
         source_path=payload.source_path,
+        existing_topics=existing_qa_topics(project_id),
     )
-    answer_without_terms, model_terms = parse_term_metadata(answer_without_handoff)
+    answer_without_terms, model_terms = parse_term_metadata(answer_without_handoff, project_id, question)
     title, answer = _parse_answer_title(answer_without_terms, question, selected_text, payload.source_path)
     if not answer:
         raise RuntimeError("模型返回为空内容，未创建问答记录。")

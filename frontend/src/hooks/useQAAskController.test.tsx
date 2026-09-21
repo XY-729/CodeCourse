@@ -53,6 +53,35 @@ function setup(overrides: Record<string, unknown> = {}) {
 }
 
 describe("useQAAskController", () => {
+  it("clears selection immediately while preserving context across confirmation", async () => {
+    let selectedText = "original selection";
+    let resolveConfirmation!: (confirmed: boolean) => void;
+    const confirmation = new Promise<boolean>((resolve) => { resolveConfirmation = resolve; });
+    const clear = vi.fn(() => { selectedText = ""; });
+    const test = setup({
+      buildContext: () => ({ source_type: "file", source_path: "src/main.ts", selected_text: selectedText }),
+      onAskSubmitted: clear,
+      confirm: () => confirmation,
+    });
+    let request!: Promise<void>;
+    act(() => { request = test.hook.result.current.ask("解释选区"); });
+    expect(clear).toHaveBeenCalledOnce();
+    expect(test.runStreamingQuestion).not.toHaveBeenCalled();
+    await act(async () => { resolveConfirmation(true); await request; });
+    expect(test.runStreamingQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({ selected_text: "original selection", selection_range: expect.objectContaining({ start_line: 10 }) }),
+      "session:8", test.token,
+    );
+  });
+
+  it("does not dismiss selection for an invalid or concurrent request", async () => {
+    const clear = vi.fn();
+    const test = setup({ onAskSubmitted: clear, beginOperation: () => null });
+    await act(() => test.hook.result.current.ask(" "));
+    await act(() => test.hook.result.current.ask("解释选区"));
+    expect(clear).not.toHaveBeenCalled();
+  });
+
   it("asks only after confirmation and preserves the exact context range", async () => {
     const test = setup();
     await act(() => test.hook.result.current.ask("  为什么？  "));

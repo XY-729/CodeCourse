@@ -1,3 +1,5 @@
+import TeachingReferenceDialog from "./components/TeachingReferenceDialog";
+import { TEACHING_CHANGED } from "./personalization/teachingApi";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { FolderTree, Loader2, PanelLeft, RefreshCw, Search } from "lucide-react";
@@ -74,6 +76,7 @@ import {
   parseScopePaths,
   qaTitle,
   resetGenerationScope,
+  resolveCourseFilename,
   taskStatusMessage,
 } from "./app/appUtils";
 import { resolveRecentProjectDocument } from "./projects/resolveRecentProjectDocument";
@@ -110,6 +113,7 @@ import MobileMoreMenu from "./components/MobileMoreMenu";
 import type { MobileAssistantView } from "./components/MobileAssistantPanel";
 import MobileWorkspaceChrome, { type MobilePrimaryDestination, type MobileWorkspaceSheetHandle, type MobileWorkspaceTab } from "./components/MobileWorkspaceChrome";
 import Sidebar, { type NavigationView } from "./components/Sidebar";
+import type { FileGenerationStatus } from "./components/DesktopGenerationStatus";
 import type { GenerationIntent } from "./components/DesktopToolbar";
 import { isGenerationTaskRunning } from "./components/generationTaskModel";
 import type { MobileGenerationView } from "./components/MobileGenerationPanel";
@@ -186,6 +190,7 @@ const MobileGenerationPanel = lazy(() => import("./components/MobileGenerationPa
 const MobileMePanel = lazy(() => import("./components/MobileMePanel"));
 const DesktopToolbar = __ANDROID_BUILD__ ? null : lazy(() => import("./components/DesktopToolbar"));
 const GestureGuide = __ANDROID_BUILD__ ? null : lazy(() => import("./components/GestureGuide"));
+const DesktopGenerationStatus = __ANDROID_BUILD__ ? null : lazy(() => import("./components/DesktopGenerationStatus"));
 const GenerationSheet = __ANDROID_BUILD__ ? null : lazy(() => import("./components/GenerationSheet"));
 
 type ScopeType = LearningScope["type"];
@@ -220,7 +225,15 @@ export default function App() {
   const [restoringWorkbenchProjectId, setRestoringWorkbenchProjectId] = useState<number | null>(null);
   const [busyProjectId, setBusyProjectId] = useState<number | null>(null);
   const [error, setError] = useState("");
-  const [toast, setToast] = useState("");
+  const [toast, setToastText] = useState("");
+  const [toastKind, setToastKind] = useState<"info" | "success">("info");
+  const setToast = useCallback((message: string, kind: "info" | "success" = "info") => {
+    setToastKind(kind); setToastText(message);
+  }, []);
+  const favoriteRequests = useRef(new Set<string>());
+  const saveRequests = useRef(new Set<string>());
+  const [openingDocument, setOpeningDocument] = useState<{ groupId: string; title: string } | null>(null);
+  const openDocumentSequence = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [learnerProfileOpen, setLearnerProfileOpen] = useState(false);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
@@ -234,6 +247,7 @@ export default function App() {
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [contextFiles, setContextFiles] = useState<string[]>([]);
   const [contextFilePickerOpen, setContextFilePickerOpen] = useState(false);
+  const [filePickerPurpose, setFilePickerPurpose] = useState<"context" | "generation">("context");
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab | null>(null);
   const [mobileCodeSearchRequestId, setMobileCodeSearchRequestId] = useState(0);
   const [generationOpen, setGenerationOpen] = useState(false);
@@ -248,6 +262,7 @@ export default function App() {
   const [indexStatus, setIndexStatus] = useState<ProjectIndexStatus | null>(null);
   const [indexBuilding, setIndexBuilding] = useState(false);
   const [taskMessage, setTaskMessage] = useState("");
+  const [fileGeneration, setFileGeneration] = useState<FileGenerationStatus | null>(null);
   const {
     tasks: generationTasks,
     activeTask,
@@ -277,6 +292,7 @@ export default function App() {
     retryTask: handleRetryTask,
   } = useGenerationTrackingController({
     project,
+    autoOpenCompleted: mobileRuntime,
     getCurrentProjectId: () => currentProjectIdRef.current,
     acquireStartLock: acquireGenerationStartLock,
     releaseStartLock: releaseGenerationStart,
@@ -290,7 +306,7 @@ export default function App() {
       setProject(freshProject);
       setProjects((items) => items.map((item) => item.id === freshProject.id ? freshProject : item));
     },
-    onOpenCourse: openCourseInActiveGroup,
+    onOpenCourse: async (projectId, path) => { await openCourseInActiveGroup(projectId, path); },
     onCompleted: notifyTaskCompleted,
     onKnowledgeChanged: () => setKnowledgeRefreshKey((value) => value + 1),
     onShowMobileTasks: () => setMobileGenerationView("tasks"),
@@ -377,7 +393,7 @@ export default function App() {
   const [knowledgeRefreshKey, setKnowledgeRefreshKey] = useState(0);
   const handleLearningStatus = useCallback((message: string) => {
     setTaskMessage(message);
-    setToast(message);
+    setToast(message, "success");
   }, []);
   const {
     states: learningStates,
@@ -486,6 +502,12 @@ export default function App() {
   const [workspaceMenuGroupId, setWorkspaceMenuGroupId] = useState<string | null>(null);
   const [qaHighlightDraft, setQAHighlightDraft] = useState<{ sourcePath: string; selectedText: string } | null>(null);
   const [selectionAnchor, setSelectionAnchor] = useState<SelectionAnchor | null>(null);
+  const assistantWasVisible = useRef(false);
+  const assistantVisible = mobileRuntime ? mobileWorkspaceTab === "assistant" : assistantOpen;
+  useEffect(() => {
+    if (assistantWasVisible.current && !assistantVisible) handleDismissSelection();
+    assistantWasVisible.current = assistantVisible;
+  }, [assistantVisible]);
   const [editingCourseItemId, setEditingCourseItemId] = useState<string | null>(null);
   const [outlinePreflight, setOutlinePreflight] = useState<OutlinePreflight | null>(null);
   const [outlinePreflightLoading, setOutlinePreflightLoading] = useState(false);
@@ -726,6 +748,7 @@ export default function App() {
     isOperationActive: isQAOperationActive,
     runStreamingQuestion,
     buildContext: buildAskPayloadContext,
+    onAskSubmitted: handleDismissSelection,
     confirm: confirmAction,
     onToast: setToast,
     onPanelError: setQAPanelError,
@@ -894,7 +917,7 @@ export default function App() {
     awaitingNotificationSettingsRef.current = true;
     void CodeCourseNative.openNotificationSettings().catch(() => {
       awaitingNotificationSettingsRef.current = false;
-      setToast("无法打开通知设置");
+      setError("无法打开通知设置");
     });
   }, []);
 
@@ -938,7 +961,7 @@ export default function App() {
         if (!/404|not found|不存在/i.test(message)) {
           handledCompletionNavRef.current.delete(navKey);
         }
-        setToast("无法打开项目");
+        setError("无法打开项目");
         return /404|not found|不存在/i.test(message);
       }
     }
@@ -963,7 +986,7 @@ export default function App() {
         });
         void refreshDocumentTerms("course", outputPath, projectId);
       } catch {
-        setToast("生成完成，但结果文件不存在：" + outputPath);
+        setError("生成完成，但结果文件不存在：" + outputPath);
       }
     }
     return true;
@@ -1092,7 +1115,7 @@ export default function App() {
 
   useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(""), 2400);
+    const timer = window.setTimeout(() => setToast(""), 3600);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
@@ -1689,6 +1712,8 @@ export default function App() {
   }
 
   function activateItem(groupId: string, item: OpenItem) {
+    openDocumentSequence.current++;
+    setOpeningDocument(null);
     setLayout((prev) => updateGroup(prev, groupId, (group) => ({ ...group, activeItemId: item.id })));
     setActiveGroupId(groupId);
     if (item.hydrated === false && project) {
@@ -1855,12 +1880,17 @@ export default function App() {
   }
 
   async function openFileInActiveGroup(projectId: number, path: string, explicitLine?: number) {
+    const sequence = ++openDocumentSequence.current;
+    const groupId = activeGroupId;
+    setOpeningDocument({ groupId, title: path.split("/").pop() ?? path });
+    try {
     const content = await getProjectFile(projectId, path);
+    if (currentProjectIdRef.current !== projectId || sequence !== openDocumentSequence.current) return false;
     const saved = findLearningState("file", path);
     const restoreLine = saved?.position_kind === "line" ? saved.position_value : 1;
     setFileContent(content);
     setSelectedCourse(null);
-    openItemInGroup(activeGroupId, {
+    openItemInGroup(groupId, {
       id: `file:${path}`,
       type: "file",
       path,
@@ -1875,15 +1905,25 @@ export default function App() {
       } : undefined,
     });
     dismissMobileWorkspaceAfterOpen();
+    return true;
+    } catch (caught) {
+      if (currentProjectIdRef.current === projectId && sequence === openDocumentSequence.current) setError(caught instanceof Error ? caught.message : "读取文件失败，请重试");
+      return false;
+    } finally { if (sequence === openDocumentSequence.current) setOpeningDocument(null); }
   }
 
   async function openCourseInActiveGroup(projectId: number, filename: string) {
+    const sequence = ++openDocumentSequence.current;
+    const groupId = activeGroupId;
+    setOpeningDocument({ groupId, title: courses.find(file => file.filename === filename)?.title ?? filename.split("/").pop() ?? filename });
+    try {
     const content = await getCourseContent(projectId, filename);
+    if (currentProjectIdRef.current !== projectId || sequence !== openDocumentSequence.current) return false;
     void refreshDocumentTerms("course", filename, projectId);
     setSelectedCourse(filename);
     setFileContent(null);
     const matchingQA = qaHistory.find((record) => _normalizeOutputPath(record.output_path, record.id, projectId) === filename);
-    openItemInGroup(activeGroupId, {
+    openItemInGroup(groupId, {
       id: `course:${filename}`,
       type: "course",
       path: filename,
@@ -1892,6 +1932,11 @@ export default function App() {
       qaRecordId: matchingQA?.id,
     });
     dismissMobileWorkspaceAfterOpen();
+    return true;
+    } catch (caught) {
+      if (currentProjectIdRef.current === projectId && sequence === openDocumentSequence.current) setError(caught instanceof Error ? caught.message : "读取课件失败，请重试");
+      return false;
+    } finally { if (sequence === openDocumentSequence.current) setOpeningDocument(null); }
   }
 
   async function openQAInActiveGroup(record: QARecord) {
@@ -2022,7 +2067,7 @@ export default function App() {
 
   async function openProject(nextProject: Project): Promise<boolean> {
     if (project && project.id !== nextProject.id) {
-      if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
+      if (rejectProjectMutationWhileQABusy() || ((mobileRuntime || generationStarting) && rejectProjectMutationWhileGenerationBusy())) {
         return false;
       }
     }
@@ -2589,19 +2634,25 @@ export default function App() {
       });
       setTaskMessage(`${label}生成中…`);
 
+      setFileGeneration({ projectId: project.id, filename, startedAt: new Date().toISOString(), status: "running", label: "正在准备课件", characters: 0 });
+      let streamUsedCache = false;
       const streamedFilename = await generateFileLessonStream(
         project.id,
         fileContent.path,
         nextMode,
         instructions,
         {
-          onStage(_stage, nextLabel) { setTaskMessage(nextLabel); },
+          onStage(_stage, nextLabel) {
+            setTaskMessage(nextLabel);
+            setFileGeneration(previous => previous ? { ...previous, label: nextLabel } : previous);
+          },
           onDelta(text) {
+            setFileGeneration(previous => previous ? { ...previous, characters: previous.characters + text.length } : previous);
             const current = streamingContentRef.current.get(filename) ?? "";
             const updated = current + text;
             streamingContentRef.current.set(filename, updated);
             setLayout((previous) =>
-              updateGroup(previous, activeGroupId, (group) => ({
+              updateEveryGroup(previous, (group) => ({
                 ...group,
                 items: group.items.map((item) =>
                   item.id === `course:${filename}` ? { ...item, content: updated } : item,
@@ -2609,7 +2660,9 @@ export default function App() {
               })),
             );
           },
-          onCompleted({ cached }) {
+          onCompleted({ cached, filename: completedFilename }) {
+            streamUsedCache = Boolean(cached);
+            setFileGeneration(previous => previous ? { ...previous, filename: completedFilename, status: "completed", label: cached ? "已缓存，无需重新生成" : "生成完成", finishedAt: new Date().toISOString() } : previous);
             setTaskMessage(cached ? "已缓存，无需重新生成" : "生成完成");
             setToast("内容已生成");
             notifyTaskCompleted("CodeCourse 生成完成", `${baseFileName} ${label}已经可以阅读。`);
@@ -2622,9 +2675,19 @@ export default function App() {
       );
       if (streamedFilename) {
         await refreshCourses(project.id);
-        await openCourseInActiveGroup(project.id, streamedFilename);
+        if (streamUsedCache) {
+          const saved = await getCourseContent(project.id, streamedFilename);
+          setLayout(previous => updateEveryGroup(previous, group => ({
+            ...group,
+            items: group.items.map(item => item.id === `course:${filename}` && !item.content
+              ? { ...item, id: `course:${streamedFilename}`, path: streamedFilename, content: saved.content }
+              : item),
+          })));
+        }
+        // Keep the current reader and scroll position; the status bar opens the saved result on demand.
       }
     } catch (caught) {
+      setFileGeneration(previous => previous ? { ...previous, status: "failed", label: caught instanceof Error ? caught.message : "生成失败", finishedAt: new Date().toISOString() } : previous);
       streamingPathsRef.current.delete(filename);
       if (caught instanceof Error && caught.name === "AbortError") return;
       setError(caught instanceof Error ? caught.message : "创建文件课件任务失败");
@@ -2685,6 +2748,7 @@ export default function App() {
       }
 
       setError("");
+      setFileGeneration(null);
       setTaskMessage("正在创建课件任务");
 
       const task = outlinePath
@@ -2817,11 +2881,7 @@ export default function App() {
 
   function handleSelection(nextSelection: ViewerSelection) {
     const nextText = nextSelection.selectedText.slice(0, 20000);
-    // Keep Android's native selection handles alive until the learner decides
-    // to ask. Switching surfaces here collapses the initial text selection.
-    if (!mobileRuntime && nextText.trim()) {
-      openAssistant("history");
-    }
+    // Selection only reveals the tools; opening the assistant requires Ask.
     setSelection({
       sourceType: nextSelection.sourceType,
       sourcePath: nextSelection.sourcePath,
@@ -3271,6 +3331,12 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    const refresh = () => bumpPersonalizationRevision();
+    window.addEventListener(TEACHING_CHANGED, refresh);
+    return () => window.removeEventListener(TEACHING_CHANGED, refresh);
+  }, [bumpPersonalizationRevision]);
+
   async function handleOpenQAReference(referenceProjectId: number, qaRecordId: number) {
     try {
       const record = await getQARecord(referenceProjectId, qaRecordId);
@@ -3322,6 +3388,7 @@ export default function App() {
   function handleDismissSelection() {
     setSelection(null);
     setSelectionAnchor(null);
+    setQAHighlightDraft(null);
     window.getSelection()?.removeAllRanges();
   }
 
@@ -3864,24 +3931,30 @@ export default function App() {
 
   async function handleSaveQAItem(groupId: string, item: OpenItem) {
     if (!project || !item.qaRecordId) {
-      return;
+      return false;
     }
+    const requestKey = `${project.id}:${item.qaRecordId}`;
+    if (saveRequests.current.has(requestKey)) return false;
+    saveRequests.current.add(requestKey);
     setError("");
     try {
       const record = await updateQARecord(project.id, item.qaRecordId, { answer_md: item.content });
+      if (currentProjectIdRef.current !== project.id) return false;
       setSelectedQA(record);
       setQAHistory((items) => items.map((entry) => (entry.id === record.id ? record : entry)));
       setLayout((prev) =>
         updateGroup(prev, groupId, (group) => ({
           ...group,
           items: group.items.map((entry) =>
-            entry.id === item.id ? { ...entry, content: record.answer_md, favorite: record.favorite, dirty: false } : entry,
+            entry.id === item.id && entry.content === item.content ? { ...entry, content: record.answer_md, favorite: record.favorite, dirty: false } : entry,
           ),
         })),
       );
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存回答失败");
-    }
+      return false;
+    } finally { saveRequests.current.delete(requestKey); }
   }
 
   async function handleToggleFavorite(recordOrItem: QARecord | OpenItem) {
@@ -3893,16 +3966,26 @@ export default function App() {
     if (!id) {
       return;
     }
+    const requestKey = `${project.id}:${id}`;
+    if (favoriteRequests.current.has(requestKey)) return;
+    favoriteRequests.current.add(requestKey);
+    const applyFavorite = (value: boolean) => {
+      if (currentProjectIdRef.current !== project.id) return;
+      setSelectedQA(current => current?.id === id ? { ...current, favorite: value } : current);
+      setQAFollowUpRecord(current => current?.id === id ? { ...current, favorite: value } : current);
+      setQAHistory(items => items.map(entry => entry.id === id ? { ...entry, favorite: value } : entry));
+      setLayout(previous => updateEveryGroup(previous, group => ({ ...group,
+        items: group.items.map(entry => entry.qaRecordId === id ? { ...entry, favorite: value } : entry),
+      })));
+    };
+    applyFavorite(!favorite);
     try {
       const updated = await setQAFavorite(project.id, id, !favorite);
-      setSelectedQA((current) => current?.id === updated.id ? updated : current);
-      setQAFollowUpRecord((current) => current?.id === updated.id ? updated : current);
-      setQAHistory((items) => items.map((item) => (item.id === updated.id ? updated : item)));
-      updateOpenQARecord(updated);
-      await refreshQAHistory(project.id);
+      applyFavorite(updated.favorite);
     } catch (caught) {
-      setQAPanelError(caught instanceof Error ? caught.message : "切换收藏失败");
-    }
+      applyFavorite(favorite);
+      if (currentProjectIdRef.current === project.id) setError(caught instanceof Error ? caught.message : "收藏未保存，已恢复原状态，请重试");
+    } finally { favoriteRequests.current.delete(requestKey); }
   }
 
   async function handleGroupDrop(event: DragEvent<HTMLElement>, groupId: string) {
@@ -3960,7 +4043,7 @@ export default function App() {
   }
 
   async function saveEditedCourseItem(group: EditorGroup, item: OpenItem) {
-    if (!project || item.type !== "course") return;
+    if (!project || item.type !== "course") return false;
     let recordId = item.qaRecordId;
     if (!recordId) {
       const matchingRecord = qaHistory.find((record) => (
@@ -3970,15 +4053,19 @@ export default function App() {
     }
     if (!recordId) {
       setError("找不到当前文档对应的问答记录");
-      return;
+      return false;
     }
+    const requestKey = `${project.id}:${recordId}`;
+    if (saveRequests.current.has(requestKey)) return false;
+    saveRequests.current.add(requestKey);
     try {
       const record = qaHistory.find((entry) => entry.id === recordId);
       if (!record) {
         setError("找不到当前文档对应的问答记录");
-        return;
+        return false;
       }
       const updated = await updateQARecord(project.id, recordId, { answer_md: item.content });
+      if (currentProjectIdRef.current !== project.id) return false;
       setQAHistory((items) => items.map((entry) => entry.id === updated.id ? updated : entry));
       if (selectedQA?.id === updated.id) setSelectedQA(updated);
       if (qaFollowUpRecord?.id === updated.id) setQAFollowUpRecord(updated);
@@ -3990,6 +4077,7 @@ export default function App() {
       })));
       try {
         const fresh = await getCourseContent(project.id, item.path);
+        if (currentProjectIdRef.current !== project.id) return false;
         setLayout((previous) => updateGroup(previous, group.id, (currentGroup) => ({
           ...currentGroup,
           items: currentGroup.items.map((entry) => (
@@ -4000,9 +4088,12 @@ export default function App() {
         // The answer was saved; keep the local confirmed content if reloading fails.
       }
       setEditingCourseItemId(null);
+      setToast("已保存", "success");
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "保存失败");
-    }
+      return false;
+    } finally { saveRequests.current.delete(requestKey); }
   }
 
   async function cancelEditedCourseItem(group: EditorGroup, item: OpenItem) {
@@ -4049,6 +4140,7 @@ export default function App() {
     const editorMountDeferred = activeItem ? deferredEditorMounts.has(`${group.id}:${activeItem.id}`) : false;
     return (
       <WorkbenchEditorGroup
+        openingTitle={openingDocument?.groupId === group.id ? openingDocument.title : undefined}
         key={group.id}
         group={group}
         activeGroupId={activeGroupId}
@@ -4102,9 +4194,9 @@ export default function App() {
         onCloseGroup={() => closeWorkspaceGroup(group.id)}
         onMobileCodeSearch={() => setMobileCodeSearchRequestId((current) => current + 1)}
         onOpenCourse={(path) => { if (project) void openCourseInActiveGroup(project.id, path); }}
-        onToggleLessonComplete={(path) => { void toggleLessonComplete(path); }}
+        onToggleLessonComplete={toggleLessonComplete}
         onSetEditingCourse={setEditingCourseItemId}
-        onSaveEditedCourse={(targetGroup, item) => { void saveEditedCourseItem(targetGroup, item); }}
+        onSaveEditedCourse={saveEditedCourseItem}
         onCancelEditedCourse={(targetGroup, item) => { void cancelEditedCourseItem(targetGroup, item); }}
         onUpdateItemContent={updateQAItemContent}
         onSelectionChange={handleSelection}
@@ -4122,7 +4214,7 @@ export default function App() {
         onLearningPosition={(sourceType, path, positionKind, value) => queueLearningUpdate(sourceType, path, positionKind, value)}
         onToggleFavorite={(item) => { void handleToggleFavorite(item); }}
         onCreateHighlight={(sourceType, sourcePath, selectedText) => { void handleCreateHighlight(sourceType, sourcePath, selectedText); }}
-        onSaveQA={(groupId, item) => { void handleSaveQAItem(groupId, item); }}
+        onSaveQA={handleSaveQAItem}
         onPersonalizationChanged={bumpPersonalizationRevision}
         onOpenKnowledgeLink={(term, links) => { void handleOpenKnowledgeLink(term, links); }}
         onOpenQAReference={(referenceProjectId, qaRecordId) => { void handleOpenQAReference(referenceProjectId, qaRecordId); }}
@@ -4747,7 +4839,7 @@ export default function App() {
         selection={selection}
         contextSummary={assistantContextSummary}
         contextFiles={contextFiles}
-        onOpenFilePicker={() => setContextFilePickerOpen(true)}
+        onOpenFilePicker={() => { setFilePickerPurpose("context"); setContextFilePickerOpen(true); }}
         onRemoveContextFile={(path) => setContextFiles((current) => current.filter((item) => item !== path))}
         question={qaQuestionInput}
         questionInput={qaQuestionInput}
@@ -4809,7 +4901,7 @@ export default function App() {
         selection={selection}
         contextSummary={assistantContextSummary}
         contextFiles={contextFiles}
-        onOpenFilePicker={() => setContextFilePickerOpen(true)}
+        onOpenFilePicker={() => { setFilePickerPurpose("context"); setContextFilePickerOpen(true); }}
         onRemoveContextFile={(path) => setContextFiles((current) => current.filter((item) => item !== path))}
         question={qaQuestionInput}
         resetToken={qaResetToken}
@@ -5004,16 +5096,20 @@ export default function App() {
 
   async function handleOpenGenerationTask(task: GenerationTask) {
     if (!project || task.project_id !== project.id || task.status !== "completed" || !task.output_path) {
-      return;
+      return false;
     }
     try {
-      const outputPath = task.output_path;
-      const matchingCourse = courses.find((course) => course.filename === outputPath || outputPath.endsWith(`/${course.filename}`));
-      const filename = matchingCourse?.filename ?? outputPath;
-      await openCourseInActiveGroup(project.id, filename);
-      mobileWorkspaceSheetRef.current?.dismiss();
+      const filename = resolveCourseFilename(task.output_path, courses.map((course) => course.filename), project.id);
+      if (!filename) {
+        setError("找不到这个任务对应的课件文件，请从课程列表打开。");
+        return false;
+      }
+      const opened = await openCourseInActiveGroup(project.id, filename);
+      if (opened) mobileWorkspaceSheetRef.current?.dismiss();
+      return opened;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "打开生成结果失败");
+      return false;
     }
   }
 
@@ -5053,6 +5149,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <TitleBar />
+      <TeachingReferenceDialog projectId={project?.id ?? null} />
       <input ref={archiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportArchive(file); }} />
       <input ref={dataArchiveInputRef} className="visually-hidden" type="file" accept=".zip,application/zip" onChange={(event) => { const file = event.target.files?.[0]; if (file) void handleImportDataArchive(file); }} />
       {dataTransferBusy ? (
@@ -5072,7 +5169,7 @@ export default function App() {
           navigationOpen={navigationOpen}
           assistantOpen={assistantOpen}
           busyProjectId={busyProjectId}
-          loading={loading || dataTransferBusy || isTaskRunning}
+          loading={loading || dataTransferBusy || generationStarting}
           canGenerateLesson={Boolean(activeLessonNumber)}
           canGenerateFile={canGenerateFileLesson}
           indexLabel={indexBuilding || indexStatus?.status === "building" ? "正在构建索引" : "构建项目索引"}
@@ -5122,10 +5219,11 @@ export default function App() {
         onClose={() => setMoreMenuOpen(false)}
       />
       <AppFeedbackLayer
+        toastKind={toastKind}
         permissionNotice={permissionNotice}
         permissionNoticeDismissed={Boolean(permissionNotice && dismissedPermissionStatusRef.current === permissionNotice.status)}
         error={mobileRuntime && mobileWorkspaceTab ? "" : error}
-        busy={showBusy && !(mobileRuntime && mobileWorkspaceTab)}
+        busy={(mobileRuntime ? showBusy && !mobileWorkspaceTab : loading || dataTransferBusy || (qaInteractionBusy && !assistantOpen))}
         label={dataTransferBusy ? taskMessage : qaInteractionBusy ? qaBusyLabel : loading ? "正在处理" : activeTask ? taskStatusMessage(activeTask) : taskMessage}
         progressCurrent={activeTask?.progress_current}
         progressTotal={activeTask?.progress_total}
@@ -5199,8 +5297,26 @@ export default function App() {
           }}
         />
       ) : null}
+      {!mobileRuntime && DesktopGenerationStatus && project ? (
+        <DesktopGenerationStatus key={project.id}
+          task={activeTask?.project_id === project.id ? activeTask : null}
+          stream={fileGeneration?.projectId === project.id ? fileGeneration : null}
+          starting={generationStarting} message={taskMessage}
+          onOpenTask={handleOpenGenerationTask}
+          onOpenStream={(filename) => {
+            const content = streamingContentRef.current.get(filename);
+            if (content !== undefined) {
+              openItemInGroup(activeGroupId, { id: `course:${filename}`, type: "course", path: filename, title: "生成中的课件", content });
+              return true;
+            } else { return openCourseInActiveGroup(project.id, filename); }
+          }}
+          onRetry={(task) => { void handleRetryTask(task); }}
+        />
+      ) : null}
       {!mobileRuntime && GenerationSheet ? (
         <GenerationSheet
+          pickerOpen={contextFilePickerOpen}
+          onOpenFiles={() => { setFilePickerPurpose("generation"); setContextFilePickerOpen(true); }}
           open={generationOpen}
           intent={generationIntent}
           project={project}
@@ -5316,11 +5432,12 @@ export default function App() {
           onClose: () => handleOutlineQuestionnaireAnswers(null),
         }}
         contextFilePicker={{
+          purpose: filePickerPurpose,
           open: contextFilePickerOpen,
           files: flattenTree(tree).filter((entry) => entry.type === "file").map((entry) => entry.path),
-          selected: contextFiles,
+          selected: filePickerPurpose === "generation" ? selectedScopeFiles : contextFiles,
           currentPath: getActiveOpenItem()?.type === "file" ? getActiveOpenItem()?.path ?? null : null,
-          onConfirm: (files) => { setContextFiles(files); setContextFilePickerOpen(false); },
+          onConfirm: (files) => { if (filePickerPurpose === "generation") { setSelectedScopeFiles(files); setScopePathsText(""); } else setContextFiles(files); setContextFilePickerOpen(false); },
           onClose: () => setContextFilePickerOpen(false),
         }}
       />

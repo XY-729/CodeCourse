@@ -174,7 +174,7 @@ export default function Sidebar({
             </section>
           ) : null;
         })()}
-        {courses.length ? <CourseList files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDragItem={onDragItem} onDelete={onDeleteCourse} onRename={onRenameCourse} learningStates={learningStates} /> : (
+        {courses.length ? <CourseList projectId={currentProjectId} files={courses} selected={selectedCourse} onSelect={onSelectCourse} onDragItem={onDragItem} onDelete={onDeleteCourse} onRename={onRenameCourse} learningStates={learningStates} /> : (
           <div className="empty">还没有课程内容{onCreateCourse ? <div style={{ marginTop: 10 }}><button className="secondary-button compact" onClick={onCreateCourse} disabled={!currentProjectId}><Plus size={14} />新建文档</button></div> : null}</div>
         )}
       </div>

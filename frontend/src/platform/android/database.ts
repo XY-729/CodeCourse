@@ -1,10 +1,11 @@
+import { TEACHING_SCHEMA } from "./teachingSchema";
 import { CapacitorSQLite } from "@capacitor-community/sqlite";
 import { CodeCourseSecureStore } from "../runtime";
 import { repairLegacyProfile } from "../../personalization/profileRepair";
 
 const DATABASE = "codecourse_mobile";
 const DATABASE_VERSION = 1;
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 type ColumnMigration = {
   name: string;
@@ -108,6 +109,7 @@ export class MobileDatabase {
   }
 
   private async createSchema(): Promise<void> {
+    await CapacitorSQLite.execute({ database: DATABASE, statements: TEACHING_SCHEMA, transaction: true, readonly: false });
     await CapacitorSQLite.execute({
       database: DATABASE,
       statements: `

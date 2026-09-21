@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import perf_counter, sleep
@@ -10,10 +11,32 @@ from typing import Any
 import httpx
 
 
-_SYNC_CLIENT = httpx.Client(
-    limits=httpx.Limits(max_connections=12, max_keepalive_connections=6),
-    follow_redirects=True,
-)
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def use_system_proxy() -> bool:
+    """模型请求是否继承操作系统代理。
+
+    默认关闭：系统代理（Clash 全局模式、公司网关等）会把发往国内 API 的请求
+    绕道海外节点，带来中间人自签证书（CERTIFICATE_VERIFY_FAILED）与连接超时。
+    确实需要经代理访问模型服务的用户设 GPL_LLM_USE_SYSTEM_PROXY=true 恢复。
+    """
+    return os.getenv("GPL_LLM_USE_SYSTEM_PROXY", "").strip().lower() in _TRUTHY
+
+
+def _limits() -> httpx.Limits:
+    return httpx.Limits(max_connections=12, max_keepalive_connections=6)
+
+
+def _new_sync_client() -> httpx.Client:
+    return httpx.Client(limits=_limits(), follow_redirects=True, trust_env=use_system_proxy())
+
+
+def _new_async_client() -> httpx.AsyncClient:
+    return httpx.AsyncClient(limits=_limits(), follow_redirects=True, trust_env=use_system_proxy())
+
+
+_SYNC_CLIENT = _new_sync_client()
 _ASYNC_CLIENT: httpx.AsyncClient | None = None
 
 # 瞬态错误：服务过载/限流/网关故障，重试可能成功；4xx 等不可恢复错误不重试。
@@ -48,10 +71,7 @@ class LLMCallResult:
 def _async_client() -> httpx.AsyncClient:
     global _ASYNC_CLIENT
     if _ASYNC_CLIENT is None or _ASYNC_CLIENT.is_closed:
-        _ASYNC_CLIENT = httpx.AsyncClient(
-            limits=httpx.Limits(max_connections=12, max_keepalive_connections=6),
-            follow_redirects=True,
-        )
+        _ASYNC_CLIENT = _new_async_client()
     return _ASYNC_CLIENT
 
 

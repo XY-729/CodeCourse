@@ -103,6 +103,35 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertGreater(text.find("## 记录信息"), text.find("## 回答"))
         self.assertGreater(text.find("来源类型"), text.find("## 记录信息"))
 
+    def test_explicit_topic_reuse_is_sent_to_model_and_persisted_for_utility(self):
+        import json
+        from app.services.storage import get_current_teaching_handoff
+        records = []
+        for create, engagement in [(True, "learning"), (False, "utility")]:
+            metadata = {
+                "engagement": engagement, "continuity": "update" if create else "preserve",
+                "topic": "std", "is_new_topic": create, "new_topic": "std" if create else "",
+                "existing_topic": "" if create else "std", "progress_summary": "理解标准库" if create else "",
+                "established_points": [], "unresolved_points": [], "next_actions": [], "used_prior_context": False,
+            }
+            answer = "TITLE: 标准库回答\nTERMS: []\nHANDOFF: " + json.dumps(metadata) + "\n正文"
+            with patch("app.services.qa_service.call_openai_compatible_chat", return_value=answer) as model:
+                response = self.client.post(f"/api/projects/{self.project.id}/qa/ask", json={
+                    "source_type": "file", "source_path": "src/main.py", "selected_text": "std",
+                    "question": "解释标准库" if create else "查词", "provider": "deepseek",
+                    "base_url": "https://api.deepseek.com", "model": "deepseek-test",
+                })
+                self.assertEqual(response.status_code, 200, response.text)
+                records.append(response.json())
+                if not create:
+                    self.assertIn('["std"]', str(model.call_args))
+                    self.assertIsNone(response.json()["teaching_handoff"])
+                self.assertNotIn("HANDOFF", response.json()["answer_md"])
+        groups = self.client.get(f"/api/projects/{self.project.id}/qa/threads").json()
+        self.assertEqual({group["topic"] for group in groups}, {"std"})
+        self.assertEqual(sorted(record for group in groups for record in group["records"]), sorted(record["id"] for record in records))
+        self.assertEqual(get_current_teaching_handoff(self.project.id).qa_record_id, records[0]["id"])
+
     def test_generic_question_uses_selection_and_source_for_fallback_title(self):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="## 结论\n这是后端框架线索。"):
             resp = self.client.post(

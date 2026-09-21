@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, Loader2, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, Info, Loader2, X } from "lucide-react";
 
 type Props = {
   error?: string;
@@ -7,11 +7,12 @@ type Props = {
   progressCurrent?: number;
   progressTotal?: number;
   toast?: string;
+  toastKind?: "info" | "success";
   onDismissError?: () => void;
   inline?: boolean;
 };
 
-export default function TaskFeedback({ error, busy, label, progressCurrent = 0, progressTotal = 0, toast, onDismissError, inline = false }: Props) {
+export default function TaskFeedback({ error, busy, label, progressCurrent = 0, progressTotal = 0, toast, toastKind = "info", onDismissError, inline = false }: Props) {
   return (
     <div className={`apple-feedback-stack ${inline ? "is-inline" : ""}`} aria-live="polite">
       {error ? (
@@ -30,7 +31,7 @@ export default function TaskFeedback({ error, busy, label, progressCurrent = 0, 
           ) : null}
         </div>
       ) : null}
-      {toast ? <div className="apple-feedback success"><CheckCircle2 size={15} /><span>{toast}</span></div> : null}
+      {toast ? <div className={`apple-feedback ${toastKind}`} role="status">{toastKind === "success" ? <CheckCircle2 size={15} /> : <Info size={15} />}<span>{toast}</span></div> : null}
     </div>
   );
 }

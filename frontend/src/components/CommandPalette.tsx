@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import { useModalFocus } from "../hooks/useModalFocus";
 
 export type CommandPaletteItem = {
   id: string;
@@ -35,7 +36,10 @@ export default function CommandPalette({ open, items, onClose }: Props) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [present, setPresent] = useState(open);
   const [visible, setVisible] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  useModalFocus(dialogRef, open && present);
   const filtered = useMemo(
     () => items.map((item) => ({ item, score: score(item, query) })).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score).slice(0, 60),
     [items, query],
@@ -47,9 +51,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
     if (open) {
       setPresent(true);
       setQuery("");
-      setActiveIndex(0);
       frame = window.requestAnimationFrame(() => setVisible(true));
-      timer = window.setTimeout(() => inputRef.current?.focus(), 40);
     } else if (present) {
       setVisible(false);
       timer = window.setTimeout(() => setPresent(false), 190);
@@ -60,12 +62,18 @@ export default function CommandPalette({ open, items, onClose }: Props) {
     };
   }, [open, present]);
 
-  useEffect(() => setActiveIndex(0), [query]);
+  useEffect(() => {
+    setActiveIndex(filtered.findIndex(({ item }) => !item.disabled));
+  }, [filtered, open]);
+
+  useEffect(() => {
+    if (open) resultsRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView?.({ block: "nearest" });
+  }, [activeIndex, open]);
 
   if (!present) return null;
 
   function run(item: CommandPaletteItem) {
-    if (item.disabled) return;
+    if (!open || item.disabled) return;
     onClose();
     item.run();
   }
@@ -80,18 +88,33 @@ export default function CommandPalette({ open, items, onClose }: Props) {
   }
 
   return (
-    <div className={`command-palette-layer ${visible ? "is-open" : "is-closing"}`} onMouseDown={onClose}>
-      <section className="command-palette" role="dialog" aria-modal="true" aria-label="命令面板" onMouseDown={(event) => event.stopPropagation()}>
+    <div className={`command-palette-layer ${visible ? "is-open" : "is-closing"}`} inert={!open} onMouseDown={onClose}>
+      <section ref={dialogRef} className="command-palette" role="dialog" aria-modal="true" aria-label="命令面板" onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing || event.keyCode === 229) {
+          event.stopPropagation();
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}>
         <div className="command-palette-search">
           <Search size={17} />
           <input
-            ref={inputRef}
+            data-modal-initial-focus
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索课程、源码、回答或命令"
             aria-label="搜索命令"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={listId}
+            aria-autocomplete="list"
+            aria-activedescendant={filtered[activeIndex] ? `${listId}-${activeIndex}` : undefined}
             onKeyDown={(event) => {
-              if (event.key === "Escape") onClose();
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
               if (event.key === "ArrowDown") {
                 event.preventDefault();
                 setActiveIndex((index) => nextEnabled(index, 1));
@@ -110,12 +133,16 @@ export default function CommandPalette({ open, items, onClose }: Props) {
             <X size={17} />
           </button>
         </div>
-        <div className="command-palette-results" role="listbox">
+        <div ref={resultsRef} id={listId} className="command-palette-results" role="listbox" aria-label="搜索结果">
           {filtered.map(({ item }, index) => (
             <button
               key={item.id}
+              id={`${listId}-${index}`}
+              type="button"
+              tabIndex={-1}
               className={`${index === activeIndex ? "active" : ""} ${item.disabled ? "is-disabled" : ""}`}
-              onMouseEnter={() => setActiveIndex(index)}
+              onMouseEnter={() => { if (!item.disabled) setActiveIndex(index); }}
+              onMouseDown={(event) => event.preventDefault()}
               onClick={() => run(item)}
               role="option"
               aria-selected={index === activeIndex}
@@ -130,7 +157,7 @@ export default function CommandPalette({ open, items, onClose }: Props) {
               {item.shortcut ? <kbd>{item.shortcut}</kbd> : null}
             </button>
           ))}
-          {!filtered.length ? <div className="command-empty">没有匹配项</div> : null}
+          {!filtered.length ? <div className="command-empty" role="status">没有匹配项，试试课程名称、文件路径或操作关键词。</div> : null}
         </div>
       </section>
     </div>

@@ -1,11 +1,13 @@
 import { Check, FolderOpen, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useModalFocus } from "../hooks/useModalFocus";
 
 type Props = {
   open: boolean;
   files: string[];
   selected: string[];
   currentPath: string | null;
+  purpose?: "context" | "generation";
   onConfirm: (files: string[]) => void;
   onClose: () => void;
 };
@@ -19,9 +21,11 @@ function directoryPrefix(path: string) {
   return parts.length > 1 ? parts.slice(0, -1).join("/") : "";
 }
 
-export default function ContextFilePickerDialog({ open, files, selected, currentPath, onConfirm, onClose }: Props) {
+export default function ContextFilePickerDialog({ open, files, selected, currentPath, onConfirm, onClose, purpose = "context" }: Props) {
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<string[]>([]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(dialogRef, open);
 
   useEffect(() => {
     if (open) {
@@ -61,14 +65,14 @@ export default function ContextFilePickerDialog({ open, files, selected, current
 
   return (
     <div className="modal-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="app-dialog context-file-picker-dialog" role="dialog" aria-label="选择参考文件">
+      <div ref={dialogRef} className="app-dialog context-file-picker-dialog" role="dialog" aria-modal="true" aria-label={purpose === "generation" ? "选择学习文件" : "选择参考文件"}>
         <header className="context-file-picker-header">
           <div className="modal-title">
-            <span><FolderOpen size={15} />选择参考文件</span>
+            <span><FolderOpen size={15} />{purpose === "generation" ? "选择学习文件" : "选择参考文件"}</span>
             <button type="button" className="icon-button" onClick={onClose} aria-label="关闭" title="关闭"><X size={16} /></button>
           </div>
         </header>
-        <p className="context-file-picker-hint">提问时会一并检索这些文件中的代码，实现跨文件问答。当前打开的文件已包含在内。</p>
+        {purpose === "context" ? <p className="context-file-picker-hint">当前文件已包含在内，可添加其他参考文件。</p> : null}
         <div className="context-file-picker-search">
           <Search size={14} />
           <input

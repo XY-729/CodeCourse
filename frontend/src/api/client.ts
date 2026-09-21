@@ -481,6 +481,14 @@ export type GenerationTask = {
   stage_label?: string | null;
   created_at: string;
   updated_at: string;
+  progress_phase?: string | null;
+  total_sections?: number;
+  completed_sections?: number;
+  readable_sections?: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  retry_available?: boolean;
+
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1964,4 +1972,18 @@ export function flagDiagnostic(projectId: number, itemId: string): Promise<{ sta
   return request(`/projects/${projectId}/personalization/diagnostics/${encodeURIComponent(itemId)}/flag`, {
     method: "POST",
   });
+}
+
+export type GenerationPreview = {
+  task_id: number;
+  status: string;
+  version: string;
+  total_sections: number;
+  completed_sections: number;
+  readable_sections: number;
+  markdown: string;
+};
+
+export function getGenerationPreview(projectId: number, taskId: number): Promise<GenerationPreview> {
+  return request<GenerationPreview>(`/projects/${projectId}/tasks/${taskId}/preview`);
 }

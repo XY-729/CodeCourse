@@ -57,6 +57,8 @@ app.include_router(knowledge.router)
 app.include_router(learning.router)
 app.include_router(terms.router)
 app.include_router(personalization.router)
+from app.api import teaching
+app.include_router(teaching.router)
 app.include_router(settings.router)
 
 

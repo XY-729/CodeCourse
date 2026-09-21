@@ -172,6 +172,51 @@ class TeachingContinuityTests(unittest.TestCase):
         self.assertIn('["C++ 新特性"]', context)
         self.assertIn("语义匹配时优先复用", context)
 
+    def test_explicit_routing_and_invalid_choices(self):
+        from app.services.continuity_service import parse_handoff_metadata
+        for fields, expected in [
+            ({"is_new_topic": False, "new_topic": "", "existing_topic": "std"}, "std"),
+            ({"is_new_topic": True, "new_topic": "shared_ptr", "existing_topic": ""}, "shared_ptr"),
+            ({"is_new_topic": False, "new_topic": "", "existing_topic": "unknown"}, None),
+            ({"is_new_topic": True, "new_topic": "new", "existing_topic": "std"}, None),
+            ({"is_new_topic": "false", "new_topic": "", "existing_topic": "std"}, None),
+            ({"is_new_topic": False, "existing_topic": "std"}, None),
+        ]:
+            visible, parsed = parse_handoff_metadata(
+                "正文\nHANDOFF: " + json.dumps(_metadata(**fields)),
+                source_type="file", source_path="main.py", existing_topics=["std"],
+            )
+            self.assertEqual(visible, "正文")
+            self.assertEqual(parsed["topic"] if parsed else None, expected)
+
+    def test_utility_routing_preserves_learning_and_separates_topics_within_session(self):
+        from dataclasses import replace
+        from app.services.continuity_service import parse_handoff_metadata, persist_teaching_handoff, list_qa_thread_summaries
+        from app.services.storage import get_current_teaching_handoff, get_teaching_handoff_for_qa, run_in_transaction
+        first = self._record(self.project.id)
+        current = persist_teaching_handoff(first, {"topic": "std", "progressSummary": "学习中", "usedPriorContext": False})
+        second = self._record(self.project.id, "新问题")
+        run_in_transaction(lambda conn: conn.execute("UPDATE qa_records SET session_id=? WHERE id=?", (first.session_id, second.id)))
+        second = replace(second, session_id=first.session_id)
+        _, parsed = parse_handoff_metadata("HANDOFF: " + json.dumps(_metadata(
+            engagement="utility", continuity="preserve", is_new_topic=True, new_topic="网络", existing_topic="",
+        )), source_type="file", source_path="main.py", existing_topics=["std"])
+        persist_teaching_handoff(second, parsed)
+        self.assertEqual(get_current_teaching_handoff(self.project.id).id, current.id)
+        self.assertIsNone(get_teaching_handoff_for_qa(self.project.id, second.id))
+        groups = list_qa_thread_summaries(self.project.id)
+        self.assertEqual({item["topic"]: item["records"] for item in groups}, {"std": [first.id], "网络": [second.id]})
+
+    def test_all_topic_names_are_sent_unchanged(self):
+        from app.services.continuity_service import persist_teaching_handoff, existing_qa_topics, render_project_learning_context
+        topics = ["shared_ptr"] + [f"主题{i}" for i in range(31)]
+        for topic in topics:
+            persist_teaching_handoff(self._record(self.project.id, topic), {"topic": topic, "progressSummary": "进展", "usedPriorContext": False})
+        self.assertEqual(set(existing_qa_topics(self.project.id)), set(topics))
+        context = render_project_learning_context(self.project.id)
+        for topic in topics:
+            self.assertIn('"' + topic + '"', context)
+
     def test_project_deletion_removes_handoff_rows(self):
         from app.services.continuity_service import persist_teaching_handoff
         from app.services.storage import delete_project, list_teaching_handoffs
