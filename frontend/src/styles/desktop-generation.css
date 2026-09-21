@@ -19,7 +19,6 @@
   font-size: 12px;
 }
 .desktop-generation-description { display: flex; flex-wrap: wrap; gap: 10px; }
-.desktop-generation-status progress { width: 120px; height: 8px; accent-color: var(--apple-blue); }
 .desktop-generation-status button, .lesson-preview button {
   border: 1px solid var(--apple-separator);
   border-radius: 6px;
@@ -27,6 +26,60 @@
   color: var(--apple-text);
   padding: 5px 9px;
   cursor: pointer;
+}
+.desktop-generation-status.is-running {
+  width: 300px;
+  height: 40px;
+  padding: 0;
+  gap: 0;
+  flex-wrap: nowrap;
+  border-radius: 999px;
+  overflow: hidden;
+  isolation: isolate;
+}
+.desktop-generation-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--apple-blue) 18%, transparent);
+  pointer-events: none;
+  transition: width 450ms ease;
+}
+.desktop-generation-fill.is-indeterminate {
+  opacity: .45;
+  animation: generation-pill-breathe 2s ease-in-out infinite alternate;
+}
+.desktop-generation-status .desktop-generation-pill-content {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0 16px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  box-sizing: border-box;
+}
+.desktop-generation-status button.desktop-generation-pill-content:hover {
+  background: color-mix(in srgb, var(--apple-blue) 5%, transparent);
+}
+.desktop-generation-status button.desktop-generation-pill-content:focus-visible {
+  outline: 2px solid var(--apple-blue);
+  outline-offset: -3px;
+}
+.desktop-generation-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desktop-generation-percent { flex-shrink: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+@keyframes generation-pill-breathe { to { opacity: .8; } }
+@media (prefers-reduced-motion: reduce) {
+  .desktop-generation-fill { transition: none; }
+  .desktop-generation-fill.is-indeterminate { animation: none; }
 }
 .lesson-preview {
   position: fixed;
@@ -44,9 +97,6 @@
 }
 .lesson-preview header { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px; border-bottom: 1px solid var(--apple-separator); }
 .lesson-preview header span { flex: 1; font-size: 12px; color: var(--apple-text-secondary); }
-.lesson-preview-speeds { display: inline-flex; align-items: center; gap: 4px; }
-.lesson-preview-speeds button { padding: 3px 8px; font-size: 11px; }
-.lesson-preview-speeds button[aria-pressed="true"] { border-color: var(--apple-blue); color: var(--apple-blue); }
 .lesson-preview > p { padding: 0 18px; font-size: 13px; }
 .lesson-preview-content { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; padding: 20px 28px 40px; line-height: 1.8; overflow-wrap: anywhere; }
 .lesson-preview-content pre { overflow-x: auto; padding: 12px; background: var(--apple-fill); }

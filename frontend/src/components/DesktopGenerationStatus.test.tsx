@@ -30,21 +30,17 @@ describe("desktop lesson progress and preview", () => {
     expect(screen.queryByLabelText("课程生成进度")).toBeNull();
   });
 
-  it("allows immediately revealing already generated content", async () => {
-    vi.mocked(getGenerationPreview).mockResolvedValue(snapshot("甲".repeat(3000)));
-    render(<DesktopGenerationStatus {...props()} />);
-    await act(async () => fireEvent.click(screen.getByText("查看生成内容")));
-    fireEvent.click(screen.getByRole("button", { name: "立即显示" }));
-    expect(screen.getByText("甲".repeat(3000))).toBeTruthy();
-  });
   it("shows indeterminate planning and reserves 100% for saved completion", () => {
     expect(desktopTaskProgress({ ...task, progress_phase: "planning", progress_total: 0 })).toBeNull();
     expect(desktopTaskProgress({ ...task, progress_current: 7, progress_phase: "saving" })).toBe(99);
     expect(desktopTaskProgress({ ...task, status: "completed" })).toBe(100);
     const view = render(<DesktopGenerationStatus {...props({ ...task, progress_phase: "planning" })} />);
-    expect(screen.getByRole("progressbar").hasAttribute("value")).toBe(false);
+    expect(screen.getByRole("progressbar").hasAttribute("aria-valuenow")).toBe(false);
     view.rerender(<DesktopGenerationStatus {...props()} />);
-    expect(screen.getByText("已完成 1/4 章")).toBeTruthy();
+    expect(screen.getByText("28%")).toBeTruthy();
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("28");
+    expect(screen.queryByText("已完成 1/4 章")).toBeNull();
+    expect(screen.getByLabelText("课程生成进度").textContent).toBe("正在生成章节28%");
   });
 
   it("polls only when open, types the snapshot in without moving scroll, and never auto-opens the final course", async () => {
@@ -53,7 +49,7 @@ describe("desktop lesson progress and preview", () => {
     const options = props();
     const view = render(<DesktopGenerationStatus {...options} />);
     expect(getGenerationPreview).not.toHaveBeenCalled();
-    await act(async () => fireEvent.click(screen.getByText("查看生成内容")));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "查看生成内容" })));
     const content = view.container.querySelector(".lesson-preview-content") as HTMLElement;
     await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
     expect(screen.getByText("先读这一章")).toBeTruthy();
@@ -79,7 +75,7 @@ describe("desktop lesson progress and preview", () => {
     const section = "甲".repeat(400);
     vi.mocked(getGenerationPreview).mockResolvedValue(snapshot(section));
     const view = render(<DesktopGenerationStatus {...props()} />);
-    fireEvent.click(screen.getByText("查看生成内容"));
+    fireEvent.click(screen.getByRole("button", { name: "查看生成内容" }));
     const typed = () => view.container.querySelector(".lesson-preview-content")?.textContent ?? "";
     await act(async () => { await vi.advanceTimersByTimeAsync(200); });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
@@ -90,17 +86,21 @@ describe("desktop lesson progress and preview", () => {
     expect(typed()).toBe(section);
   });
 
-  it("applies the chosen typing speed and remembers it for later previews", async () => {
+  it("uses fast preview speed even with an old slow preference and hides speed controls", async () => {
     vi.useFakeTimers();
+    window.localStorage.setItem("codecourse.desktop.previewSpeed", "slow");
     const section = "乙".repeat(400);
     vi.mocked(getGenerationPreview).mockResolvedValue(snapshot(section));
-    render(<DesktopGenerationStatus {...props()} />);
-    fireEvent.click(screen.getByText("查看生成内容"));
-    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-    expect(screen.queryByText(section)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "快" }));
-    expect(window.localStorage.getItem("codecourse.desktop.previewSpeed")).toBe("fast");
-    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    const view = render(<DesktopGenerationStatus {...props()} />);
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "查看生成内容" })));
+    for (const name of ["慢", "标准", "快", "立即显示"]) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    const partial = view.container.querySelector(".lesson-preview-content")?.textContent ?? "";
+    expect(partial.length).toBeGreaterThanOrEqual(200);
+    expect(partial.length).toBeLessThan(400);
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
     expect(screen.getByText(section)).toBeTruthy();
   });
 
@@ -114,7 +114,7 @@ describe("desktop lesson progress and preview", () => {
     try {
       vi.mocked(getGenerationPreview).mockResolvedValue(snapshot("## 第一章\n\n立刻可读"));
       render(<DesktopGenerationStatus {...props()} />);
-      fireEvent.click(screen.getByText("查看生成内容"));
+      fireEvent.click(screen.getByRole("button", { name: "查看生成内容" }));
       await act(async () => { await vi.advanceTimersByTimeAsync(50); });
       expect(screen.getByText("立刻可读")).toBeTruthy();
     } finally {
@@ -126,13 +126,13 @@ describe("desktop lesson progress and preview", () => {
     let resolve!: (value: GenerationPreview) => void;
     vi.mocked(getGenerationPreview).mockReturnValueOnce(new Promise(done => { resolve = done; }));
     const view = render(<DesktopGenerationStatus key={1} {...props()} />);
-    fireEvent.click(screen.getByText("查看生成内容"));
+    fireEvent.click(screen.getByRole("button", { name: "查看生成内容" }));
     view.rerender(<DesktopGenerationStatus key={2} {...props({ ...task, project_id: 2 })} />);
     await act(async () => resolve(snapshot("旧项目绝不显示")));
     expect(screen.queryByText("旧项目绝不显示")).toBeNull();
     vi.mocked(getGenerationPreview).mockResolvedValue(snapshot("保留的第一章", "retained", "failed"));
     await act(async () => view.rerender(<DesktopGenerationStatus key={2} {...props({ ...task, project_id: 2, status: "failed", retry_available: true })} />));
-    await act(async () => fireEvent.click(screen.getByText("查看生成内容")));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "查看生成内容" })));
     expect(screen.getByText("保留的第一章")).toBeTruthy();
     expect(screen.getAllByText("重试").length).toBeGreaterThan(0);
   });
@@ -142,7 +142,7 @@ describe("desktop lesson progress and preview", () => {
     const first = "甲".repeat(200);
     vi.mocked(getGenerationPreview).mockResolvedValue(snapshot(first));
     const view = render(<DesktopGenerationStatus {...props()} />);
-    fireEvent.click(screen.getByText("查看生成内容"));
+    fireEvent.click(screen.getByRole("button", { name: "查看生成内容" }));
     const typed = () => view.container.querySelector(".lesson-preview-content")?.textContent ?? "";
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
     await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
@@ -151,7 +151,7 @@ describe("desktop lesson progress and preview", () => {
     expect(view.container.querySelector(".lesson-preview-content")).toBeNull();
     const grown = `${first}${"乙".repeat(100)}`;
     vi.mocked(getGenerationPreview).mockResolvedValue(snapshot(grown, "two"));
-    fireEvent.click(screen.getByText("查看生成内容"));
+    fireEvent.click(screen.getByRole("button", { name: "查看生成内容" }));
     await act(async () => { await vi.advanceTimersByTimeAsync(200); });
     await act(async () => { await vi.advanceTimersByTimeAsync(200); });
     // 已显示的部分直接在场（不重打），此时还在打这次新增的那 100 字
@@ -166,7 +166,7 @@ describe("desktop lesson progress and preview", () => {
     let resolve!: (value: GenerationPreview) => void;
     vi.mocked(getGenerationPreview).mockReturnValueOnce(new Promise(done => { resolve = done; }));
     render(<DesktopGenerationStatus {...props()} />);
-    fireEvent.click(screen.getByText("查看生成内容"));
+    fireEvent.click(screen.getByRole("button", { name: "查看生成内容" }));
     await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
     expect(getGenerationPreview).toHaveBeenCalledOnce();
     fireEvent.click(screen.getByLabelText("关闭课件预读"));

@@ -1,5 +1,6 @@
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import AsyncActionButton from "./AsyncActionButton";
+import type { ReactNode } from "react";
 
 type Props = {
   title: string;
@@ -7,16 +8,18 @@ type Props = {
   total: number;
   completed: boolean;
   showCompletion?: boolean;
+  actions?: ReactNode;
   onPrevious?: () => void;
   onNext?: () => void;
   onToggleComplete: () => unknown | Promise<unknown>;
 };
 
-export default function ReaderLearningToolbar({ title, index, total, completed, showCompletion = true, onPrevious, onNext, onToggleComplete }: Props) {
+export default function ReaderLearningToolbar({ title, index, total, completed, showCompletion = true, actions, onPrevious, onNext, onToggleComplete }: Props) {
   return (
     <div className="reader-learning-toolbar">
       <div className="reader-breadcrumb"><span>课程</span><ChevronRight size={13} /><strong>{title}</strong></div>
       <div className="reader-learning-actions">
+        {actions}
         <span className="lesson-position">{index + 1}/{total}</span>
         <button className="icon-button" onClick={onPrevious} disabled={!onPrevious} title="上一课" aria-label="上一课"><ChevronLeft size={16} /></button>
         <button className="icon-button" onClick={onNext} disabled={!onNext} title="下一课" aria-label="下一课"><ChevronRight size={16} /></button>

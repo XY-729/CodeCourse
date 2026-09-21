@@ -294,6 +294,7 @@ function WorkbenchEditorGroupView(props: Props) {
       {!mobile && activeItem?.type === "course" && lessonIndex >= 0 ? (
         <ReaderLearningToolbar title={activeItem.title} index={lessonIndex} total={lessons.length}
           completed={learningState?.status === "completed"} showCompletion={false}
+          actions={props.editingCourseItemId !== activeItem.id ? markdownActions(false) : undefined}
           onPrevious={lessonIndex > 0 ? () => props.onOpenCourse(lessons[lessonIndex - 1].filename) : undefined}
           onNext={lessonIndex < lessons.length - 1 ? () => props.onOpenCourse(lessons[lessonIndex + 1].filename) : undefined}
           onToggleComplete={() => props.onToggleLessonComplete(activeItem.path)} />
@@ -344,6 +345,7 @@ function WorkbenchEditorGroupView(props: Props) {
             sourceType={activeItem.qaRecordId ? "qa" : "course"}
             content={activeItem.content}
             embedded={mobile}
+            hideHeader={!mobile && lessonIndex >= 0}
             termSourceKey={props.activeTermSourceKey}
             highlights={highlights.filter((highlight) => (
               highlight.source_type === (activeItem.qaRecordId ? "qa" : "course")

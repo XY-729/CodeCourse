@@ -60,6 +60,7 @@ type Props = {
   onTermAction?: (term: DocumentTerm, position?: { x: number; y: number }) => void;
   onGenerateLesson?: (lessonNumber: number, title: string, outlinePath?: string) => void;
   headerActions?: ReactNode;
+  hideHeader?: boolean;
   footer?: ReactNode;
   jumpLine?: number;
   embedded?: boolean;
@@ -354,6 +355,7 @@ export default function MarkdownViewer({
   onTermAction,
   onGenerateLesson,
   headerActions,
+  hideHeader = false,
   footer,
   jumpLine,
   embedded = false,
@@ -909,7 +911,7 @@ export default function MarkdownViewer({
 
   return (
     <div className={`viewer markdown-viewer ${embedded ? "embedded" : ""}`}>
-      {!embedded ? <div className="viewer-header">
+      {!embedded && !hideHeader ? <div className="viewer-header">
         <span>{title ?? "课件"}</span>
         <div className="viewer-actions">
           {headerActions}
