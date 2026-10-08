@@ -27,6 +27,8 @@ type Props = {
   selection: SelectionSummary | null;
   contextSummary: AssistantContextSummary | null;
   contextFiles: string[];
+  includeContext?: boolean;
+  onIncludeContextChange?: (value: boolean) => void;
   onOpenFilePicker: () => void;
   onRemoveContextFile: (path: string) => void;
   question: string;
@@ -104,7 +106,7 @@ function recordTitle(record: QARecord) {
 
 export default function ExplainPanel(props: Props) {
   const {
-    selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, questionInput, loading, loadingLabel, streamContent, history, threads = [], continuity = null, historyQuery, favoriteOnly,
+    includeContext = false, onIncludeContextChange, selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, questionInput, loading, loadingLabel, streamContent, history, threads = [], continuity = null, historyQuery, favoriteOnly,
     selectedRecord, followUpRecord, selectedRecordReadOnly = false, surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError, upperTab, mobileMode = false, embeddedMobileSheet = false, onUpperTabChange, knowledgeContent,
     knowledgeDisabled, onQuestionChange, onSelectionTextChange, onClearSelection,
     onAsk, onNewConversation, onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord, onFollowUp,
@@ -233,7 +235,7 @@ export default function ExplainPanel(props: Props) {
               <div className="assistant-empty-card">
                 <Bot size={28} />
                 <strong>开始提问</strong>
-                <span>选中课程或代码中的术语，然后在此提问，AI 助手会根据项目上下文回答。</span>
+                <span>选中文字后直接提问；需要项目资料时，勾选附带上下文或选择参考文件。</span>
                 <div className="assistant-example-questions">
                   <button type="button" className="secondary-button compact" onClick={() => onQuestionChange("这个项目的主要架构是什么？")}>这个项目的主要架构是什么？</button>
                   <button type="button" className="secondary-button compact" onClick={() => onQuestionChange("帮我解释当前课程的核心概念")}>帮我解释当前课程的核心概念</button>
@@ -250,7 +252,9 @@ export default function ExplainPanel(props: Props) {
       {!knowledgeOnly && !mobileKnowledge ? <section className="qa-ask-section">
         <div className="qa-ask-scroll">
           <div className="qa-section selection-card">
-            <div className="qa-section-title">附带上下文</div>
+            <div className="qa-section-title">本次选区与参考材料</div>
+            {onIncludeContextChange ? <label><input type="checkbox" checked={includeContext} disabled={loading}
+              onChange={event => onIncludeContextChange(event.target.checked)} /> 附带上下文（当前文档及相关项目检索）</label> : null}
             {selection ? (
               <>
                 <div className="selection-meta"><span>{sourceLabel(selection.sourceType)}</span><span>{selectedLength} 字符</span></div>
@@ -258,9 +262,9 @@ export default function ExplainPanel(props: Props) {
                 <DeferredLiftTextarea className="selection-editor" value={selection.selectedText} onLift={onSelectionTextChange} liftDelayMs={250} disabled={loading} aria-label="附带上下文文本" />
                 <button type="button" className="secondary-button compact" onClick={onClearSelection} disabled={loading}><Trash2 size={14} />清空文本</button>
               </>
-            ) : contextSummary ? (
+            ) : contextSummary && includeContext ? (
               <><div className="selection-meta"><span>{contextSummary.label}</span></div><div className="selection-path">{contextSummary.sourcePath ?? "项目上下文"}</div></>
-            ) : <div className="selection-meta"><span>项目上下文</span></div>}
+            ) : <div className="selection-meta"><span>默认仅发送问题、选区、简短对话历史和已有画像摘要</span></div>}
             {contextFiles.length > 0 ? (
               <div className="context-file-chips">
                 {contextFiles.map((path) => (
@@ -397,7 +401,7 @@ export default function ExplainPanel(props: Props) {
           {panelError ? <div className="qa-local-error" role="alert">{panelError}</div> : null}
           {modelReady ? (
             <div className="model-row">
-              <button type="button" className="text-button" onClick={onOpenSettings} title="模型设置">{settings?.model}</button>
+              <button type="button" className="text-button" onClick={onOpenSettings} title="模型设置">{settings?.model}</button><span>点击询问将调用模型，可能产生费用</span>
             </div>
           ) : (
             <div className="model-row">

@@ -195,7 +195,10 @@ class PromptQualityTests(unittest.TestCase):
                 / "default-prompts.json"
             ).read_text(encoding="utf-8")
         )
-        self.assertEqual(mobile, PROMPT_DEFAULTS)
+        # Desktop now puts metadata after the streamed body; Android remains unchanged.
+        desktop = dict(PROMPT_DEFAULTS)
+        desktop["prompt.qa.answer"] = desktop["prompt.qa.answer"].replace("正文结束后再输出 TITLE:", "TITLE:")
+        self.assertEqual(mobile, desktop)
 
     def test_missing_and_unknown_placeholders_are_rejected(self):
         missing = DEFAULT_QA_ANSWER_PROMPT.replace("{context_text}", "")

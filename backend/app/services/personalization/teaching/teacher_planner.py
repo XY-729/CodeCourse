@@ -7,6 +7,8 @@ from typing import Any, Optional
 
 from pydantic import ValidationError
 
+from app.services.qa_work_scheduler import background_work
+
 from app.services.personalization.teaching.teaching_plan_schema import TeachingPlan
 from app.services.personalization.teaching.teacher_planner_prompt import (
     TEACHER_PLANNER_VERSION,
@@ -204,6 +206,7 @@ def _save_plan(
     return plan_id
 
 
+@background_work()
 def execute_teacher_planner(
     project_id: int,
     session_id: int | None,
@@ -236,6 +239,11 @@ def execute_teacher_planner(
         qa_record = get_qa_record(project_id, qa_record_id)
         if qa_record is None:
             return
+        from app.services.storage import _connect
+        with _connect() as check_conn:
+            existing = check_conn.execute("SELECT status FROM teacher_plan_runs WHERE id=?", (run_id,)).fetchone()
+        if existing and existing["status"] == "completed":
+            return
 
         parent_question = ""
         parent_answer_summary = ""
@@ -258,6 +266,10 @@ def execute_teacher_planner(
             ensure_ascii=False,
         )[:2000]
 
+        from app.services.qa_background import authorized_context
+        from app.services.qa_answer_context import complete_answer_context
+        answered_context = complete_answer_context(qa_record.answer_md or "", settings,
+                                                   project_id=project_id, qa_record_id=qa_record_id)
         source_summary = json.dumps({
             "source_type": source_type or "unknown",
             "source_path": source_path or "",
@@ -273,7 +285,7 @@ def execute_teacher_planner(
 
         as_of_qa_id = (qa_record_id - 1) if qa_record_id > 0 else None
 
-        def _tx(conn):
+        def _prepare(conn):
             snapshot = build_shadow_snapshot(
                 project_id=project_id,
                 session_id=session_id,
@@ -306,37 +318,45 @@ def execute_teacher_planner(
                 snapshot_json=snapshot_json,
                 manual_prefs_json=json.dumps(manual_prefs, ensure_ascii=False),
             )
+            messages.append({"role": "user", "content": (
+                "本轮已完成，以下完整回答/分段摘要仅供规划后续教学，不能认定用户已掌握。\n"
+                + answered_context + "\n本轮授权材料：\n" + authorized_context(project_id, qa_record_id)[:8000]
+            )})
 
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc).isoformat()
-            plan = None
-            last_error = None
-            input_tokens = 0
-            output_tokens = 0
-            model_name = settings.get("model")
+            return messages, snapshot_id
 
-            for attempt in range(MAX_RETRIES + 1):
-                try:
-                    call_result = _call_planner_model_result(messages, settings)
-                    input_tokens += int(call_result.usage.get("input_tokens", 0))
-                    output_tokens += int(call_result.usage.get("output_tokens", 0))
-                    model_name = call_result.model
-                    raw = call_result.content
-                    plan = parse_teaching_plan(raw)
-                    break
-                except (ValueError, ValidationError) as exc:
-                    last_error = str(exc)
-                    if attempt < MAX_RETRIES:
-                        messages.append({
-                            "role": "user",
-                            "content": "Please output ONLY valid JSON matching the schema.",
-                        })
-                        continue
-                    raise
+        messages, snapshot_id = run_in_transaction(_prepare)
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        plan = None
+        last_error = None
+        input_tokens = 0
+        output_tokens = 0
+        model_name = settings.get("model")
 
-            if plan is None:
-                raise ValueError(f"Planner failed after retries: {last_error}")
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                call_result = _call_planner_model_result(messages, settings)
+                input_tokens += int(call_result.usage.get("input_tokens", 0))
+                output_tokens += int(call_result.usage.get("output_tokens", 0))
+                model_name = call_result.model
+                raw = call_result.content
+                plan = parse_teaching_plan(raw)
+                break
+            except (ValueError, ValidationError) as exc:
+                last_error = str(exc)
+                if attempt < MAX_RETRIES:
+                    messages.append({
+                        "role": "user",
+                        "content": "Please output ONLY valid JSON matching the schema.",
+                    })
+                    continue
+                raise
 
+        if plan is None:
+            raise ValueError(f"Planner failed after retries: {last_error}")
+
+        def _persist(conn):
             conn.execute(
                 """INSERT OR IGNORE INTO teacher_plan_runs
                    (id, idempotency_key, project_id, session_id, qa_record_id,
@@ -352,6 +372,7 @@ def execute_teacher_planner(
                 ),
             )
 
+            conn.execute("UPDATE teacher_plan_runs SET status='completed',error_message=NULL WHERE id=?", (run_id,))
             _save_plan(
                 run_id=run_id,
                 project_id=project_id,
@@ -376,7 +397,7 @@ def execute_teacher_planner(
                 conn=conn,
             )
 
-        run_in_transaction(_tx)
+        run_in_transaction(_persist)
 
     except Exception:
         logger.exception(

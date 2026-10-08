@@ -47,3 +47,9 @@ describe("explicit course completion", () => {
     expect(result.current.states).toEqual([]);
   });
 });
+
+it("does not persist an in-memory answer preview as a learning source", () => {
+  const { result } = renderHook(() => useLearningStateController({ projectId: 1, onStatus: vi.fn(), onError: vi.fn() }));
+  act(() => result.current.touchOpenItem({ id: "qa-preview:test", type: "course", path: "qa-preview:test", title: "回答", content: "片段", qaPreview: { key: "draft:1", label: "正在回答", status: "streaming", startedAt: 0 } }));
+  expect(updateLearningState).not.toHaveBeenCalled();
+});

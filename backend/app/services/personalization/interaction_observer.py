@@ -11,6 +11,8 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from app.services.qa_work_scheduler import background_work
+
 from app.services.personalization.observation_schema import InteractionObservation
 from app.services.personalization.observer_prompt import (
     OBSERVER_PROMPT_VERSION,
@@ -461,6 +463,19 @@ def _call_observer_model(
     )
 
 
+def _manual_mastery_names() -> tuple[list[str], list[str]]:
+    from app.services.storage import _connect
+    with _connect() as conn:
+        rows = conn.execute("""SELECT c.display_name, m.manual_status
+            FROM concepts c JOIN concept_mastery m ON m.concept_id=c.id
+            WHERE m.scope_type='global' AND m.scope_id='local-user'
+              AND m.manual_status IN ('known','unknown')
+            ORDER BY c.domain,c.canonical_name""").fetchall()
+    return ([row["display_name"] for row in rows if row["manual_status"] == "known"],
+            [row["display_name"] for row in rows if row["manual_status"] == "unknown"])
+
+
+@background_work()
 def _execute_observer_run(
     project_id: int,
     qa_record_id: int,
@@ -553,15 +568,7 @@ def _execute_observer_run(
                 parent_question = parent.question
                 parent_answer = parent.answer_md
 
-        concepts = list_all_concepts()
-        manual_known: list[str] = []
-        manual_unfamiliar: list[str] = []
-        for c in concepts:
-            mastery = get_concept_mastery(c.id, "global", "local-user")
-            if mastery and mastery.manual_status == "known":
-                manual_known.append(c.display_name)
-            elif mastery and mastery.manual_status == "unknown":
-                manual_unfamiliar.append(c.display_name)
+        manual_known, manual_unfamiliar = _manual_mastery_names()
 
         prefs = get_learner_preferences("global", "local-user")
         from app.services.storage import _connect
@@ -582,23 +589,9 @@ def _execute_observer_run(
         user_message_set = {qa_record.question}
         # Selected source text is context, not the learner's own explanation.
 
-        source_excerpt = ""
-        if qa_record.source_path:
-            try:
-                from pathlib import Path
-                from app.services.generation_service import project_course_dir
-                from app.services.scanner import read_text_file
-                from app.services.storage import get_project
-                project = get_project(project_id)
-                root = (
-                    Path(project.local_path)
-                    if qa_record.source_type == "file" and project is not None
-                    else project_course_dir(project_id)
-                )
-                source_excerpt = read_text_file(root, qa_record.source_path)[0][:2200]
-            except Exception:
-                source_excerpt = ""
-
+        from app.services.qa_background import authorized_context
+        from app.services.qa_answer_context import complete_answer_context
+        source_excerpt = authorized_context(project_id, qa_record_id)[:8000]
         messages = _build_observer_messages(
             question=qa_record.question,
             selected_text=qa_record.selected_text or "",
@@ -615,7 +608,8 @@ def _execute_observer_run(
         messages[1]["content"] += (
             "\n<project_learning_summary>" + json.dumps(prior_inferences, ensure_ascii=False)
             + "</project_learning_summary>\n<current_answer_for_context>"
-            + (qa_record.answer_md or "")[:3000]
+            + complete_answer_context(qa_record.answer_md or "", settings,
+                                      project_id=project_id, qa_record_id=qa_record_id)
             + "</current_answer_for_context>\n助手回答只用于概念消歧和知识结构，不是用户掌握证据。"
         )
 

@@ -12,11 +12,12 @@ type SelectionRange = {
 
 type AskContext = Pick<
   QAAskPayload,
-  "source_type" | "source_path" | "selected_text" | "context_files"
+  "source_type" | "source_path" | "selected_text" | "context_files" | "include_context"
 >;
 
 type Options = {
   projectId: number | null;
+  confirmBeforeSend?: boolean;
   settings: LLMSettings | null;
   sessionId: number | null;
   parentQAId: number | null;
@@ -89,7 +90,7 @@ export function useQAAskController(options: Options) {
       const context = current.buildContext();
       const range = current.selectionRange;
       current.onAskSubmitted?.();
-      const confirmed = await current.confirm(
+      const confirmed = current.confirmBeforeSend === false || await current.confirm(
         "AI 助手询问",
         `将调用模型 API 使用 ${current.settings.model} 回答当前问题，可能消耗 token。是否继续？`,
         { confirmText: "询问", skipKey: "confirm.ask" },
@@ -102,7 +103,8 @@ export function useQAAskController(options: Options) {
           source_type: context.source_type,
           source_path: context.source_path,
           selected_text: context.selected_text,
-          context_files: context.context_files,
+          context_files: context.context_files ? [...context.context_files] : undefined,
+          include_context: context.include_context,
           question: trimmedQuestion,
           provider: current.settings.provider,
           base_url: current.settings.base_url,

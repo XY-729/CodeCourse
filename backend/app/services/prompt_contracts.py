@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 
-TaskOutputKind = Literal["markdown", "json", "json_array", "qa"]
+TaskOutputKind = Literal["markdown", "json", "json_array", "qa", "qa_body"]
 
 
 IMMUTABLE_SAFETY_RULES = """你在 CodeCourse 中处理学习材料和用户问题。
@@ -20,6 +20,12 @@ IMMUTABLE_SAFETY_RULES = """你在 CodeCourse 中处理学习材料和用户问�
 
 
 TASK_OUTPUT_CONTRACTS: dict[TaskOutputKind, str] = {
+    "qa_body": """<task_output_contract>
+输出回答当前问题的 Markdown 正文，完整遵守用户要求和原有回答决策、教学尺度、个性化规则。
+回答深度、推导、例子和限制条件按原任务要求决定，不为缩短等待而删减。
+正文完成即结束。本次不要生成 TITLE、TERMS、HANDOFF、TEACHING、REUSE 等机器元数据；这些由回答保存后的独立任务处理，即使用户模板要求也不要在此生成。
+不因生成了讲解就推断用户已经掌握。不要输出准备说明或包裹整篇回答的代码围栏。
+</task_output_contract>""",
     "markdown": """<task_output_contract>
 本任务输出 Markdown 正文。不要输出 JSON 包装、代码围栏包裹的整篇文档或格式说明。
 只遵守当前任务模板要求的标题和元数据；没有证据的可选章节应省略或标注证据不足。
@@ -34,12 +40,12 @@ TASK_OUTPUT_CONTRACTS: dict[TaskOutputKind, str] = {
 </task_output_contract>""",
     "qa": """<task_output_contract>
 本任务输出 AI 问答记录。
-第一行必须是 `TITLE: 简短标题`。
-第二行必须是 `TERMS: [...]`，数组项使用
+先直接输出回答正文，不输出准备说明。正文结束后单独一行输出 `TITLE: 简短标题`，其后再输出其他元数据。
+TITLE 后一行必须是 `TERMS: [...]`，数组项使用
 `{"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文原词"}}`。
 display_name 与 source_span.text 必须逐字出现在正文可见文本中；禁止完整句子、命令、路径、函数调用/签名、编译错误和 Markdown 片段。没有合适术语时使用 `[]`。
 术语与正文在本次回答中一起决定：结合 learner_context、term_learning_context 和当前问题，自主选择最多 12 个影响理解、可能仍需帮助的最小完整技术名词。未记录不等于不会；已确认掌握或本轮已经充分讲清的词不必标注。不要把强调句、临时变量、示例输出、标题当术语；允许正文行内代码中的真实技术名词，禁止仅在代码块中出现的词。可以输出零个，不为凑数添加术语。
-第三行必须是单行 `HANDOFF: {...}` JSON。
+TERMS 后一行必须是单行 `HANDOFF: {...}` JSON。
 - 教学型回答使用 `{"engagement":"learning","continuity":"update","topic":"当前学习主题","is_new_topic":true,"new_topic":"当前学习主题","existing_topic":"","progress_summary":"本轮后用户已经走到哪里","established_points":["已建立的认识"],"unresolved_points":["仍待弄清的问题"],"next_actions":[{"kind":"follow_up","label":"按钮文字","prompt":"由用户确认后发送的问题"}],"used_prior_context":false}`。
 - 每次回答（包括 utility）都必须在 HANDOFF 中附加 is_new_topic、new_topic、existing_topic 三个字段。优先复用 <existing_qa_topics> 中语义匹配的已有主题；没有匹配项时才新建。主题由你依据问题和上下文判断，不按固定关键词分类。
 - 加入已有主题："is_new_topic":false,"new_topic":"","existing_topic":"已有主题原名"；existing_topic 必须逐字选择列表中的名称。
@@ -47,7 +53,7 @@ display_name 与 source_span.text 必须逐字出现在正文可见文本中；�
 - 主题归类与教学主线独立：utility 也要归类，但仍保持 continuity=preserve，不覆盖学习进展。示例中的主题及新建决定仅为格式演示，必须按本次实际判断填写。
 - 快速查词、单纯修复、一次性任务或与此前主线无关的回答必须使用 `{"engagement":"utility","continuity":"preserve","topic":"已有主题原名","is_new_topic":false,"new_topic":"","existing_topic":"已有主题原名","progress_summary":"","established_points":[],"unresolved_points":[],"next_actions":[],"used_prior_context":false}`，不得覆盖项目学习主线。
 - next_actions 最多 2 项，kind 只能是 `follow_up`、`open_source` 或 `review`；不要声称系统会自动发送问题或自动改变课程。
-之后输出 Markdown 正文。不要在正文重复 TITLE、TERMS 或 HANDOFF。
+Markdown 正文在上述元数据之前输出。不要在正文重复 TITLE、TERMS 或 HANDOFF。
 </task_output_contract>""",
 }
 

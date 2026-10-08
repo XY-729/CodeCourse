@@ -142,3 +142,12 @@ describe("useQAAskController", () => {
     expect(test.endOperation).toHaveBeenCalledWith(test.token);
   });
 });
+
+it("desktop sends immediately without confirmation and preserves the attachment choice", async () => {
+  const test = setup({ confirmBeforeSend: false, buildContext: () => ({
+    source_type: "file", source_path: "src/main.ts", selected_text: "run()", include_context: false, context_files: ["helper.ts"],
+  }) });
+  await act(() => test.hook.result.current.ask("解释选区"));
+  expect(test.confirm).not.toHaveBeenCalled();
+  expect(test.runStreamingQuestion).toHaveBeenCalledWith(expect.objectContaining({ include_context: false, context_files: ["helper.ts"] }), "session:8", test.token);
+});

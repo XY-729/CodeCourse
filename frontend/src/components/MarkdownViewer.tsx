@@ -1,4 +1,4 @@
-import { Children, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Children, createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { PluggableList } from "unified";
@@ -10,37 +10,54 @@ import { normalizeHighlightLanguage } from "../utils/highlightLanguages";
 import type { Annotation } from "../types";
 import { COLOR_VALUES } from "../types";
 import { splitRecordInformation } from "../utils/recordInformation";
+import { markDesktopPerformance } from "../performance/desktopPerformance";
+import type { QAStreamTiming } from "../performance/qaTiming";
 import type { ViewerSelection } from "./CodeViewer";
 
-function HighlightedCode({ className, code }: { className: string; code: string }) {
+const StreamingMarkdownContext = createContext(false);
+const EMPTY_HIGHLIGHTS: HighlightRecord[] = [];
+const EMPTY_LINKS: KnowledgeLink[] = [];
+const EMPTY_TERMS: DocumentTerm[] = [];
+const EMPTY_ANNOTATIONS: Annotation[] = [];
+const MemoizedMarkdown = memo(ReactMarkdown);
+
+const HighlightedCode = memo(function HighlightedCode({ className, code }: { className: string; code: string }) {
   const [html, setHtml] = useState<string | null>(null);
+  const streaming = useContext(StreamingMarkdownContext);
   const language = normalizeHighlightLanguage(className.replace(/^language-/, ""));
 
   useEffect(() => {
     setHtml(null);
-    if (language === "plaintext") return;
+    // Highlight once the stream settles, preserving text immediately while a
+    // code fence is still growing. This also avoids repeated work on long code.
+    if (streaming || language === "plaintext") return;
     let cancelled = false;
     let idleId: number | null = null;
+    let timeoutId: number | null = null;
     const run = () => {
       void import("../utils/highlightRuntime")
-        .then(({ highlightCode }) => highlightCode(code, language))
+        .then(({ highlightCode }) => cancelled ? null : highlightCode(code, language))
         .then((value) => { if (!cancelled) setHtml(value); })
         .catch(() => undefined);
     };
     if (window.requestIdleCallback) idleId = window.requestIdleCallback(run, { timeout: 500 });
-    else window.setTimeout(run, 0);
+    else timeoutId = window.setTimeout(run, 0);
     return () => {
       cancelled = true;
       if (idleId !== null) window.cancelIdleCallback?.(idleId);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
     };
-  }, [code, language]);
+  }, [code, language, streaming]);
 
   return html
     ? <code className={`hljs ${className}`} dangerouslySetInnerHTML={{ __html: html }} />
     : <code className={className}>{code}</code>;
-}
+});
 
 type Props = {
+  documentIdentity?: string;
+  streaming?: boolean;
+  streamTiming?: QAStreamTiming;
   title: string | null;
   sourcePath?: string | null;
   sourceType?: "course" | "qa";
@@ -336,17 +353,18 @@ function highlightChildren(
 }
 
 export default function MarkdownViewer({
+  documentIdentity, streaming = false, streamTiming,
   title,
   sourcePath,
   sourceType = "course",
   content,
   termSourceKey,
-  highlights = [],
-  knowledgeLinks = [],
-  documentTerms = [],
+  highlights = EMPTY_HIGHLIGHTS,
+  knowledgeLinks = EMPTY_LINKS,
+  documentTerms = EMPTY_TERMS,
   visibleTermCandidateIds,
   termDisplayTiers,
-  annotations = [],
+  annotations = EMPTY_ANNOTATIONS,
   tempSelectedText,
   onSelectionChange,
   onOpenKnowledgeLink,
@@ -366,6 +384,51 @@ export default function MarkdownViewer({
   const recordContent = useMemo(() => sourceType === "qa" || /^(qa|selection_answers)\//.test(sourcePath ?? "")
     ? splitRecordInformation(content) : { body: content, information: "" }, [content, sourceType, sourcePath]);
   const articleRef = useRef<HTMLElement | null>(null);
+  const followStreamRef = useRef(true);
+  const paintedRequestRef = useRef<string | null>(null);
+  const paintFramesRef = useRef<number[]>([]);
+  useEffect(() => {
+    const article = articleRef.current;
+    if (!article || !streaming) return;
+    let previousTop = article.scrollTop;
+    const scroll = () => {
+      const nearBottom = article.scrollHeight - article.clientHeight - article.scrollTop < 64;
+      if (article.scrollTop < previousTop || nearBottom) followStreamRef.current = nearBottom;
+      previousTop = article.scrollTop;
+    };
+    article.addEventListener("scroll", scroll, { passive: true });
+    return () => article.removeEventListener("scroll", scroll);
+  }, [streaming]);
+  useLayoutEffect(() => {
+    if (!content.trim()) return;
+    const article = articleRef.current;
+    if (streaming && article && followStreamRef.current) article.scrollTop = article.scrollHeight;
+    // Keep timing on the completed item too: a delta and completed event can
+    // arrive in one React batch without ever committing a streaming preview.
+    if (streamTiming?.firstDeltaAt != null && paintedRequestRef.current !== streamTiming.requestId) {
+      paintedRequestRef.current = streamTiming.requestId;
+      markDesktopPerformance("qa-first-commit", {
+        request_id: streamTiming.requestId,
+        elapsed_ms: performance.now() - streamTiming.startedAt,
+        delta_to_commit_ms: performance.now() - streamTiming.firstDeltaAt,
+      });
+      paintFramesRef.current.push(requestAnimationFrame(() => {
+        paintFramesRef.current.push(requestAnimationFrame(() => {
+          markDesktopPerformance("qa-first-paint", {
+            request_id: streamTiming.requestId,
+            elapsed_ms: performance.now() - streamTiming.startedAt,
+            delta_to_paint_ms: performance.now() - streamTiming.firstDeltaAt!,
+            paint_proxy: "double_raf",
+          });
+          paintFramesRef.current = [];
+        }));
+      }));
+    }
+  }, [content, streaming, streamTiming]);
+  useEffect(() => () => {
+    paintFramesRef.current.forEach(cancelAnimationFrame);
+    paintFramesRef.current = [];
+  }, []);
   useEffect(() => {
     if (!jumpLine) return;
     const elements = Array.from(articleRef.current?.querySelectorAll<HTMLElement>("[data-source-line]") ?? []);
@@ -436,7 +499,7 @@ export default function MarkdownViewer({
     const article = articleRef.current;
     if (!article) return;
     if (hasActiveAndroidSelection()) return;
-    const restoreKey = `${sourceType}:${sourcePath ?? title}`;
+    const restoreKey = documentIdentity ?? `${sourceType}:${sourcePath ?? title}`;
     if (restoredSourceRef.current === restoreKey) return;
     const ratio = Math.min(1, Math.max(0, initialScrollRatio ?? 0));
     if (ratio === 0) {
@@ -488,7 +551,7 @@ export default function MarkdownViewer({
     const ro = new ResizeObserver(() => scheduleProgressRefresh());
     ro.observe(body);
     return () => ro.disconnect();
-  }, [content, scheduleProgressRefresh]);
+  }, [scheduleProgressRefresh]);
 
   // ResizeObserver on article viewport
   useEffect(() => {
@@ -927,9 +990,11 @@ export default function MarkdownViewer({
         onKeyUp={androidRuntime ? undefined : captureSelection}
       >
         <div ref={bodyRef} className="markdown-body">
-          <ReactMarkdown remarkPlugins={markdownRemarkPlugins} components={highlightedComponents}>
-            {recordContent.body}
-          </ReactMarkdown>
+          <StreamingMarkdownContext.Provider value={streaming}>
+            <MemoizedMarkdown remarkPlugins={markdownRemarkPlugins} components={highlightedComponents}>
+              {recordContent.body}
+            </MemoizedMarkdown>
+          </StreamingMarkdownContext.Provider>
           {recordContent.information ? <details className="document-record-information"><summary>文档信息</summary><ReactMarkdown>{recordContent.information}</ReactMarkdown></details> : null}
         </div>
         {footer}

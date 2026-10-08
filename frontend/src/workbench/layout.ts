@@ -1,4 +1,6 @@
+import type { QAAskPayload } from "../api/client";
 import type { DragEvent } from "react";
+import type { QAStreamTiming } from "../performance/qaTiming";
 
 export type OpenItem = {
   id: string;
@@ -12,6 +14,8 @@ export type OpenItem = {
   favorite?: boolean;
   dirty?: boolean;
   hydrated?: boolean;
+  qaPreview?: { key: string; label: string; status: "streaming" | "failed"; startedAt: number; firstDeltaAt?: number; request?: QAAskPayload };
+  qaTiming?: QAStreamTiming;
   restoreLine?: number;
   jumpRequest?: {
     id: string;
@@ -114,8 +118,9 @@ export function stripLayoutContent(node: LayoutNode): LayoutNode {
       ...node,
       group: {
         ...node.group,
-        items: node.group.items.map((item) => ({
+        items: node.group.items.filter(item => !item.qaPreview).map((item) => ({
           ...item,
+          qaTiming: undefined,
           content: "",
           dirty: false,
           hydrated: item.type === "knowledge_graph",
@@ -329,6 +334,22 @@ export function updateEveryGroup(
     first: updateEveryGroup(node.first, updater),
     second: updateEveryGroup(node.second, updater),
   };
+}
+
+// Streaming edits must preserve every unrelated group and item reference.
+export function updateLayoutItem(node: LayoutNode, itemId: string, updater: (item: OpenItem) => OpenItem): LayoutNode {
+  if (node.type === "group") {
+    const index = node.group.items.findIndex(item => item.id === itemId);
+    if (index < 0) return node;
+    const item = updater(node.group.items[index]);
+    if (item === node.group.items[index]) return node;
+    const items = [...node.group.items];
+    items[index] = item;
+    return { ...node, group: { ...node.group, items } };
+  }
+  const first = updateLayoutItem(node.first, itemId, updater);
+  const second = updateLayoutItem(node.second, itemId, updater);
+  return first === node.first && second === node.second ? node : { ...node, first, second };
 }
 
 export function splitChildBounds(

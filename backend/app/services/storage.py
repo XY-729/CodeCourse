@@ -1746,6 +1746,29 @@ def init_storage() -> None:
             conn.execute(
                 "ALTER TABLE diagnostic_attempts ADD COLUMN teaching_trial_id TEXT"
             )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS qa_postprocess_jobs (
+                qa_record_id INTEGER PRIMARY KEY REFERENCES qa_records(id) ON DELETE CASCADE,
+                project_id INTEGER NOT NULL,
+                payload_json TEXT NOT NULL,
+                context_snapshot TEXT NOT NULL DEFAULT '',
+                terms_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'pending',
+                evidence_done INTEGER NOT NULL DEFAULT 0,
+                observer_done INTEGER NOT NULL DEFAULT 0,
+                planner_done INTEGER NOT NULL DEFAULT 0,
+                metadata_done INTEGER NOT NULL DEFAULT 1,
+                metadata_json TEXT,
+                last_error TEXT
+            )
+        """)
+        qa_job_cols = {row[1] for row in conn.execute("PRAGMA table_info(qa_postprocess_jobs)")}
+        if "metadata_done" not in qa_job_cols:
+            conn.execute("ALTER TABLE qa_postprocess_jobs ADD COLUMN metadata_done INTEGER NOT NULL DEFAULT 1")
+        if "metadata_json" not in qa_job_cols:
+            conn.execute("ALTER TABLE qa_postprocess_jobs ADD COLUMN metadata_json TEXT")
+        from app.services.qa_answer_context import initialize_answer_context_cache
+        initialize_answer_context_cache(conn)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS observer_jobs (
@@ -2234,6 +2257,9 @@ def delete_project(project_id: int) -> bool:
         conn.execute("DELETE FROM diagnostic_attempts WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM diagnostic_items WHERE project_id = ?", (project_id,))
         conn.execute("DELETE FROM observer_jobs WHERE project_id = ?", (project_id,))
+        conn.execute("DELETE FROM qa_postprocess_jobs WHERE project_id = ?", (project_id,))
+        from app.services.qa_answer_context import delete_answer_context_cache
+        delete_answer_context_cache(project_id, conn=conn)
         conn.execute("DELETE FROM learning_evidence_v2 WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM knowledge_states_v2 WHERE scope_type = 'project' AND scope_id = ?", (str(project_id),))
         conn.execute("DELETE FROM document_terms WHERE project_id = ?", (project_id,))
@@ -2811,7 +2837,12 @@ def create_teaching_handoff(
         ).fetchone()
         if existing is not None:
             return _row_to_teaching_handoff(existing)
-        if engagement == "learning":
+        newer_current = conn.execute(
+            "SELECT 1 FROM teaching_handoffs WHERE project_id=? AND is_current=1 AND qa_record_id>?",
+            (project_id, qa_record_id),
+        ).fetchone()
+        make_current = engagement == "learning" and not newer_current
+        if make_current:
             conn.execute(
                 "UPDATE teaching_handoffs SET is_current = 0, updated_at = ? WHERE project_id = ? AND is_current = 1",
                 (now, project_id),
@@ -2839,7 +2870,7 @@ def create_teaching_handoff(
                 source_type,
                 source_path,
                 1 if used_prior_context else 0,
-                1 if engagement == "learning" else 0,
+                1 if make_current else 0,
                 now,
                 now,
             ),
@@ -3583,6 +3614,9 @@ def set_qa_favorite(project_id: int, record_id: int, favorite: bool) -> Optional
 
 def delete_qa_record(project_id: int, record_id: int) -> bool:
     with _connect() as conn:
+        from app.services.qa_answer_context import delete_answer_context_cache
+        delete_answer_context_cache(project_id, record_id, conn=conn)
+        conn.execute("DELETE FROM qa_postprocess_jobs WHERE project_id=? AND qa_record_id=?", (project_id, record_id))
         qa_record = conn.execute(
             "SELECT output_path FROM qa_records WHERE project_id = ? AND id = ?",
             (project_id, record_id),

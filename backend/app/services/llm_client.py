@@ -114,6 +114,8 @@ def call_openai_compatible_chat_result(
     last_error: BaseException | None = None
     attempts = max(1, min(_MAX_ATTEMPTS, max_attempts))
     for attempt in range(attempts):
+        from app.services.qa_work_scheduler import wait_before_model_request
+        wait_before_model_request()
         started = perf_counter()
         try:
             response = _SYNC_CLIENT.post(
@@ -183,6 +185,7 @@ async def stream_openai_compatible_chat(
     }
     client = _async_client()
     last_error: BaseException | None = None
+    emitted = False
     # 流式响应没有整体截止时间时，服务端只要缓慢吐数据就能让请求无限挂起
     # （httpx 的 read timeout 是每阶段超时，不限制总时长）。用 asyncio.timeout
     # 作为硬上限，超出即抛 TimeoutError（不重试——停滞的重试无意义，交由
@@ -219,12 +222,14 @@ async def stream_openai_compatible_chat(
                                 yield content
                             return
 
+                        complete = False
                         async for line in response.aiter_lines():
                             if not line or not line.startswith("data:"):
                                 continue
                             data = line[5:].strip()
                             if not data or data == "[DONE]":
                                 if data == "[DONE]":
+                                    complete = True
                                     break
                                 continue
                             try:
@@ -234,12 +239,22 @@ async def stream_openai_compatible_chat(
                             choices = event.get("choices") or []
                             if not choices:
                                 continue
+                            reason = choices[0].get("finish_reason")
+                            if reason == "length":
+                                raise RuntimeError("模型输出达到长度限制，回答未完成")
+                            if reason == "stop":
+                                complete = True
                             delta = choices[0].get("delta") or {}
                             content = delta.get("content")
                             if content:
+                                emitted = True
                                 yield str(content)
+                        if not complete:
+                            raise RuntimeError("模型连接提前结束，已保留部分回答，请重试")
                         return
                 except httpx.HTTPError as exc:
+                    if emitted:
+                        raise RuntimeError("模型流式连接中断，已保留部分回答，请重试") from exc
                     last_error = exc
                     await _retry_backoff_async(attempt)
     except TimeoutError as exc:

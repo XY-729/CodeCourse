@@ -1,4 +1,4 @@
-import { useEffect, type MutableRefObject } from "react";
+import { useEffect, useRef, type MutableRefObject } from "react";
 import type { NavigationView } from "../components/Sidebar";
 import type { LayoutNode, OpenItem } from "./layout";
 import { stripLayoutContent } from "./layout";
@@ -23,6 +23,7 @@ type Options = {
 };
 
 export function useWorkbenchPersistence(options: Options) {
+  const lastSavedRef = useRef<{ key: string; snapshot: string } | null>(null);
   useEffect(() => {
     options.closedItemsRef.current = [];
   }, [options.projectId]);
@@ -41,7 +42,10 @@ export function useWorkbenchPersistence(options: Options) {
       const key = options.mobile
         ? androidWorkbenchStorageKey(options.projectId)
         : workbenchStorageKey(options.projectId);
-      window.localStorage.setItem(key, JSON.stringify(stored));
+      const snapshot = JSON.stringify(stored);
+      if (lastSavedRef.current?.key === key && lastSavedRef.current.snapshot === snapshot) return;
+      window.localStorage.setItem(key, snapshot);
+      lastSavedRef.current = { key, snapshot };
     } catch {
       // Reading must continue when browser storage is unavailable or full.
     }

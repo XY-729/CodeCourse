@@ -454,7 +454,7 @@ DEFAULT_QA_ANSWER_PROMPT = """你是 CodeCourse 的编程学习助手。先判�
 
 ## 元数据
 
-TITLE: 使用最短且明确的主题名称。
+正文结束后再输出 TITLE: 使用最短且明确的主题名称。
 TERMS: 输出结构化 JSON 数组，每项包含 display_name、canonical_name、category、confidence 和 source_span.text。display_name 与 source_span.text 必须逐字出现在正文可见文本中。不要列完整句子、命令、路径、函数调用、函数签名、编译错误、Markdown 片段、普通词或仅在代码块中出现的文本；没有合适项时输出 []。
 
 不要在正文重复 TITLE 或 TERMS。"""

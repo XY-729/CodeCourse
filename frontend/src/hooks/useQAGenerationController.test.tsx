@@ -303,3 +303,34 @@ describe(
     );
   },
 );
+
+it("publishes the first body before completion and retains partial text on failure", async () => {
+  let reject!: (error: Error) => void;
+  let handlers!: NonNullable<Parameters<typeof askQuestionStream>[2]>;
+  askMock.mockImplementationOnce((_project, _payload, callbacks) => {
+    handlers = callbacks!;
+    return new Promise((_resolve, rejectRequest) => { reject = rejectRequest; });
+  });
+  const onUpdate = vi.fn();
+  const onError = vi.fn();
+  const onComplete = vi.fn();
+  const { result } = renderHook(() => useQAGenerationController(1, { onUpdate, onError, onComplete }));
+  let token!: symbol;
+  act(() => { token = result.current.beginOperation()!; });
+  let request!: Promise<QARecord>;
+  act(() => { request = result.current.runStreamingQuestion(PAYLOAD, "draft:1", token); });
+  expect(askMock).toHaveBeenCalledWith(1, expect.objectContaining({ defer_metadata: true }), expect.any(Object));
+  act(() => handlers.onDelta?.("首段 **正文**"));
+  expect(result.current.generations["draft:1"].partial).toBe("首段 **正文**");
+  expect(onComplete).not.toHaveBeenCalled();
+  await act(async () => {
+    handlers.onDelta?.("\n后续内容");
+    reject(new Error("断流"));
+    await expect(request).rejects.toThrow("断流");
+  });
+  expect(onUpdate).toHaveBeenLastCalledWith("draft:1", expect.objectContaining({ partial: "首段 **正文**\n后续内容" }), expect.objectContaining({ firstDeltaAt: expect.any(Number), requestId: expect.any(String) }));
+  expect(onError).toHaveBeenCalledWith("draft:1", "断流");
+  expect(onComplete).not.toHaveBeenCalled();
+  act(() => result.current.endOperation(token));
+  expect(result.current.busy).toBe(false);
+});

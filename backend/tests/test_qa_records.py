@@ -51,6 +51,10 @@ class QARecordEndpointTests(unittest.TestCase):
         generation_service.GENERATED_ROOT = self.generated
         qa_service.project_course_dir = lambda project_id: (self.generated / str(project_id)).resolve()
         self.client = TestClient(app)
+        from app.services.qa_background import _run
+        drain = patch("app.services.qa_background.dispatch_answer", side_effect=_run)
+        drain.start()
+        self.addCleanup(drain.stop)
 
         from app.services.storage import set_setting, upsert_project
 
@@ -519,7 +523,7 @@ class QARecordEndpointTests(unittest.TestCase):
         data = resp.json()
         self.assertEqual(data["selected_text"], "")
         output_path = _generated_file(self.generated, self.project.id, data["output_path"])
-        self.assertIn("无附带上下文", output_path.read_text(encoding="utf-8"))
+        self.assertIn("无选区文本", output_path.read_text(encoding="utf-8"))
 
     def test_index_build_and_search_find_code_symbols(self):
         import time
@@ -597,7 +601,7 @@ class QARecordEndpointTests(unittest.TestCase):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: main.py\n\n这个文件提供健康检查接口。") as mocked:
             resp = self.client.post(
                 f"/api/projects/{self.project.id}/qa/ask",
-                json={
+                json={"include_context": True,
                     "source_type": "file",
                     "source_path": "src/main.py",
                     "selected_text": "",
@@ -624,7 +628,7 @@ class QARecordEndpointTests(unittest.TestCase):
         with patch("app.services.qa_service.call_openai_compatible_chat", return_value="TITLE: outline.md\n\n先按总纲读入口。") as mocked:
             resp = self.client.post(
                 f"/api/projects/{self.project.id}/qa/ask",
-                json={
+                json={"include_context": True,
                     "source_type": "course",
                     "source_path": "outline.md",
                     "selected_text": "",
@@ -859,7 +863,7 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertIn("event: completed", response.text)
         self.assertIn("FastAPI connects routes", response.text)
         self.assertNotIn("HANDOFF", response.text)
-        self.assertEqual(retrieval.call_count, 1)
+        self.assertEqual(retrieval.call_count, 0)
         history = self.client.get(f"/api/projects/{self.project.id}/qa").json()
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["teaching_handoff"]["topic"], "FastAPI 路由")

@@ -77,10 +77,15 @@ class StreamingMetadataFilter:
                 self.hidden = True
                 continue
             possible_metadata = not self.fence and any(
-                name.startswith(candidate) or candidate.startswith(name)
+                name.startswith(candidate) or (candidate.startswith(name) and not candidate[len(name):].strip())
                 for name in self.names
             )
-            possible_fence = not candidate or candidate.startswith(("`", "~"))
+            # One or two markers may still become a fence. Once ordinary text
+            # follows them, inline code/strikethrough can stream immediately.
+            # Keep actual fence lines buffered so _complete_line tracks them.
+            possible_fence = not candidate or bool(re.match(
+                r"^ {0,3}(?:`{1,2}$|~{1,2}$|`{3,}|~{3,})", self.pending
+            ))
             possible_continuation = self.continuation and (not candidate or candidate[0] in '[]{}",')
             if not possible_metadata and not possible_fence and not possible_continuation:
                 self.continuation = False

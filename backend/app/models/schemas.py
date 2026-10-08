@@ -178,6 +178,10 @@ class SelectionRange(BaseModel):
 
 
 class QAAskRequest(BaseModel):
+    include_context: bool = False
+    # Desktop opts in; legacy/mobile clients keep their existing output contract.
+    defer_metadata: bool = False
+    request_id: Optional[str] = Field(default=None, max_length=100)
     source_type: Literal["file", "course", "selection", "qa", "call_guide"]
     source_path: Optional[str] = Field(default=None, max_length=1000)
     selected_text: str = Field(default="", max_length=20000)

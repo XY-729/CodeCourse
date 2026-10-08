@@ -30,7 +30,39 @@ def _clean_text(value: object, limit: int) -> str:
 
 
 def existing_qa_topics(project_id: int) -> list[str]:
-    return list(dict.fromkeys(item["topic"] for item in list_qa_thread_summaries(project_id)))
+    """Return the sidebar's topic order without loading historical answer bodies."""
+    from app.services.storage import _connect
+
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT q.id, COALESCE(NULLIF(q.session_id, 0), q.id) AS session_key,
+                      substr(COALESCE(NULLIF(q.display_title, ''), q.question), 1, 80) AS legacy_topic,
+                      q.created_at, q.updated_at, h.id AS handoff_id, h.topic,
+                      h.is_current, h.engagement, h.created_at AS handoff_created_at, h.dismissed_at
+               FROM qa_records q
+               LEFT JOIN teaching_handoffs h ON h.qa_record_id = q.id AND h.project_id = q.project_id
+               WHERE q.project_id = ? ORDER BY q.created_at ASC, q.id ASC""",
+            (project_id,),
+        ).fetchall()
+    legacy_topics: dict[int, str] = {}
+    groups: dict[tuple[int, str], dict[str, Any]] = {}
+    for row in rows:
+        session_key = row["session_key"]
+        legacy_topics.setdefault(session_key, row["legacy_topic"])
+        topic = row["topic"] if row["handoff_id"] is not None else legacy_topics[session_key]
+        group = groups.setdefault((session_key, topic), {
+            "topic": topic, "latest": (row["updated_at"], row["id"]),
+            "handoff_rank": None, "is_current": False,
+        })
+        group["latest"] = max(group["latest"], (row["updated_at"], row["id"]))
+        if row["handoff_id"] is not None:
+            rank = (row["is_current"], row["engagement"] == "learning",
+                    row["handoff_created_at"], row["handoff_id"])
+            if group["handoff_rank"] is None or rank > group["handoff_rank"]:
+                group["handoff_rank"] = rank
+                group["is_current"] = bool(row["is_current"] and row["dismissed_at"] is None)
+    ordered = sorted(groups.values(), key=lambda item: (item["is_current"], item["latest"]), reverse=True)
+    return list(dict.fromkeys(item["topic"] for item in ordered))
 
 
 def resolve_topic_decision(raw: dict[str, object], existing_topics: list[str]) -> Optional[str]:

@@ -201,7 +201,7 @@ export function useLearningStateController({
   }, [persist, projectId]);
 
   const touchOpenItem = useCallback((item: OpenItem) => {
-    if (item.type === "file" || item.type === "knowledge_graph") return;
+    if (item.qaPreview || item.type === "file" || item.type === "knowledge_graph") return;
     const sourceType = item.type === "qa" || item.qaRecordId ? "qa" : "course";
     const existing = findState(sourceType, item.path);
     queueUpdate(

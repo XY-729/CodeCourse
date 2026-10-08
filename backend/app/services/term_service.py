@@ -857,19 +857,33 @@ def get_document_term_status(
     terms = register_document_terms(project_id, source_type, source_path, content)
     content_hash = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
     state = get_term_scan_state(project_id, source_type, source_path, content_hash)
+    deferred_state = None
+    deferred_error = None
+    if source_type == "qa":
+        from app.services.storage import _connect
+        with _connect() as conn:
+            job = conn.execute("""SELECT j.status,j.metadata_done,j.metadata_json,j.evidence_done,j.last_error
+                FROM qa_postprocess_jobs j JOIN qa_records q ON q.id=j.qa_record_id
+                WHERE q.project_id=? AND (q.output_path=? OR CAST(q.id AS TEXT)=?) LIMIT 1""",
+                (project_id, source_path, source_path)).fetchone()
+        if job and (not job["metadata_done"] or job["metadata_json"] is not None) and not job["evidence_done"]:
+            # Existing desktop polling picks up terms when deferred extraction
+            # finishes; the saved answer remains available throughout.
+            deferred_state = "failed" if job["status"] == "failed" else ("running" if job["status"] == "running" else "queued")
+            deferred_error = job["last_error"]
     authorized = _term_scan_enabled()
     high_confidence_count = sum(1 for term in terms if term.confidence >= 0.8)
     return {
         "source_type": source_type,
         "source_path": source_path,
         "content_hash": content_hash,
-        "scan_status": state.status if state else ("completed" if terms else "idle"),
+        "scan_status": deferred_state or (state.status if state else ("completed" if terms else "idle")),
         "model_scan_authorized": authorized,
         "candidate_count": len(terms),
         "high_confidence_count": high_confidence_count,
         "local_candidate_count": 0,
         "model_candidate_count": sum(1 for term in terms if term.detection_source == "model"),
-        "error_message": state.error_message if state else None,
+        "error_message": deferred_error or (state.error_message if state else None),
         "updated_at": state.updated_at if state else None,
     }
 

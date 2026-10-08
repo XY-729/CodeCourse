@@ -230,6 +230,9 @@ export type KnowledgeLink = {
 };
 
 export type QAAskPayload = {
+  include_context?: boolean;
+  defer_metadata?: boolean;
+  request_id?: string;
   source_type: SourceType;
   source_path?: string | null;
   selected_text: string;
@@ -256,7 +259,7 @@ export type QAAskPayload = {
 export type QAStreamStage = "queued" | "retrieving" | "waiting_model" | "answering" | "saving";
 
 export type QAStreamHandlers = {
-  onStage?: (stage: QAStreamStage, label: string) => void;
+  onStage?: (stage: QAStreamStage, label: string, elapsedMs?: number) => void;
   onDelta?: (text: string) => void;
 };
 
@@ -1063,7 +1066,7 @@ export async function askQuestionStream(
     }
     if (!dataLines.length) return;
     const data = JSON.parse(dataLines.join("\n"));
-    if (eventName === "stage") handlers.onStage?.(data.stage as QAStreamStage, String(data.label || ""));
+    if (eventName === "stage") handlers.onStage?.(data.stage as QAStreamStage, String(data.label || ""), data.elapsed_ms);
     else if (eventName === "delta") handlers.onDelta?.(String(data.text || ""));
     else if (eventName === "completed") completed = data as QARecord;
     else if (eventName === "error") throw new Error(String(data.message || "生成回答失败"));

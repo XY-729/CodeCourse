@@ -22,6 +22,8 @@ async def lifespan(app: FastAPI):
     from app.services.storage import fail_stale_generation_tasks
     from app.services.task_watchdog import start_watchdog, stop_watchdog
 
+    from app.services.qa_background import recover_answers, shutdown_answers
+    recover_answers()
     recover_pending_observer_jobs()
     marked = fail_stale_generation_tasks(
         timeout_minutes=0,
@@ -33,6 +35,7 @@ async def lifespan(app: FastAPI):
     yield
     await stop_watchdog()
     shutdown_observer(wait=False)
+    shutdown_answers()
 
 
 app = FastAPI(title="GitHub Project Learner", version="0.1.0", lifespan=lifespan)

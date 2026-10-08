@@ -47,6 +47,7 @@ type Props = {
   canManageGroups: boolean;
   mobileCodeSearchRequestId: number;
   activeTermSourceKey: string;
+  onRetryQAPreview?: (item: OpenItem) => void;
   highlights: HighlightRecord[];
   knowledgeLinks: KnowledgeLink[];
   documentTerms: DocumentTerm[];
@@ -131,6 +132,14 @@ function WorkbenchEditorGroupView(props: Props) {
     selectionAnchor,
   } = props;
   const activeItem = group.items.find((item) => item.id === group.activeItemId) ?? null;
+  const markdownSourceType = activeItem?.qaRecordId ? "qa" : "course";
+  const markdownPath = activeItem?.path;
+  const markdownHighlights = useMemo(() => highlights.filter(highlight => (
+    highlight.source_type === markdownSourceType && highlight.source_path === markdownPath
+  )), [highlights, markdownSourceType, markdownPath]);
+  const markdownLinks = useMemo(() => knowledgeLinks.filter(link => (
+    link.source_type === "course" && link.source_path === markdownPath
+  )), [knowledgeLinks, markdownPath]);
   const [savingItemId, setSavingItemId] = useState<string | null>(null);
   const saving = Boolean(activeItem && savingItemId === activeItem.id);
   const onSavePending = (pending: boolean) => setSavingItemId(current => pending ? activeItem?.id ?? null : current === activeItem?.id ? null : current);
@@ -339,7 +348,10 @@ function WorkbenchEditorGroupView(props: Props) {
           </div>
         ) : (
           <MarkdownViewer
-            key={`${activeItem.qaRecordId ? "qa" : "course"}:${activeItem.id}`}
+            key={activeItem.id}
+            documentIdentity={activeItem.id}
+            streaming={activeItem.qaPreview?.status === "streaming"}
+            streamTiming={activeItem.qaTiming}
             title={activeItem.title}
             sourcePath={activeItem.path}
             sourceType={activeItem.qaRecordId ? "qa" : "course"}
@@ -347,11 +359,8 @@ function WorkbenchEditorGroupView(props: Props) {
             embedded={mobile}
             hideHeader={!mobile && lessonIndex >= 0}
             termSourceKey={props.activeTermSourceKey}
-            highlights={highlights.filter((highlight) => (
-              highlight.source_type === (activeItem.qaRecordId ? "qa" : "course")
-              && highlight.source_path === activeItem.path
-            ))}
-            knowledgeLinks={knowledgeLinks.filter((link) => link.source_type === "course" && link.source_path === activeItem.path)}
+            highlights={markdownHighlights}
+            knowledgeLinks={markdownLinks}
             documentTerms={documentTerms}
             visibleTermCandidateIds={visibleTermCandidateIds}
             termDisplayTiers={termDisplayTiers}
@@ -360,7 +369,7 @@ function WorkbenchEditorGroupView(props: Props) {
               && selectionAnchor.sourcePath === activeItem.path
               ? selectionAnchor.selectedText
               : null}
-            onSelectionChange={props.onSelectionChange}
+            onSelectionChange={activeItem.qaPreview ? undefined : props.onSelectionChange}
             onOpenKnowledgeLink={props.onOpenKnowledgeLink}
             onOpenQAReference={props.onOpenQAReference}
             onGenerateTerm={props.onGenerateTerm}
@@ -368,14 +377,14 @@ function WorkbenchEditorGroupView(props: Props) {
             onGenerateLesson={props.isOutlineCourse(activeItem.path) ? props.onGenerateLesson : undefined}
             immersiveReading={mobile && activeGroupId === group.id}
             initialScrollRatio={learningState?.position_kind === "scroll_ratio" ? learningState.position_value : 0}
-            onScrollRatioChange={(ratio) => props.onLearningPosition(
+            onScrollRatioChange={activeItem.qaPreview ? undefined : (ratio) => props.onLearningPosition(
               activeItem.qaRecordId ? "qa" : "course",
               activeItem.path,
               "scroll_ratio",
               ratio,
             )}
-            footer={projectId && !hasMarkdownActions ? <UnderstandingFeedback projectId={projectId} sourceType={activeItem.qaRecordId ? "qa" : "course"} sourcePath={activeItem.path} revision={activeItem.content} /> : undefined}
-            headerActions={mobile ? undefined : markdownActions(false)}
+            footer={!activeItem.qaPreview && projectId && !hasMarkdownActions ? <UnderstandingFeedback projectId={projectId} sourceType={activeItem.qaRecordId ? "qa" : "course"} sourcePath={activeItem.path} revision={activeItem.content} /> : undefined}
+            headerActions={activeItem.qaPreview ? <><span role="status">{activeItem.qaPreview.label}</span>{activeItem.qaPreview.status === "failed" && activeItem.qaPreview.request ? <button type="button" className="secondary-button compact" onClick={() => props.onRetryQAPreview?.(activeItem)}>重试</button> : null}</> : mobile ? undefined : markdownActions(false)}
           />
         )
       ) : null}

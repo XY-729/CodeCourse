@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from uuid import uuid4
 from pathlib import Path
 from typing import Optional
 
@@ -32,7 +34,6 @@ from app.services.qa_service import (
     search_records,
     finalize_question,
     prepare_question,
-    _build_default_teaching_trial_draft,
 )
 from app.services.llm_client import stream_openai_compatible_chat
 from app.services.storage import (
@@ -49,6 +50,7 @@ from app.services.continuity_service import (
     teaching_handoff_payload,
 )
 from app.services.metadata_stream import StreamingMetadataFilter
+from app.services.qa_work_scheduler import foreground_work
 
 logger = logging.getLogger(__name__)
 
@@ -144,10 +146,12 @@ async def ask(project_id: int, payload: QAAskRequest) -> QARecordResponse:
         lock = _session_lock(project_id, session_id)
         async with _project_semaphore(project_id):
             if lock is None:
-                record = await asyncio.to_thread(ask_question, project_id, payload)
+                with foreground_work():
+                    record = await asyncio.to_thread(ask_question, project_id, payload)
             else:
                 async with lock:
-                    record = await asyncio.to_thread(ask_question, project_id, payload)
+                    with foreground_work():
+                        record = await asyncio.to_thread(ask_question, project_id, payload)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return _to_response(record)
@@ -158,67 +162,50 @@ async def ask_stream(project_id: int, payload: QAAskRequest) -> StreamingRespons
     _require_project(project_id)
 
     async def generate():
-        yield _sse("stage", {"stage": "queued", "label": "等待生成位置"})
+        started = time.perf_counter()
+        request_id = payload.request_id or uuid4().hex
+        yield _sse("stage", {"stage": "queued", "label": "准备回答", "request_id": request_id})
         try:
             requested_session_id = await asyncio.to_thread(_requested_session_id, project_id, payload)
             lock = _session_lock(project_id, requested_session_id)
             async with _project_semaphore(project_id):
                 async def run_stream():
-                    yield _sse("stage", {"stage": "retrieving", "label": "检索上下文"})
-                    prepared = await asyncio.to_thread(prepare_question, project_id, payload)
-                    if prepared.existing_record is not None:
-                        yield _sse("completed", _to_response(prepared.existing_record).model_dump(mode="json"))
-                        return
-                    trial_draft = await asyncio.to_thread(
-                        _build_default_teaching_trial_draft,
-                        project_id,
-                        prepared,
-                    )
-                    try:
-                        from app.services.qa_service import _maybe_plan_teaching
-                        tc = await asyncio.to_thread(_maybe_plan_teaching, project_id, prepared)
-                        if tc is not None and tc.rendered_context:
-                            rendered = tc.rendered_context
-                            for i, msg in enumerate(prepared.messages):
-                                if msg.get("role") == "system":
-                                    prepared.messages[i] = {
-                                        "role": "system",
-                                        "content": (msg.get("content") or "") + "\n\n<trusted_teaching_context>\n" + rendered + "\n</trusted_teaching_context>",
-                                    }
-                                    break
-                            trial_draft = tc.trial_draft
-                    except Exception:
-                        logger.exception(
-                            "Teacher planner failed before streaming answer; using normal answer",
-                            extra={"project_id": project_id},
-                        )
-                    yield _sse("stage", {"stage": "waiting_model", "label": "等待模型"})
-                    chunks: list[str] = []
-                    handoff_filter = _StreamingHandoffFilter()
-                    emitted_answer_stage = False
-                    async for chunk in stream_openai_compatible_chat(
-                        prepared.settings["base_url"],
-                        prepared.settings["api_key"],
-                        prepared.settings["model"],
-                        prepared.messages,
-                        timeout=90,
-                    ):
-                        if not emitted_answer_stage:
-                            emitted_answer_stage = True
-                            yield _sse("stage", {"stage": "answering", "label": "正在回答"})
-                        chunks.append(chunk)
-                        for visible_chunk in handoff_filter.push(chunk):
-                            yield _sse("delta", {"text": visible_chunk})
-                    for visible_chunk in handoff_filter.finish():
-                        yield _sse("delta", {"text": visible_chunk})
-                    yield _sse("stage", {"stage": "saving", "label": "保存记录"})
-                    record = await asyncio.to_thread(
-                        finalize_question,
-                        prepared,
-                        "".join(chunks),
-                        trial_draft,
-                    )
+                    with foreground_work():
+                        yield _sse("stage", {"stage": "retrieving", "label": "读取附带上下文" if payload.include_context or payload.context_files else "准备回答"})
+                        prepared = await asyncio.to_thread(prepare_question, project_id, payload)
+                        if prepared.existing_record is not None:
+                            record = prepared.existing_record
+                        else:
+                            model_started = time.perf_counter()
+                            logger.info("qa_timing request_id=%s prepared_ms=%.1f", request_id, (model_started - started) * 1000)
+                            yield _sse("stage", {"stage": "waiting_model", "label": "等待模型", "elapsed_ms": round((time.perf_counter() - started) * 1000, 1)})
+                            chunks: list[str] = []
+                            handoff_filter = _StreamingHandoffFilter()
+                            emitted_answer_stage = False
+                            first_raw = True
+                            async for chunk in stream_openai_compatible_chat(
+                                prepared.settings["base_url"], prepared.settings["api_key"],
+                                prepared.settings["model"], prepared.messages, timeout=90,
+                            ):
+                                if first_raw and chunk.strip():
+                                    first_raw = False
+                                    logger.info("qa_timing request_id=%s first_raw_ms=%.1f", request_id, (time.perf_counter() - started) * 1000)
+                                chunks.append(chunk)
+                                for visible_chunk in handoff_filter.push(chunk):
+                                    if not emitted_answer_stage and visible_chunk.strip():
+                                        emitted_answer_stage = True
+                                        logger.info("qa_timing request_id=%s first_visible_ms=%.1f", request_id, (time.perf_counter() - started) * 1000)
+                                        yield _sse("stage", {"stage": "answering", "label": "正在回答", "elapsed_ms": round((time.perf_counter() - started) * 1000, 1)})
+                                    yield _sse("delta", {"text": visible_chunk})
+                            for visible_chunk in handoff_filter.finish():
+                                yield _sse("delta", {"text": visible_chunk})
+                            logger.info("qa_timing request_id=%s model_finished_ms=%.1f", request_id, (time.perf_counter() - started) * 1000)
+                            yield _sse("stage", {"stage": "saving", "label": "保存记录"})
+                            record = await asyncio.to_thread(finalize_question, prepared, "".join(chunks))
+                    from app.services.qa_background import dispatch_answer
+                    dispatch_answer(project_id, record.id)
                     yield _sse("completed", _to_response(record).model_dump(mode="json"))
+                    logger.info("qa_timing request_id=%s completed_ms=%.1f", request_id, (time.perf_counter() - started) * 1000)
 
                 if lock is None:
                     async for event in run_stream():

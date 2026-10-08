@@ -142,6 +142,7 @@ import { useDesktopInteractionLight } from "./hooks/useDesktopInteractionLight";
 import { useDesktopImportDrop } from "./hooks/useDesktopImportDrop";
 import { useCommandPaletteItems } from "./commands/useCommandPaletteItems";
 import { markDesktopPerformance, measureDesktopInteraction } from "./performance/desktopPerformance";
+import type { QAStreamTiming } from "./performance/qaTiming";
 import { useWorkbenchLayoutController } from "./workbench/useWorkbenchLayoutController";
 import { useWorkbenchResizeController } from "./workbench/useWorkbenchResizeController";
 import { useWorkbenchPersistence } from "./workbench/useWorkbenchPersistence";
@@ -174,6 +175,7 @@ import {
   normalizeGroupIds,
   splitMeta,
   updateEveryGroup,
+  updateLayoutItem,
   updateGroup,
 } from "./workbench/layout";
 import type {
@@ -246,6 +248,8 @@ export default function App() {
   const [navigationView, setNavigationView] = useState<NavigationView>("courses");
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [contextFiles, setContextFiles] = useState<string[]>([]);
+  const [includeContext, setIncludeContext] = useState(false);
+  const qaPreviewIds = useRef(new Map<string, string>());
   const [contextFilePickerOpen, setContextFilePickerOpen] = useState(false);
   const [filePickerPurpose, setFilePickerPurpose] = useState<"context" | "generation">("context");
   const [mobileWorkspaceTab, setMobileWorkspaceTab] = useState<MobileWorkspaceTab | null>(null);
@@ -444,6 +448,7 @@ export default function App() {
   } =
     useQAGenerationController(
       project?.id ?? null,
+      mobileRuntime ? {} : { onStart: openQAPreview, onUpdate: updateQAPreview, onComplete: completeQAPreview, onError: failQAPreview },
     );
   const {
     revision: personalizationRevision,
@@ -468,7 +473,7 @@ export default function App() {
 
   const activeTermSource = useMemo(() => {
     const item = getActiveOpenItem();
-    if (!item || (item.type !== "course" && item.type !== "qa")) return null;
+    if (!item || item.qaPreview || (item.type !== "course" && item.type !== "qa")) return null;
     return {
       sourceType: (item.qaRecordId ? "qa" : "course") as "course" | "qa",
       sourcePath: item.path,
@@ -477,7 +482,7 @@ export default function App() {
 
   const activeTermContent = useMemo(() => {
     const item = getActiveOpenItem();
-    return item?.content ?? "";
+    return item && !item.qaPreview ? item.content : "";
   }, [layout, activeGroupId]);
 
   const {
@@ -495,6 +500,25 @@ export default function App() {
     profileRevision: personalizationRevision,
     onError: setQAPanelError,
   });
+  const deferredQARefreshRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (mobileRuntime || !project || activeTermSource?.sourceType !== "qa" || !activeTermScanStatus) return;
+    const key = `${project.id}:${activeTermSource.sourcePath}`;
+    if (["queued", "running"].includes(activeTermScanStatus.scan_status)) {
+      deferredQARefreshRef.current = key;
+      return;
+    }
+    if (deferredQARefreshRef.current !== key) return;
+    deferredQARefreshRef.current = null;
+    // Deferred teaching metadata appears when ready without extending the
+    // foreground operation or changing the already displayed answer.
+    const projectId = project.id;
+    void Promise.all([
+      refreshDocumentTerms("qa", activeTermSource.sourcePath, projectId),
+      refreshQAHistory(projectId), refreshQAContinuity(projectId), refreshKnowledgeLinks(projectId),
+    ]).catch(() => undefined);
+  }, [mobileRuntime, project?.id, activeTermSource?.sourcePath, activeTermSource?.sourceType,
+      activeTermScanStatus?.scan_status, refreshDocumentTerms]);
   const awaitingNotificationSettingsRef = useRef(false);
   const promptClosePendingRef = useRef(false);
   const handledCompletionNavRef = useRef(new Set<string>());
@@ -736,6 +760,7 @@ export default function App() {
     rejectProjectMutationWhileBusy: rejectProjectMutationWhileQABusy,
     ask: handleAsk,
   } = useQAAskController({
+    confirmBeforeSend: mobileRuntime,
     projectId: project?.id ?? null,
     settings: llmSettings,
     sessionId: activeQASessionId,
@@ -761,12 +786,12 @@ export default function App() {
       setMobileAssistantView("ask");
       setQAHistory((items) => [record, ...items.filter((item) => item.id !== record.id)]);
       clearQAQuestionInput();
-      await Promise.all([
+      void Promise.all([
         refreshCourses(projectId),
         refreshQAHistory(projectId),
         refreshQAContinuity(projectId),
         refreshKnowledgeLinks(projectId),
-      ]);
+      ]).catch(() => setToast("回答已保存，列表刷新稍后重试"));
       setKnowledgeRefreshKey((value) => value + 1);
       notifyTaskCompleted("CodeCourse 回答完成", record.display_title || "AI 助手已经完成回答。");
       schedulePersonalizationRefresh();
@@ -1521,6 +1546,7 @@ export default function App() {
   }
 
   function applyActiveItem(item: OpenItem) {
+    if (item.qaPreview) return;
     if (item.type === "file") {
       setFileContent({ path: item.path, content: item.content, language: item.language ?? "plaintext" });
       setSelectedCourse(null);
@@ -1593,9 +1619,67 @@ export default function App() {
     };
   }
 
-  function buildAskPayloadContext(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text" | "context_files"> {
+  function openQAPreview(key: string, payload: QAAskPayload, timing: QAStreamTiming) {
+    const id = `qa-preview:${crypto.randomUUID()}`;
+    qaPreviewIds.current.set(key, id);
+    openItemInGroup(activeGroupId, {
+      id, type: "course", path: id, title: payload.question.slice(0, 40), content: "", hydrated: true,
+      qaPreview: { key, label: "准备回答", status: "streaming", startedAt: timing.startedAt, request: payload },
+      qaTiming: timing,
+    });
+  }
+
+  function updateQAPreview(key: string, state: { label: string; partial: string }, timing: QAStreamTiming) {
+    const id = qaPreviewIds.current.get(key);
+    if (!id) return;
+    setLayout(previous => updateLayoutItem(previous, id, item => {
+      if (!item.qaPreview || (item.content === state.partial && item.qaPreview.label === state.label && item.qaTiming === timing)) return item;
+      return { ...item, content: state.partial, qaTiming: timing, qaPreview: { ...item.qaPreview, label: state.label } };
+    }));
+  }
+
+  function completeQAPreview(key: string, record: QARecord, timing: QAStreamTiming) {
+    const id = qaPreviewIds.current.get(key);
+    if (!id) return;
+    setLayout(previous => updateLayoutItem(previous, id, item => ({ ...item, qaPreview: undefined, qaTiming: timing,
+        path: _normalizeOutputPath(record.output_path, record.id, record.project_id),
+        title: record.display_title || record.question, content: record.answer_md, qaRecordId: record.id,
+        favorite: record.favorite })));
+    qaPreviewIds.current.delete(key);
+  }
+
+  function failQAPreview(key: string, message: string) {
+    const id = qaPreviewIds.current.get(key);
+    if (!id) return;
+    setLayout(previous => updateLayoutItem(previous, id, item => item.qaPreview ? { ...item,
+      qaPreview: { ...item.qaPreview, status: "failed", label: `未完成：${message}。可点击重试保留原问题和选区。` } } : item));
+    qaPreviewIds.current.delete(key);
+  }
+
+  async function retryQAPreview(item: OpenItem) {
+    const request = item.qaPreview?.request;
+    if (!request || !project) return;
+    const token = beginQAOperation();
+    if (!token) return;
+    const projectId = project.id;
+    try {
+      const record = await runStreamingQuestion(request, `retry:${item.id}`, token);
+      setSelectedQA(record);
+      setQASessionId(record.session_id ?? null);
+      setQAHistory(items => [record, ...items.filter(entry => entry.id !== record.id)]);
+      setQAPanelError("");
+      clearQAQuestionInput();
+      void Promise.all([refreshCourses(projectId), refreshQAHistory(projectId), refreshQAContinuity(projectId), refreshKnowledgeLinks(projectId)])
+        .catch(() => setToast("回答已保存，列表刷新稍后重试"));
+      schedulePersonalizationRefresh();
+    } catch (error) {
+      setQAPanelError(error instanceof Error ? error.message : "重试失败");
+    } finally { endQAOperation(token); }
+  }
+
+  function buildAskPayloadContext(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text" | "context_files" | "include_context"> {
     const base = buildAskPayloadContextBase();
-    return { ...base, context_files: contextFiles.length > 0 ? contextFiles : undefined };
+    return { ...base, include_context: mobileRuntime ? undefined : includeContext, context_files: contextFiles.length > 0 ? [...contextFiles] : undefined };
   }
 
   function buildAskPayloadContextBase(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text"> {
@@ -1639,7 +1723,7 @@ export default function App() {
     setLayout((prev) => updateGroup(prev, groupId, (group) => openItem(group, item)));
     setActiveGroupId(groupId);
     applyActiveItem(item);
-    touchOpenItem(item);
+    if (!item.qaPreview) touchOpenItem(item);
   }
 
   function deferEditorMount(groupId: string, itemId: string) {
@@ -1693,7 +1777,7 @@ export default function App() {
     });
     setActiveGroupId(newGroupId);
     applyActiveItem(item);
-    touchOpenItem(item);
+    if (!item.qaPreview) touchOpenItem(item);
     if (meta && !canSplit) setToast(`最多支持 ${MAX_GROUPS} 个工作区，标签已移入当前工作区`);
   }
 
@@ -1733,7 +1817,7 @@ export default function App() {
       return;
     }
     applyActiveItem(item);
-    touchOpenItem(item);
+    if (!item.qaPreview) touchOpenItem(item);
   }
 
   function updateOpenQARecord(record: QARecord) {
@@ -2124,6 +2208,7 @@ export default function App() {
       setSelection(null);
       setSelectionAnchor(null);
       setContextFiles([]);
+      setIncludeContext(false);
       setContextFilePickerOpen(false);
       clearQAQuestionInput();
       setSelectedQA(null);
@@ -2899,6 +2984,8 @@ export default function App() {
   }
 
   function handleNewConversation() {
+    setIncludeContext(false);
+    setContextFiles([]);
     setSelectedQA(null);
     setQAFollowUpRecord(null);
     setQASessionId(null);
@@ -3206,6 +3293,7 @@ export default function App() {
             relation_type:
               "term_explanation",
 
+            include_context: true,
             term_candidate_id:
               term.id,
           },
@@ -4153,6 +4241,7 @@ export default function App() {
         canUndoLayout={layoutHistoryRef.current.length > 0}
         canManageGroups={countGroups(layout) > 1}
         mobileCodeSearchRequestId={mobileCodeSearchRequestId}
+        onRetryQAPreview={retryQAPreview}
         activeTermSourceKey={activeTermSource ? `${activeTermSource.sourceType}:${activeTermSource.sourcePath}` : ""}
         highlights={highlights}
         knowledgeLinks={knowledgeLinks}
@@ -4708,6 +4797,7 @@ export default function App() {
       if (!ok) return;
       const record = await runStreamingQuestion({
         source_type: "call_guide",
+        include_context: true,
         source_path: node.path,
         selected_text: "",
         question: `请讲解当前节点到调用链起点的真实调用路径，说明每一跳的职责、输入输出和阅读顺序。当前关注：${node.qualified_name || node.symbol_name}`,
@@ -4836,6 +4926,8 @@ export default function App() {
     const showKnowledgeGraph = qaUpperTab === "knowledge" && Boolean(project);
     return (
       <ExplainPanel
+        includeContext={includeContext}
+        onIncludeContextChange={setIncludeContext}
         selection={selection}
         contextSummary={assistantContextSummary}
         contextFiles={contextFiles}
@@ -4846,7 +4938,7 @@ export default function App() {
         resetToken={qaResetToken}
         loading={qaInteractionBusy}
         loadingLabel={qaBusyLabel}
-        streamContent={visibleQAGeneration?.partial}
+        streamContent={mobileRuntime ? visibleQAGeneration?.partial : undefined}
         history={qaHistory}
         threads={qaThreads}
         continuity={qaContinuity}
