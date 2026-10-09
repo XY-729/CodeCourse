@@ -1,0 +1,143 @@
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import type { DiagnosticItem, LLMSettings, QARecord } from "../../../api/client";
+import MobileAssistantPanel from "./MobileAssistantPanel";
+
+const SETTINGS: LLMSettings = { provider: "openai", base_url: "", model: "test-model", enabled: true, has_api_key: true, masked_api_key: "***" };
+
+const RECORD: QARecord = {
+  id: 1, project_id: 1, session_id: 10, parent_qa_id: null, relation_type: "follow_up",
+  source_type: "file", source_path: "src/App.tsx", display_title: "状态管理",
+  selected_text: "", question: "状态如何管理？", answer_md: "这是一个测试回答。",
+  provider: "openai", model: "test-model", output_path: "qa/1.md", favorite: false,
+  created_at: "2026-07-30T00:00:00Z", updated_at: "2026-07-30T00:00:00Z",
+};
+
+function createProps() {
+  return {
+    view: "ask" as const, onViewChange: vi.fn(),
+    selection: null,
+    contextSummary: { label: "当前文件", sourceType: "file" as const, sourcePath: "src/App.tsx", preview: "当前正在阅读 App.tsx。" },
+    contextFiles: [], onOpenFilePicker: vi.fn(), onRemoveContextFile: vi.fn(),
+    question: "", loading: false, loadingLabel: "", streamContent: "",
+    history: [RECORD], historyQuery: "", favoriteOnly: false,
+    selectedRecord: null, followUpRecord: null, selectedRecordReadOnly: false,
+    surveyCandidate: null, diagnosticItem: null, diagnosticResult: null,
+    settings: SETTINGS, panelError: "",
+    knowledgeContent: <div>测试知识网络</div>, knowledgeDisabled: false,
+    onQuestionChange: vi.fn(), onSelectionTextChange: vi.fn(), onClearSelection: vi.fn(),
+    onAsk: vi.fn(), onNewConversation: vi.fn(),
+    onHistoryQueryChange: vi.fn(), onFavoriteOnlyChange: vi.fn(),
+    onSelectRecord: vi.fn(), onFollowUp: vi.fn(), onOpenRecord: vi.fn(), onDeleteRecord: vi.fn(),
+    onRenameRecord: vi.fn(), onToggleFavorite: vi.fn(), onOpenSettings: vi.fn(),
+    onAnswerSurvey: vi.fn(), onDismissSurvey: vi.fn(), onDisableSurveys: vi.fn(),
+    onAnswerDiagnostic: vi.fn(), onDismissDiagnostic: vi.fn(), onFlagDiagnostic: vi.fn(),
+  };
+}
+
+describe("MobileAssistantPanel", () => {
+  it("shows ask context by default", () => {
+    const props = createProps();
+    render(<MobileAssistantPanel {...props} />);
+    expect(screen.getByText("当前上下文")).toBeTruthy();
+    expect(screen.getByText("src/App.tsx")).toBeTruthy();
+  });
+
+  it("updates question immediately in the local draft", () => {
+    const props = createProps();
+    render(<MobileAssistantPanel {...props} />);
+    const textbox = screen.getByRole("textbox", { name: "输入问题" }) as HTMLTextAreaElement;
+    expect(textbox.placeholder).toBe("请输入问题");
+    fireEvent.change(textbox, { target: { value: "立即提交的问题" } });
+    expect(textbox.value).toBe("立即提交的问题");
+    // The send action is enabled straight away from the local draft (typing
+    // must not re-render the whole app).
+    expect((screen.getByRole("button", { name: "询问" }) as HTMLButtonElement).disabled).toBe(false);
+    // The draft is lifted to the parent on blur.
+    fireEvent.blur(textbox);
+    expect(props.onQuestionChange).toHaveBeenCalledWith("立即提交的问题");
+  });
+
+  it("uses suggestion without delay", () => {
+    const props = createProps();
+    render(<MobileAssistantPanel {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "这个文件的主要职责是什么？" }));
+    expect(props.onQuestionChange).toHaveBeenCalledWith("这个文件的主要职责是什么？");
+    expect((screen.getByRole("textbox", { name: "输入问题" }) as HTMLTextAreaElement).value).toBe("这个文件的主要职责是什么？");
+  });
+
+  it("selects history and returns to ask", () => {
+    const props = { ...createProps(), view: "history" as const };
+    render(<MobileAssistantPanel {...props} />);
+    fireEvent.click(screen.getByText("状态管理"));
+    expect(props.onSelectRecord).toHaveBeenCalledWith(RECORD);
+    expect(props.onViewChange).toHaveBeenCalledWith("ask");
+  });
+
+  it("keeps history actions independent", () => {
+    const props = { ...createProps(), view: "history" as const };
+    render(<MobileAssistantPanel {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "收藏 状态管理" }));
+    expect(props.onToggleFavorite).toHaveBeenCalledWith(RECORD);
+    expect(props.onSelectRecord).not.toHaveBeenCalled();
+  });
+
+  it("starts follow-up only from the explicit history action", () => {
+    const props = { ...createProps(), view: "history" as const };
+    render(<MobileAssistantPanel {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "追问 状态管理" }));
+    expect(props.onFollowUp).toHaveBeenCalledWith(RECORD);
+    expect(props.onViewChange).toHaveBeenCalledWith("ask");
+    expect(props.onSelectRecord).not.toHaveBeenCalled();
+  });
+
+  it("renders knowledge without remount navigation", () => {
+    const props = { ...createProps(), view: "knowledge" as const };
+    render(<MobileAssistantPanel {...props} />);
+    expect(screen.getByText("测试知识网络")).toBeTruthy();
+  });
+
+  it("allows a new independent question while viewing a readonly record", () => {
+    const props = { ...createProps(), question: "继续追问", selectedRecord: RECORD, selectedRecordReadOnly: true };
+    render(<MobileAssistantPanel {...props} />);
+    const btn = screen.getByRole("button", { name: "询问" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("shows model configuration when unavailable", () => {
+    const props = { ...createProps(), settings: { ...SETTINGS, enabled: false, has_api_key: false } };
+    render(<MobileAssistantPanel {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "配置模型" }));
+    expect(props.onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it("submits diagnostic answers", () => {
+    const diagnostic: DiagnosticItem = {
+      id: "diagnostic-1", projectId: 1, conceptIds: [], dimension: "conceptual",
+      itemType: "single_choice", prompt: "哪个选项正确？",
+      options: [{ value: "a", label: "选项 A" }, { value: "b", label: "选项 B" }],
+      sourceRefs: [], rationale: "", difficulty: 0.5, createdAt: "2026-07-30T00:00:00Z",
+    };
+    const props = { ...createProps(), diagnosticItem: diagnostic };
+    render(<MobileAssistantPanel {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "选项 A" }));
+    fireEvent.click(screen.getByRole("button", { name: "提交" }));
+    expect(props.onAnswerDiagnostic).toHaveBeenCalledWith("a");
+  });
+
+  it("locks session-changing actions while loading", () => {
+    const props = { ...createProps(), loading: true, selectedRecord: RECORD, followUpRecord: RECORD };
+    render(<MobileAssistantPanel {...props} />);
+    expect((screen.getByRole("tab", { name: "历史" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("tab", { name: "知识" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "取消追问" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("disables history actions while loading", () => {
+    const props = { ...createProps(), view: "history" as const, loading: true };
+    render(<MobileAssistantPanel {...props} />);
+    expect((screen.getByRole("button", { name: "收藏 状态管理" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "打开 状态管理" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(props.onSelectRecord).not.toHaveBeenCalled();
+  });
+});

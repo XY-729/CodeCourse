@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { calculateReadingProgress } from "../components/MarkdownViewer";
+import { calculateReadingProgress } from "../features/reader/MarkdownViewer";
 
 describe("calculateReadingProgress", () => {
   it("0 at top", () => expect(calculateReadingProgress(0, 1000, 500)).toBe(0));

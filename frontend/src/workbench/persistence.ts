@@ -9,7 +9,7 @@ import {
   type TreeNode,
 } from "../api/client";
 import { titleFromMarkdown } from "../utils/titleFromMarkdown";
-import type { NavigationView } from "../components/Sidebar";
+import type { NavigationView } from "../features/navigation/Sidebar";
 import {
   ROOT_GROUP_ID,
   countLayoutItems,

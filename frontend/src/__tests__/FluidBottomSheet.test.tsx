@@ -1,7 +1,7 @@
 import { createRef } from "react";
 import { fireEvent, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import FluidBottomSheet, { type FluidBottomSheetHandle } from "../components/FluidBottomSheet";
+import FluidBottomSheet, { type FluidBottomSheetHandle } from "../components/ui/FluidBottomSheet";
 
 describe("FluidBottomSheet", () => {
   beforeEach(() => {

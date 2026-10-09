@@ -30,7 +30,7 @@ afterEach(() => {
   window.getSelection()?.removeAllRanges();
 });
 
-import MobileCodeViewer from "../components/MobileCodeViewer";
+import MobileCodeViewer from "../features/reader/mobile/MobileCodeViewer";
 
 const sampleCode = `const a = 1;\nconst b = 2;\nfunction add(x, y) { return x + y; }\n`;
 

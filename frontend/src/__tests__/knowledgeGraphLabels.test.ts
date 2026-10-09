@@ -6,7 +6,7 @@ import {
   positionLabelOverlay,
   reconcileLabelElements,
   updateLabelVisibility,
-} from "../components/knowledgeGraphLabels";
+} from "../features/knowledge/knowledgeGraphLabels";
 
 function graph(): KnowledgeGraph {
   return {

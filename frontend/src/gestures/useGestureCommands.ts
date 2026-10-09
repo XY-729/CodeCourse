@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { GESTURE_COMPLETE_EVENT } from "../components/GestureLayer";
+import { GESTURE_COMPLETE_EVENT } from "../features/gestures/GestureLayer";
 import type { GesturePath } from "./GestureDrawer";
 import { recognizeGesture, type GestureShape } from "./GestureRecognizer";
 

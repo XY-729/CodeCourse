@@ -1,6 +1,6 @@
 import { act, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import SlidingSelectionIndicator from "../components/SlidingSelectionIndicator";
+import SlidingSelectionIndicator from "../components/ui/SlidingSelectionIndicator";
 
 describe("SlidingSelectionIndicator", () => {
   it("moves the same compositor layer between active items", async () => {

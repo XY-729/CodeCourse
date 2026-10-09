@@ -1,6 +1,6 @@
 import { useMemo, useRef } from "react";
 import type { CallGuide, CourseFile, Project, QARecord } from "../api/client";
-import type { CommandPaletteItem } from "../components/CommandPalette";
+import type { CommandPaletteItem } from "../components/overlays/CommandPalette";
 
 type SourceFile = { name: string; path: string };
 

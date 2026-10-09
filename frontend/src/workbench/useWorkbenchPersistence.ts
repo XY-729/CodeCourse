@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MutableRefObject } from "react";
-import type { NavigationView } from "../components/Sidebar";
+import type { NavigationView } from "../features/navigation/Sidebar";
 import type { LayoutNode, OpenItem } from "./layout";
 import { stripLayoutContent } from "./layout";
 import {

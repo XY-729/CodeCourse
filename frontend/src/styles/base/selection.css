@@ -1,0 +1,36 @@
+/* Selection actions stay available without obscuring the selected paragraph. */
+.selection-quick-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: 1800;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid #cfd7d3;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 10px 30px rgba(35, 45, 41, 0.16);
+  transform: translateX(-50%);
+  animation: selection-bar-in 160ms ease-out both;
+}
+.selection-quick-bar button { min-height: 30px; padding: 0 8px; display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 5px; color: #38413d; background: transparent; }
+.selection-quick-bar button:hover { color: #165d53; background: #edf5f2; }
+@keyframes selection-bar-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  z-index: 2600;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 8px 12px;
+  border: 1px solid #cbd8d3;
+  border-radius: 7px;
+  color: #23453f;
+  background: rgba(248, 252, 250, 0.98);
+  box-shadow: 0 9px 28px rgba(35, 45, 41, 0.14);
+  transform: translateX(-50%);
+  animation: selection-bar-in 180ms ease-out both;
+}

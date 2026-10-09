@@ -5,31 +5,31 @@ import type { CallGuide, CourseFile } from "../api/client";
 import WorkbenchEditorGroup from "./WorkbenchEditorGroup";
 import type { EditorGroup, OpenItem } from "./layout";
 
-vi.mock("../components/CodeViewer", () => ({
+vi.mock("../features/reader/CodeViewer", () => ({
   default: ({ path, content }: { path: string; content: string }) => (
     <div data-testid="code-viewer">{path}:{content}</div>
   ),
 }));
 
-vi.mock("../components/ReaderLearningToolbar", () => ({
+vi.mock("../features/reader/ReaderLearningToolbar", () => ({
   default: ({ title }: { title: string }) => <div data-testid="reader-toolbar">{title}</div>,
 }));
 
-vi.mock("../components/TeachingRationale", () => ({
+vi.mock("../features/teaching/TeachingRationale", () => ({
   default: () => <button type="button">教学依据</button>,
 }));
 
-vi.mock("../components/MarkdownViewer", () => ({
+vi.mock("../features/reader/MarkdownViewer", () => ({
   default: ({ title, content, headerActions }: { title: string; content: string; headerActions?: ReactNode }) => (
     <div data-testid="markdown-viewer">{headerActions}{title}:{content}</div>
   ),
 }));
 
-vi.mock("../components/CallGuideViewer", () => ({
+vi.mock("../features/call-guide/CallGuideViewer", () => ({
   default: ({ guide }: { guide: CallGuide }) => <div data-testid="call-guide-viewer">{guide.title}</div>,
 }));
 
-vi.mock("../components/KnowledgeGraphViewer", () => ({
+vi.mock("../features/knowledge/KnowledgeGraphViewer", () => ({
   default: () => <div data-testid="knowledge-graph-viewer" />,
 }));
 

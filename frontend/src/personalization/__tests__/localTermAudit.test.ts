@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { DocumentTerm } from "../../api/client";
-import MarkdownViewer from "../../components/MarkdownViewer";
+import MarkdownViewer from "../../features/reader/MarkdownViewer";
 import { analyzeMarkdownTermOccurrences } from "../termOccurrences";
 import { buildPreliminaryTermDecision } from "../termDisplayDecision";
 import { allocateTermDisplays } from "../termDisplayAllocator";

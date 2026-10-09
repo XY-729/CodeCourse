@@ -1,0 +1,125 @@
+.app-shell {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.topbar {
+  height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: #ffffff;
+  border-bottom: 1px solid #d5dbe3;
+}
+
+.brand {
+  min-width: 210px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid #d5dbe3;
+  flex: 0 0 auto;
+}
+
+.brand-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.brand strong {
+  font-size: 16px;
+  line-height: 1.15;
+}
+
+.brand span {
+  max-width: 170px;
+  color: #607086;
+  font-size: 13px;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-form {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+}
+
+.repo-form input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid #c8d0da;
+  border-radius: 6px;
+  padding: 0 10px;
+  background: #fbfcfd;
+}
+
+.repo-form button,
+.topbar-action,
+.generation-bar button,
+.primary-button,
+.secondary-button,
+.link-button {
+  height: 36px;
+  border: 1px solid #25766c;
+  border-radius: 6px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #ffffff;
+  background: #25766c;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.topbar-action,
+.secondary-button,
+.link-button {
+  color: #25766c;
+  background: #ffffff;
+}
+
+.secondary-button.compact {
+  height: 30px;
+  padding: 0 8px;
+}
+
+button:disabled,
+.primary-button:disabled,
+.secondary-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.error-bar {
+  padding: 8px 16px;
+  color: #7a271a;
+  background: #fff1ed;
+  border-bottom: 1px solid #f2b8a2;
+}
+
+.busy-bar {
+  padding: 6px 16px;
+  color: #174c43;
+  background: #e6f4f1;
+  border-bottom: 1px solid #b9ddd6;
+  font-size: 13px;
+}

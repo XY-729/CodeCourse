@@ -2,7 +2,7 @@ import { act, cleanup, render, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { updateLayoutItem, type LayoutNode } from "./layout";
 import { useWorkbenchPersistence } from "./useWorkbenchPersistence";
-import MarkdownViewer from "../components/MarkdownViewer";
+import MarkdownViewer from "../features/reader/MarkdownViewer";
 import { markDesktopPerformance } from "../performance/desktopPerformance";
 
 vi.mock("../performance/desktopPerformance", () => ({ markDesktopPerformance: vi.fn() }));

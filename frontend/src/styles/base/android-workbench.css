@@ -1,0 +1,646 @@
+/* Android portrait workbench */
+.mobile-only,
+.activity-rail button > span {
+  display: none;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.mobile-code-viewer {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #171a1f;
+  color: #d9dee7;
+}
+
+.mobile-code-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 0 28px;
+  font: 13px/var(--mobile-code-row-height) "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  line-height: var(--mobile-code-row-height);
+  overflow-anchor: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.mobile-code-search {
+  flex: 0 0 50px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px 4px 10px;
+  border-bottom: 1px solid #343a44;
+  background: #20242b;
+}
+
+.mobile-code-search input {
+  min-width: 0;
+  flex: 1;
+  height: 40px;
+  border: 1px solid #48515e;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: #f0f3f7;
+  background: #171a1f;
+}
+
+.mobile-code-search > span {
+  min-width: 34px;
+  color: #aab2bf;
+  font-size: 11px;
+  text-align: center;
+}
+
+.platform-android .mobile-code-search .icon-button {
+  min-width: 40px;
+  width: 40px;
+  height: 44px;
+  min-height: 44px;
+  color: #c9d0da;
+}
+
+.mobile-code-line {
+  display: grid;
+  grid-template-columns: 46px max-content;
+  min-width: max-content;
+  height: var(--mobile-code-row-height);
+  min-height: var(--mobile-code-row-height);
+  max-height: var(--mobile-code-row-height);
+  line-height: var(--mobile-code-row-height);
+  overflow: hidden;
+  overflow-anchor: none;
+}
+
+.mobile-line-number {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  padding-right: 12px;
+  text-align: right;
+  color: #68717e;
+  background: #171a1f;
+  user-select: none;
+  height: var(--mobile-code-row-height);
+  line-height: var(--mobile-code-row-height);
+}
+
+.mobile-code-line code {
+  display: block;
+  min-width: 100%;
+  height: var(--mobile-code-row-height);
+  line-height: var(--mobile-code-row-height);
+  padding-right: 18px;
+  white-space: pre;
+}
+
+.mobile-code-line code span {
+  line-height: inherit;
+}
+
+.mobile-code-virtual-spacer {
+  overflow-anchor: none;
+}
+
+.mobile-code-line.selection-anchor,
+.mobile-code-line.selection-anchor .mobile-line-number {
+  background: #25496d;
+}
+
+.mobile-code-line.selection-anchor code {
+  background: rgba(65, 126, 184, 0.28);
+}
+
+.mobile-code-line.search-match:not(.selection-anchor),
+.mobile-code-line.search-match:not(.selection-anchor) .mobile-line-number {
+  background: rgba(128, 99, 24, 0.38);
+}
+
+.mobile-code-viewer .hljs-keyword,
+.mobile-code-viewer .hljs-selector-tag { color: #d6a3ff; }
+.mobile-code-viewer .hljs-title,
+.mobile-code-viewer .hljs-function { color: #83c7ff; }
+.mobile-code-viewer .hljs-string,
+.mobile-code-viewer .hljs-attr { color: #a8d58c; }
+.mobile-code-viewer .hljs-number,
+.mobile-code-viewer .hljs-literal { color: #f3b37b; }
+.mobile-code-viewer .hljs-comment { color: #77818f; font-style: italic; }
+.mobile-code-viewer .hljs-type,
+.mobile-code-viewer .hljs-built_in { color: #70d6c1; }
+
+html.platform-android,
+html.platform-android body,
+html.platform-android #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: #f6f6f3;
+}
+
+.platform-android .app-shell {
+  height: 100dvh;
+  min-height: 0;
+  padding-top: 0;
+  background: #f6f6f3;
+}
+
+.platform-android .topbar {
+  min-height: 52px;
+  height: 52px;
+  padding: 6px 10px;
+  gap: 8px;
+}
+
+.platform-android .brand {
+  flex: 0 0 auto;
+}
+
+.platform-android .brand-logo {
+  width: 30px;
+  height: 30px;
+}
+
+.platform-android .brand-text {
+  display: none;
+}
+
+.platform-android .topbar-workspace-actions {
+  min-width: 0;
+  flex: 1;
+  justify-content: flex-end;
+}
+
+.platform-android .project-switch {
+  min-width: 0;
+  max-width: min(54vw, 230px);
+  height: 38px;
+}
+
+.platform-android .project-switch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.platform-android .topbar-import {
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+  font-size: 0;
+}
+
+.platform-android .topbar-import svg {
+  width: 18px;
+  height: 18px;
+}
+
+.platform-android .workbench,
+.platform-android .workbench.navigation-open {
+  position: relative;
+  display: block !important;
+  min-height: 0;
+  padding-bottom: calc(60px + env(safe-area-inset-bottom));
+}
+
+.platform-android .activity-rail {
+  position: fixed;
+  z-index: 70;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: calc(60px + env(safe-area-inset-bottom));
+  padding: 4px 8px env(safe-area-inset-bottom);
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  border: 0;
+  border-top: 1px solid #dedfdc;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(18px);
+}
+
+.platform-android .activity-rail .activity-rail-spacer,
+.platform-android .activity-rail .desktop-project-nav {
+  display: none;
+}
+
+.platform-android .activity-rail .mobile-only {
+  display: flex;
+}
+
+.platform-android .activity-rail button {
+  flex: 1 1 25%;
+  width: auto;
+  height: 52px;
+  min-height: 52px;
+  margin: 0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: #6a6f72;
+}
+
+.platform-android .activity-rail button > span {
+  display: block;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.platform-android .activity-rail button.active {
+  color: #28685e;
+  background: #e8f2ef;
+}
+
+.platform-android .navigation-panel {
+  position: absolute;
+  z-index: 55;
+  inset: 0 0 calc(60px + env(safe-area-inset-bottom)) 0;
+  width: 100% !important;
+  max-width: none;
+  border: 0;
+  background: #fff;
+  box-shadow: none;
+  animation: mobile-sheet-in 180ms ease-out;
+}
+
+.platform-android .navigation-panel-header {
+  min-height: 50px;
+  padding: 8px 14px;
+}
+
+.platform-android .navigation-panel button,
+.platform-android .project-row,
+.platform-android .tree-row,
+.platform-android .course-row {
+  min-height: 44px;
+}
+
+.platform-android .navigation-resizer,
+.platform-android .assistant-resizer,
+.platform-android .split-resizer,
+.platform-android .resize-handle {
+  display: none !important;
+}
+
+.platform-android .center-pane {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.platform-android .context-toolbar {
+  min-height: 44px;
+  padding: 5px 10px;
+}
+
+.platform-android .context-toolbar-title small {
+  display: none;
+}
+
+.platform-android .context-toolbar-actions .icon-button {
+  display: none;
+}
+
+.platform-android .reader-workspace,
+.platform-android .editor-group,
+.platform-android .editor-body {
+  min-height: 0;
+}
+
+.platform-android .reader-workspace {
+  height: calc(100% - 44px);
+}
+
+.platform-android .split-node > .split-child:first-child {
+  flex: 1 1 100% !important;
+}
+
+.platform-android .split-node > .split-child:nth-of-type(n + 2),
+.platform-android .split-node > .split-resizer {
+  display: none !important;
+}
+
+.platform-android .split-node > .split-child > .reader-pane {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+}
+
+.platform-android .editor-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.platform-android .editor-tab {
+  min-height: 42px;
+  max-width: 74vw;
+  flex: 0 0 auto;
+}
+
+.platform-android .assistant-drawer {
+  position: absolute;
+  z-index: 60;
+  inset: 0 0 calc(60px + env(safe-area-inset-bottom)) 0;
+  width: 100% !important;
+  max-width: none;
+  transform: translateY(16px);
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  background: #fff;
+  transition: transform 200ms ease, opacity 180ms ease;
+}
+
+.platform-android .assistant-drawer.open {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.platform-android .assistant-drawer .explain-panel,
+.platform-android .knowledge-graph-viewer {
+  width: 100%;
+  height: 100%;
+}
+
+.platform-android .generation-drawer {
+  inset: auto 0 0 0;
+  width: 100%;
+  max-height: calc(100dvh - env(safe-area-inset-top));
+  padding-bottom: env(safe-area-inset-bottom);
+  border-radius: 14px 14px 0 0;
+}
+
+.platform-android .modal-backdrop {
+  z-index: 3000;
+  padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom));
+}
+
+.platform-android .settings-modal,
+.platform-android .prompt-editor-modal {
+  width: 100% !important;
+  max-width: none !important;
+  max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.platform-android .settings-grid {
+  grid-template-columns: 1fr;
+  overflow-y: auto;
+}
+
+.platform-android .settings-secret-row input,
+.platform-android .settings-secret-row .settings-paste-button {
+  min-height: 44px;
+}
+
+.platform-android .settings-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto 44px;
+  gap: 6px;
+  padding: 10px;
+}
+
+.platform-android .settings-actions > button {
+  min-width: 0;
+  padding-inline: 9px;
+  white-space: nowrap;
+}
+
+.platform-android .settings-actions > button:last-child {
+  width: 44px;
+  padding: 0;
+}
+
+.platform-android .settings-secret-row input {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.platform-android .settings-secret-row .settings-paste-button {
+  min-width: 88px;
+}
+
+.platform-android .prompt-tabs {
+  flex: 0 0 auto;
+  padding-inline: 8px;
+  scroll-snap-type: x proximity;
+}
+
+.platform-android .prompt-tab {
+  min-height: 42px;
+  scroll-snap-align: start;
+}
+
+.platform-android .prompt-editor-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.platform-android .prompt-editor-textarea {
+  min-height: 0;
+  height: 100%;
+  resize: none;
+}
+
+.platform-android textarea,
+.platform-android input,
+.platform-android select {
+  font-size: 16px;
+}
+
+.platform-android button,
+.platform-android .icon-button {
+  min-height: 44px;
+}
+
+.platform-android .markdown-body {
+  padding: 20px 18px 72px;
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.platform-android .error-bar,
+.platform-android .busy-bar {
+  z-index: 80;
+}
+
+@keyframes mobile-sheet-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .platform-android .navigation-panel,
+  .platform-android .assistant-drawer {
+    animation: none;
+    transition: none;
+  }
+}
+
+.platform-android .mobile-topbar-action {
+  flex: 0 0 40px;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+}
+
+.platform-android .more-menu-divider {
+  height: 1px;
+  margin: 5px 4px;
+  background: #e1e3e0;
+}
+
+.platform-android .topbar-more-menu {
+  width: min(270px, calc(100vw - 20px));
+  max-height: calc(100dvh - 72px - env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+
+.platform-android .generation-drawer-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.platform-android .generation-drawer-actions > button {
+  width: 100%;
+  min-width: 0;
+}
+
+.platform-android .command-palette-layer {
+  align-items: stretch;
+  padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom));
+}
+
+.platform-android .command-palette {
+  width: 100%;
+  max-height: 100%;
+  margin: 0;
+  border-radius: 12px;
+}
+
+.platform-android .command-palette-results > button {
+  min-height: 52px;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+}
+
+html.platform-android[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html.platform-android[data-theme="dark"],
+html.platform-android[data-theme="dark"] body,
+html.platform-android[data-theme="dark"] #root,
+html.platform-android[data-theme="dark"] .app-shell,
+html.platform-android[data-theme="dark"] .workbench,
+html.platform-android[data-theme="dark"] .center-pane,
+html.platform-android[data-theme="dark"] .reader-workspace,
+html.platform-android[data-theme="dark"] .editor-group,
+html.platform-android[data-theme="dark"] .editor-body {
+  color: #f2f2f7;
+  background: #1c1c1e;
+}
+
+html.platform-android[data-theme="dark"] .topbar,
+html.platform-android[data-theme="dark"] .activity-rail,
+html.platform-android[data-theme="dark"] .navigation-panel,
+html.platform-android[data-theme="dark"] .assistant-drawer,
+html.platform-android[data-theme="dark"] .sidebar,
+html.platform-android[data-theme="dark"] .explain-panel,
+html.platform-android[data-theme="dark"] .viewer,
+html.platform-android[data-theme="dark"] .viewer-header,
+html.platform-android[data-theme="dark"] .editor-tabs,
+html.platform-android[data-theme="dark"] .generation-drawer,
+html.platform-android[data-theme="dark"] .settings-modal,
+html.platform-android[data-theme="dark"] .prompt-editor-modal,
+html.platform-android[data-theme="dark"] .command-palette,
+html.platform-android[data-theme="dark"] .more-menu,
+html.platform-android[data-theme="dark"] .modal-card {
+  color: #f2f2f7;
+  background: #242426;
+  border-color: rgba(235, 235, 245, 0.16);
+}
+
+html.platform-android[data-theme="dark"] .markdown-body {
+  color: #f2f2f7;
+  background: #242426;
+}
+
+html.platform-android[data-theme="dark"] .markdown-body pre {
+  color: #f2f2f7;
+  background: #1c1c1e;
+  border-color: rgba(235, 235, 245, 0.18);
+}
+
+html.platform-android[data-theme="dark"] .markdown-body code:not(pre code) {
+  color: #f2f2f7;
+  background: rgba(235, 235, 245, 0.12);
+}
+
+html.platform-android[data-theme="dark"] input,
+html.platform-android[data-theme="dark"] textarea,
+html.platform-android[data-theme="dark"] select,
+html.platform-android[data-theme="dark"] .project-switch,
+html.platform-android[data-theme="dark"] .command-palette-search input {
+  color: #f2f2f7;
+  background: #2c2c2e;
+  border-color: rgba(235, 235, 245, 0.18);
+}
+
+html.platform-android[data-theme="dark"] .course-row:hover,
+html.platform-android[data-theme="dark"] .project-row:hover,
+html.platform-android[data-theme="dark"] .tree-row:hover,
+html.platform-android[data-theme="dark"] .more-menu button:hover:not(:disabled),
+html.platform-android[data-theme="dark"] .command-palette-results > button.active {
+  color: #fff;
+  background: rgba(10, 132, 255, 0.2);
+}
+
+html.platform-android[data-theme="dark"] .course-row.selected,
+html.platform-android[data-theme="dark"] .project-row.selected,
+html.platform-android[data-theme="dark"] .activity-rail button.active {
+  color: #64a0ff;
+  background: rgba(10, 132, 255, 0.18);
+}
+
+html.platform-android[data-theme="dark"] .more-menu-divider {
+  background: rgba(235, 235, 245, 0.16);
+}
+
+html.platform-android[data-theme="dark"] .command-palette-results > button,
+html.platform-android[data-theme="dark"] .command-palette-search input,
+html.platform-android[data-theme="dark"] .command-copy strong {
+  color: #f2f2f7;
+}
+
+html.platform-android[data-theme="dark"] .command-copy small,
+html.platform-android[data-theme="dark"] .command-section,
+html.platform-android[data-theme="dark"] .scope-helper,
+html.platform-android[data-theme="dark"] .field-label > span {
+  color: #aeaeb2;
+}

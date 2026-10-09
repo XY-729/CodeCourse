@@ -5,7 +5,7 @@ import {
   selectPrimaryGenerationTask,
   sortGenerationTasks,
   upsertGenerationTask,
-} from "../components/generationTaskModel";
+} from "../features/generation/generationTaskModel";
 
 type Options = {
   getCurrentProjectId: () => number | null;

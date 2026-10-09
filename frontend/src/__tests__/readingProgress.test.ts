@@ -3,7 +3,7 @@ import {
   advanceReadingChrome,
   calculateReadingProgress,
   type ReadingChromeState,
-} from "../components/MarkdownViewer";
+} from "../features/reader/MarkdownViewer";
 
 describe("calculateReadingProgress", () => {
   it("returns 0 at top", () => {

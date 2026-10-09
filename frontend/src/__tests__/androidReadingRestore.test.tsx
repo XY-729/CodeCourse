@@ -30,7 +30,7 @@ function flushAnimationFrames() {
   });
 }
 
-import MarkdownViewer from "../components/MarkdownViewer";
+import MarkdownViewer from "../features/reader/MarkdownViewer";
 
 const markdown = `# 第一课
 

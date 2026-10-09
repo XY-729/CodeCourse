@@ -5,7 +5,7 @@ import {
   getKnowledgeGraphIndex,
   getKnowledgeNeighborhood,
   knowledgeGraphSignature,
-} from "../components/knowledgeGraphModel";
+} from "../features/knowledge/knowledgeGraphModel";
 
 function node(id: number, title = `node-${id}`): KnowledgeNode {
   return {

@@ -1,0 +1,45 @@
+.reader-highlight {
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.monaco-persistent-selection {
+  background: rgba(84, 117, 255, 0.42);
+}
+
+.monaco-persistent-selection-inline {
+  background: rgba(84, 117, 255, 0.42);
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+.starred {
+  fill: #d99a16;
+  color: #b87503;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.empty,
+.empty-state {
+  color: #7b8794;
+  padding: 18px;
+}
+
+.empty.small {
+  padding: 8px 0;
+  font-size: 12px;
+}
+
+.empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

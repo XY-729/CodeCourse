@@ -1,6 +1,6 @@
 import { fireEvent, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import MobileWorkspaceSheet from "../components/MobileWorkspaceSheet";
+import MobileWorkspaceSheet from "../app/shell/mobile/MobileWorkspaceSheet";
 
 describe("MobileWorkspaceSheet", () => {
   beforeEach(() => {

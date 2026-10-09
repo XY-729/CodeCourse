@@ -3,8 +3,8 @@ import { resolve } from "node:path";
 import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Project, QARecord } from "../api/client";
-import ExplainPanel from "../components/ExplainPanel";
-import Sidebar from "../components/Sidebar";
+import ExplainPanel from "../features/assistant/ExplainPanel";
+import Sidebar from "../features/navigation/Sidebar";
 
 const noop = vi.fn();
 

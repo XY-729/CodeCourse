@@ -1,0 +1,39 @@
+/* Command palette */
+.command-palette-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: clamp(56px, 10vh, 100px);
+  background: rgba(36, 39, 38, 0.16);
+  backdrop-filter: blur(2px);
+  animation: cc-fade-in 140ms ease-out both;
+}
+
+.command-palette {
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(590px, calc(100dvh - 120px));
+  overflow: hidden;
+  border: 1px solid #d6dcd9;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 22px 60px rgba(33, 39, 37, 0.2);
+  animation: cc-pop-in 180ms ease-out both;
+}
+
+.command-palette-search { height: 48px; padding: 0 13px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid #e2e5e3; }
+.command-palette-search svg { color: #78817d; }
+.command-palette-search input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; color: #252927; background: transparent; font-size: 15px; }
+.command-palette kbd { padding: 2px 5px; border: 1px solid #d8ddda; border-radius: 4px; color: #737a77; background: #f6f7f6; font: 11px/1.3 ui-monospace, monospace; }
+.command-palette-results { max-height: 520px; overflow: auto; padding: 6px; }
+.command-palette-results > button { width: 100%; min-height: 46px; padding: 6px 9px; display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; align-items: center; gap: 9px; border: 0; border-radius: 6px; color: #303633; background: transparent; text-align: left; }
+.command-palette-results > button.active { background: #eaf3f0; }
+.command-section { color: #7a837f; font-size: 11px; }
+.command-copy { min-width: 0; display: grid; gap: 2px; }
+.command-copy strong,
+.command-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.command-copy strong { font-size: 13px; font-weight: 650; }
+.command-copy small { color: #79817e; font-size: 11px; }
+.command-empty { padding: 28px; color: #7b827f; text-align: center; }

@@ -1,5 +1,5 @@
-import UnderstandingFeedback from "../components/UnderstandingFeedback";
-import AsyncActionButton from "../components/AsyncActionButton";
+import UnderstandingFeedback from "../features/teaching/UnderstandingFeedback";
+import AsyncActionButton from "../components/ui/AsyncActionButton";
 import { lazy, memo, Suspense, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { Check, Loader2, Pencil, Save, Star, X } from "lucide-react";
@@ -13,18 +13,18 @@ import type {
   LearningState,
   TermScanStatus,
 } from "../api/client";
-import type { SelectionSummary } from "../components/ExplainPanel";
-import type { ViewerSelection } from "../components/CodeViewer";
-import CodeViewer from "../components/CodeViewer";
-import ReaderLearningToolbar from "../components/ReaderLearningToolbar";
-import DocumentTermScanControl from "../components/DocumentTermScanControl";
+import type { SelectionSummary } from "../features/assistant/ExplainPanel";
+import type { ViewerSelection } from "../features/reader/CodeViewer";
+import CodeViewer from "../features/reader/CodeViewer";
+import ReaderLearningToolbar from "../features/reader/ReaderLearningToolbar";
+import DocumentTermScanControl from "../features/teaching/DocumentTermScanControl";
 import type { TermDisplayTier } from "../personalization/termDisplayTypes";
 import EditorPaneFrame from "./EditorPaneFrame";
 import type { EditorGroup, OpenItem } from "./layout";
 
-const CallGuideViewer = __ANDROID_BUILD__ ? null : lazy(() => import("../components/CallGuideViewer"));
-const KnowledgeGraphViewer = lazy(() => import("../components/KnowledgeGraphViewer"));
-const MarkdownViewer = lazy(() => import("../components/MarkdownViewer"));
+const CallGuideViewer = __ANDROID_BUILD__ ? null : lazy(() => import("../features/call-guide/CallGuideViewer"));
+const KnowledgeGraphViewer = lazy(() => import("../features/knowledge/KnowledgeGraphViewer"));
+const MarkdownViewer = lazy(() => import("../features/reader/MarkdownViewer"));
 
 type SelectionAnchor = SelectionSummary & {
   range?: ViewerSelection["range"];

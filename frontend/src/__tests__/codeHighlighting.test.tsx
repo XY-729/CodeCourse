@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import hljs from "highlight.js";
-import { splitHighlightedToLines } from "../components/MobileCodeViewer";
+import { splitHighlightedToLines } from "../features/reader/mobile/MobileCodeViewer";
 
 // Helper: check that every line has balanced HTML tags
 function hasBalancedTags(html: string): boolean {

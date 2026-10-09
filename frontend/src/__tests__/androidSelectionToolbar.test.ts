@@ -6,13 +6,13 @@ const readSource = (path: string) => readFileSync(resolve(process.cwd(), path), 
 
 describe("Android text selection toolbar contract", () => {
   it("does not render the web selection quick bar on Android", () => {
-    const appSource = readSource("src/App.tsx");
+    const appSource = readSource("src/app/views/AppView.tsx");
 
     expect(appSource).toContain("!mobileRuntime && selectionAnchor?.selectedText");
   });
 
   it("marks only unfamiliar term candidates for the native known action", () => {
-    const viewerSource = readSource("src/components/MarkdownViewer.tsx");
+    const viewerSource = readSource("src/features/reader/MarkdownViewer.tsx");
 
     expect(viewerSource).toContain(
       'data-codecourse-unfamiliar-term={term.status === "candidate" ? "true" : undefined}',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { KnowledgeGraph } from "../api/client";
-import { computeTreeForestPositions } from "../components/knowledgeGraphLayout";
+import { computeTreeForestPositions } from "../features/knowledge/knowledgeGraphLayout";
 
 function graph(size: number): KnowledgeGraph {
   return {

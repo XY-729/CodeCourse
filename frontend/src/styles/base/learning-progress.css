@@ -1,0 +1,57 @@
+/* Learning path */
+.continue-learning-card {
+  margin: 2px 2px 10px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 10px;
+  border: 1px solid #dce5e1;
+  border-radius: 8px;
+  background: #f8fbfa;
+}
+
+.continue-learning-copy { min-width: 0; display: grid; gap: 2px; }
+.continue-learning-copy span { color: #64716c; font-size: 11px; }
+.continue-learning-copy strong { overflow: hidden; color: #26312d; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.continue-learning-card > small { grid-column: 1 / -1; color: #74807b; font-size: 11px; }
+.learning-progress-track { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 999px; background: #e3e9e6; }
+.learning-progress-track span { display: block; height: 100%; border-radius: inherit; background: #337a70; transition: width 200ms ease; }
+.course-state { flex: 0 0 auto; color: #aab2ae; }
+.course-state.in-progress { color: #43877c; fill: #d8ebe6; }
+.course-state.completed { color: #287369; }
+
+.reader-progress-bar {
+  flex: 0 0 2px;
+  overflow: hidden;
+  background: #e3e9e6;
+}
+.reader-progress-fill {
+  display: block;
+  height: 100%;
+  background: #337a70;
+  transform-origin: left center;
+  transform: scaleX(0);
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-progress-fill {
+    transition: none;
+  }
+}
+.reader-learning-toolbar {
+  min-height: 39px;
+  padding: 5px 10px 5px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--cc-line);
+  background: #fdfdfc;
+}
+
+.reader-breadcrumb,
+.reader-learning-actions { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.reader-breadcrumb { overflow: hidden; color: #7b827e; font-size: 12px; }
+.reader-breadcrumb strong { overflow: hidden; color: #343a37; text-overflow: ellipsis; white-space: nowrap; }
+.lesson-position { color: #7b827e; font-size: 11px; font-variant-numeric: tabular-nums; }
+.complete-button.completed { border-color: #9fc8bf; color: #1f6b60; background: #eaf5f2; }

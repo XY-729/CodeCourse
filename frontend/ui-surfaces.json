@@ -1,0 +1,741 @@
+{
+  "version": 1,
+  "surfaces": [
+    {
+      "id": "app",
+      "name": "应用入口与主布局",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "启动应用；桌面入口也支持浏览器预览",
+      "files": [
+        "src/App.tsx",
+        "src/main.tsx",
+        "src/main.android.tsx",
+        "src/app/views/AppView.tsx",
+        "src/app/shell/AppOverlayLayer.tsx"
+      ],
+      "styles": [
+        "src/styles/desktop.css",
+        "src/styles/android.css"
+      ],
+      "states": [
+        "首次启动",
+        "恢复项目",
+        "浅色/深色",
+        "桌面/窄窗口/Android"
+      ]
+    },
+    {
+      "id": "desktop-shell",
+      "name": "桌面标题栏与工具栏",
+      "platforms": [
+        "desktop"
+      ],
+      "entry": "主窗口顶部；项目菜单、生成菜单、更多菜单",
+      "files": [
+        "src/app/shell/TitleBar.tsx",
+        "src/app/shell/DesktopToolbar.tsx"
+      ],
+      "styles": [
+        "src/styles/apple-workbench.css",
+        "src/styles/apple-depth.css",
+        "src/styles/base/shell-controls.css"
+      ],
+      "states": [
+        "无项目/有项目",
+        "项目菜单展开",
+        "更多菜单展开",
+        "最大化/还原",
+        "更新提示"
+      ]
+    },
+    {
+      "id": "mobile-shell",
+      "name": "移动端导航与抽屉外壳",
+      "platforms": [
+        "android"
+      ],
+      "entry": "顶部项目按钮、更多按钮、底部学习/源码/提问/我的",
+      "files": [
+        "src/app/shell/mobile/MobileTopBar.tsx",
+        "src/app/shell/mobile/MobileMoreMenu.tsx",
+        "src/app/shell/mobile/MobileBottomNavigation.tsx",
+        "src/app/shell/mobile/MobileWorkspaceChrome.tsx",
+        "src/app/shell/mobile/MobileWorkspaceSheet.tsx",
+        "src/app/views/MobileWorkspaceView.tsx"
+      ],
+      "styles": [
+        "src/styles/android-shell.css",
+        "src/styles/android-experience.css",
+        "src/styles/apple-android-final.css"
+      ],
+      "states": [
+        "抽屉进入/展开/退出",
+        "项目/课程/源码/问答/生成/我的",
+        "忙碌/错误/提示",
+        "触摸拖动",
+        "安全区域/键盘"
+      ]
+    },
+    {
+      "id": "workbench",
+      "name": "工作区、分栏、标签与起始页",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "打开项目；打开多个文档；拖动标签页；工作区菜单",
+      "files": [
+        "src/workbench/WorkbenchSurface.tsx",
+        "src/workbench/WorkbenchLayoutTree.tsx",
+        "src/workbench/WorkbenchEditorGroup.tsx",
+        "src/workbench/EditorPaneFrame.tsx",
+        "src/app/views/WorkbenchGroupView.tsx"
+      ],
+      "styles": [
+        "src/styles/base/workbench.css",
+        "src/styles/base/workbench-theme.css",
+        "src/styles/apple-workbench.css",
+        "src/styles/apple-depth.css"
+      ],
+      "states": [
+        "无项目欢迎页",
+        "项目无法打开",
+        "空标签组",
+        "打开中",
+        "单栏/多栏",
+        "标签菜单",
+        "拖放预览",
+        "拖拽缩放",
+        "窄窗层叠",
+        "恢复布局"
+      ]
+    },
+    {
+      "id": "project-navigation",
+      "name": "项目列表、课程列表与源码树",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "桌面左栏/项目菜单；移动端项目、学习、源码抽屉",
+      "files": [
+        "src/features/navigation/Sidebar.tsx",
+        "src/features/navigation/CourseList.tsx",
+        "src/features/navigation/FileTree.tsx",
+        "src/app/views/NavigationView.tsx"
+      ],
+      "styles": [
+        "src/styles/base/navigation.css",
+        "src/styles/base/navigation-actions.css",
+        "src/styles/base/learning-progress.css",
+        "src/styles/apple-workbench.css",
+        "src/styles/android-shell.css"
+      ],
+      "states": [
+        "无项目",
+        "仓库/学习计划",
+        "课程为空",
+        "课程分组展开",
+        "源码树展开",
+        "选中文件",
+        "生成范围多选",
+        "进度",
+        "重命名/删除"
+      ]
+    },
+    {
+      "id": "markdown-reader",
+      "name": "课件与问答正文阅读器",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "打开课程或问答文档",
+      "files": [
+        "src/features/reader/MarkdownViewer.tsx",
+        "src/features/reader/ProgressiveMarkdown.tsx",
+        "src/features/reader/ReaderLearningToolbar.tsx"
+      ],
+      "styles": [
+        "src/styles/base/reader.css",
+        "src/styles/apple-content.css",
+        "src/styles/teaching.css",
+        "src/styles/android-reader.css",
+        "src/styles/base/loading.css"
+      ],
+      "states": [
+        "Markdown/代码块/表格",
+        "流式内容",
+        "编辑/保存",
+        "阅读进度",
+        "课程完成状态",
+        "高亮",
+        "术语候选/已知",
+        "空内容/加载"
+      ]
+    },
+    {
+      "id": "code-reader",
+      "name": "源码阅读器",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "源码树打开文件；问答引用返回源码",
+      "files": [
+        "src/features/reader/CodeViewer.tsx",
+        "src/features/reader/MonacoCodeViewer.tsx",
+        "src/features/reader/mobile/MobileCodeViewer.tsx",
+        "src/features/reader/mobile/MobileReaderHeader.tsx"
+      ],
+      "styles": [
+        "src/styles/apple-code-highlight.css",
+        "src/styles/base/android-workbench.css",
+        "src/styles/android-reader.css"
+      ],
+      "states": [
+        "桌面Monaco/移动端虚拟列表",
+        "语言高亮",
+        "选区/行号",
+        "定位跳转",
+        "搜索有结果/无结果",
+        "原生选区工具栏"
+      ]
+    },
+    {
+      "id": "detached-reader",
+      "name": "独立文档窗口",
+      "platforms": [
+        "desktop"
+      ],
+      "entry": "将文档标签拖出主窗口；主入口 ?detached",
+      "files": [
+        "src/features/reader/DetachedDocumentWindow.tsx"
+      ],
+      "styles": [
+        "src/styles/apple-workbench.css",
+        "src/styles/apple-content.css"
+      ],
+      "states": [
+        "等待恢复",
+        "课件",
+        "问答",
+        "源码",
+        "标题与路径"
+      ]
+    },
+    {
+      "id": "assistant",
+      "name": "桌面问答与历史侧栏",
+      "platforms": [
+        "desktop"
+      ],
+      "entry": "顶部问答按钮；选择文字后提问",
+      "files": [
+        "src/features/assistant/ExplainPanel.tsx",
+        "src/app/views/AssistantView.tsx"
+      ],
+      "styles": [
+        "src/styles/base/assistant.css",
+        "src/styles/base/assistant-thread.css",
+        "src/styles/apple-content.css"
+      ],
+      "states": [
+        "新问题/追问",
+        "有/无选区",
+        "上下文开关与文件",
+        "生成中/停止/失败",
+        "历史搜索/收藏",
+        "只读跨项目回答",
+        "知识网络页签"
+      ]
+    },
+    {
+      "id": "mobile-assistant",
+      "name": "移动端问答、历史与知识页",
+      "platforms": [
+        "android"
+      ],
+      "entry": "底部提问；更多→知识网络",
+      "files": [
+        "src/features/assistant/mobile/MobileAssistantPanel.tsx",
+        "src/app/views/MobileAssistantView.tsx"
+      ],
+      "styles": [
+        "src/styles/android-assistant.css",
+        "src/styles/base/assistant-thread.css"
+      ],
+      "states": [
+        "提问/历史/知识切换",
+        "选区与上下文",
+        "流式回答/停止",
+        "历史空/搜索/收藏",
+        "追问/续学",
+        "动态问题/诊断"
+      ]
+    },
+    {
+      "id": "knowledge",
+      "name": "知识网络与节点编辑",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "问答知识页；独立知识网络标签",
+      "files": [
+        "src/features/knowledge/KnowledgeGraphViewer.tsx",
+        "src/features/knowledge/KnowledgeGraphSurface.tsx",
+        "src/app/views/KnowledgeView.tsx"
+      ],
+      "styles": [
+        "src/styles/base/knowledge.css",
+        "src/styles/apple-content.css",
+        "src/styles/android-assistant.css"
+      ],
+      "states": [
+        "未选项目/空网络",
+        "加载/错误",
+        "缩放/拖动/聚焦",
+        "节点选择/菜单/编辑",
+        "关联内容",
+        "精简/完整网络"
+      ]
+    },
+    {
+      "id": "call-guide",
+      "name": "调用路径讲解",
+      "platforms": [
+        "desktop"
+      ],
+      "entry": "源码选择后打开调用路径；文档标签打开已有路径",
+      "files": [
+        "src/features/call-guide/CallGuideViewer.tsx"
+      ],
+      "styles": [
+        "src/styles/call-guide.css",
+        "src/styles/apple-content.css"
+      ],
+      "states": [
+        "路径加载",
+        "节点选择",
+        "访问进度",
+        "回到源码",
+        "生成讲解",
+        "刷新/删除",
+        "错误"
+      ]
+    },
+    {
+      "id": "desktop-generation",
+      "name": "桌面生成配置与任务状态",
+      "platforms": [
+        "desktop"
+      ],
+      "entry": "工具栏生成；底部任务状态",
+      "files": [
+        "src/features/generation/GenerationSheet.tsx",
+        "src/features/generation/DesktopGenerationStatus.tsx"
+      ],
+      "styles": [
+        "src/styles/desktop-generation.css",
+        "src/styles/base/generation.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "大纲/当前课/简略分析/详细分析",
+        "全项目/文件范围",
+        "配置/运行/完成/失败",
+        "流式课件",
+        "重试",
+        "打开产物"
+      ]
+    },
+    {
+      "id": "mobile-generation",
+      "name": "移动端生成配置与任务列表",
+      "platforms": [
+        "android"
+      ],
+      "entry": "更多→生成；课程或源码中的生成入口",
+      "files": [
+        "src/features/generation/mobile/MobileGenerationPanel.tsx",
+        "src/app/views/MobileGenerationView.tsx"
+      ],
+      "styles": [
+        "src/styles/android-generation.css",
+        "src/styles/base/generation.css"
+      ],
+      "states": [
+        "配置/任务页",
+        "无项目",
+        "学习计划/仓库",
+        "文件选择/清空",
+        "启动/排队/运行/完成/失败/重试",
+        "结果打开"
+      ]
+    },
+    {
+      "id": "outline-survey",
+      "name": "生成大纲前问卷",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "首次生成大纲或需要补充学习目标时",
+      "files": [
+        "src/features/generation/OutlineQuestionnaireDialog.tsx"
+      ],
+      "styles": [
+        "src/styles/base/outline-questionnaire.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "加载",
+        "选择/补充答案",
+        "分步前进/返回",
+        "提交",
+        "取消",
+        "错误"
+      ]
+    },
+    {
+      "id": "context-picker",
+      "name": "上下文与生成文件选择器",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "问答添加上下文；生成配置选择文件",
+      "files": [
+        "src/components/overlays/ContextFilePickerDialog.tsx"
+      ],
+      "styles": [
+        "src/styles/base/context-picker.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "上下文/生成两种用途",
+        "空文件列表",
+        "搜索无结果",
+        "多选/取消选择",
+        "确认/取消"
+      ]
+    },
+    {
+      "id": "settings",
+      "name": "模型与应用设置",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "桌面设置；移动端我的→设置",
+      "files": [
+        "src/features/settings/LLMSettingsDialog.tsx"
+      ],
+      "styles": [
+        "src/styles/base/settings.css",
+        "src/styles/base/settings-sections.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "模型/个性化/阅读/隐私区块",
+        "载入/保存/测试/失败",
+        "启用/禁用",
+        "API Key显示/粘贴",
+        "桌面与移动端差异"
+      ]
+    },
+    {
+      "id": "learner-profile",
+      "name": "学习者画像与偏好",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "桌面偏好；移动端我的→学习者画像",
+      "files": [
+        "src/features/settings/LearnerProfileDialog.tsx"
+      ],
+      "styles": [
+        "src/styles/learner-profile.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "全局/项目偏好",
+        "知识掌握",
+        "术语诊断/重新扫描",
+        "加载/保存/失败",
+        "重置确认"
+      ]
+    },
+    {
+      "id": "prompt-editor",
+      "name": "提示词编辑器",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "工具栏/生成配置/我的→提示词",
+      "files": [
+        "src/features/settings/PromptEditor.tsx"
+      ],
+      "styles": [
+        "src/styles/base/prompts.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "切换模板",
+        "编辑/未保存",
+        "保存中/成功/失败",
+        "恢复默认",
+        "退出确认"
+      ]
+    },
+    {
+      "id": "mobile-me",
+      "name": "移动端我的",
+      "platforms": [
+        "android"
+      ],
+      "entry": "底部我的",
+      "files": [
+        "src/features/settings/mobile/MobileMePanel.tsx",
+        "src/app/views/MobileMeView.tsx"
+      ],
+      "styles": [
+        "src/styles/android-me.css"
+      ],
+      "states": [
+        "无项目/有项目",
+        "模型就绪/未配置",
+        "索引状态",
+        "学习进度",
+        "主题切换",
+        "导入/导出忙碌"
+      ]
+    },
+    {
+      "id": "selection",
+      "name": "文本选区操作与标注菜单",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "选中课件、问答或源码文本；右键正文",
+      "files": [
+        "src/features/reader/SelectionQuickBar.tsx"
+      ],
+      "styles": [
+        "src/styles/base/annotations.css",
+        "src/styles/base/selection.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "提问",
+        "术语解释",
+        "调用路径",
+        "高亮/取消高亮",
+        "复制",
+        "菜单定位",
+        "Android使用原生工具栏"
+      ]
+    },
+    {
+      "id": "terms",
+      "name": "术语操作与扫描状态",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "点击陌生术语；阅读器术语扫描按钮",
+      "files": [
+        "src/features/teaching/TermActionPopover.tsx",
+        "src/features/teaching/DocumentTermScanControl.tsx"
+      ],
+      "styles": [
+        "src/styles/base/terms.css",
+        "src/styles/learner-profile.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "生成解释",
+        "标为已知/未知",
+        "忽略",
+        "扫描中/失败/完成",
+        "重新扫描"
+      ]
+    },
+    {
+      "id": "teaching",
+      "name": "教学反馈与续学卡片",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "回答正文底部；问答续学提示；教学参考事件",
+      "files": [
+        "src/features/teaching/UnderstandingFeedback.tsx",
+        "src/features/teaching/TeachingContinuityCards.tsx",
+        "src/features/teaching/TeachingIndexControl.tsx",
+        "src/features/teaching/TeachingReferenceDialog.tsx"
+      ],
+      "styles": [
+        "src/styles/teaching.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "理解/困难/反馈提交",
+        "续学/跳过/恢复",
+        "教学索引开关",
+        "参考资料弹窗",
+        "空/加载/失败"
+      ]
+    },
+    {
+      "id": "commands",
+      "name": "全局搜索与命令面板",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "顶部搜索按钮或命令面板快捷键",
+      "files": [
+        "src/components/overlays/CommandPalette.tsx"
+      ],
+      "styles": [
+        "src/styles/base/command-palette.css",
+        "src/styles/apple-overlays.css",
+        "src/styles/apple-android-final.css"
+      ],
+      "states": [
+        "搜索为空/有结果/无结果",
+        "键盘选择",
+        "执行/关闭",
+        "移动端搜索"
+      ]
+    },
+    {
+      "id": "dialogs",
+      "name": "通用确认与输入弹窗",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "导入仓库、新建学习计划、重命名、删除等操作触发",
+      "files": [
+        "src/components/overlays/AppDialog.tsx"
+      ],
+      "styles": [
+        "src/styles/base/dialogs.css",
+        "src/styles/apple-overlays.css"
+      ],
+      "states": [
+        "确认/危险确认",
+        "文本输入/校验",
+        "不再提示",
+        "取消/确认",
+        "焦点与键盘"
+      ]
+    },
+    {
+      "id": "feedback",
+      "name": "全局反馈与数据传输遮罩",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "业务操作、通知权限、拖入目录或ZIP包",
+      "files": [
+        "src/app/shell/AppFeedbackLayer.tsx",
+        "src/components/ui/TaskFeedback.tsx"
+      ],
+      "styles": [
+        "src/styles/interaction-feedback.css",
+        "src/styles/base/feedback.css",
+        "src/styles/base/dialogs.css"
+      ],
+      "states": [
+        "忙碌/进度",
+        "成功提示",
+        "错误及关闭",
+        "通知权限提示",
+        "桌面拖入提示",
+        "数据传输锁定"
+      ]
+    },
+    {
+      "id": "gestures",
+      "name": "桌面手势与手势说明",
+      "platforms": [
+        "desktop"
+      ],
+      "entry": "手势操作；工具栏更多→手势说明",
+      "files": [
+        "src/features/gestures/GestureLayer.tsx",
+        "src/features/gestures/GestureGuide.tsx"
+      ],
+      "styles": [
+        "src/styles/gesture-drawer.css"
+      ],
+      "states": [
+        "轨迹/识别结果",
+        "帮助打开/关闭",
+        "快捷操作反馈"
+      ]
+    },
+    {
+      "id": "shared-ui",
+      "name": "通用交互组件",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "由以上界面组合使用，无单独导航入口",
+      "files": [
+        "src/components/ui/AsyncActionButton.tsx",
+        "src/components/ui/DeferredLiftText.tsx",
+        "src/components/ui/FluidBottomSheet.tsx",
+        "src/components/ui/SlidingSelectionIndicator.tsx"
+      ],
+      "styles": [
+        "src/styles/interaction-feedback.css",
+        "src/styles/android-experience.css",
+        "src/styles/apple-workbench.css"
+      ],
+      "states": [
+        "按钮空闲/忙碌",
+        "文字延迟显示",
+        "底部抽屉手势/焦点",
+        "选项滑动指示",
+        "减少动态效果"
+      ]
+    },
+    {
+      "id": "retained-ui",
+      "name": "保留但当前未接入的界面组件",
+      "platforms": [
+        "desktop",
+        "android"
+      ],
+      "entry": "当前未发现生产入口引用；重绘时确认是否重新接入",
+      "files": [
+        "src/features/navigation/RepositoryForm.tsx",
+        "src/features/teaching/TeachingRationale.tsx",
+        "src/features/teaching/TermFeedbackPopover.tsx"
+      ],
+      "styles": [
+        "src/styles/base/shell-controls.css",
+        "src/styles/teaching.css",
+        "src/styles/base/terms.css"
+      ],
+      "states": [
+        "仓库输入表单",
+        "教学理由",
+        "术语反馈浮层"
+      ]
+    }
+  ]
+}

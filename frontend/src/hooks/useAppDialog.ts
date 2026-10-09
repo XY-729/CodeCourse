@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type {
   AppDialogState,
   ChoiceDialogOption,
-} from "../components/AppDialog";
+} from "../components/overlays/AppDialog";
 
 type DialogResult = string | boolean | null;
 type DialogResolver = (value: DialogResult) => void;

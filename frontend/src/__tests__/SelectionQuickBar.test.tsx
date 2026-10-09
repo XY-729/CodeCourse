@@ -1,6 +1,6 @@
 import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import SelectionQuickBar from "../components/SelectionQuickBar";
+import SelectionQuickBar from "../features/reader/SelectionQuickBar";
 
 describe("SelectionQuickBar", () => {
   it("coalesces scroll positioning into one animation frame", () => {

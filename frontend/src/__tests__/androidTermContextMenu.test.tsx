@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render } from "@testing-library/react";
-import MarkdownViewer from "../components/MarkdownViewer";
+import MarkdownViewer from "../features/reader/MarkdownViewer";
 import type { DocumentTerm } from "../api/client";
 
 vi.mock("@capacitor/core", () => ({

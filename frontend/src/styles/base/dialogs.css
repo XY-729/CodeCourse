@@ -1,0 +1,145 @@
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(18, 27, 39, 0.42);
+}
+
+.data-transfer-lock {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 17, 31, 0.18);
+  touch-action: none;
+}
+
+.data-transfer-lock-card {
+  min-height: 52px;
+  max-width: min(420px, calc(100vw - 48px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--cc-border, rgba(34, 74, 61, 0.18));
+  border-radius: 14px;
+  color: var(--cc-text, #17231f);
+  background: var(--cc-surface, #fff);
+  box-shadow: var(--apple-shadow-md, 0 14px 34px rgba(24, 52, 43, 0.18));
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.app-dialog {
+  width: min(440px, 100%);
+  border: 1px solid #c8d0da;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.24);
+}
+
+.app-dialog-title {
+  min-height: 50px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #d5dbe3;
+  color: #18212f;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.app-dialog-message {
+  margin: 16px 18px 0;
+  color: #607086;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.app-dialog-skip {
+  padding: 10px 18px 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: #607086;
+  user-select: none;
+  cursor: pointer;
+}
+
+.app-dialog-skip input[type="checkbox"] { cursor: pointer; }
+
+.app-dialog-field {
+  margin: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.app-dialog-field input {
+  width: 100%;
+  height: 38px;
+  border: 1px solid #c8d0da;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: #18212f;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 400;
+  outline: none;
+}
+
+.app-dialog-field input:focus {
+  border-color: #25766c;
+  box-shadow: 0 0 0 3px rgba(37, 118, 108, 0.12);
+}
+
+.app-dialog-choice-list {
+  margin: 16px 18px;
+  display: grid;
+  gap: 8px;
+}
+
+.app-dialog-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid #d5dbe3;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.app-dialog-choice span {
+  display: grid;
+  gap: 2px;
+}
+
+.app-dialog-choice small {
+  color: #607086;
+}
+
+.app-dialog-actions {
+  min-height: 62px;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid #d5dbe3;
+  background: #fbfcfd;
+}
+
+.outline-questionnaire-dialog {
+  width: min(560px, 100%);
+}

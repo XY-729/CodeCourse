@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "check:ui": "node scripts/check-ui-inventory.mjs",
     "dev": "vite",
-    "build": "tsc -b && vite build --configLoader runner",
-    "build:android": "tsc -b && vite build --mode android --configLoader runner",
+    "build": "pnpm run check:ui && tsc -b && vite build --configLoader runner",
+    "build:android": "pnpm run check:ui && tsc -b && vite build --mode android --configLoader runner",
     "preview": "vite preview",
     "test": "vitest run --configLoader runner"
   },

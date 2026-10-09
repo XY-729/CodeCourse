@@ -1,7 +1,7 @@
 import type { DragEvent, ReactNode } from "react";
 import { MoreHorizontal, X } from "lucide-react";
-import MobileReaderHeader from "../components/MobileReaderHeader";
-import SlidingSelectionIndicator from "../components/SlidingSelectionIndicator";
+import MobileReaderHeader from "../features/reader/mobile/MobileReaderHeader";
+import SlidingSelectionIndicator from "../components/ui/SlidingSelectionIndicator";
 import { setCodeCourseDragImage } from "../utils/dragImage";
 import type { EditorGroup, OpenItem } from "./layout";
 

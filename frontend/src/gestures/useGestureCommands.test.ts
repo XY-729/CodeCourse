@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { GESTURE_COMPLETE_EVENT } from "../components/GestureLayer";
+import { GESTURE_COMPLETE_EVENT } from "../features/gestures/GestureLayer";
 import { useGestureCommands } from "./useGestureCommands";
 
 function commands(left: () => string | null) {

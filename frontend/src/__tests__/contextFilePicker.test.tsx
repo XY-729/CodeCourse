@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import ContextFilePickerDialog from "../components/ContextFilePickerDialog";
+import ContextFilePickerDialog from "../components/overlays/ContextFilePickerDialog";
 
 const FILES = ["src/main.py", "src/scheduler.py", "src/worker/task.py", "README.md"];
 

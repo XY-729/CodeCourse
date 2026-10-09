@@ -7,7 +7,7 @@ import MobileCodeViewer, {
   calcScrollTop,
   calculateVisibleLine,
   computeVirtualRange,
-} from "../components/MobileCodeViewer";
+} from "../features/reader/mobile/MobileCodeViewer";
 
 const ROW_HEIGHT = 24;
 const OVERSCAN = 20;
@@ -396,7 +396,9 @@ describe("MobileCodeViewer production component", () => {
   });
 
   it("keeps the code-row CSS geometry stable", () => {
-    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    const css = ["foundation", "android-workbench"].map((name) =>
+      readFileSync(resolve(process.cwd(), `src/styles/base/${name}.css`), "utf8"),
+    ).join("\n");
     expect(css).toContain("--mobile-code-row-height: 24px");
     expect(css).toMatch(/\.mobile-code-line\s*\{[\s\S]*height:\s*var\(--mobile-code-row-height\)/);
     expect(css).toMatch(/\.mobile-code-line code\s*\{[\s\S]*white-space:\s*pre/);

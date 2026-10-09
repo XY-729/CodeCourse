@@ -1,0 +1,86 @@
+.markdown-body {
+  min-height: 100%;
+  overflow: visible;
+  padding: 24px 34px 48px;
+  line-height: 1.72;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  color: #172033;
+  margin-top: 1.4em;
+}
+
+.markdown-body h1:first-child,
+.markdown-body h2:first-child,
+.markdown-body h3:first-child {
+  margin-top: 0;
+}
+
+.markdown-body code {
+  background: #edf2f7;
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
+.markdown-body pre {
+  overflow: auto;
+  background: #18212f;
+  color: #edf2f7;
+  border-radius: 6px;
+  padding: 14px;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #cfd8e3;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: #f3f6f8;
+}
+
+.qa-workspace-editor {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  resize: none;
+  padding: 18px 22px;
+  outline: none;
+  color: #18212f;
+  background: #ffffff;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.qa-highlight-list {
+  max-height: 118px;
+  overflow: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid #d5dbe3;
+  background: #fbfcfd;
+}
+
+.qa-highlight-list mark {
+  max-width: 100%;
+  white-space: pre-wrap;
+}

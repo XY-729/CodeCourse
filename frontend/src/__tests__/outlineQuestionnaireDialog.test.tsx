@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import OutlineQuestionnaireDialog from "../components/OutlineQuestionnaireDialog";
+import OutlineQuestionnaireDialog from "../features/generation/OutlineQuestionnaireDialog";
 import type { OutlinePreflight } from "../api/client";
 
 const samplePreflight: OutlinePreflight = {

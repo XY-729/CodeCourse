@@ -9,7 +9,7 @@ import {
   type GenerationTask,
   type Project,
 } from "../api/client";
-import { isGenerationTaskRunning, sortGenerationTasks } from "../components/generationTaskModel";
+import { isGenerationTaskRunning, sortGenerationTasks } from "../features/generation/generationTaskModel";
 import { resolveCourseFilename, taskLabel } from "../app/appUtils";
 
 type Options = {
