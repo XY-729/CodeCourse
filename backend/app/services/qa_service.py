@@ -94,12 +94,9 @@ def _compact_title(candidate: str, selected_text: str) -> str:
     title = _clean_title(candidate)
     if not title:
         return selected_fragment
-    head = TITLE_SPLIT_RE.split(title, maxsplit=1)[0].strip()
-    if 1 <= len(head) <= 24:
-        return head
-    if len(title) > 24:
-        return title[:24].rstrip()
-    return title
+    # Preserve subjects after spaces/colons (e.g. "解释 Python 的 return")
+    # instead of reducing a history title to its instruction prefix.
+    return title[:60].rstrip()
 
 
 def _fallback_title(question: str, selected_text: str, source_path: Optional[str]) -> str:
@@ -700,6 +697,7 @@ def finalize_question(
         retrieval_sources_json=json.dumps(prepared.retrieval_sources, ensure_ascii=False),
         parent_qa_id=prepared.parent_id,
         relation_type=payload.relation_type,
+        selection_range_json=payload.selection_range.model_dump_json() if payload.selection_range else None,
     )
 
     try:

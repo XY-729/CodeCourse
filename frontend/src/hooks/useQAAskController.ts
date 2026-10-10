@@ -1,7 +1,7 @@
 import { useCallback, useRef } from "react";
 import type { LLMSettings, QAAskPayload, QARecord } from "../api/client";
 import type { ConfirmActionOptions } from "./useAppDialog";
-import type { QAOperationToken } from "./useQAGenerationController";
+import { QAStoppedError, type QAOperationToken } from "./useQAGenerationController";
 
 type SelectionRange = {
   startLineNumber: number;
@@ -126,7 +126,8 @@ export function useQAAskController(options: Options) {
       );
       await current.onAnswerComplete(record, current.projectId);
     } catch (caught) {
-      current.onPanelError(caught instanceof Error ? caught.message : "生成回答失败");
+      if (caught instanceof QAStoppedError) current.onToast(caught.message);
+      else current.onPanelError(caught instanceof Error ? caught.message : "生成回答失败");
     } finally {
       current.endOperation(operationToken);
     }

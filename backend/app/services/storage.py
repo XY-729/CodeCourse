@@ -66,6 +66,7 @@ class QARecord:
     favorite: bool
     created_at: str
     updated_at: str
+    selection_range_json: Optional[str] = None
 
 
 @dataclass
@@ -577,6 +578,9 @@ def init_storage() -> None:
             conn.execute("ALTER TABLE qa_records ADD COLUMN parent_qa_id INTEGER")
         if "relation_type" not in qa_cols:
             conn.execute("ALTER TABLE qa_records ADD COLUMN relation_type TEXT NOT NULL DEFAULT 'follow_up'")
+        needs_qa_range_backfill = "selection_range_json" not in qa_cols
+        if needs_qa_range_backfill:
+            conn.execute("ALTER TABLE qa_records ADD COLUMN selection_range_json TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS highlights (
@@ -1769,6 +1773,17 @@ def init_storage() -> None:
             conn.execute("ALTER TABLE qa_postprocess_jobs ADD COLUMN metadata_json TEXT")
         from app.services.qa_answer_context import initialize_answer_context_cache
         initialize_answer_context_cache(conn)
+        if needs_qa_range_backfill:
+            # Earlier desktop requests already saved their selection range in
+            # the durable job. Recover it without opening any source files.
+            for row in conn.execute("SELECT qa_record_id,payload_json FROM qa_postprocess_jobs").fetchall():
+                try:
+                    saved_range = json.loads(row["payload_json"]).get("selection_range")
+                    if isinstance(saved_range, dict):
+                        conn.execute("UPDATE qa_records SET selection_range_json=? WHERE id=?",
+                                     (json.dumps(saved_range), row["qa_record_id"]))
+                except (ValueError, TypeError, AttributeError):
+                    continue
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS observer_jobs (
@@ -1929,6 +1944,7 @@ def _row_to_qa_record(row: sqlite3.Row) -> QARecord:
         favorite=bool(row["favorite"]),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        selection_range_json=row["selection_range_json"] if "selection_range_json" in row.keys() else None,
     )
 
 
@@ -2623,6 +2639,7 @@ def create_qa_record(
     retrieval_sources_json: Optional[str] = None,
     parent_qa_id: Optional[int] = None,
     relation_type: str = "follow_up",
+    selection_range_json: Optional[str] = None,
 ) -> QARecord:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
@@ -2630,9 +2647,9 @@ def create_qa_record(
             """
             INSERT INTO qa_records (
                 project_id, session_id, parent_qa_id, relation_type, source_type, source_path, display_title, selected_text, question,
-                answer_md, provider, model, output_path, retrieval_trace, retrieval_sources_json, favorite, created_at, updated_at
+                answer_md, provider, model, output_path, retrieval_trace, retrieval_sources_json, favorite, created_at, updated_at, selection_range_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
             """,
             (
                 project_id,
@@ -2652,6 +2669,7 @@ def create_qa_record(
                 retrieval_sources_json,
                 now,
                 now,
+                selection_range_json,
             ),
         )
         conn.commit()

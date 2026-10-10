@@ -1,6 +1,6 @@
 import UnderstandingFeedback from "../teaching/UnderstandingFeedback";
 import { normalizeOutputPath } from "../../app/appUtils";
-import { ArrowDown, ArrowUp, Bot, Edit3, FileText, Loader2, MessageCircle, Search, Send, Star, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, CornerUpLeft, Edit3, FileText, Loader2, MessageCircle, Search, Send, Square, Star, Trash2, X } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, QAThreadSummary, SourceType, TeachingHandoff, TeachingNextAction } from "../../api/client";
 import { DeferredLiftInput, DeferredLiftTextarea } from "../../components/ui/DeferredLiftText";
@@ -43,6 +43,11 @@ type Props = {
   favoriteOnly: boolean;
   selectedRecord: QARecord | null;
   followUpRecord: QARecord | null;
+  conversationActive?: boolean;
+  conversationLabel?: string;
+  canStopAnswer?: boolean;
+  onStopAnswer?: () => void;
+  onReturnToSource?: (record: QARecord) => void;
   selectedRecordReadOnly?: boolean;
   surveyCandidate?: DynamicSurveyCandidate | null;
   diagnosticItem?: DiagnosticItem | null;
@@ -113,7 +118,7 @@ export default function ExplainPanel(props: Props) {
     onOpenRecord, onDeleteRecord, onRenameRecord, onToggleFavorite, onResumeContinuity = () => {}, onOpenContinuitySource = () => {}, onDismissContinuity = () => {}, onTeachingNextAction = () => {}, onOpenSettings,
     onAnswerSurvey, onDismissSurvey, onDisableSurveys,
     onAnswerDiagnostic, onDismissDiagnostic, onFlagDiagnostic, onClose,
-    resetToken,
+    resetToken, conversationActive = false, conversationLabel, canStopAnswer = false, onStopAnswer, onReturnToSource,
   } = props;
   const [diagnosticAnswer, setDiagnosticAnswer] = useState<unknown>(null);
   const [diagnosticOrder, setDiagnosticOrder] = useState<string[]>([]);
@@ -155,7 +160,8 @@ export default function ExplainPanel(props: Props) {
           event.dataTransfer.effectAllowed = "copy";
         }}
       >
-        <span>{recordTitle(record)}</span><small>{record.model}</small>
+        <span title={record.question}>{recordTitle(record)}</span><small title={record.question}>{record.question} · {record.model}</small>
+        {!mobileMode && record.source_path && onReturnToSource ? <CornerUpLeft size={14} role="button" tabIndex={0} aria-label={`回到原文 ${recordTitle(record)}`} onClick={event => { event.stopPropagation(); onReturnToSource(record); }} onKeyDown={event => { if (event.key === "Enter") { event.stopPropagation(); onReturnToSource(record); } }} /> : null}
         <Trash2 size={14} className="history-delete" role="button" tabIndex={0} aria-label="删除记录" onClick={(event) => { event.stopPropagation(); onDeleteRecord?.(record); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onDeleteRecord?.(record); } }} />
         <Edit3 size={14} className="history-rename" role="button" tabIndex={0} aria-label="重命名记录" onClick={(event) => { event.stopPropagation(); onRenameRecord(record); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onRenameRecord(record); } }} />
         <Star size={14} className={record.favorite ? "history-star starred" : "history-star"} role="button" tabIndex={0} aria-label={record.favorite ? "取消收藏" : "收藏"} onClick={(event) => { event.stopPropagation(); onToggleFavorite(record); }} onKeyDown={(event) => { if (event.key === "Enter") { event.stopPropagation(); onToggleFavorite(record); } }} />
@@ -377,8 +383,8 @@ export default function ExplainPanel(props: Props) {
 
         <div className="qa-section ask-box">
           <div className="ask-box-toolbar">
-            <span>{followUpRecord ? `正在追问：${recordTitle(followUpRecord)}` : "新问题"}</span>
-            {followUpRecord ? (
+            <span title={followUpRecord?.question}>{!mobileMode && conversationLabel ? conversationLabel : followUpRecord ? `正在追问：${recordTitle(followUpRecord)}` : mobileMode ? "新问题" : conversationActive ? "当前对话" : "新对话"}</span>
+            {!mobileMode ? <button className="assistant-new-question-button" type="button" onClick={onNewConversation} disabled={loading}>新对话</button> : followUpRecord ? (
               <button className="assistant-new-question-button" type="button" onClick={onNewConversation} disabled={loading}>
                 取消追问
               </button>
@@ -411,6 +417,7 @@ export default function ExplainPanel(props: Props) {
           <button className="primary-button" aria-busy={loading} onClick={() => { if (questionDraft.trim()) onAsk(questionDraft.trim()); }} disabled={loading || !modelReady || !questionDraft.trim()}>
             {loading ? <Loader2 size={15} className="spin" /> : <Send size={15} />}{loading ? (loadingLabel || "生成中...") : followUpRecord ? "继续追问" : "询问"}
           </button>
+          {!mobileMode && loading && canStopAnswer && onStopAnswer ? <button type="button" className="secondary-button compact" onClick={onStopAnswer}><Square size={14} />停止回答</button> : null}
         </div>
       </section> : null}
     </aside>

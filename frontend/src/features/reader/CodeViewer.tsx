@@ -7,7 +7,7 @@ const MonacoCodeViewer = __ANDROID_BUILD__ ? null : lazy(() => import("./MonacoC
 export type ViewerRange = { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
 export type ViewerAnchorRect = { left: number; top: number; right: number; bottom: number; width: number; height: number };
 export type ViewerSelection = { sourceType: "file" | "course" | "qa"; sourcePath: string | null; selectedText: string; language?: string; range?: ViewerRange; anchorRect?: ViewerAnchorRect };
-export type CodeJumpRequest = { id: string; line: number; align: "start" | "center" };
+export type CodeJumpRequest = { id: string; line: number; align: "start" | "center"; selection?: ViewerRange };
 type Props = {
   path: string | null;
   language: string;

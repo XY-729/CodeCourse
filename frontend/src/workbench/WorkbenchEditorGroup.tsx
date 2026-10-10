@@ -48,6 +48,10 @@ type Props = {
   mobileCodeSearchRequestId: number;
   activeTermSourceKey: string;
   onRetryQAPreview?: (item: OpenItem) => void;
+  canStopQAPreview?: boolean;
+  qaBusy?: boolean;
+  onStopQAPreview?: (key: string) => void;
+  onReturnQASource?: (qaId: number) => void;
   highlights: HighlightRecord[];
   knowledgeLinks: KnowledgeLink[];
   documentTerms: DocumentTerm[];
@@ -172,6 +176,7 @@ function WorkbenchEditorGroupView(props: Props) {
     if (!activeItem) return null;
     return (
       <>
+        {!mobile && activeItem.qaRecordId && props.onReturnQASource ? <button type="button" className="secondary-button compact" title="打开提问来源，并定位原选区" onClick={() => props.onReturnQASource?.(activeItem.qaRecordId!)}>回到原文</button> : null}
         <DocumentTermScanControl status={props.termScanStatus} onRescan={props.onRescanTerms} compact={compact} />
         {!hasMarkdownActions && (!compact || lessonIndex < 0) && !props.isOutlineCourse(activeItem.path) ? (
           <AsyncActionButton key={`complete:${activeItem.id}`} className={`secondary-button compact complete-button ${learningState?.status === "completed" ? "completed" : ""}`}
@@ -355,6 +360,9 @@ function WorkbenchEditorGroupView(props: Props) {
             title={activeItem.title}
             sourcePath={activeItem.path}
             sourceType={activeItem.qaRecordId ? "qa" : "course"}
+            jumpLine={activeItem.jumpRequest?.line}
+            jumpToken={activeItem.jumpRequest?.id}
+            onJumpConsumed={() => { if (activeItem.jumpRequest) props.onCodeJumpConsumed(activeItem.id, activeItem.jumpRequest.id); }}
             content={activeItem.content}
             embedded={mobile}
             hideHeader={!mobile && lessonIndex >= 0}
@@ -384,7 +392,7 @@ function WorkbenchEditorGroupView(props: Props) {
               ratio,
             )}
             footer={!activeItem.qaPreview && projectId && !hasMarkdownActions ? <UnderstandingFeedback projectId={projectId} sourceType={activeItem.qaRecordId ? "qa" : "course"} sourcePath={activeItem.path} revision={activeItem.content} /> : undefined}
-            headerActions={activeItem.qaPreview ? <><span role="status">{activeItem.qaPreview.label}</span>{activeItem.qaPreview.status === "failed" && activeItem.qaPreview.request ? <button type="button" className="secondary-button compact" onClick={() => props.onRetryQAPreview?.(activeItem)}>重试</button> : null}</> : mobile ? undefined : markdownActions(false)}
+            headerActions={activeItem.qaPreview ? <><span role="status">{activeItem.qaPreview.label}</span>{activeItem.qaPreview.status === "streaming" && props.canStopQAPreview ? <button type="button" className="secondary-button compact" onClick={() => props.onStopQAPreview?.(activeItem.qaPreview!.key)}>停止回答</button> : null}{activeItem.qaPreview.status !== "streaming" && activeItem.qaPreview.request ? <button type="button" className="secondary-button compact" disabled={props.qaBusy} onClick={() => props.onRetryQAPreview?.(activeItem)}>重试</button> : null}</> : mobile ? undefined : markdownActions(false)}
           />
         )
       ) : null}

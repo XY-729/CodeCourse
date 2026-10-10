@@ -123,6 +123,17 @@ function baseProps(group: EditorGroup, overrides: Partial<Props> = {}): Props {
   };
 }
 
+it("keeps a stopped answer's text and retries the same item", async () => {
+  const item: OpenItem = { id: "preview:original", type: "course", path: "preview:original", title: "原问题", content: "保留的未完成正文",
+    qaPreview: { key: "first", label: "已停止 · 内容未完成", status: "stopped", startedAt: 0,
+      request: { source_type: "file", selected_text: "return x", question: "原问题", provider: "test", base_url: "", model: "test" } } };
+  const retry = vi.fn();
+  const { getByRole, findByText } = render(<WorkbenchEditorGroup {...baseProps(groupWith(item), { onRetryQAPreview: retry })} />);
+  expect(await findByText(/保留的未完成正文/)).toBeTruthy();
+  fireEvent.click(getByRole("button", { name: "重试" }));
+  expect(retry).toHaveBeenCalledWith(item);
+});
+
 describe("WorkbenchEditorGroup", () => {
   it("renders a source file with the code viewer", () => {
     const group = groupWith({

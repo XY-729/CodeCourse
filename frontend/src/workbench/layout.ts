@@ -14,13 +14,14 @@ export type OpenItem = {
   favorite?: boolean;
   dirty?: boolean;
   hydrated?: boolean;
-  qaPreview?: { key: string; label: string; status: "streaming" | "failed"; startedAt: number; firstDeltaAt?: number; request?: QAAskPayload };
+  qaPreview?: { key: string; label: string; status: "streaming" | "failed" | "stopped"; startedAt: number; firstDeltaAt?: number; request?: QAAskPayload; keepPreviousBody?: boolean };
   qaTiming?: QAStreamTiming;
   restoreLine?: number;
   jumpRequest?: {
     id: string;
     line: number;
     align: "start" | "center";
+    selection?: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number };
   };
 };
 

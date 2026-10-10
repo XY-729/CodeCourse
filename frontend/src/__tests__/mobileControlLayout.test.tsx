@@ -8,9 +8,10 @@ import Sidebar from "../features/navigation/Sidebar";
 
 const noop = vi.fn();
 
-function renderAssistant(selectedRecord: QARecord | null = null, history: QARecord[] = [], onFollowUp = noop) {
+function renderAssistant(selectedRecord: QARecord | null = null, history: QARecord[] = [], onFollowUp = noop, mobileMode = false) {
   return render(
     <ExplainPanel
+      mobileMode={mobileMode}
       selection={null}
       contextSummary={null}
       contextFiles={[]}
@@ -46,7 +47,7 @@ function renderAssistant(selectedRecord: QARecord | null = null, history: QAReco
 
 describe("mobile controls", () => {
   it("does not show a redundant new-conversation button for an empty question", () => {
-    const { getByText, queryByRole } = renderAssistant();
+    const { getByText, queryByRole } = renderAssistant(null, [], noop, true);
 
     expect(getByText("新问题")).toBeTruthy();
     expect(queryByRole("button", { name: "新对话" })).toBeNull();
@@ -58,7 +59,7 @@ describe("mobile controls", () => {
       question: "旧问题",
       answer_md: "回答",
     } as QARecord;
-    const { getByRole } = renderAssistant(record);
+    const { getByRole } = renderAssistant(record, [], noop, true);
 
     expect(getByRole("button", { name: "取消追问" })).toBeTruthy();
   });

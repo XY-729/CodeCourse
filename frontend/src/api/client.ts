@@ -152,6 +152,7 @@ export type QAThreadSummary = {
 };
 
 export type QARecord = {
+  selection_range?: { start_line: number; start_column: number; end_line: number; end_column: number } | null;
   id: number;
   project_id: number;
   session_id?: number | null;

@@ -25,6 +25,10 @@ export function renderGroup(model: AppViewModel, group: EditorGroup) {
     layout,
     mobileCodeSearchRequestId,
     retryQAPreview,
+    canStopQAAnswer,
+    qaInteractionBusy,
+    stopQAAnswer,
+    returnToQASource,
     activeTermSource,
     highlights,
     knowledgeLinks,
@@ -106,6 +110,10 @@ export function renderGroup(model: AppViewModel, group: EditorGroup) {
       canManageGroups={countGroups(layout) > 1}
       mobileCodeSearchRequestId={mobileCodeSearchRequestId}
       onRetryQAPreview={retryQAPreview}
+      canStopQAPreview={canStopQAAnswer}
+      qaBusy={qaInteractionBusy}
+      onStopQAPreview={key => stopQAAnswer(key)}
+      onReturnQASource={id => { void returnToQASource(id); }}
       activeTermSourceKey={activeTermSource ? `${activeTermSource.sourceType}:${activeTermSource.sourcePath}` : ""}
       highlights={highlights}
       knowledgeLinks={knowledgeLinks}

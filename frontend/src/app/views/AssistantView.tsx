@@ -1,4 +1,5 @@
 import ExplainPanel from "../../features/assistant/ExplainPanel";
+import { requestConversationLabel } from "../qaConversation";
 import type { AppViewModel } from "./appViewModel";
 import { renderKnowledgeGraph } from "./KnowledgeView";
 
@@ -27,7 +28,11 @@ export function renderAssistantPanel(model: AppViewModel) {
     qaHistoryQuery,
     qaFavoriteOnly,
     selectedQA,
-    qaFollowUpRecord,
+    qaFollowUpTarget,
+    activeQASessionId,
+    canStopQAAnswer,
+    stopQAAnswer,
+    returnToQASource,
     dynamicSurvey,
     diagnosticItem,
     diagnosticResult,
@@ -42,6 +47,7 @@ export function renderAssistantPanel(model: AppViewModel) {
     setQAHistoryQuery,
     setQAFavoriteOnly,
     setSelectedQA,
+    setQAFollowUpRecord,
     setQASessionId,
     handleFollowUp,
     openQAInActiveGroup,
@@ -84,7 +90,12 @@ export function renderAssistantPanel(model: AppViewModel) {
       historyQuery={qaHistoryQuery}
       favoriteOnly={qaFavoriteOnly}
       selectedRecord={selectedQA}
-      followUpRecord={qaFollowUpRecord}
+      followUpRecord={qaFollowUpTarget}
+      conversationActive={Boolean(activeQASessionId)}
+      conversationLabel={qaInteractionBusy && visibleQAGeneration?.request ? requestConversationLabel(visibleQAGeneration.request, qaHistory) : undefined}
+      canStopAnswer={canStopQAAnswer}
+      onStopAnswer={() => stopQAAnswer()}
+      onReturnToSource={record => { void returnToQASource(record); }}
       selectedRecordReadOnly={Boolean(selectedQA && project && selectedQA.project_id !== project.id)}
       surveyCandidate={dynamicSurvey}
       diagnosticItem={diagnosticItem}
@@ -102,7 +113,7 @@ export function renderAssistantPanel(model: AppViewModel) {
       onNewConversation={handleNewConversation}
       onHistoryQueryChange={setQAHistoryQuery}
       onFavoriteOnlyChange={setQAFavoriteOnly}
-      onSelectRecord={(record) => { setSelectedQA(record); setQASessionId(record.session_id ?? null); }}
+      onSelectRecord={(record) => { setSelectedQA(record); setQAFollowUpRecord(null); setQASessionId(record.session_id ?? null); }}
       onFollowUp={handleFollowUp}
       onOpenRecord={(record) => { void openQAInActiveGroup(record); }}
       onDeleteRecord={handleDeleteQA}

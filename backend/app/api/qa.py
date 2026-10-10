@@ -19,6 +19,7 @@ from app.models.schemas import (
     QARecordResponse,
     QAThreadSummaryResponse,
     QAUpdateRequest,
+    SelectionRange,
     RetrievalSourceResponse,
     TeachingHandoffResponse,
 )
@@ -93,6 +94,12 @@ def _require_project(project_id: int) -> None:
 
 
 def _to_response(record: QARecord) -> QARecordResponse:
+    selection_range = None
+    if record.selection_range_json:
+        try:
+            selection_range = SelectionRange.model_validate_json(record.selection_range_json)
+        except (ValueError, TypeError):
+            pass
     try:
         raw_sources = json.loads(record.retrieval_sources_json or "[]")
     except (json.JSONDecodeError, TypeError):
@@ -117,6 +124,7 @@ def _to_response(record: QARecord) -> QARecordResponse:
         source_path=record.source_path,
         display_title=record.display_title,
         selected_text=record.selected_text,
+        selection_range=selection_range,
         question=record.question,
         answer_md=record.answer_md,
         provider=record.provider,

@@ -85,15 +85,18 @@ export default function MonacoCodeViewer({
   }, [selectedRange, content, path]);
   const consumedJumpIdsRef = useRef(new Set<string>());
 
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor || !jumpRequest || consumedJumpIdsRef.current.has(jumpRequest.id)) return;
-    const line = Math.max(1, Math.round(jumpRequest.line));
-    if (jumpRequest.align === "center") editor.revealLineInCenter(line);
+  function applyJump(editor: Parameters<OnMount>[0], request: CodeJumpRequest | null | undefined) {
+    if (!request || consumedJumpIdsRef.current.has(request.id)) return;
+    const line = Math.max(1, Math.round(request.line));
+    if (request.selection) editor.setSelection(request.selection);
+    if (request.align === "center") editor.revealLineInCenter(line);
     else editor.revealLine(line);
-    editor.setPosition({ lineNumber: line, column: 1 });
-    consumedJumpIdsRef.current.add(jumpRequest.id);
-    onJumpConsumed?.(jumpRequest.id);
+    if (!request.selection) editor.setPosition({ lineNumber: line, column: 1 });
+    consumedJumpIdsRef.current.add(request.id);
+    onJumpConsumed?.(request.id);
+  }
+  useEffect(() => {
+    if (editorRef.current) applyJump(editorRef.current, jumpRequest);
   }, [jumpRequest, onJumpConsumed]);
 
   const handleMount: OnMount = (editor, monaco) => {
@@ -128,6 +131,7 @@ export default function MonacoCodeViewer({
         handleFontSizeChange(fs);
       }
     });
+    applyJump(editor, jumpRequest);
   };
 
   return <div className="viewer code-viewer"><div className="viewer-header"><span>{path ?? "代码"}</span><strong>{language}</strong></div><Editor height="100%" language={language} value={content} theme={editorTheme} onMount={handleMount} options={{ readOnly: true, minimap: { enabled: false }, fontSize: codeFontSize, mouseWheelZoom: true, lineNumbers: "on", scrollBeyondLastLine: false, wordWrap: "on", automaticLayout: true, renderValidationDecorations: "off", quickSuggestions: false, suggestOnTriggerCharacters: false }} /></div>;

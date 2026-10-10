@@ -80,6 +80,8 @@ type Props = {
   hideHeader?: boolean;
   footer?: ReactNode;
   jumpLine?: number;
+  jumpToken?: string;
+  onJumpConsumed?: () => void;
   embedded?: boolean;
   immersiveReading?: boolean;
   onScrollRatioChange?: (ratio: number) => void;
@@ -376,6 +378,7 @@ export default function MarkdownViewer({
   hideHeader = false,
   footer,
   jumpLine,
+  jumpToken, onJumpConsumed,
   embedded = false,
   immersiveReading = false,
   initialScrollRatio,
@@ -384,6 +387,8 @@ export default function MarkdownViewer({
   const recordContent = useMemo(() => sourceType === "qa" || /^(qa|selection_answers)\//.test(sourcePath ?? "")
     ? splitRecordInformation(content) : { body: content, information: "" }, [content, sourceType, sourcePath]);
   const articleRef = useRef<HTMLElement | null>(null);
+  const jumpConsumedRef = useRef(onJumpConsumed);
+  jumpConsumedRef.current = onJumpConsumed;
   const followStreamRef = useRef(true);
   const paintedRequestRef = useRef<string | null>(null);
   const paintFramesRef = useRef<number[]>([]);
@@ -436,9 +441,9 @@ export default function MarkdownViewer({
     if (!target) return;
     target.scrollIntoView?.({ block: "center" });
     target.classList.add("teaching-jump-target");
-    const timer = window.setTimeout(() => target.classList.remove("teaching-jump-target"), 3500);
+    const timer = window.setTimeout(() => { target.classList.remove("teaching-jump-target"); jumpConsumedRef.current?.(); }, 3500);
     return () => { window.clearTimeout(timer); target.classList.remove("teaching-jump-target"); };
-  }, [jumpLine, content]);
+  }, [jumpLine, jumpToken, content]);
   const progressFillRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const restoredSourceRef = useRef<string | null>(null);

@@ -22,6 +22,7 @@ import type {
 
 import {
   useQAGenerationController,
+  QAStoppedError,
 } from "./useQAGenerationController";
 
 vi.mock(
@@ -100,6 +101,52 @@ const askMock =
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+it("stops the active request, retains its body and releases the operation", async () => {
+  let handlers!: NonNullable<Parameters<typeof askQuestionStream>[2]>;
+  let signal!: AbortSignal;
+  askMock.mockImplementationOnce((_project, _payload, callbacks, requestSignal) => {
+    handlers = callbacks!; signal = requestSignal!;
+    return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new DOMException("Stopped", "AbortError"))));
+  });
+  const onUpdate = vi.fn(), onStop = vi.fn(), onError = vi.fn(), onComplete = vi.fn();
+  const { result } = renderHook(() => useQAGenerationController(1, { onUpdate, onStop, onError, onComplete }));
+  let token!: symbol, request!: Promise<QARecord>;
+  act(() => { token = result.current.beginOperation()!; });
+  act(() => { request = result.current.runStreamingQuestion(PAYLOAD, "draft:stop", token); });
+  act(() => handlers.onDelta?.("已经显示的正文"));
+  await act(async () => {
+    result.current.stopGeneration("another-tab");
+    expect(signal.aborted).toBe(false);
+    result.current.stopGeneration("draft:stop");
+    await expect(request).rejects.toBeInstanceOf(QAStoppedError);
+  });
+  expect(onUpdate).toHaveBeenLastCalledWith("draft:stop", expect.objectContaining({ partial: "已经显示的正文" }), expect.any(Object));
+  expect(onStop).toHaveBeenCalledWith("draft:stop");
+  expect(onError).not.toHaveBeenCalled();
+  expect(onComplete).not.toHaveBeenCalled();
+  act(() => result.current.endOperation(token));
+  expect(result.current.busy).toBe(false);
+});
+
+it("does not abort a response after saving has started", async () => {
+  let handlers!: NonNullable<Parameters<typeof askQuestionStream>[2]>;
+  let signal!: AbortSignal, resolve!: (record: QARecord) => void;
+  askMock.mockImplementationOnce((_project, _payload, callbacks, requestSignal) => {
+    handlers = callbacks!; signal = requestSignal!;
+    return new Promise(done => { resolve = done; });
+  });
+  const { result } = renderHook(() => useQAGenerationController(1));
+  let token!: symbol, request!: Promise<QARecord>;
+  act(() => { token = result.current.beginOperation()!; });
+  act(() => { request = result.current.runStreamingQuestion(PAYLOAD, "draft:save", token); });
+  act(() => handlers.onStage?.("saving", "保存记录"));
+  expect(result.current.canStop).toBe(false);
+  act(() => result.current.stopGeneration());
+  expect(signal.aborted).toBe(false);
+  await act(async () => { resolve(RECORD); await request; });
+  act(() => result.current.endOperation(token));
 });
 
 describe(
@@ -319,7 +366,7 @@ it("publishes the first body before completion and retains partial text on failu
   act(() => { token = result.current.beginOperation()!; });
   let request!: Promise<QARecord>;
   act(() => { request = result.current.runStreamingQuestion(PAYLOAD, "draft:1", token); });
-  expect(askMock).toHaveBeenCalledWith(1, expect.objectContaining({ defer_metadata: true }), expect.any(Object));
+  expect(askMock).toHaveBeenCalledWith(1, expect.objectContaining({ defer_metadata: true }), expect.any(Object), expect.any(AbortSignal));
   act(() => handlers.onDelta?.("首段 **正文**"));
   expect(result.current.generations["draft:1"].partial).toBe("首段 **正文**");
   expect(onComplete).not.toHaveBeenCalled();

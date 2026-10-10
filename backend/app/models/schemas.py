@@ -336,6 +336,7 @@ class QAThreadSummaryResponse(BaseModel):
 
 
 class QARecordResponse(BaseModel):
+    selection_range: Optional[SelectionRange] = None
     id: int
     project_id: int
     session_id: Optional[int] = None

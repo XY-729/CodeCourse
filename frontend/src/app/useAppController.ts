@@ -115,7 +115,7 @@ import { useAppDialog } from "../hooks/useAppDialog";
 import { useDesktopImportDrop } from "../hooks/useDesktopImportDrop";
 import { useDesktopInteractionLight } from "../hooks/useDesktopInteractionLight";
 import { useQAAskController } from "../hooks/useQAAskController";
-import { useQAGenerationController } from "../hooks/useQAGenerationController";
+import { QAStoppedError, useQAGenerationController } from "../hooks/useQAGenerationController";
 import { useLearningStateController } from "../learning/useLearningStateController";
 import { markDesktopPerformance, measureDesktopInteraction } from "../performance/desktopPerformance";
 import type { QAStreamTiming } from "../performance/qaTiming";
@@ -164,6 +164,8 @@ import {
 import { useWorkbenchLayoutController } from "../workbench/useWorkbenchLayoutController";
 import { useWorkbenchPersistence } from "../workbench/useWorkbenchPersistence";
 import { useWorkbenchResizeController } from "../workbench/useWorkbenchResizeController";
+import { desktopFollowUpTarget } from "./qaConversation";
+import { locateQASource } from "./qaSourceLocation";
 import type { GenerationIntent } from "./shell/DesktopToolbar";
 import { type MobilePrimaryDestination, type MobileWorkspaceSheetHandle, type MobileWorkspaceTab } from "./shell/mobile/MobileWorkspaceChrome";
 
@@ -408,6 +410,8 @@ export default function useAppController() {
     startNewQADraft,
 
     runStreamingQuestion,
+    stopGeneration: stopQAAnswer,
+    canStop: canStopQAAnswer,
 
     operationPending:
     qaOperationPending,
@@ -429,7 +433,7 @@ export default function useAppController() {
   } =
     useQAGenerationController(
       project?.id ?? null,
-      mobileRuntime ? {} : { onStart: openQAPreview, onUpdate: updateQAPreview, onComplete: completeQAPreview, onError: failQAPreview },
+      mobileRuntime ? {} : { onStart: openQAPreview, onUpdate: updateQAPreview, onComplete: completeQAPreview, onError: failQAPreview, onStop: stopQAPreview },
     );
   const {
     revision: personalizationRevision,
@@ -709,7 +713,8 @@ export default function useAppController() {
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
   const isTaskRunning = generationTasks.some(isGenerationTaskRunning);
-  const activeQASessionId = qaFollowUpRecord?.session_id ?? (mobileRuntime ? null : qaSessionId);
+  const qaFollowUpTarget = mobileRuntime ? qaFollowUpRecord : desktopFollowUpTarget(project?.id ?? null, qaFollowUpRecord, selectedQA);
+  const activeQASessionId = qaFollowUpTarget?.session_id ?? (mobileRuntime || (selectedQA && selectedQA.project_id !== project?.id) ? null : qaSessionId);
   const activeQAKey = activeQASessionId ? `session:${activeQASessionId}` : `draft:${qaDraftId}`;
   const activeQAGeneration = qaGenerations[activeQAKey] ?? null;
 
@@ -745,7 +750,7 @@ export default function useAppController() {
     projectId: project?.id ?? null,
     settings: llmSettings,
     sessionId: activeQASessionId,
-    parentQAId: qaFollowUpRecord?.id ?? (mobileRuntime ? null : selectedQA?.id ?? null),
+    parentQAId: qaFollowUpTarget?.id ?? null,
     selectionRange: selectionAnchor?.range,
     generationKey: activeQAKey,
     interactionBusy: qaInteractionBusy,
@@ -1601,6 +1606,17 @@ export default function useAppController() {
   }
 
   function openQAPreview(key: string, payload: QAAskPayload, timing: QAStreamTiming) {
+    const retryId = qaPreviewIds.current.get(key);
+    if (retryId) {
+      setLayout(previous => updateLayoutItem(previous, retryId, item => ({
+        ...item, qaTiming: timing,
+        qaPreview: {
+          key, label: "重新生成中，收到新正文后替换原内容", status: "streaming", startedAt: timing.startedAt,
+          request: payload, keepPreviousBody: true
+        }
+      })));
+      return;
+    }
     const id = `qa-preview:${crypto.randomUUID()}`;
     qaPreviewIds.current.set(key, id);
     openItemInGroup(activeGroupId, {
@@ -1615,11 +1631,16 @@ export default function useAppController() {
     if (!id) return;
     setLayout(previous => updateLayoutItem(previous, id, item => {
       if (!item.qaPreview || (item.content === state.partial && item.qaPreview.label === state.label && item.qaTiming === timing)) return item;
-      return { ...item, content: state.partial, qaTiming: timing, qaPreview: { ...item.qaPreview, label: state.label } };
+      const keepPreviousBody = Boolean(item.qaPreview.keepPreviousBody && !state.partial.trim());
+      return {
+        ...item, content: keepPreviousBody ? item.content : state.partial, qaTiming: timing,
+        qaPreview: { ...item.qaPreview, label: keepPreviousBody ? `${state.label} · 收到新正文后原位替换` : state.label, keepPreviousBody }
+      };
     }));
   }
 
   function completeQAPreview(key: string, record: QARecord, timing: QAStreamTiming) {
+    setQAFollowUpRecord(null);
     const id = qaPreviewIds.current.get(key);
     if (!id) return;
     setLayout(previous => updateLayoutItem(previous, id, item => ({
@@ -1641,25 +1662,40 @@ export default function useAppController() {
     qaPreviewIds.current.delete(key);
   }
 
+  function stopQAPreview(key: string) {
+    const id = qaPreviewIds.current.get(key);
+    if (!id) return;
+    setLayout(previous => updateLayoutItem(previous, id, item => item.qaPreview ? {
+      ...item,
+      qaPreview: { ...item.qaPreview, status: "stopped", label: "已停止 · 内容未完成，可在此重试" }
+    } : item));
+    qaPreviewIds.current.delete(key);
+  }
+
   async function retryQAPreview(item: OpenItem) {
     const request = item.qaPreview?.request;
     if (!request || !project) return;
     const token = beginQAOperation();
     if (!token) return;
     const projectId = project.id;
+    const retryKey = `retry:${item.id}`;
+    qaPreviewIds.current.set(retryKey, item.id);
+    setQAPanelError("");
     try {
-      const record = await runStreamingQuestion(request, `retry:${item.id}`, token);
+      const record = await runStreamingQuestion(request, retryKey, token);
       setSelectedQA(record);
+      setQAFollowUpRecord(null);
       setQASessionId(record.session_id ?? null);
       setQAHistory(items => [record, ...items.filter(entry => entry.id !== record.id)]);
       setQAPanelError("");
-      clearQAQuestionInput();
+      if (qaQuestionInput.trim() === request.question.trim()) clearQAQuestionInput();
       void Promise.all([refreshCourses(projectId), refreshQAHistory(projectId), refreshQAContinuity(projectId), refreshKnowledgeLinks(projectId)])
         .catch(() => setToast("回答已保存，列表刷新稍后重试"));
       schedulePersonalizationRefresh();
     } catch (error) {
-      setQAPanelError(error instanceof Error ? error.message : "重试失败");
-    } finally { endQAOperation(token); }
+      if (error instanceof QAStoppedError) setToast(error.message);
+      else setQAPanelError(error instanceof Error ? error.message : "重试失败");
+    } finally { qaPreviewIds.current.delete(retryKey); endQAOperation(token); }
   }
 
   function buildAskPayloadContext(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text" | "context_files" | "include_context"> {
@@ -1676,6 +1712,10 @@ export default function useAppController() {
       };
     }
     const activeItem = getActiveOpenItem();
+    if (activeItem?.qaPreview?.request) {
+      const original = activeItem.qaPreview.request;
+      return { source_type: original.source_type, source_path: original.source_path, selected_text: "" };
+    }
     if (activeItem?.type === "file") {
       return {
         source_type: "file",
@@ -1948,7 +1988,7 @@ export default function useAppController() {
     });
   }
 
-  async function openFileInActiveGroup(projectId: number, path: string, explicitLine?: number) {
+  async function openFileInActiveGroup(projectId: number, path: string, explicitLine?: number, origin?: QARecord) {
     const sequence = ++openDocumentSequence.current;
     const groupId = activeGroupId;
     setOpeningDocument({ groupId, title: path.split("/").pop() ?? path });
@@ -1956,6 +1996,9 @@ export default function useAppController() {
       const content = await getProjectFile(projectId, path);
       if (currentProjectIdRef.current !== projectId || sequence !== openDocumentSequence.current) return false;
       const saved = findLearningState("file", path);
+      const sourceRange = origin ? locateQASource(content.content, origin) : null;
+      if (origin?.selected_text && !sourceRange) setToast("原文可能已变化，无法唯一定位原选区，已打开来源文件");
+      const jumpLine = sourceRange?.startLineNumber ?? explicitLine;
       const restoreLine = saved?.position_kind === "line" ? saved.position_value : 1;
       setFileContent(content);
       setSelectedCourse(null);
@@ -1967,10 +2010,11 @@ export default function useAppController() {
         content: content.content,
         language: content.language,
         restoreLine,
-        jumpRequest: explicitLine ? {
+        jumpRequest: jumpLine ? {
           id: nextId("code-jump"),
-          line: explicitLine,
+          line: jumpLine,
           align: "start",
+          selection: sourceRange ?? undefined,
         } : undefined,
       });
       dismissMobileWorkspaceAfterOpen();
@@ -1981,7 +2025,7 @@ export default function useAppController() {
     } finally { if (sequence === openDocumentSequence.current) setOpeningDocument(null); }
   }
 
-  async function openCourseInActiveGroup(projectId: number, filename: string) {
+  async function openCourseInActiveGroup(projectId: number, filename: string, origin?: QARecord) {
     const sequence = ++openDocumentSequence.current;
     const groupId = activeGroupId;
     setOpeningDocument({ groupId, title: courses.find(file => file.filename === filename)?.title ?? filename.split("/").pop() ?? filename });
@@ -1992,6 +2036,8 @@ export default function useAppController() {
       setSelectedCourse(filename);
       setFileContent(null);
       const matchingQA = qaHistory.find((record) => _normalizeOutputPath(record.output_path, record.id, projectId) === filename);
+      const sourceRange = origin ? locateQASource(content.content, origin) : null;
+      if (origin?.selected_text && !sourceRange) setToast("原文可能已变化，无法唯一定位原选区，已打开原文");
       openItemInGroup(groupId, {
         id: `course:${filename}`,
         type: "course",
@@ -1999,6 +2045,7 @@ export default function useAppController() {
         title: courses.find((file) => file.filename === filename)?.title ?? titleFromMarkdown(filename, content.content),
         content: content.content,
         qaRecordId: matchingQA?.id,
+        jumpRequest: sourceRange ? { id: nextId("source-jump"), line: sourceRange.startLineNumber, align: "start" } : undefined,
       });
       dismissMobileWorkspaceAfterOpen();
       return true;
@@ -2013,6 +2060,7 @@ export default function useAppController() {
       return;
     }
     setSelectedQA(record);
+    if (!mobileRuntime) { setQAFollowUpRecord(null); setQASessionId(record.session_id ?? null); }
     const relPath = _normalizeOutputPath(record.output_path, record.id, project.id);
     void refreshDocumentTerms("qa", relPath, project.id);
     try {
@@ -2968,6 +3016,7 @@ export default function useAppController() {
   }
 
   function handleNewConversation() {
+    if (isQABusyNow()) { setToast("请先停止当前回答或等待保存完成"); return; }
     setIncludeContext(false);
     setContextFiles([]);
     setSelectedQA(null);
@@ -2975,7 +3024,7 @@ export default function useAppController() {
     setQASessionId(null);
     setQASessionTree([]);
     setLearningAnchor(null);
-    clearQAQuestionInput();
+    if (mobileRuntime) clearQAQuestionInput();
     setQAUpperTab("history");
     setMobileAssistantView("ask");
     startNewQADraft();
@@ -2992,6 +3041,22 @@ export default function useAppController() {
     clearQAQuestionInput();
     setQAUpperTab("history");
     setMobileAssistantView("ask");
+  }
+
+  async function returnToQASource(recordOrId: QARecord | number) {
+    if (!project) return;
+    try {
+      const record = typeof recordOrId === "number"
+        ? qaHistory.find(item => item.id === recordOrId) ?? await getQARecord(project.id, recordOrId) : recordOrId;
+      if (record.project_id !== project.id || !record.source_path) { setToast("此回答没有当前项目中可打开的原文"); return; }
+      if (record.source_type === "file" || record.source_type === "call_guide") await openFileInActiveGroup(project.id, record.source_path, undefined, record);
+      else if (record.source_type === "course") await openCourseInActiveGroup(project.id, record.source_path, record);
+      else if (record.source_type === "qa") {
+        const numericId = Number(record.source_path);
+        const source = Number.isInteger(numericId) && numericId > 0 ? await getQARecord(project.id, numericId) : null;
+        await openCourseInActiveGroup(project.id, source ? _normalizeOutputPath(source.output_path, source.id, project.id) : record.source_path, record);
+      } else setToast("此回答没有可定位的源码或课件来源");
+    } catch (error) { setToast(error instanceof Error ? error.message : "原文不存在或暂时无法打开"); }
   }
 
   async function handleResumeContinuity(handoff: TeachingHandoff) {
@@ -3333,11 +3398,8 @@ export default function useAppController() {
 
       schedulePersonalizationRefresh();
     } catch (caught) {
-      setQAPanelError(
-        caught instanceof Error
-          ? caught.message
-          : "术语解释处理失败",
-      );
+      if (caught instanceof QAStoppedError) setToast(caught.message);
+      else setQAPanelError(caught instanceof Error ? caught.message : "术语解释处理失败");
     } finally {
       endQAOperation(
         operationToken,
@@ -3806,11 +3868,8 @@ export default function useAppController() {
         "history",
       );
     } catch (caught) {
-      setQAPanelError(
-        caught instanceof Error
-          ? caught.message
-          : "术语解释处理失败",
-      );
+      if (caught instanceof QAStoppedError) setToast(caught.message);
+      else setQAPanelError(caught instanceof Error ? caught.message : "术语解释处理失败");
     } finally {
       endQAOperation(
         operationToken,
@@ -4686,7 +4745,8 @@ export default function useAppController() {
       schedulePersonalizationRefresh();
       notifyTaskCompleted("CodeCourse 回答完成", record.display_title || "调用路径讲解已完成");
     } catch (caught) {
-      setQAPanelError(caught instanceof Error ? caught.message : "生成调用路径讲解失败");
+      if (caught instanceof QAStoppedError) setToast(caught.message);
+      else setQAPanelError(caught instanceof Error ? caught.message : "生成调用路径讲解失败");
     } finally {
       endQAOperation(operationToken);
     }
@@ -4762,6 +4822,10 @@ export default function useAppController() {
     layout,
     mobileCodeSearchRequestId,
     retryQAPreview,
+    canStopQAAnswer,
+    qaInteractionBusy,
+    stopQAAnswer,
+    returnToQASource,
     activeTermSource,
     highlights,
     knowledgeLinks,
@@ -4855,7 +4919,6 @@ export default function useAppController() {
     setContextFiles,
     qaQuestionInput,
     qaResetToken,
-    qaInteractionBusy,
     qaBusyLabel,
     visibleQAGeneration,
     qaHistory,
@@ -4863,7 +4926,8 @@ export default function useAppController() {
     qaContinuity,
     qaHistoryQuery,
     qaFavoriteOnly,
-    qaFollowUpRecord,
+    qaFollowUpTarget,
+    activeQASessionId,
     dynamicSurvey,
     diagnosticItem,
     diagnosticResult,
@@ -4878,6 +4942,7 @@ export default function useAppController() {
     setQAHistoryQuery,
     setQAFavoriteOnly,
     setSelectedQA,
+    setQAFollowUpRecord,
     setQASessionId,
     handleFollowUp,
     openQAInActiveGroup,
@@ -4897,6 +4962,7 @@ export default function useAppController() {
     setAssistantOpen,
     mobileAssistantView,
     setMobileAssistantView,
+    qaFollowUpRecord,
     mobileWorkspaceMotionRef,
     indexStatus,
     completedLessonCount,
