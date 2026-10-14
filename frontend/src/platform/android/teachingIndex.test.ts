@@ -1,5 +1,4 @@
 // @vitest-environment node
-// @ts-expect-error Runtime test uses Node 24 SQLite; application targets browser types.
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { TeachingIndex } from "./teachingIndex";

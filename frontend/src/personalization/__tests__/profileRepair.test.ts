@@ -1,5 +1,4 @@
 // @vitest-environment node
-// @ts-expect-error Bundled Node 24 supports SQLite; the frontend's older Node typings do not.
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import { repairLegacyProfile } from "../profileRepair";
