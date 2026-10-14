@@ -1,0 +1,239 @@
+{
+  "lesson_title": "现代标准库实用件：chrono 时间设施与 filesystem",
+  "position": "第 7 课，共 8 课。位于第 5、6 课线程与并发之后、第 8 课第三方库集成之前；主要依赖第 1 课（auto、constexpr、范围 for），为第 8 课的第三方库集成提供标准库对比基准。",
+  "objectives": [
+    "能说出 std::chrono 中 duration、time_point、clock 三者的关系，并用 steady_clock 写出测量一段代码耗时的代码",
+    "能正确使用时间单位别名、C++14 时间字面量与 duration_cast 完成单位换算，并说明整数截断带来的误差",
+    "能用 std::filesystem::path、exists/file_size 与目录迭代器完成一次目录树遍历并统计文件总数与总大小",
+    "能用错误码重载接口处理不可读条目和文件操作失败，而不是依赖异常",
+    "能指出 Windows/MSVC 上路径分隔符、宽字符路径与大小写敏感带来的行为差异"
+  ],
+  "sections": [
+    {
+      "title": "chrono 基本架构与时间单位",
+      "items": [
+        {
+          "name": "std::chrono::duration",
+          "kind": "concept",
+          "focus": "表示一段时长的类型，由数值类型与单位比例构成"
+        },
+        {
+          "name": "std::chrono::time_point",
+          "kind": "concept",
+          "focus": "某个时钟上的一点，由 clock 与 duration 共同定义"
+        },
+        {
+          "name": "std::chrono::clock",
+          "kind": "concept",
+          "focus": "时间来源，duration 与 time_point 如何经由 clock 关联起来"
+        },
+        {
+          "name": "时间单位别名 nanoseconds/microseconds/milliseconds/seconds/minutes/hours",
+          "kind": "concept",
+          "focus": "各别名的单位比例及相互换算前提"
+        },
+        {
+          "name": "C++14 时间字面量 1s、500ms",
+          "kind": "function",
+          "focus": "字面量后缀写法及其所属版本"
+        },
+        {
+          "name": "std::chrono::duration_cast",
+          "kind": "function",
+          "focus": "显式单位换算的写法与使用时机"
+        },
+        {
+          "name": "整数除法截断问题",
+          "kind": "concept",
+          "focus": "向小单位或整数单位换算时被截断的后果，以及计算耗时最稳妥的单位选择"
+        }
+      ]
+    },
+    {
+      "title": "时钟选择与时间点取值",
+      "items": [
+        {
+          "name": "std::chrono::system_clock",
+          "kind": "concept",
+          "focus": "对应墙上时间，可能与外部时间调整同步"
+        },
+        {
+          "name": "std::chrono::steady_clock",
+          "kind": "concept",
+          "focus": "单调不可回退，为什么测量代码耗时应使用它"
+        },
+        {
+          "name": "std::chrono::high_resolution_clock",
+          "kind": "concept",
+          "focus": "它与前两者可能是同一时钟，因此不能假定其保证"
+        },
+        {
+          "name": "time_since_epoch",
+          "kind": "function",
+          "focus": "取得自纪元以来的 duration 并据此计算时间点差值"
+        },
+        {
+          "name": "计时用 steady_clock、取墙上时间用 system_clock 的选用原则",
+          "kind": "concept",
+          "focus": "两类需求的判断依据"
+        },
+        {
+          "name": "Windows 上本地时间转换的注意点",
+          "kind": "concept",
+          "focus": "纪元起点与本地时区转换带来的差异"
+        }
+      ]
+    },
+    {
+      "title": "线程睡眠与超时配合",
+      "items": [
+        {
+          "name": "std::this_thread::sleep_for",
+          "kind": "function",
+          "focus": "按 duration 阻塞当前线程的写法"
+        },
+        {
+          "name": "std::this_thread::sleep_until",
+          "kind": "function",
+          "focus": "按 time_point 阻塞到指定时刻的写法"
+        },
+        {
+          "name": "sleep_for/sleep_until 与 future 的 wait_for 配合",
+          "kind": "concept",
+          "focus": "超时等待场景下两类接口的分工与衔接"
+        }
+      ]
+    },
+    {
+      "title": "filesystem 模块边界与 path",
+      "items": [
+        {
+          "name": "<filesystem> 的版本与平台边界",
+          "kind": "concept",
+          "focus": "它是 C++17 标准库组成部分，但不同编译器与平台实现存在行为差异"
+        },
+        {
+          "name": "std::filesystem::path",
+          "kind": "concept",
+          "focus": "路径的表示以及原生分隔符在不同平台上的差异"
+        },
+        {
+          "name": "path 的 operator/ 路径拼接",
+          "kind": "function",
+          "focus": "用 / 运算符拼接路径而非手工拼字符串"
+        },
+        {
+          "name": "path::filename",
+          "kind": "function",
+          "focus": "取路径最后一段文件名"
+        },
+        {
+          "name": "path::extension",
+          "kind": "function",
+          "focus": "取扩展名及其是否包含点号"
+        },
+        {
+          "name": "path::stem",
+          "kind": "function",
+          "focus": "取去掉扩展名后的名称，并与 filename、extension 区分"
+        }
+      ]
+    },
+    {
+      "title": "文件状态查询与错误码接口",
+      "items": [
+        {
+          "name": "std::filesystem::exists",
+          "kind": "function",
+          "focus": "判断路径是否存在"
+        },
+        {
+          "name": "std::filesystem::is_directory",
+          "kind": "function",
+          "focus": "判断路径是否为目录"
+        },
+        {
+          "name": "std::filesystem::file_size",
+          "kind": "function",
+          "focus": "取得文件大小及其对目录等非普通文件的行为"
+        },
+        {
+          "name": "错误码重载（std::error_code 参数）",
+          "kind": "concept",
+          "focus": "抛出异常版本与接收 error_code 版本在非异常场景下的取舍"
+        }
+      ]
+    },
+    {
+      "title": "目录遍历",
+      "items": [
+        {
+          "name": "std::filesystem::directory_iterator",
+          "kind": "function",
+          "focus": "单层遍历的写法与迭代范围内元素类型"
+        },
+        {
+          "name": "std::filesystem::recursive_directory_iterator",
+          "kind": "function",
+          "focus": "递归遍历整棵目录树，与单层迭代器的差异"
+        },
+        {
+          "name": "遍历过程中的跳过与修改控制",
+          "kind": "concept",
+          "focus": "跳过子目录、遍历中修改文件时的可用控制手段"
+        },
+        {
+          "name": "遍历中删除当前条目的行为",
+          "kind": "concept",
+          "focus": "recursive_directory_iterator 遍历时删除当前文件会发生什么"
+        }
+      ]
+    },
+    {
+      "title": "文件操作及其失败模式",
+      "items": [
+        {
+          "name": "std::filesystem::copy",
+          "kind": "function",
+          "focus": "复制文件或目录的基本语义与覆盖选项"
+        },
+        {
+          "name": "std::filesystem::rename",
+          "kind": "function",
+          "focus": "重命名/移动的语义"
+        },
+        {
+          "name": "std::filesystem::remove",
+          "kind": "function",
+          "focus": "删除文件或空目录的语义与返回值"
+        },
+        {
+          "name": "文件操作的失败模式",
+          "kind": "concept",
+          "focus": "目标已存在、权限不足等情况下如何通过 error_code 判断并处理"
+        }
+      ]
+    },
+    {
+      "title": "Windows/MSVC 平台注意点",
+      "items": [
+        {
+          "name": "宽字符路径处理",
+          "kind": "concept",
+          "focus": "Windows 上路径的宽字符表示及其与窄字符接口的转换关系"
+        },
+        {
+          "name": "权限表达的差异",
+          "kind": "concept",
+          "focus": "Windows 权限模型与 POSIX 权限位表达不一致带来的影响"
+        },
+        {
+          "name": "路径比较的大小写敏感性",
+          "kind": "concept",
+          "focus": "Windows 文件系统不区分大小写对路径比较与查找的后果"
+        }
+      ]
+    }
+  ],
+  "textbooks": []
+}

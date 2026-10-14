@@ -73,6 +73,32 @@ from app.services.storage import (
 
 LOGGER = logging.getLogger(__name__)
 
+CONCURRENT_LESSON_PROMPT_VERSION = "section-coordination-v1"
+
+
+def _lesson_section_coordination(sections: list[dict], current_number: int) -> str:
+    """Share the actual plan with each independent section writer."""
+    lines = ["本课章节分工（来自本次规划；各章正在并发编写，以下不是已生成正文）："]
+    for number, section in enumerate(sections, 1):
+        current = "（当前章，由你编写）" if number == current_number else ""
+        lines.append(f"第 {number} 章：{section['title']}{current}")
+        for item in section["items"]:
+            focus = item["focus"] or "完整讲清本项，并结合其他章节的分工确定边界"
+            lines.append(f"- {item['name']}（类型：{item['kind']}；讲解重点：{focus}）")
+    lines.extend([
+        "",
+        "章节协调要求（用于界定本章任务）：",
+        "- 先结合全部章节的知识项和讲解重点确定本章边界，只输出当前章正文。",
+        "- 其他章节负责详讲的定义、通用机制、基础接口和完整示例，本章只作必要的简短承接，注明对应章节，不重新完整展开。",
+        "- 同一概念在多个章节出现时，按各章重点递进：保留本章新增的推导、应用、边界条件和必要示例；不能仅因概念同名就省略本章内容。",
+        "- 本章各知识项之间也要承接：前面小节已讲清的基础可直接引用，后面小节集中讲新增内容，不从定义重新讲起。",
+        "- 本章负责首次讲解的内容仍须完整讲清；必要的前置解释可以保留，不能为避免重复而缩减推导、略去条件或只列结论。",
+        "- 这是一份计划，其他章节的具体正文尚不可知；不得虚构其代码、例子、结论或声称它们已经完成。",
+        "- 本次是核心正文章节写作，全课公共部分和集中练习、自测由统一整合阶段负责，不在每章重复生成。",
+        "",
+    ])
+    return "\n".join(lines)
+
 
 
 def project_course_dir(project_id: int) -> Path:
@@ -1258,6 +1284,7 @@ def _run_learning_plan_lesson_task(
         sp += "本课：" + str(lesson_number) + "“" + lesson_title + "”\n"
         sp += "章节标题：" + sec.get("title", "") + "\n"
         sp += "本章知识项：\n" + ls + "\n\n"
+        sp += _lesson_section_coordination(sections, idx) + "\n"
         sp += "输出要求：\n"
         sp += "- 正文（元数据之后）以 `## " + sec.get("title", "") + "` 开始，只输出本章 Markdown。\n"
         sp += "- 每个知识项必须以包含其完整名称的 `###` 小节单独展开。\n"
@@ -1268,8 +1295,7 @@ def _run_learning_plan_lesson_task(
         sp += "用户补充要求：" + user_instructions + "\n\n"
         sp += "学习材料：\n" + lesson_input + "\n"
         sp += term_metadata_instruction(project_id) + "\n本次只选本节最必要的 0-3 个术语。先输出 TERMS 行，然后开始章节正文。"
-        if idx == 1:
-            _debug_dump("L" + str(lesson_number) + "-section-1-prompt.txt", sp)
+        _debug_dump(f"task-{task_id}_L{lesson_number}-section-{idx}-prompt.txt", sp)
         c = call_openai_compatible_chat(
             settings["base_url"], settings["api_key"], settings["model"],
             [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
@@ -1492,6 +1518,7 @@ def _run_repository_lesson_task(
         sp += "本课：第 " + str(lesson_number) + " 课“" + lesson_title + "”\n"
         sp += "章节标题：" + sec.get("title", "") + "\n"
         sp += "本章知识项：\n" + ls + "\n\n"
+        sp += _lesson_section_coordination(sections, idx) + "\n"
         sp += "输出要求：\n"
         sp += "- 正文（元数据之后）以 `## " + sec.get("title", "") + "` 开始，只输出本章 Markdown。\n"
         sp += "- 每个知识项必须以包含其完整名称的 `###` 小节单独展开。\n"
@@ -1501,8 +1528,7 @@ def _run_repository_lesson_task(
         sp += "用户补充要求：" + user_instructions + "\n\n"
         sp += "课程材料：\n" + lesson_input + "\n"
         sp += term_metadata_instruction(project_id) + "\n本次只选本节最必要的 0-3 个术语。先输出 TERMS 行，然后开始章节正文。"
-        if idx == 1:
-            _debug_dump("L" + str(lesson_number) + "-repo-section-1-prompt.txt", sp)
+        _debug_dump(f"task-{task_id}_L{lesson_number}-repo-section-{idx}-prompt.txt", sp)
         c = call_openai_compatible_chat(
             settings["base_url"], settings["api_key"], settings["model"],
             [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
@@ -1776,7 +1802,7 @@ def create_or_reuse_outline_lesson_task(
     _, _, input_hash = build_outline_lesson_input(project_id, repo_root, lesson_number, title, instructions, outline_path)
     project = get_project(project_id)
     prompt_key = "prompt.learning_plan.lesson" if project is not None and project.project_type == "learning_plan" else "prompt.outline_lesson"
-    prompt_hash = hash_inputs(input_hash, load_prompt(prompt_key), load_prompt("prompt.system"))
+    prompt_hash = hash_inputs(input_hash, load_prompt(prompt_key), load_prompt("prompt.system"), CONCURRENT_LESSON_PROMPT_VERSION)
     mode = f"lesson-{lesson_number:02d}"
     cached = find_completed_task(project_id, "outline_lesson", prompt_hash, PROMPT_VERSION, source_path=outline_rel, mode=mode)
     if cached and cached.output_path and Path(cached.output_path).exists():
