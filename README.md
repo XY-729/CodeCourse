@@ -37,13 +37,13 @@ CodeCourse 是一个面向学习者的代码阅读与课程生成工具。它不
 
 ## 下载与安装
 
-打开 [v0.4.8 下载页面](https://github.com/XY-729/CodeCourse/releases/tag/v0.4.8)，在 **Assets** 中选择一个文件即可。本次仅发布 Windows 桌面版。
+打开 [v0.4.9 下载页面](https://github.com/XY-729/CodeCourse/releases/tag/v0.4.9)，在 **Assets** 中选择一个文件即可。本次仅发布 Windows 桌面版。
 
 | 文件 | 用途 |
 | --- | --- |
-| `CodeCourse-0.4.8-setup.exe` | Windows 安装版，按向导选择安装位置，适合日常使用 |
-| `CodeCourse-0.4.8-portable.exe` | Windows 便携版，直接启动，适合先体验 |
-| `CodeCourse-0.4.8-guide.md` | 可下载保存的本说明书 |
+| `CodeCourse-0.4.9-setup.exe` | Windows 安装版，按向导选择安装位置，适合日常使用 |
+| `CodeCourse-0.4.9-portable.exe` | Windows 便携版，直接启动，适合先体验 |
+| `CodeCourse-0.4.9-guide.md` | 可下载保存的本说明书 |
 | `SHA256SUMS.txt` | 安装版和便携版的 SHA-256 校验值 |
 
 `latest.yml` 和 `.blockmap` 是更新用的辅助文件，无需手动打开。GitHub 自动提供的 Source code 是源码，不是桌面安装包。桌面包已内置运行所需组件，无需另装 Node.js 或 Python。旧用户建议先在“更多 → 导出 CodeCourse 数据包”备份，再关闭应用并升级。
