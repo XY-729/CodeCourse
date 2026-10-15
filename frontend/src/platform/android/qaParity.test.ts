@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import type { QAAskPayload, QARecord, LLMSettings } from "../../api/client";
@@ -40,6 +41,7 @@ const payload: QAAskPayload = { source_type: "file", source_path: "main.ts", sel
 let provider: Pick<AndroidLocalProvider, "askQuestionStream"> & Internals;
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubGlobal("window", new EventTarget());
   harness.sql = new DatabaseSync(":memory:");
   harness.sql.exec(`CREATE TABLE qa_records(id INTEGER PRIMARY KEY,project_id,session_id,parent_qa_id,relation_type,source_type,source_path,display_title,selected_text,question,answer_md,provider,model,output_path,retrieval_trace,favorite,created_at,updated_at,selection_range_json);
     CREATE TABLE qa_postprocess_jobs(qa_record_id INTEGER PRIMARY KEY,project_id,payload_json,context_snapshot,metadata_json,applied_plan_json,status DEFAULT 'pending',evidence_done DEFAULT 0,planner_done DEFAULT 0,observer_done DEFAULT 0,last_error);
@@ -71,7 +73,7 @@ beforeEach(() => {
   harness.readRepo.mockResolvedValue("授权参考文件正文");
   harness.readGenerated.mockResolvedValue("当前文档正文");
 });
-afterEach(() => harness.sql.close());
+afterEach(() => { harness.sql.close(); vi.unstubAllGlobals(); });
 
 it("publishes body before save, preserves selection, provider and model, and defers every model analysis", async () => {
   let finish!: () => void;
@@ -124,6 +126,8 @@ it("lets new background model calls yield until the foreground answer saves", as
 });
 
 it("resumes persisted metadata without another model call after a partial failure", async () => {
+  const onEnriched = vi.fn();
+  window.addEventListener("codecourse:qa-enriched", onEnriched);
   harness.stream.mockImplementation(async (_options, onDelta) => { onDelta("正文"); return "正文"; });
   const record = await provider.askQuestionStream(1, payload, {});
   const metadata = 'TITLE: 标题\nTERMS: []\nHANDOFF: {"engagement":"utility","continuity":"preserve","topic":"主题","is_new_topic":true,"new_topic":"主题","existing_topic":"","used_prior_context":false}';
@@ -134,4 +138,5 @@ it("resumes persisted metadata without another model call after a partial failur
   expect(provider.teacherStrategyForQuestion).not.toHaveBeenCalled();
   expect(provider.runAndroidObserver).toHaveBeenCalledTimes(1);
   expect(harness.sql.prepare("SELECT status FROM qa_postprocess_jobs").get()).toMatchObject({ status: "completed" });
+  expect(onEnriched).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ detail: { projectId: 1, qaRecordId: record.id } }));
 });

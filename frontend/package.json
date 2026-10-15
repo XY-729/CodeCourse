@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "check:ui": "node scripts/check-ui-inventory.mjs",
+    "check:tests": "node scripts/check-test-environments.mjs",
     "dev": "vite",
     "build": "pnpm run check:ui && tsc -b && vite build --configLoader runner",
     "build:android": "pnpm run check:ui && tsc -b && vite build --mode android --configLoader runner",
     "preview": "vite preview",
-    "test": "vitest run --configLoader runner"
+    "test": "pnpm run check:tests && vitest run --configLoader runner"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.6.0",
