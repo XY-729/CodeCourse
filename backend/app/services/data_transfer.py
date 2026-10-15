@@ -410,6 +410,8 @@ def export_data_archive(
                 course_root = generated_root / str(project_id)
                 listed_courses = {item.filename: item for item in list_course_files_from_dir(course_root)}
                 for relative, payload, _language, _key_file in _iter_portable_text_files(course_root):
+                    if relative not in listed_courses or any(part.startswith(".") for part in PurePosixPath(relative).parts):
+                        continue
                     file_count += 1
                     uncompressed_bytes += len(payload)
                     if file_count > MAX_FILE_COUNT or uncompressed_bytes > MAX_EXTRACTED_BYTES:

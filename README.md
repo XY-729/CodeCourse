@@ -4,6 +4,8 @@
 
 [下载 Windows 版](https://github.com/XY-729/CodeCourse/releases/latest) · [使用说明书](#使用说明书) · [常见问题](#常见问题) · [查看源码](https://github.com/XY-729/CodeCourse)
 
+Android 已同步最近的实时问答、停止与重试、连续会话、返回原文、后台分析和章节分工功能，详见 [Android 同步核对](docs/android-parity-20261015.md)。
+
 前端开发与重绘请先阅读 [前端结构与重绘指南](frontend/UI_GUIDE.md)，并按 [界面清单](frontend/ui-surfaces.json) 核对主界面、移动抽屉、弹窗及独立窗口。
 
 CodeCourse 是一个面向学习者的代码阅读与课程生成工具。它不是 IDE，不运行、编译或调试导入的代码，而是帮助你理解一个项目：

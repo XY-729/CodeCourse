@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import shutil
 import zipfile
@@ -61,6 +62,15 @@ def import_local_archive(archive_path: str, display_name: str | None = None) -> 
 
     try:
         with zipfile.ZipFile(source) as archive:
+            if "manifest.json" in archive.namelist():
+                manifest = archive.getinfo("manifest.json")
+                if manifest.file_size <= 4 * 1024 * 1024:
+                    try:
+                        value = json.loads(archive.read(manifest))
+                    except (ValueError, UnicodeError):
+                        value = None
+                    if isinstance(value, dict) and value.get("format") == "codecourse-data-archive":
+                        raise HTTPException(status_code=400, detail="这是 CodeCourse 数据包，请使用“导入 CodeCourse 数据包”按原项目恢复，不能作为单个源码项目导入。")
             members = [member for member in archive.infolist() if not member.is_dir()]
             if len(members) > MAX_ARCHIVE_FILES:
                 raise HTTPException(status_code=413, detail="ZIP contains too many files")

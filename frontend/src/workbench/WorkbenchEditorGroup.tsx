@@ -176,7 +176,7 @@ function WorkbenchEditorGroupView(props: Props) {
     if (!activeItem) return null;
     return (
       <>
-        {!mobile && activeItem.qaRecordId && props.onReturnQASource ? <button type="button" className="secondary-button compact" title="打开提问来源，并定位原选区" onClick={() => props.onReturnQASource?.(activeItem.qaRecordId!)}>回到原文</button> : null}
+        {activeItem.qaRecordId && props.onReturnQASource ? <button type="button" className="secondary-button compact" title="打开提问来源，并定位原选区" onClick={() => props.onReturnQASource?.(activeItem.qaRecordId!)}>回到原文</button> : null}
         <DocumentTermScanControl status={props.termScanStatus} onRescan={props.onRescanTerms} compact={compact} />
         {!hasMarkdownActions && (!compact || lessonIndex < 0) && !props.isOutlineCourse(activeItem.path) ? (
           <AsyncActionButton key={`complete:${activeItem.id}`} className={`secondary-button compact complete-button ${learningState?.status === "completed" ? "completed" : ""}`}
@@ -205,7 +205,12 @@ function WorkbenchEditorGroupView(props: Props) {
     );
   };
 
-  const mobileActions = activeItem?.type === "course"
+  const mobileActions = activeItem?.qaPreview
+    ? <>
+        {activeItem.qaPreview.status === "streaming" && props.canStopQAPreview ? <button type="button" className="mobile-reader-action-button" onClick={() => props.onStopQAPreview?.(activeItem.qaPreview!.key)}>停止回答</button> : null}
+        {activeItem.qaPreview.status !== "streaming" && activeItem.qaPreview.request ? <button type="button" className="mobile-reader-action-button" disabled={props.qaBusy} onClick={() => props.onRetryQAPreview?.(activeItem)}>重试</button> : null}
+      </>
+    : activeItem?.type === "course"
     ? editingCourseItemId === activeItem.id
       ? (
           <>
@@ -352,6 +357,10 @@ function WorkbenchEditorGroupView(props: Props) {
             />
           </div>
         ) : (
+          <>
+          {mobile && activeItem.qaPreview ? <div className="viewer-header" role="region" aria-label="回答生成状态">
+            <span role="status">{activeItem.qaPreview.label}</span>
+          </div> : null}
           <MarkdownViewer
             key={activeItem.id}
             documentIdentity={activeItem.id}
@@ -394,6 +403,7 @@ function WorkbenchEditorGroupView(props: Props) {
             footer={!activeItem.qaPreview && projectId && !hasMarkdownActions ? <UnderstandingFeedback projectId={projectId} sourceType={activeItem.qaRecordId ? "qa" : "course"} sourcePath={activeItem.path} revision={activeItem.content} /> : undefined}
             headerActions={activeItem.qaPreview ? <><span role="status">{activeItem.qaPreview.label}</span>{activeItem.qaPreview.status === "streaming" && props.canStopQAPreview ? <button type="button" className="secondary-button compact" onClick={() => props.onStopQAPreview?.(activeItem.qaPreview!.key)}>停止回答</button> : null}{activeItem.qaPreview.status !== "streaming" && activeItem.qaPreview.request ? <button type="button" className="secondary-button compact" disabled={props.qaBusy} onClick={() => props.onRetryQAPreview?.(activeItem)}>重试</button> : null}</> : mobile ? undefined : markdownActions(false)}
           />
+          </>
         )
       ) : null}
 

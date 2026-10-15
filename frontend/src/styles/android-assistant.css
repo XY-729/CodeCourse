@@ -452,6 +452,7 @@ html.platform-android .teaching-continuity-card footer button.teaching-card-prim
 }
 
 html.platform-android .mobile-assistant-thread {
+  flex: 0 0 auto;
   overflow: hidden; border: 1px solid var(--mobile-line); border-radius: 16px; background: var(--mobile-surface);
 }
 

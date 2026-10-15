@@ -38,6 +38,7 @@ export function renderAssistantPanel(model: AppViewModel) {
     diagnosticResult,
     llmSettings,
     qaPanelError,
+    qaHistoryError,
     setQAUpperTab,
     handleQAQuestionChange,
     handleSelectionTextChange,
@@ -101,7 +102,7 @@ export function renderAssistantPanel(model: AppViewModel) {
       diagnosticItem={diagnosticItem}
       diagnosticResult={diagnosticResult}
       settings={llmSettings}
-      panelError={qaPanelError}
+      panelError={qaHistoryError || qaPanelError}
       upperTab={qaUpperTab}
       onUpperTabChange={setQAUpperTab}
       knowledgeDisabled={!project}

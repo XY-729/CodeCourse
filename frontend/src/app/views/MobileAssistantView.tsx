@@ -1,10 +1,12 @@
 import { lazy } from "react";
+import { requestConversationLabel } from "../qaConversation";
 import type { AppViewModel } from "./appViewModel";
 import { renderKnowledgeGraph } from "./KnowledgeView";
 const MobileAssistantPanel = lazy(() => import("../../features/assistant/mobile/MobileAssistantPanel"));
 
 export function renderMobileAssistantPanel(model: AppViewModel) {
   const {
+    includeContext, setIncludeContext, activeQASessionId, canStopQAAnswer, stopQAAnswer, returnToQASource, qaFollowUpTarget, setQAFollowUpRecord,
     mobileAssistantView,
     setMobileAssistantView,
     selection,
@@ -19,12 +21,14 @@ export function renderMobileAssistantPanel(model: AppViewModel) {
     qaBusyLabel,
     visibleQAGeneration,
     qaHistory,
+    qaHistoryLoading,
+    qaHistoryError,
+    refreshQAHistory,
     qaThreads,
     qaContinuity,
     qaHistoryQuery,
     qaFavoriteOnly,
     selectedQA,
-    qaFollowUpRecord,
     project,
     dynamicSurvey,
     diagnosticItem,
@@ -61,6 +65,13 @@ export function renderMobileAssistantPanel(model: AppViewModel) {
 
   return (
     <MobileAssistantPanel
+      includeContext={includeContext}
+      onIncludeContextChange={setIncludeContext}
+      conversationActive={Boolean(activeQASessionId)}
+      conversationLabel={qaInteractionBusy && visibleQAGeneration?.request ? requestConversationLabel(visibleQAGeneration.request, qaHistory) : undefined}
+      canStopAnswer={canStopQAAnswer}
+      onStopAnswer={() => stopQAAnswer()}
+      onReturnToSource={record => { void returnToQASource(record); }}
       view={mobileAssistantView}
       onViewChange={setMobileAssistantView}
       selection={selection}
@@ -74,12 +85,15 @@ export function renderMobileAssistantPanel(model: AppViewModel) {
       loadingLabel={qaBusyLabel}
       streamContent={visibleQAGeneration?.partial}
       history={qaHistory}
+      historyLoading={qaHistoryLoading}
+      historyError={qaHistoryError}
+      onRetryHistory={() => { void refreshQAHistory(); }}
       threads={qaThreads}
       continuity={qaContinuity}
       historyQuery={qaHistoryQuery}
       favoriteOnly={qaFavoriteOnly}
       selectedRecord={selectedQA}
-      followUpRecord={qaFollowUpRecord}
+      followUpRecord={qaFollowUpTarget}
       selectedRecordReadOnly={Boolean(selectedQA && project && selectedQA.project_id !== project.id)}
       surveyCandidate={dynamicSurvey}
       diagnosticItem={diagnosticItem}
@@ -95,7 +109,7 @@ export function renderMobileAssistantPanel(model: AppViewModel) {
       onNewConversation={handleNewConversation}
       onHistoryQueryChange={setQAHistoryQuery}
       onFavoriteOnlyChange={setQAFavoriteOnly}
-      onSelectRecord={(record) => { setSelectedQA(record); setQASessionId(record.session_id ?? null); }}
+      onSelectRecord={(record) => { setSelectedQA(record); setQAFollowUpRecord(null); setQASessionId(record.session_id ?? null); }}
       onFollowUp={handleFollowUp}
       onOpenRecord={(record) => { void openQAInActiveGroup(record); }}
       onDeleteRecord={handleDeleteQA}

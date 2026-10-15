@@ -148,6 +148,19 @@ class DataTransferTests(unittest.TestCase):
     def tearDown(self):
         self.tempdir.cleanup()
 
+    def test_export_excludes_generated_scratch_files_from_course_manifest(self):
+        from app.services.data_transfer import export_data_archive
+        course = self.source_generated / "7"
+        (course / ".tasks" / "task-1").mkdir(parents=True)
+        (course / ".tasks" / "task-1" / "section.part").write_text("scratch", encoding="utf-8")
+        (course / ".previews").mkdir()
+        (course / ".previews" / "task-1.json").write_text("{}", encoding="utf-8")
+        payload, _ = export_data_archive(db_path=self.source_db, generated_root=self.source_generated)
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+            self.assertEqual(sorted(file["filename"] for file in manifest["projects"][0]["course_files"]), ["lesson.md", "outline.md"])
+            self.assertFalse(any("/.tasks/" in path or "/.previews/" in path for path in archive.namelist()))
+
     def test_round_trip_preserves_relations_and_keeps_secrets_device_local(self):
         with zipfile.ZipFile(io.BytesIO(self.payload)) as archive:
             manifest = json.loads(archive.read("manifest.json"))

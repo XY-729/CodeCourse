@@ -28,6 +28,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(CodeCourseSecureStorePlugin.class);
         registerPlugin(CodeCourseNativePlugin.class);
+        registerPlugin(CodeCourseLLMPlugin.class);
         super.onCreate(savedInstanceState);
         applyFullscreen();
 

@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags:
+      - "v*"
       - "android-debug-*"
 
 permissions:
@@ -43,6 +44,13 @@ jobs:
       - name: Build web assets and sync Capacitor
         run: pnpm run mobile:sync
 
+      - name: Test frontend
+        run: pnpm --dir frontend test
+
+      - name: Verify Android unit tests and lint
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew testDebugUnitTest lintDebug
+
       - name: Check Android signing secrets
         id: signing
         if: startsWith(github.ref, 'refs/tags/v')
@@ -56,7 +64,8 @@ jobs:
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Android signing secrets are not configured; skipping the release APK."
+            echo "::error::Production Android signing secrets are required for a versioned release."
+            exit 1
           fi
 
       - name: Restore release keystore
@@ -95,11 +104,17 @@ jobs:
       - name: Scan APK for private data
         run: python scripts/scan_mobile_artifact.py dist-mobile/*.apk
 
+      - name: Generate Android checksums
+        working-directory: dist-mobile
+        run: sha256sum *.apk > SHA256SUMS-android.txt
+
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
           name: CodeCourse-android
-          path: dist-mobile/*.apk
+          path: |
+            dist-mobile/*.apk
+            dist-mobile/SHA256SUMS-android.txt
 
       - name: Publish Android APK asset to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -107,7 +122,9 @@ jobs:
         with:
           generate_release_notes: true
           fail_on_unmatched_files: true
-          files: dist-mobile/*.apk
+          files: |
+            dist-mobile/*.apk
+            dist-mobile/SHA256SUMS-android.txt
 
       - name: Publish debug APK prerelease
         if: startsWith(github.ref, 'refs/tags/android-debug-')
@@ -115,4 +132,6 @@ jobs:
         with:
           prerelease: true
           generate_release_notes: true
-          files: dist-mobile/*.apk
+          files: |
+            dist-mobile/*.apk
+            dist-mobile/SHA256SUMS-android.txt

@@ -1,7 +1,8 @@
+import MarkdownViewer from "../../reader/MarkdownViewer";
 import UnderstandingFeedback from "../../teaching/UnderstandingFeedback";
 import { normalizeOutputPath } from "../../../app/appUtils";
 import {
-  ArrowDown, ArrowUp, Bot, BrainCircuit, Edit3, ExternalLink, FileText,
+  CornerUpLeft, Square, ArrowDown, ArrowUp, Bot, BrainCircuit, Edit3, ExternalLink, FileText,
   History as HistoryIcon, Loader2, MessageCircle, Search, Send,
   Settings as SettingsIcon, Sparkles, Star, Trash2, X,
 } from "lucide-react";
@@ -15,6 +16,13 @@ import { groupQARecordsByThreads, TeachingClosureCard, TeachingResumeCard } from
 export type MobileAssistantView = "ask" | "history" | "knowledge";
 
 type Props = {
+  includeContext?: boolean;
+  onIncludeContextChange?: (value: boolean) => void;
+  conversationActive?: boolean;
+  conversationLabel?: string;
+  canStopAnswer?: boolean;
+  onStopAnswer?: () => void;
+  onReturnToSource?: (record: QARecord) => void;
   view: MobileAssistantView;
   onViewChange: (view: MobileAssistantView) => void;
   selection: SelectionSummary | null;
@@ -27,6 +35,9 @@ type Props = {
   loadingLabel?: string;
   streamContent?: string;
   history: QARecord[];
+  historyLoading?: boolean;
+  historyError?: string;
+  onRetryHistory?: () => void;
   threads?: QAThreadSummary[];
   continuity?: TeachingHandoff | null;
   historyQuery: string;
@@ -116,8 +127,9 @@ function buildSuggestions(selection: SelectionSummary | null, context: Assistant
 }
 
 export default function MobileAssistantPanel({
+  includeContext = false, onIncludeContextChange, conversationActive = false, conversationLabel, canStopAnswer = false, onStopAnswer, onReturnToSource,
   view, onViewChange, selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, loading, loadingLabel, streamContent,
-  history, threads = [], continuity = null, historyQuery, favoriteOnly, selectedRecord, followUpRecord, selectedRecordReadOnly = false,
+  history, historyLoading = false, historyError = "", onRetryHistory, threads = [], continuity = null, historyQuery, favoriteOnly, selectedRecord, followUpRecord, selectedRecordReadOnly = false,
   surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError,
   knowledgeContent, knowledgeDisabled = false,
   onQuestionChange, onSelectionTextChange, onClearSelection, onAsk, onNewConversation,
@@ -203,15 +215,16 @@ export default function MobileAssistantPanel({
             {loading ? (
               <section className="mobile-assistant-answer-card is-loading" aria-live="polite">
                 <header><Loader2 size={17} className="spin" aria-hidden="true" /><strong>{loadingLabel || "正在生成回答"}</strong></header>
-                {streamContent ? <p>{streamContent}</p> : <span>正在整理项目上下文，请稍候…</span>}
+                {streamContent ? <MarkdownViewer title={null} content={streamContent} streaming embedded hideHeader /> : <span>正在等待模型返回正文…</span>}
               </section>
             ) : selectedRecord ? (
               <section className="mobile-assistant-answer-card">
                 <header>
                   <div><small>{selectedRecordReadOnly ? "跨项目历史回答" : "当前回答"}</small><strong>{recordTitle(selectedRecord)}</strong></div>
-                  <button type="button" className="mobile-assistant-text-action" onClick={onNewConversation} disabled={loading}>新问题</button>
+                  <button type="button" className="mobile-assistant-text-action" onClick={onNewConversation} disabled={loading}>新对话</button>
                 </header>
                 <p>{summarizeMarkdown(selectedRecord.answer_md) || "回答内容为空"}</p>
+                {!selectedRecordReadOnly && selectedRecord.source_path && onReturnToSource ? <button type="button" className="mobile-assistant-text-action" onClick={() => onReturnToSource(selectedRecord)}><CornerUpLeft size={17} />回到原文</button> : null}
                 {!selectedRecordReadOnly ? (
                   <button type="button" className="mobile-assistant-open-answer" onClick={() => onOpenRecord(selectedRecord)}>
                     <ExternalLink size={17} aria-hidden="true" />打开完整回答
@@ -228,7 +241,7 @@ export default function MobileAssistantPanel({
                 <section className="mobile-assistant-welcome">
                   <div><Bot size={24} aria-hidden="true" /></div>
                   <strong>关于当前内容提问</strong>
-                  <p>我会结合当前项目、文档和你的选区回答。</p>
+                  <p>可以发送问题与选区，需要当前文档和项目检索时勾选附带上下文。</p>
                 </section>
               </>
             )}
@@ -242,20 +255,21 @@ export default function MobileAssistantPanel({
                 <div><Sparkles size={17} aria-hidden="true" /><strong>当前上下文</strong></div>
                 {selection ? <button type="button" className="mobile-assistant-text-action" onClick={onClearSelection} disabled={loading}>清除</button> : null}
               </header>
+              {onIncludeContextChange ? <label><input type="checkbox" checked={includeContext} disabled={loading} onChange={event => onIncludeContextChange(event.target.checked)} />附带上下文（当前文档及相关项目检索）</label> : null}
               {selection ? (
                 <>
                   <div className="mobile-assistant-context-meta"><span>{sourceLabel(selection.sourceType)}</span><span>{selection.selectedText.length} 字符</span></div>
                   <div className="mobile-assistant-context-path">{selection.sourcePath || "未命名来源"}</div>
                   <DeferredLiftTextarea value={selection.selectedText} onLift={onSelectionTextChange} liftDelayMs={250} disabled={loading} aria-label="附带给 AI 的上下文" />
                 </>
-              ) : contextSummary ? (
+              ) : contextSummary && includeContext ? (
                 <>
                   <div className="mobile-assistant-context-meta"><span>{contextSummary.label}</span></div>
                   <div className="mobile-assistant-context-path">{contextSummary.sourcePath || "项目上下文"}</div>
                   <p>{contextSummary.preview}</p>
                 </>
               ) : (
-                <p>将使用当前项目的结构和学习内容作为上下文。</p>
+                <p>默认仅发送问题、选区、简短对话历史和已有画像摘要；自选参考文件独立生效。</p>
               )}
               {contextFiles.length > 0 ? (
                 <div className="mobile-context-file-chips">
@@ -340,8 +354,8 @@ export default function MobileAssistantPanel({
 
           <div className="mobile-assistant-composer">
             <div className="mobile-assistant-composer-heading">
-              <span>{followUpRecord ? `正在追问：${recordTitle(followUpRecord)}` : "新问题"}</span>
-              {followUpRecord ? <button type="button" onClick={onNewConversation} disabled={loading}>取消追问</button> : null}
+              <span>{conversationLabel || (followUpRecord ? `正在追问：${recordTitle(followUpRecord)}` : conversationActive ? "当前对话" : "新对话")}</span>
+              <button type="button" onClick={onNewConversation} disabled={loading}>新对话</button>
             </div>
             {selectedRecordReadOnly ? <div className="mobile-assistant-readonly-note">这是其他项目中的历史回答，只能查看；你仍可发起新的独立问题。</div> : null}
             <DeferredLiftTextarea
@@ -361,6 +375,7 @@ export default function MobileAssistantPanel({
               ) : (
                 <button type="button" className="mobile-assistant-configure" onClick={onOpenSettings}><SettingsIcon size={17} aria-hidden="true" />配置模型</button>
               )}
+              {loading && canStopAnswer && onStopAnswer ? <button type="button" className="mobile-assistant-send" onClick={onStopAnswer}><Square size={18} />停止回答</button> : null}
               <button type="button" className="mobile-assistant-send" onClick={handleSend} disabled={!canAsk}>
                 {loading ? <Loader2 size={18} className="spin" aria-hidden="true" /> : <Send size={18} aria-hidden="true" />}
                 <span>{loading ? loadingLabel || "生成中" : followUpRecord ? "继续追问" : "询问"}</span>
@@ -376,9 +391,14 @@ export default function MobileAssistantPanel({
             <label><Search size={18} aria-hidden="true" /><DeferredLiftInput value={historyQuery} onLift={onHistoryQueryChange} liftDelayMs={250} placeholder="搜索历史回答" aria-label="搜索历史回答" /></label>
             <button type="button" className={favoriteOnly ? "active" : ""} aria-pressed={favoriteOnly} onClick={() => onFavoriteOnlyChange(!favoriteOnly)}><Star size={18} aria-hidden="true" />收藏</button>
           </div>
-          <div className="mobile-assistant-history-list">
+          <div className="mobile-assistant-history-list" aria-busy={historyLoading}>
+            {historyError || panelError ? <div className="mobile-assistant-error" role="alert">
+              {historyError || panelError}
+              {historyError && onRetryHistory ? <button type="button" className="mobile-assistant-text-action" onClick={onRetryHistory} disabled={historyLoading}>重试加载历史</button> : null}
+            </div> : null}
+            {historyLoading ? <div role="status">正在加载历史记录…</div> : null}
             {history.length ? threadGroups.map(({ summary, records }) => (
-              <details className={`mobile-assistant-thread ${summary.isCurrent ? "current" : ""}`} key={summary.sessionId} open={summary.isCurrent || records.some((record) => record.id === selectedRecord?.id)}>
+              <details className={`mobile-assistant-thread ${summary.isCurrent ? "current" : ""}`} key={summary.topic} open={Boolean(historyQuery.trim() || favoriteOnly) || summary.isCurrent || records.some((record) => record.id === selectedRecord?.id)}>
                 <summary>
                   <span><strong>{`主题 · ${summary.topic}`}</strong>{summary.progressSummary ? <small>{summary.progressSummary}</small> : null}</span>
                   <small>{summary.turnCount} 轮{summary.sourcePath ? ` · ${fileLabel(summary.sourcePath)}` : ""}{summary.updatedAt ? ` · ${formatRecordDate(summary.updatedAt)}` : ""}</small>
@@ -395,6 +415,7 @@ export default function MobileAssistantPanel({
                         </button>
                         <div className="mobile-assistant-history-actions">
                           <button type="button" onClick={() => onOpenRecord(record)} disabled={loading} aria-label={`打开 ${recordTitle(record)}`} title="打开完整回答"><ExternalLink size={17} aria-hidden="true" /></button>
+                          {record.source_path && onReturnToSource ? <button type="button" onClick={() => onReturnToSource(record)} disabled={loading} aria-label={`回到原文 ${recordTitle(record)}`} title="回到原文"><CornerUpLeft size={17} aria-hidden="true" /></button> : null}
                           <button type="button" onClick={() => followUpHistoryRecord(record)} disabled={loading} aria-label={`追问 ${recordTitle(record)}`} title="将此问答链作为追问材料"><MessageCircle size={17} aria-hidden="true" /></button>
                           <button type="button" className={record.favorite ? "active" : ""} onClick={() => onToggleFavorite(record)} disabled={loading} aria-label={record.favorite ? `取消收藏 ${recordTitle(record)}` : `收藏 ${recordTitle(record)}`} aria-pressed={record.favorite} title={record.favorite ? "取消收藏" : "收藏"}><Star size={17} aria-hidden="true" /></button>
                           <button type="button" onClick={() => onRenameRecord(record)} disabled={loading} aria-label={`重命名 ${recordTitle(record)}`} title="重命名"><Edit3 size={17} aria-hidden="true" /></button>
@@ -405,14 +426,14 @@ export default function MobileAssistantPanel({
                   })}
                 </div>
               </details>
-            )) : (
+            )) : !historyLoading && !historyError ? (
               <section className="mobile-assistant-empty-state">
                 <HistoryIcon size={28} aria-hidden="true" />
                 <strong>{historyQuery || favoriteOnly ? "没有符合条件的回答" : "还没有提问记录"}</strong>
                 <p>{historyQuery || favoriteOnly ? "修改搜索词或关闭收藏筛选。" : "提出第一个问题后，回答会出现在这里。"}</p>
                 <button type="button" onClick={() => onViewChange("ask")}>去提问</button>
               </section>
-            )}
+            ) : null}
           </div>
         </section>
       ) : null}

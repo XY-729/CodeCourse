@@ -32,7 +32,7 @@ export default function MobileMoreMenu(props: Props) {
         </button>
         <button type="button" role="menuitem" onClick={props.onImportArchive}>
           <FileArchive size={15} />
-          导入本地 ZIP
+          导入 ZIP（项目或数据包）
         </button>
       </div>
     </div>

@@ -4,6 +4,10 @@ export const MAX_DATA_ARCHIVE_BYTES = 160 * 1024 * 1024;
 export const MAX_DATA_EXTRACTED_BYTES = 300 * 1024 * 1024;
 export const MAX_DATA_ARCHIVE_FILES = 10_000;
 
+export function isCourseDocument(filename: string): boolean {
+  return /\.md$/i.test(filename) && !filename.split("/").some(part => part.startsWith("."));
+}
+
 export const PORTABLE_TABLES = [
   "projects",
   "qa_sessions",

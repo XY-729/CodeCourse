@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 
 vi.mock("@capacitor/core", () => ({
   Capacitor: {
@@ -164,4 +164,19 @@ describe("Android code reading progress bar", () => {
     const fill = container.querySelector(".mobile-code-progress-fill") as HTMLElement;
     expect(fill.style.opacity).toBe("0");
   });
+});
+
+it("keeps the original QA source range highlighted after consuming Android navigation", async () => {
+  const onJumpConsumed = vi.fn();
+  const jumpRequest = { id: "qa-source", line: 2, align: "start" as const,
+    selection: { startLineNumber: 2, startColumn: 1, endLineNumber: 2, endColumn: 13 } };
+  const { container, rerender } = render(<MobileCodeViewer path="/source.ts" language="typescript" content={sampleCode} jumpRequest={jumpRequest} onJumpConsumed={onJumpConsumed} />);
+  await waitFor(() => expect(onJumpConsumed).toHaveBeenCalledWith("qa-source"));
+  rerender(<MobileCodeViewer path="/source.ts" language="typescript" content={sampleCode} onJumpConsumed={onJumpConsumed} />);
+  expect(container.querySelector('[data-line="2"]')?.classList.contains("selection-anchor")).toBe(true);
+  expect(container.querySelector('[data-line="1"]')?.classList.contains("selection-anchor")).toBe(false);
+  selectLine0(container);
+  const before = window.getSelection()?.toString();
+  fireEvent.scroll(container.querySelector(".mobile-code-scroll")!);
+  expect(window.getSelection()?.toString()).toBe(before);
 });

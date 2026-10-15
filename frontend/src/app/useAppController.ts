@@ -60,6 +60,8 @@ import {
   updateQARecord
 } from "../api/client";
 import { saveDataArchive } from "../dataTransfer/saveArchive";
+import { inspectDataArchive, routeArchiveImport } from "../dataTransfer/detectArchive";
+import type { DataArchiveManifest } from "../dataTransfer/archive";
 import { TEACHING_CHANGED } from "../personalization/teachingApi";
 import { resolveRecentProjectDocument } from "../projects/resolveRecentProjectDocument";
 import { titleFromMarkdown } from "../utils/titleFromMarkdown";
@@ -115,6 +117,7 @@ import { useAppDialog } from "../hooks/useAppDialog";
 import { useDesktopImportDrop } from "../hooks/useDesktopImportDrop";
 import { useDesktopInteractionLight } from "../hooks/useDesktopInteractionLight";
 import { useQAAskController } from "../hooks/useQAAskController";
+import { useQAHistory } from "../hooks/useQAHistory";
 import { QAStoppedError, useQAGenerationController } from "../hooks/useQAGenerationController";
 import { useLearningStateController } from "../learning/useLearningStateController";
 import { markDesktopPerformance, measureDesktopInteraction } from "../performance/desktopPerformance";
@@ -359,11 +362,13 @@ export default function useAppController() {
    */
   const [qaResetToken, setQaResetToken] = useState(0);
   const [mobileAssistantView, setMobileAssistantView] = useState<MobileAssistantView>("ask");
-  const [qaHistory, setQAHistory] = useState<QARecord[]>([]);
   const [qaThreads, setQAThreads] = useState<QAThreadSummary[]>([]);
   const [qaContinuity, setQAContinuity] = useState<TeachingHandoff | null>(null);
   const [qaHistoryQuery, setQAHistoryQuery] = useState("");
   const [qaFavoriteOnly, setQAFavoriteOnly] = useState(false);
+  const { qaHistory, setQAHistory, qaHistoryLoading, qaHistoryError, refreshQAHistory } = useQAHistory({
+    projectId: project?.id ?? null, query: qaHistoryQuery, favoriteOnly: qaFavoriteOnly,
+  });
   const [qaUpperTab, setQAUpperTab] = useState<"history" | "knowledge">("history");
   const [selectedQA, setSelectedQA] = useState<QARecord | null>(null);
   const [qaFollowUpRecord, setQAFollowUpRecord] = useState<QARecord | null>(null);
@@ -433,7 +438,7 @@ export default function useAppController() {
   } =
     useQAGenerationController(
       project?.id ?? null,
-      mobileRuntime ? {} : { onStart: openQAPreview, onUpdate: updateQAPreview, onComplete: completeQAPreview, onError: failQAPreview, onStop: stopQAPreview },
+      { onStart: openQAPreview, onUpdate: updateQAPreview, onComplete: completeQAPreview, onError: failQAPreview, onStop: stopQAPreview },
     );
   const {
     revision: personalizationRevision,
@@ -580,6 +585,7 @@ export default function useAppController() {
   });
   const [themeMode, setThemeMode] = useState<ThemeMode>(getInitialTheme);
 
+  const archiveImportPendingRef = useRef(false);
   const archiveInputRef = useRef<HTMLInputElement | null>(null);
   const dataArchiveInputRef = useRef<HTMLInputElement | null>(null);
   const mobileWorkspaceTabRef = useRef<MobileWorkspaceTab | null>(null);
@@ -713,8 +719,8 @@ export default function useAppController() {
   const canGenerateFileLesson = Boolean(project && fileContent);
   const isLearningPlanProject = project?.project_type === "learning_plan";
   const isTaskRunning = generationTasks.some(isGenerationTaskRunning);
-  const qaFollowUpTarget = mobileRuntime ? qaFollowUpRecord : desktopFollowUpTarget(project?.id ?? null, qaFollowUpRecord, selectedQA);
-  const activeQASessionId = qaFollowUpTarget?.session_id ?? (mobileRuntime || (selectedQA && selectedQA.project_id !== project?.id) ? null : qaSessionId);
+  const qaFollowUpTarget = desktopFollowUpTarget(project?.id ?? null, qaFollowUpRecord, selectedQA);
+  const activeQASessionId = qaFollowUpTarget?.session_id ?? (selectedQA && selectedQA.project_id !== project?.id ? null : qaSessionId);
   const activeQAKey = activeQASessionId ? `session:${activeQASessionId}` : `draft:${qaDraftId}`;
   const activeQAGeneration = qaGenerations[activeQAKey] ?? null;
 
@@ -746,7 +752,7 @@ export default function useAppController() {
     rejectProjectMutationWhileBusy: rejectProjectMutationWhileQABusy,
     ask: handleAsk,
   } = useQAAskController({
-    confirmBeforeSend: mobileRuntime,
+    confirmBeforeSend: false,
     projectId: project?.id ?? null,
     settings: llmSettings,
     sessionId: activeQASessionId,
@@ -865,7 +871,7 @@ export default function useAppController() {
     if (!mobileRuntime) return;
     let disposed = false;
     let registeredProvider: Awaited<ReturnType<typeof getCodeCourseProvider>> | null = null;
-    getCodeCourseProvider().then((provider) => {
+    void getCodeCourseProvider().then((provider) => {
       if (disposed) return;
       registeredProvider = provider;
       if (provider.setPermissionNoticeHandler) {
@@ -878,7 +884,7 @@ export default function useAppController() {
           setPermissionNotice(notice.notice);
         });
       }
-    });
+    }).catch((caught) => { console.warn("Android permission handler initialization failed", caught); });
     return () => {
       disposed = true;
       registeredProvider?.setPermissionNoticeHandler?.(null);
@@ -1320,16 +1326,6 @@ export default function useAppController() {
   }, [appDialog, assistantOpen, generationOpen, isTaskRunning, isQAOperationActive, learnerProfileOpen, mobileRuntime, mobileWorkspaceTab, moreMenuOpen, navigationOpen, promptEditorDirty, promptEditorOpen, promptEditorSaving, qaInteractionBusy, settingsDialogBusy, settingsOpen]);
 
   useEffect(() => {
-    if (!project) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      refreshQAHistory(project.id);
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [project?.id, qaHistoryQuery, qaFavoriteOnly]);
-
-  useEffect(() => {
     if (!project || !selectedQA) {
       setQASessionTree([]);
       setLearningAnchor(null);
@@ -1443,19 +1439,6 @@ export default function useAppController() {
     const nextCourses = await getCourseFiles(projectId);
     setCourses(nextCourses);
     return nextCourses;
-  }
-
-  async function refreshQAHistory(projectId = project?.id) {
-    if (!projectId) {
-      return;
-    }
-    try {
-      const records = await listQARecords(projectId, qaHistoryQuery, qaFavoriteOnly ? true : undefined);
-      setQAHistory(records);
-      setQAPanelError("");
-    } catch (caught) {
-      setQAPanelError(caught instanceof Error ? caught.message : "加载历史失败");
-    }
   }
 
   async function refreshQAContinuity(projectId = project?.id) {
@@ -1615,6 +1598,7 @@ export default function useAppController() {
           request: payload, keepPreviousBody: true
         }
       })));
+      dismissMobileWorkspaceAfterOpen();
       return;
     }
     const id = `qa-preview:${crypto.randomUUID()}`;
@@ -1624,6 +1608,7 @@ export default function useAppController() {
       qaPreview: { key, label: "准备回答", status: "streaming", startedAt: timing.startedAt, request: payload },
       qaTiming: timing,
     });
+    dismissMobileWorkspaceAfterOpen();
   }
 
   function updateQAPreview(key: string, state: { label: string; partial: string }, timing: QAStreamTiming) {
@@ -1700,7 +1685,7 @@ export default function useAppController() {
 
   function buildAskPayloadContext(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text" | "context_files" | "include_context"> {
     const base = buildAskPayloadContextBase();
-    return { ...base, include_context: mobileRuntime ? undefined : includeContext, context_files: contextFiles.length > 0 ? [...contextFiles] : undefined };
+    return { ...base, include_context: includeContext, context_files: contextFiles.length > 0 ? [...contextFiles] : undefined };
   }
 
   function buildAskPayloadContextBase(): Pick<QAAskPayload, "source_type" | "source_path" | "selected_text"> {
@@ -2060,7 +2045,7 @@ export default function useAppController() {
       return;
     }
     setSelectedQA(record);
-    if (!mobileRuntime) { setQAFollowUpRecord(null); setQASessionId(record.session_id ?? null); }
+    setQAFollowUpRecord(null); setQASessionId(record.session_id ?? null);
     const relPath = _normalizeOutputPath(record.output_path, record.id, project.id);
     void refreshDocumentTerms("qa", relPath, project.id);
     try {
@@ -2228,7 +2213,6 @@ export default function useAppController() {
       bumpPersonalizationRevision();
       setIndexStatus(null);
       setLearningStates([]);
-      setQAHistory([]);
       setQAThreads([]);
       setQAContinuity(null);
       resetCallGuides();
@@ -2268,17 +2252,15 @@ export default function useAppController() {
       void Promise.all([
         getLLMSettings().catch(() => null),
         getProjectIndexStatus(freshProject.id).catch(() => null),
-        nextQARecordsPromise,
         getLearnerPreferences(freshProject.id).catch(() => null),
         mobileRuntime ? Promise.resolve([]) : listCallGuides(freshProject.id).catch(() => []),
-      ]).then(([settings, nextIndexStatus, nextQARecords, nextPreferences, nextCallGuides]) => {
+      ]).then(([settings, nextIndexStatus, nextPreferences, nextCallGuides]) => {
         if (currentProjectIdRef.current !== freshProject.id) return;
         setLLMSettings(settings);
         setTerminologyDensity(nextPreferences?.terminologyDensity ?? 0.5);
         bumpPersonalizationRevision();
         setIndexStatus(nextIndexStatus);
         setIndexBuilding(nextIndexStatus?.status === "building");
-        setQAHistory(nextQARecords);
         replaceCallGuides(nextCallGuides);
         void refreshHighlights(freshProject.id);
         void refreshKnowledgeLinks(freshProject.id);
@@ -2365,20 +2347,28 @@ export default function useAppController() {
   }
 
   async function handleImportArchive(file: File) {
-    if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) {
-      return;
-    }
-    setLoading(true);
+    if (loading || dataTransferBusy || archiveImportPendingRef.current) return;
+    if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) return;
+    archiveImportPendingRef.current = true;
     setError("");
-    setTaskMessage("正在导入本地项目");
+    setTaskMessage("正在识别 ZIP 文件");
     try {
-      const imported = await importProjectArchive(file);
-      await loadProjects();
-      await openProject(imported);
+      await routeArchiveImport(file, {
+        data: manifest => handleImportDataArchive(file, manifest),
+        project: async () => {
+          setLoading(true);
+          setTaskMessage("正在导入本地项目");
+          const imported = await importProjectArchive(file);
+          await loadProjects();
+          await openProject(imported);
+        },
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "导入失败");
     } finally {
+      archiveImportPendingRef.current = false;
       setLoading(false);
+      setTaskMessage("");
       if (archiveInputRef.current) archiveInputRef.current.value = "";
     }
   }
@@ -2431,7 +2421,7 @@ export default function useAppController() {
     }
   }
 
-  async function handleImportDataArchive(file: File) {
+  async function handleImportDataArchive(file: File, detectedManifest?: DataArchiveManifest) {
     try {
       if (dataTransferBusy) {
         setToast("数据迁移正在进行，请稍候");
@@ -2442,9 +2432,12 @@ export default function useAppController() {
         return;
       }
       if (rejectProjectMutationWhileQABusy() || rejectProjectMutationWhileGenerationBusy()) return;
+      const manifest = detectedManifest ?? await inspectDataArchive(file);
+      if (!manifest) throw new Error("这不是 CodeCourse 数据包。源码 ZIP 请从“导入本地 ZIP”打开。");
+      const projectNames = manifest.projects.slice(0, 6).map(item => item.name).join("、");
       const confirmed = await confirmAction(
-        "替换当前设备的 CodeCourse 数据",
-        "导入后，数据包中的项目、源码、课件、问答、知识网络和学习记录将替换当前设备的全部 CodeCourse 数据。当前设备的 API Key 不会导出或被覆盖，代码索引会在需要时重建。此操作无法撤销。",
+        "恢复 CodeCourse 数据包",
+        `识别到 ${manifest.project_count} 个独立项目：${projectNames}${manifest.project_count > 6 ? "等" : ""}。将按原项目分别恢复源码、Markdown 课件、问答、知识网络和学习记录，不会合并成一个项目。\n\n数据包将替换当前设备的全部 CodeCourse 数据，请先备份手机现有数据。当前设备的 API Key 不会被覆盖，代码索引会按需重建。此操作无法撤销。`,
         { confirmText: "替换并导入", danger: true },
       );
       if (!confirmed) return;
@@ -3014,6 +3007,25 @@ export default function useAppController() {
       anchorRect: nextSelection.anchorRect,
     });
   }
+
+  useEffect(() => {
+    if (!mobileRuntime || !project) return;
+    const enriched = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId: number; qaRecordId: number }>).detail;
+      if (detail.projectId !== project.id) return;
+      void Promise.all([refreshQAHistory(project.id), refreshQAContinuity(project.id), refreshKnowledgeLinks(project.id)])
+        .catch(() => undefined);
+      void getQARecord(project.id, detail.qaRecordId).then(record => {
+        if (currentProjectIdRef.current !== project.id) return;
+        setSelectedQA(current => current?.id === record.id ? record : current);
+        void refreshDocumentTerms("qa", _normalizeOutputPath(record.output_path, record.id, project.id), project.id);
+      }).catch(() => undefined);
+      setKnowledgeRefreshKey(value => value + 1);
+      schedulePersonalizationRefresh();
+    };
+    window.addEventListener("codecourse:qa-enriched", enriched);
+    return () => window.removeEventListener("codecourse:qa-enriched", enriched);
+  }, [mobileRuntime, project?.id]);
 
   function handleNewConversation() {
     if (isQABusyNow()) { setToast("请先停止当前回答或等待保存完成"); return; }
@@ -4113,6 +4125,7 @@ export default function useAppController() {
     try {
       const updated = await setQAFavorite(project.id, id, !favorite);
       applyFavorite(updated.favorite);
+      await refreshQAHistory(project.id);
     } catch (caught) {
       applyFavorite(favorite);
       if (currentProjectIdRef.current === project.id) setError(caught instanceof Error ? caught.message : "收藏未保存，已恢复原状态，请重试");
@@ -4922,6 +4935,8 @@ export default function useAppController() {
     qaBusyLabel,
     visibleQAGeneration,
     qaHistory,
+    qaHistoryLoading,
+    qaHistoryError,
     qaThreads,
     qaContinuity,
     qaHistoryQuery,

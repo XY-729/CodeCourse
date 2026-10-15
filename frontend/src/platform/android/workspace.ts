@@ -1,5 +1,6 @@
 import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import JSZip from "jszip";
+import { dataArchiveManifest } from "../../dataTransfer/detectArchive";
 import type { TreeNode } from "../../api/client";
 import { normalizeHighlightLanguage } from "../../utils/highlightLanguages";
 
@@ -166,6 +167,9 @@ function shouldIgnore(path: string): boolean {
 export async function readZipFiles(data: ArrayBuffer): Promise<ImportedTextFile[]> {
   if (data.byteLength > MAX_ARCHIVE_BYTES) throw new Error("ZIP 文件超过 40 MB，手机版暂不支持导入。");
   const zip = await JSZip.loadAsync(data, { checkCRC32: true, createFolders: false });
+  if (await dataArchiveManifest(zip)) {
+    throw new Error("这是 CodeCourse 数据包，需要按原项目恢复；请重新选择导入文件，或使用“我的 → 导入 CodeCourse 数据包”。");
+  }
   const rawPaths = Object.values(zip.files).filter((entry) => !entry.dir).map((entry) => normalizeEntryPath(entry.name));
   const prefix = commonRoot(rawPaths);
   const candidates = Object.values(zip.files).filter((entry) => !entry.dir);

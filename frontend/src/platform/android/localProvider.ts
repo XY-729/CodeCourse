@@ -1,3 +1,6 @@
+import { StreamingMetadataFilter } from "./streamingMetadata";
+import { streamAndroidLLM } from "./llmStream";
+import { CONCURRENT_LESSON_PROMPT_VERSION, coordinatedLessonInputHash, lessonSectionCoordination } from "../../generation/lessonCoordination";
 import { coverageItems, TEACHING_CONTRACT, teachingMetadata } from "../../personalization/teachingMetadata";
 import { TeachingIndex } from "./teachingIndex";
 import { CapacitorHttp, HttpResponse } from "@capacitor/core";
@@ -22,7 +25,7 @@ type LessonPlanItem = LessonPlanSection["items"][number];
 import type {
   CourseFile, GenerationTask, HighlightRecord, KnowledgeEdge, KnowledgeGraph, KnowledgeLink, KnowledgeNode,
   LearningAnchor, LearningState, LearningStateUpdate, LLMSettings, OutlinePreflight, OutlineQuestion, OutlineSurveyAnswer, Project, ProjectIndexStatus, ProjectSearchResult,
-  QAAskPayload, QARecord, TreeNode,
+  QAAskPayload, QARecord, QAStreamHandlers, TreeNode,
   QAThreadSummary, TeachingHandoff,
   PersonalizationConcept, PersonalizationMastery, PersonalizationEvent,
   LearnerPreferences, PersonalizationProfile, LearnerInference,
@@ -32,6 +35,7 @@ import {
   buildLearnerContext,
   inferPreferenceSignals,
   shouldOfferStyleSurvey,
+  renderPreferenceDirectives,
 } from "../../personalization/preferenceEngine";
 import { composeSystemPrompt } from "../../personalization/promptContracts";
 import {
@@ -333,7 +337,9 @@ function taskFromRow(row: Row): GenerationTask {
   return { ...row, id: Number(row.id), project_id: Number(row.project_id), progress_current: Number(row.progress_current || 0), progress_total: Number(row.progress_total || 1) } as GenerationTask;
 }
 function qaFromRow(row: Row): QARecord {
-  return { ...row, id: Number(row.id), project_id: Number(row.project_id), favorite: bool(row.favorite), selected_text: String(row.selected_text || "") } as QARecord;
+  let selection_range: QARecord["selection_range"] = null;
+  try { selection_range = JSON.parse(String(row.selection_range_json || "null")); } catch { /* legacy */ }
+  return { ...row, selection_range, id: Number(row.id), project_id: Number(row.project_id), favorite: bool(row.favorite), selected_text: String(row.selected_text || "") } as QARecord;
 }
 function handoffFromRow(row: Row, sourceAvailable: boolean): TeachingHandoff {
   const parseList = (value: unknown): unknown[] => {
@@ -406,6 +412,12 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     evidence: (project, data) => this.appendLearningEvidenceV2(project, data, true),
   });
   // ---- task lifecycle ----
+  private foregroundAnswers = 0;
+  private answerWaiters: Array<() => void> = [];
+  private postprocessing: Promise<void> | null = null;
+  private async waitForAnswers(): Promise<void> {
+    while (this.foregroundAnswers) await new Promise<void>(resolve => this.answerWaiters.push(resolve));
+  }
   private runningTasks = new Set<number>();
   private runningIndexes = new Set<number>();
   private promptStates: Record<string, Record<string, unknown>> = {};
@@ -505,6 +517,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   async startRecovery(): Promise<void> {
     if (this.recoveryPromise) return this.recoveryPromise;
     this.recoveryPromise = (async () => {
+      void this.resumeAnswerJobs();
       await this.resumeTasks();
       void this.resumeIndexes();
       void this.resumeObserverJobs().catch((error) => {
@@ -805,6 +818,10 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     }
     if ((match = path.match(/^\/projects\/(\d+)\/lessons\/outline$/))) return this.queueTask(Number(match[1]), "outline_lesson", body) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/tasks$/))) return this.listTasks(Number(match[1])) as Promise<T>;
+    if ((match = path.match(/^\/projects\/(\d+)\/tasks\/(\d+)\/prompts$/)) && method === "GET") {
+      await this.getTask(Number(match[1]), Number(match[2]));
+      return await db.query<Row>("SELECT section_number,prompt_version,messages_json,updated_at FROM generation_prompt_snapshots WHERE project_id=? AND task_id=? ORDER BY section_number", [Number(match[1]), Number(match[2])]) as T;
+    }
     if ((match = path.match(/^\/projects\/(\d+)\/tasks\/(\d+)$/))) return this.getTask(Number(match[1]), Number(match[2])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/tasks\/(\d+)\/retry$/)) && method === "POST") return this.retryTask(Number(match[1]), Number(match[2])) as Promise<T>;
     if ((match = path.match(/^\/projects\/(\d+)\/index\/build$/))) return this.buildIndex(Number(match[1])) as Promise<T>;
@@ -1113,6 +1130,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     let lastError: Error | null = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
+        await this.waitForAnswers();
         const response: HttpResponse = await CapacitorHttp.request({
           method: "POST",
           url,
@@ -1337,7 +1355,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     } else if (taskType === "outline_lesson") {
       const outlinePath = String(payload.outline_path || "outline.md");
       sourceFingerprint = hashText(await readGeneratedFile(projectId, outlinePath));
-      promptFingerprint = prompts[project.project_type === "learning_plan" ? "prompt.learning_plan.lesson" : "prompt.outline_lesson"] || "";
+      promptFingerprint = `${prompts[project.project_type === "learning_plan" ? "prompt.learning_plan.lesson" : "prompt.outline_lesson"] || ""}\n${CONCURRENT_LESSON_PROMPT_VERSION}`;
     } else if (taskType === "sub_outline") {
       const paths = Array.isArray(payload.paths) ? payload.paths.map(String) : [];
       const contents = await Promise.all(paths.map((path) => readRepoFile(projectId, path).catch(() => "")));
@@ -1853,6 +1871,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     await this.reportProgress(taskId, "正在规划课件", 0, 12, true);
 
     // Parse or recover plan from checkpoint
+    inputHash = coordinatedLessonInputHash(inputHash);
     const rawCp = payload._checkpoint;
     const dlCp = parseDetailedLessonCheckpoint(rawCp, inputHash);
 
@@ -1905,11 +1924,15 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
     const genSection = async (sectionIndex: number, sec: LessonPlanSection): Promise<string> => {
       const itemLines = sec.items.map((item) => `- ${item.name}（类型：${item.kind}；重点：${item.focus || "完整讲清"}）`).join("\n");
-      const sectionPrompt = `你正在编写一节课中的一个核心正文章节，而不是完整课件。\n\n本课：第 ${payload.lesson_number} 课"${payload.title}"\n章节标题：${sec.title}\n本章知识项：\n${itemLines}\n\n输出要求：\n- 直接以 \`## ${sec.title}\` 开始，只输出本章 Markdown。\n- 每个知识项必须以包含其完整名称的 \`###\` 小节单独展开。\n- 围绕知识项解释直觉、机制和必要示例；深度以讲清为准，不设置固定段落或示例数量。\n- 不要输出本课定位、目标、知识地图、前置知识总表、综合案例、全课练习、自测、常见误区、总结或教材参照；这些由统一整合阶段生成。\n- 不要重复其他章节应负责的知识；无法由材料确认的内容明确标注证据不足。\n\n用户补充要求：${payload.instructions || "无"}\n\n课程材料：\n${base}`;
-      const markdown = (await this.callLLM([
+      const sectionPrompt = `你正在编写一节课中的一个核心正文章节，而不是完整课件。\n\n本课：第 ${payload.lesson_number} 课"${payload.title}"\n章节标题：${sec.title}\n本章知识项：\n${itemLines}\n\n${lessonSectionCoordination(plan.sections, sectionIndex + 1)}\n输出要求：\n- 直接以 \`## ${sec.title}\` 开始，只输出本章 Markdown。\n- 每个知识项必须以包含其完整名称的 \`###\` 小节单独展开。\n- 围绕知识项解释直觉、机制和必要示例；深度以讲清为准，不设置固定段落或示例数量。\n- 不要输出本课定位、目标、知识地图、前置知识总表、综合案例、全课练习、自测、常见误区、总结或教材参照；这些由统一整合阶段生成。\n- 不要重复其他章节应负责的知识；无法由材料确认的内容明确标注证据不足。\n\n用户补充要求：${payload.instructions || "无"}\n\n课程材料：\n${base}`;
+      const messages = [
         { role: "system", content: `${composeSystemPrompt(editableSystemPrompt, "markdown")}\n\n${termMetadataInstruction(3)}` },
         { role: "user", content: `${sectionPrompt}\n\n${termContext}\n\n先输出 TERMS 行，再以章节标题开始正文。` },
-      ])).trim();
+      ];
+      await db.run(`INSERT INTO generation_prompt_snapshots(project_id,task_id,section_number,prompt_version,messages_json,updated_at)
+        VALUES(?,?,?,?,?,?) ON CONFLICT(task_id,section_number) DO UPDATE SET prompt_version=excluded.prompt_version,messages_json=excluded.messages_json,updated_at=excluded.updated_at`,
+        [projectId, taskId, sectionIndex + 1, CONCURRENT_LESSON_PROMPT_VERSION, JSON.stringify(messages), now()]);
+      const markdown = (await this.callLLM(messages)).trim();
       return markdown;
     };
 
@@ -2194,6 +2217,14 @@ export class AndroidLocalProvider implements CodeCourseProvider {
 
   // ---- QA ----
   private async sourceContext(projectId: number, payload: QAAskPayload): Promise<string> {
+    const references: string[] = [];
+    for (const path of [...new Set(payload.context_files || [])]) {
+      references.push(`### 参考文件：${path}\n${await readRepoFile(projectId, path)}`);
+    }
+    const explicit = references.join("\n\n");
+    if (payload.include_context !== true) {
+      return [`用户附带上下文：\n${payload.selected_text || "无选区内容"}`, explicit].filter(Boolean).join("\n\n");
+    }
     const selected = String(payload.selected_text || "").trim();
     let source = "";
     if (payload.source_path) {
@@ -2226,7 +2257,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       ? await db.query<Row>(`SELECT term_text,summary FROM learning_anchors WHERE project_id=? AND (${anchorTerms.map(() => "summary LIKE ? OR term_text LIKE ?").join(" OR ")}) ORDER BY updated_at DESC LIMIT 4`, [projectId, ...anchorTerms.flatMap((term) => [`%${term}%`, `%${term}%`])])
       : [];
     const anchors = anchorRows.map((row) => `- ${row.term_text || "个人总结"}：${row.summary}`).join("\n");
-    return `来源：${payload.source_type} ${payload.source_path || "项目"}\n\n${selected ? `用户附带上下文：\n${selected}` : `当前文档摘要：\n${compactText(source, 8000)}`}\n\n${anchoredContext}\n\n相关项目证据：\n${evidence || "暂无索引命中"}\n\n学习者已确认的理解：\n${anchors || "暂无"}`;
+    return `${explicit}\n\n来源：${payload.source_type} ${payload.source_path || "项目"}\n\n${selected ? `用户附带上下文：\n${selected}` : `当前文档摘要：\n${compactText(source, 8000)}`}\n\n${anchoredContext}\n\n相关项目证据：\n${evidence || "暂无索引命中"}\n\n学习者已确认的理解：\n${anchors || "暂无"}`;
   }
   private parseAnswer(raw: string, payload: QAAskPayload, existingTopics: string[] = []): { title: string; answer: string; terms: StructuredTermCandidate[]; handoff: ParsedHandoffMetadata | null } {
     const titleLine = raw.match(/^TITLE:\s*(.+)$/mi)?.[1]?.trim();
@@ -2269,7 +2300,11 @@ export class AndroidLocalProvider implements CodeCourseProvider {
     if (!handoff) return;
     const stamp = now();
     await db.transaction(async () => {
-      if (handoff.engagement === "learning") await db.runInTx("UPDATE teaching_handoffs SET is_current=0,updated_at=? WHERE project_id=? AND is_current=1", [stamp, projectId]);
+      const existing = await db.queryInTx<Row>("SELECT id FROM teaching_handoffs WHERE project_id=? AND qa_record_id=?", [projectId, qaId]);
+      if (existing.length) return;
+      const newer = await db.queryInTx<Row>("SELECT id FROM teaching_handoffs WHERE project_id=? AND engagement='learning' AND qa_record_id>? LIMIT 1", [projectId, qaId]);
+      const isCurrent = handoff.engagement === "learning" && !newer.length;
+      if (isCurrent) await db.runInTx("UPDATE teaching_handoffs SET is_current=0,updated_at=? WHERE project_id=? AND is_current=1", [stamp, projectId]);
       await db.runInTx(
         `INSERT OR IGNORE INTO teaching_handoffs(
            project_id,session_id,qa_record_id,engagement,topic,progress_summary,
@@ -2278,9 +2313,8 @@ export class AndroidLocalProvider implements CodeCourseProvider {
          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)`,
         [projectId, sessionId, qaId, handoff.engagement, handoff.topic, handoff.progressSummary,
           JSON.stringify(handoff.establishedPoints), JSON.stringify(handoff.unresolvedPoints), JSON.stringify(handoff.nextActions),
-          payload.source_type, payload.source_path || null, handoff.usedPriorContext ? 1 : 0, handoff.engagement === "learning" ? 1 : 0, stamp, stamp],
+          payload.source_type, payload.source_path || null, handoff.usedPriorContext ? 1 : 0, isCurrent ? 1 : 0, stamp, stamp],
       );
-      if (handoff.engagement === "learning") await db.runInTx("UPDATE teaching_handoffs SET is_current=1,dismissed_at=NULL,updated_at=? WHERE project_id=? AND qa_record_id=?", [stamp, projectId, qaId]);
     });
   }
   private async dismissCurrentHandoff(projectId: number): Promise<{ dismissed: boolean; handoffId: number | null }> {
@@ -2511,45 +2545,157 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   }
 
   private async ask(projectId: number, payload: QAAskPayload): Promise<QARecord> {
-    const prompts = await this.getPrompts(); const settings = await this.getLLMSettings();
-    const previous = payload.session_id ? await this.sessionTree(projectId, payload.session_id) : [];
-    const memory = previous.slice(-6).map((item) => `用户：${item.question}\n助手：${compactText(item.answer_md, 1200)}`).join("\n\n");
-    const context = await this.sourceContext(projectId, payload);
-    const project = await this.getProject(projectId);
-    const sessionContext = `项目：${project.name}\n项目类型：${project.project_type}\n当前负责解释：${payload.source_path || "项目整体"}\n\n最近对话：\n${memory || "这是本会话的第一个问题。"}`;
-    const questionPrompt = renderPrompt(prompts["prompt.qa.answer"] || "回答用户关于项目的问题。", {
-      source_type: payload.source_type,
-      source_path: payload.source_path || "项目",
-      question: payload.question,
-      session_context: sessionContext,
-      context_text: context,
+    return this.askQuestionStream(projectId, payload, {});
+  }
+
+  async askQuestionStream(projectId: number, payload: QAAskPayload, handlers: QAStreamHandlers, signal?: AbortSignal): Promise<QARecord> {
+    this.foregroundAnswers++;
+    try {
+      signal?.throwIfAborted();
+      handlers.onStage?.("retrieving", "准备回答");
+      const prompts = await this.getPrompts();
+      const settings = { ...(await this.getLLMSettings()), provider: payload.provider, base_url: payload.base_url, model: payload.model };
+      const apiKey = (await CodeCourseSecureStore.get({ key: "llm_api_key" })).value;
+      if (!settings.enabled || !apiKey) throw new Error("请先在模型 API 中配置并启用模型。");
+      if (new URL(settings.base_url).protocol !== "https:") throw new Error("手机版只允许使用 HTTPS 模型 API");
+      if (payload.parent_qa_id) {
+        const parent = await this.getQA(projectId, payload.parent_qa_id);
+        if (payload.session_id && parent.session_id !== payload.session_id) throw new Error("追问与当前会话不匹配");
+        payload = { ...payload, session_id: parent.session_id || parent.id };
+      }
+      const previous = payload.session_id ? await this.sessionTree(projectId, payload.session_id) : [];
+      if (payload.session_id && !previous.length) throw new Error("当前项目中不存在此会话");
+      const memory = previous.slice(-6).map(item => `用户：${item.question}\n助手：${compactText(item.answer_md, 1200)}`).join("\n\n");
+      const context = await this.sourceContext(projectId, payload);
+      const project = await this.getProject(projectId);
+      const summaries = await db.query<Row>("SELECT summary FROM learner_inferences WHERE status='active' AND ((scope_type='project' AND scope_id=?) OR (scope_type='global' AND scope_id='local-user')) ORDER BY updated_at DESC LIMIT 4", [String(projectId)]);
+      const learnerContext = `${renderPreferenceDirectives(await this.getLearnerPreferences(projectId))}\n${summaries.map(row => String(row.summary).slice(0, 600)).join("\n")}\n历史推断仅供调整讲解，不证明已经掌握；本次明确要求优先。`;
+      const planJson = payload.session_id ? await this.setting(`qa-teacher-plan:${projectId}:${payload.session_id}`) : null;
+      let appliedPlan: EffectiveTeachingPlan | null = null;
+      try { const saved = planJson ? JSON.parse(planJson) : null; if (typeof saved?.rendered === "string") appliedPlan = saved; } catch { /* ignore stale cached plans */ }
+      const template = prompts["prompt.qa.answer"] || "回答用户关于项目的问题。";
+      const defaultTemplate = promptDefaults["prompt.qa.answer"];
+      const metadataAt = defaultTemplate.indexOf("## 元数据");
+      const bodyTemplate = metadataAt >= 0 ? template.replace(defaultTemplate.slice(metadataAt), "").trim() : template;
+      const questionPrompt = renderPrompt(bodyTemplate, {
+        source_type: payload.source_type, source_path: payload.source_path || "项目", question: payload.question,
+        session_context: `项目：${project.name}\n项目类型：${project.project_type}\n最近对话：\n${memory || "这是本会话的第一个问题。"}`,
+        context_text: context,
+      });
+      signal?.throwIfAborted();
+      handlers.onStage?.("waiting_model", "等待模型");
+      const filter = new StreamingMetadataFilter();
+      let visible = "";
+      await streamAndroidLLM({
+        url: `${settings.base_url.replace(/\/$/, "")}/chat/completions`, apiKey,
+        body: JSON.stringify({ model: settings.model, temperature: 0.25, max_tokens: 65536, stream: true, messages: [
+          { role: "system", content: `${composeSystemPrompt(prompts["prompt.system"] || "你是项目学习助手。", "markdown")}\n直接输出回答正文。不要输出 TITLE、TERMS、HANDOFF 或教学元数据；它们由后台单独处理。` },
+          { role: "user", content: `${learnerContext}\n\n${appliedPlan?.rendered || ""}\n\n${questionPrompt}` },
+        ] }),
+      }, text => { const delta = filter.push(text); visible += delta; if (delta) handlers.onDelta?.(delta); }, signal);
+      const tail = filter.finish(); visible += tail; if (tail) handlers.onDelta?.(tail);
+      signal?.throwIfAborted();
+      handlers.onStage?.("saving", "保存回答");
+      // Saving is the commit boundary; the stop button is disabled from here.
+      if (!visible.trim()) throw new Error("模型未返回有效正文，可重试");
+      const selectedTitle = payload.selected_text.trim().split(/\r?\n/)[0].replace(/[`*_#>\[\]{}()]+/g, " ").replace(/\s+/g, " ").trim();
+      const parsed = { title: (selectedTitle || payload.question || "AI 回答").slice(0, 60), answer: visible.trim() };
+      const stamp = now();
+      let id = 0;
+      await db.transaction(async () => {
+        id = await db.runInTx(`INSERT INTO qa_records(project_id,session_id,parent_qa_id,relation_type,source_type,source_path,display_title,selected_text,question,answer_md,provider,model,output_path,retrieval_trace,favorite,created_at,updated_at,selection_range_json)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [projectId, payload.session_id || null, payload.parent_qa_id || null, payload.relation_type || "follow_up", payload.source_type, payload.source_path || null, parsed.title, payload.selected_text || "", payload.question, parsed.answer, settings.provider, settings.model, null, JSON.stringify({ source: payload.source_path, context: context.slice(0, 6000) }), 0, stamp, stamp, JSON.stringify(payload.selection_range || null)]);
+        await db.runInTx("UPDATE qa_records SET session_id=?,output_path=? WHERE id=?", [payload.session_id || id, `selection_answers/qa_${String(id).padStart(4, "0")}.md`, id]);
+        await db.runInTx("INSERT INTO qa_postprocess_jobs(qa_record_id,project_id,payload_json,context_snapshot,applied_plan_json) VALUES(?,?,?,?,?)", [id, projectId, JSON.stringify(payload), context, JSON.stringify(appliedPlan)]);
+      });
+      const record = await this.getQA(projectId, id);
+      await this.upsertCourse(projectId, record.output_path!, this.formatQA(record), "AI 回答");
+      return record;
+    } finally {
+      this.foregroundAnswers--;
+      if (!this.foregroundAnswers) this.answerWaiters.splice(0).forEach(resolve => resolve());
+      setTimeout(() => { void this.resumeAnswerJobs(); }, 0);
+    }
+  }
+
+  private async resumeAnswerJobs(): Promise<void> {
+    if (this.postprocessing) return this.postprocessing;
+    this.postprocessing = this.processAnswerJobs().catch(error => { console.warn("Answer follow-up recovery failed", error); }).finally(async () => {
+      this.postprocessing = null;
+      const pending = await db.query<Row>("SELECT qa_record_id FROM qa_postprocess_jobs WHERE status='pending' LIMIT 1").catch(() => []);
+      if (pending.length) setTimeout(() => { void this.resumeAnswerJobs(); }, 0);
     });
-    const learnerContext = await this.learnerContextForQuestion(projectId, payload);
-    const termContext = await this.termLearningContext(projectId);
-    const existingTopics = (await this.listQAThreads(projectId)).map((thread) => thread.topic);
-    const projectLearningContext = renderProjectLearningContext(await this.getCurrentHandoff(projectId), existingTopics);
-    const teacherPlanResult = await this.teacherStrategyForQuestion(projectId, payload);
-    const teacherPlan = teacherPlanResult?.rendered ?? "";
-    const raw = await this.callLLM([
-      {
-        role: "system",
-        content: composeSystemPrompt(prompts["prompt.system"] || "你是项目学习助手。", "qa"),
-      },
-      { role: "user", content: `${learnerContext}\n\n${termContext}\n\n${projectLearningContext}\n\n${teacherPlan}\n\n${questionPrompt}` },
-    ], { provider: payload.provider, base_url: payload.base_url, model: payload.model });
-    const parsed = this.parseAnswer(raw, payload, existingTopics);
-    parsed.answer = await this.teaching.prepare(projectId, parsed.answer, payload.question);
-    const stamp = now();
-    const id = await db.run(`INSERT INTO qa_records(project_id,session_id,parent_qa_id,relation_type,source_type,source_path,display_title,selected_text,question,answer_md,provider,model,output_path,retrieval_trace,favorite,created_at,updated_at)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [projectId, payload.session_id || null, payload.parent_qa_id || null, payload.relation_type || "follow_up", payload.source_type, payload.source_path || null, parsed.title, payload.selected_text || "", payload.question, parsed.answer, settings.provider, settings.model, null, JSON.stringify({ source: payload.source_path, context: context.slice(0, 6000) }), 0, stamp, stamp]);
-    const sessionId = payload.session_id || id; const outputPath = `selection_answers/qa_${String(id).padStart(4, "0")}.md`;
-    await db.run("UPDATE qa_records SET session_id=?,output_path=? WHERE id=?", [sessionId, outputPath, id]);
+    return this.postprocessing;
+  }
+
+  private async processAnswerJobs(): Promise<void> {
+    const jobs = await db.query<Row>("SELECT * FROM qa_postprocess_jobs WHERE status!='completed' ORDER BY qa_record_id");
+    for (const job of jobs) {
+      await this.waitForAnswers();
+      const projectId = Number(job.project_id), id = Number(job.qa_record_id);
+      const record = await this.getQA(projectId, id).catch(() => null);
+      if (!record) continue;
+      try {
+        const payload = JSON.parse(String(job.payload_json)) as QAAskPayload;
+        await db.run("UPDATE qa_postprocess_jobs SET status='running',last_error=NULL WHERE qa_record_id=?", [id]);
+        // Recreate a generated file if the app closed after the database commit.
+        await this.upsertCourse(projectId, record.output_path!, this.formatQA(record), "AI 回答");
+        const topics = (await this.listQAThreads(projectId)).map(thread => thread.topic);
+        let metadata = String(job.metadata_json || "");
+        if (!metadata) {
+          const prompts = await this.getPrompts();
+          const raw = await this.callLLM([
+            { role: "system", content: `${composeSystemPrompt(prompts["prompt.system"] || "", "qa")}\n本任务只为已保存回答补充 TITLE、TERMS、HANDOFF 三行元数据，不生成或改写正文。回答不是用户已掌握知识的证据。` },
+            { role: "user", content: `${renderProjectLearningContext(await this.getCurrentHandoff(projectId), topics)}\n${await this.termLearningContext(projectId)}\n问题：${record.question}\n已授权上下文：${job.context_snapshot}\n已保存回答：\n${record.answer_md}` },
+          ], { provider: payload.provider, base_url: payload.base_url, model: payload.model });
+          const termLine = raw.match(/^TERMS:\s*(.+)$/mi)?.[1];
+          if (!termLine || !Array.isArray(JSON.parse(termLine)) || !parseHandoffMetadata(raw, payload.source_type, payload.source_path, topics).metadata) {
+            throw new Error("后台问答元数据未通过校验，将在恢复时重试");
+          }
+          if (!await this.getQA(projectId, id).catch(() => null)) continue;
+          metadata = raw;
+          await db.run("UPDATE qa_postprocess_jobs SET metadata_json=? WHERE qa_record_id=?", [metadata, id]);
+        }
+        await this.waitForAnswers();
+        if (!await this.getQA(projectId, id).catch(() => null)) continue;
+        const parsed = this.parseAnswer(metadata, payload, topics);
+        const termLine = metadata.match(/^TERMS:\s*(.+)$/mi)?.[1];
+        parsed.terms = anchorModelTerms(termLine ? parseTermMetadata(`TERMS: ${termLine}\n${record.answer_md}`).terms : [], record.answer_md);
+        // Use only the saved answer as body; a metadata response cannot rewrite it.
+        parsed.answer = record.answer_md;
+        parsed.terms = anchorModelTerms(parsed.terms, record.answer_md);
+        if (!job.evidence_done) {
+          await this.postprocessAnswer(projectId, record, payload, parsed, JSON.parse(String(job.applied_plan_json || "null")));
+          await db.run("UPDATE qa_postprocess_jobs SET evidence_done=1 WHERE qa_record_id=?", [id]);
+        }
+        if (!job.planner_done) {
+          const plan = await this.teacherStrategyForQuestion(projectId, payload, true);
+          if (plan) await this.setSetting(`qa-teacher-plan:${projectId}:${record.session_id}`, JSON.stringify(plan));
+          await db.run("UPDATE qa_postprocess_jobs SET planner_done=1 WHERE qa_record_id=?", [id]);
+        }
+        if (!job.observer_done) {
+          await this.runAndroidObserver(projectId, record);
+          const failed = await db.query<Row>("SELECT id FROM observer_jobs WHERE project_id=? AND qa_record_id=? AND status='failed'", [projectId, id]);
+          if (failed.length) throw new Error("画像分析尚未完成，将在恢复时重试");
+          await db.run("UPDATE qa_postprocess_jobs SET observer_done=1 WHERE qa_record_id=?", [id]);
+        }
+        await db.run("UPDATE qa_postprocess_jobs SET status='completed',last_error=NULL WHERE qa_record_id=?", [id]);
+        window.dispatchEvent(new CustomEvent("codecourse:qa-enriched", { detail: { projectId, qaRecordId: id } }));
+      } catch (error) {
+        await db.run("UPDATE qa_postprocess_jobs SET status='failed',last_error=? WHERE qa_record_id=?", [safeErrorMessage(error), id]);
+      }
+    }
+  }
+
+  private async postprocessAnswer(projectId: number, record: QARecord, payload: QAAskPayload,
+    parsed: ReturnType<AndroidLocalProvider["parseAnswer"]>, teacherPlanResult: EffectiveTeachingPlan | null): Promise<void> {
+    const id = record.id, sessionId = record.session_id || id, outputPath = record.output_path!, stamp = now();
+    const settings = { model: record.model };
     await this.persistHandoff(projectId, sessionId, id, payload, parsed.handoff);
-    let record = await this.getQA(projectId, id); await this.upsertCourse(projectId, outputPath, this.formatQA(record), "AI 回答");
     const qaNode = await this.createNode(projectId, { node_type: "qa", title: parsed.title, ref_type: "qa", ref_id: id, ref_path: outputPath, summary: parsed.answer.slice(0, 300) });
-    const parent = await this.ensureSourceNode(projectId, payload); if (parent) await this.createEdge(projectId, { source_node_id: parent.id, target_node_id: qaNode.id, relation_type: "explains", label: null });
+    const parent = await this.ensureSourceNode(projectId, payload).catch(() => null); if (parent) await this.createEdge(projectId, { source_node_id: parent.id, target_node_id: qaNode.id, relation_type: "explains", label: null });
     if (payload.source_type === "course" && payload.source_path && payload.selected_text.trim()) {
-      await db.run("INSERT INTO knowledge_links(project_id,source_type,source_path,term_text,qa_record_id,node_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", [projectId, "course", payload.source_path, payload.selected_text.trim(), id, qaNode.id, stamp, stamp]);
+      await db.run("INSERT INTO knowledge_links(project_id,source_type,source_path,term_text,qa_record_id,node_id,created_at,updated_at) SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM knowledge_links WHERE project_id=? AND qa_record_id=?)", [projectId, "course", payload.source_path, payload.selected_text.trim(), id, qaNode.id, stamp, stamp, projectId, id]);
     }
     await this.registerTerms(projectId, "qa", outputPath, parsed.answer, parsed.terms);
     if (payload.term_candidate_id) {
@@ -2639,8 +2785,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         : "The answer used the current learner context without a separate Planner call.",
     });
     await this.recordSuccessfulAnswerLearning(projectId, record);
-    void this.runAndroidObserver(projectId, record);
-    return record;
+
   }
   private async getQA(projectId: number, qaId: number): Promise<QARecord> {
     const row = (await db.query<Row>("SELECT * FROM qa_records WHERE project_id=? AND id=?", [projectId, qaId]))[0];
@@ -4394,15 +4539,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         "SELECT COUNT(*) AS count FROM qa_records WHERE answer_md <> ''",
       ))[0]?.count || 0);
       let sourceExcerpt = "";
-      if (record.source_path) {
-        try {
-          sourceExcerpt = record.source_type === "file"
-            ? await readRepoFile(projectId, record.source_path)
-            : await readGeneratedFile(projectId, record.source_path);
-        } catch {
-          sourceExcerpt = "";
-        }
-      }
+      sourceExcerpt = String((await db.query<Row>("SELECT context_snapshot FROM qa_postprocess_jobs WHERE project_id=? AND qa_record_id=?", [projectId, record.id]))[0]?.context_snapshot || "");
       const prompt = buildObserverPrompt({
         question: record.question,
         selectedText: record.selected_text,
@@ -4509,6 +4646,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
   private async teacherStrategyForQuestion(
     projectId: number,
     payload: QAAskPayload,
+    recoverable = false,
   ): Promise<EffectiveTeachingPlan | null> {
     const runtime = await this.getPersonalizationRuntimeSettings();
     const complex = await this.shouldUseTeacherPlanner(projectId, payload);
@@ -4537,6 +4675,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
       return result;
     } catch (error) {
       await this.recordModelCall(projectId, "teacher_planner", "failed", start, error).catch(() => undefined);
+      if (recoverable) throw error;
       return null;
     }
   }

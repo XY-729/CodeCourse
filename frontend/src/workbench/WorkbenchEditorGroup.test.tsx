@@ -248,3 +248,21 @@ describe("WorkbenchEditorGroup", () => {
     expect(onCancelEditedCourse).toHaveBeenCalledWith(group, item);
   });
 });
+
+it("keeps Android stop and retry controls in the mobile action bar", () => {
+  const item: OpenItem = { id: "preview", type: "course", path: "preview", title: "测试", content: "未完成正文",
+    qaPreview: { key: "draft:1", label: "生成中", status: "streaming", startedAt: 1, request: { source_type: "selection", selected_text: "原选区", question: "原问题", provider: "test", base_url: "https://test", model: "test" } } };
+  const onStopQAPreview = vi.fn(), onRetryQAPreview = vi.fn();
+  const props = baseProps(groupWith(item), { mobile: true, canStopQAPreview: true, onStopQAPreview, onRetryQAPreview });
+  const { rerender } = render(<WorkbenchEditorGroup {...props} />);
+  const actions = screen.getByTestId("mobile-actions");
+  expect(actions.textContent).toContain("停止回答");
+  fireEvent.click(actions.querySelector("button")!);
+  expect(onStopQAPreview).toHaveBeenCalledWith("draft:1");
+  const stopped = { ...item, qaPreview: { ...item.qaPreview!, status: "stopped" as const } };
+  rerender(<WorkbenchEditorGroup {...props} group={groupWith(stopped)} />);
+  expect(actions.textContent).toContain("重试");
+  fireEvent.click(actions.querySelector("button")!);
+  expect(onRetryQAPreview).toHaveBeenCalledWith(stopped);
+  expect(screen.getByTestId("markdown-viewer").textContent).toContain("未完成正文");
+});

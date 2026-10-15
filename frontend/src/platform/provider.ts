@@ -1,9 +1,11 @@
 import { isNativeAndroidRuntime } from "./runtime";
 import type { NotificationPermissionResult } from "./runtime";
 import type { ProviderNotice } from "./android/generationState";
+import type { QAAskPayload, QARecord, QAStreamHandlers } from "../api/client";
 
 export interface CodeCourseProvider {
   request<T>(path: string, init?: RequestInit): Promise<T>;
+  askQuestionStream?(projectId: number, payload: QAAskPayload, handlers: QAStreamHandlers, signal?: AbortSignal): Promise<QARecord>;
   startRecovery?(): Promise<void>;
   getNotificationPermissionStatus?(): Promise<NotificationPermissionResult>;
   invalidatePermissionCache?(): void;
@@ -98,7 +100,12 @@ export function httpApiUrl(path: string): string {
 export function getCodeCourseProvider(): Promise<CodeCourseProvider> {
   if (!providerPromise) {
     providerPromise = isNativeAndroidRuntime()
-      ? import("./android/localProvider").then(({ AndroidLocalProvider }) => AndroidLocalProvider.create())
+      ? import("./android/localProvider").then(({ AndroidLocalProvider }) => AndroidLocalProvider.create()).catch((error) => {
+          // A failed startup must not permanently reject every subsequent page
+          // request; the native database already supports retrying its init.
+          providerPromise = null;
+          throw error;
+        })
       : Promise.resolve(new HttpProvider(configuredApiBase()));
   }
   return providerPromise;

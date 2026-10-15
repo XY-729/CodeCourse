@@ -2,7 +2,6 @@ import { useCallback, useRef, useState } from "react";
 import { askQuestionStream, type QAAskPayload, type QARecord } from "../api/client";
 import { markDesktopPerformance } from "../performance/desktopPerformance";
 import type { QAStreamTiming } from "../performance/qaTiming";
-import { isAndroidRuntime } from "../platform/runtime";
 
 export type QAGenerationState = { label: string; partial: string; request?: QAAskPayload };
 export type QAOperationToken = symbol;
@@ -64,7 +63,7 @@ export function useQAGenerationController(projectId: number | null, events: Even
       eventsRef.current.onUpdate?.(generationKey, snapshot, timing);
     };
     try {
-      if (!isAndroidRuntime()) {
+      {
         activeRequestRef.current = { key: generationKey, stop: () => {
           if (saving || abortController.signal.aborted) return;
           state = { ...state, label: "正在停止回答" }; publish();
@@ -76,7 +75,7 @@ export function useQAGenerationController(projectId: number | null, events: Even
       eventsRef.current.onStart?.(generationKey, payload, timing);
       publish();
       markDesktopPerformance("qa-request-sent", { request_id: timing.requestId, elapsed_ms: performance.now() - timing.startedAt });
-      const requestPayload = isAndroidRuntime() ? payload : { ...payload, defer_metadata: true, request_id: timing.requestId };
+      const requestPayload = { ...payload, defer_metadata: true, request_id: timing.requestId };
       const record = await askQuestionStream(projectId, requestPayload, {
         onStage: (stage, label, elapsedMs) => {
           if (abortController.signal.aborted) return;
@@ -94,7 +93,7 @@ export function useQAGenerationController(projectId: number | null, events: Even
             publish();
           } else if (!timer) timer = setTimeout(publish, 50);
         },
-      }, isAndroidRuntime() ? undefined : abortController.signal);
+      }, abortController.signal);
       if (abortController.signal.aborted) throw new QAStoppedError();
       publish();
       eventsRef.current.onComplete?.(generationKey, record, timing);

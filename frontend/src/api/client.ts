@@ -1,4 +1,4 @@
-import { httpApiUrl, providerRequest } from "../platform/provider";
+import { getCodeCourseProvider, httpApiUrl, providerRequest } from "../platform/provider";
 import { isAndroidRuntime } from "../platform/runtime";
 import {
   portableArchiveFilename,
@@ -1035,8 +1035,12 @@ export async function askQuestionStream(
   signal?: AbortSignal,
 ): Promise<QARecord> {
   if (isAndroidRuntime()) {
+    const provider = await getCodeCourseProvider();
+    if (provider.askQuestionStream) return provider.askQuestionStream(projectId, payload, handlers, signal);
+    signal?.throwIfAborted();
     handlers.onStage?.("waiting_model", "等待模型");
     const record = await askQuestion(projectId, payload);
+    signal?.throwIfAborted();
     handlers.onDelta?.(record.answer_md);
     return record;
   }

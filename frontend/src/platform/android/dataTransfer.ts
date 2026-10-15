@@ -7,6 +7,7 @@ import {
   MAX_DATA_ARCHIVE_FILES,
   MAX_DATA_EXTRACTED_BYTES,
   PORTABLE_TABLES,
+  isCourseDocument,
   normalizeDataArchivePath,
   portableArchiveFilename,
   validateDataArchiveDatabase,
@@ -155,6 +156,7 @@ export async function exportAndroidDataArchive(db: MobileDatabase): Promise<{ bl
       [projectId],
     );
     for (const file of courseRows) {
+      if (!isCourseDocument(String(file.filename))) continue;
       const filename = normalizeDataArchivePath(String(file.filename));
       const content = await readGeneratedFile(projectId, filename);
       const size = encoder.encode(content).byteLength;
@@ -451,6 +453,7 @@ async function replaceAndroidDatabase(
           sourceMetadata.push([project.id, file.path, file.language, file.size, file.is_key_file ? 1 : 0]);
         }
         for (const file of project.course_files) {
+          if (!isCourseDocument(file.filename)) continue;
           courseMetadata.push([project.id, file.filename, file.title, file.group, stamp]);
         }
       }

@@ -5,7 +5,16 @@ import { repairLegacyProfile } from "../../personalization/profileRepair";
 
 const DATABASE = "codecourse_mobile";
 const DATABASE_VERSION = 1;
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
+
+// The native connection outlives a WebView/module instance. All wrappers for
+// this database must also share the initialization and transaction queue.
+let databaseOperations: Promise<unknown> = Promise.resolve();
+
+function nativeErrorMessage(error: unknown): string {
+  if (typeof error === "object" && error !== null && "message" in error) return String(error.message);
+  return String(error);
+}
 
 type ColumnMigration = {
   name: string;
@@ -22,10 +31,16 @@ export class MobileDatabase {
   private initializationPromise: Promise<void> | null = null;
   private ftsVersion: 4 | 5 = 4;
 
+  private serializeWrite<T>(work: () => Promise<T>): Promise<T> {
+    const next = databaseOperations.then(work);
+    databaseOperations = next.catch(() => undefined);
+    return next;
+  }
+
   async init(): Promise<void> {
     if (this.opened) return;
     if (this.initializationPromise) return this.initializationPromise;
-    this.initializationPromise = this.initialize();
+    this.initializationPromise = this.serializeWrite(() => this.initialize());
     try {
       await this.initializationPromise;
     } catch (error) {
@@ -42,14 +57,7 @@ export class MobileDatabase {
     }
     const stored = await CapacitorSQLite.isSecretStored();
     if (!stored.result) await CapacitorSQLite.setEncryptionSecret({ passphrase: secret });
-    await CapacitorSQLite.createConnection({
-      database: DATABASE,
-      version: DATABASE_VERSION,
-      encrypted: true,
-      mode: "secret",
-      readonly: false,
-    });
-    await CapacitorSQLite.open({ database: DATABASE, readonly: false });
+    await this.ensureOpenConnection();
     await CapacitorSQLite.execute({
       database: DATABASE,
       statements: "PRAGMA foreign_keys = ON",
@@ -71,10 +79,37 @@ export class MobileDatabase {
         transaction: false,
         readonly: false,
       });
-    } else {
-      await this.restoreRuntimeSchemaState();
     }
+    // CREATE IF NOT EXISTS also succeeds when a legacy FTS4 table exists;
+    // inspect the actual table after migration instead of assuming FTS5.
+    await this.restoreRuntimeSchemaState();
     this.opened = true;
+  }
+
+  private async ensureOpenConnection(): Promise<void> {
+    const options = { database: DATABASE, readonly: false };
+    try {
+      if ((await CapacitorSQLite.isDBOpen(options)).result) return;
+    } catch (error) {
+      // isDBOpen rejects when no native connection exists; false means a
+      // registered connection that still needs opening (including a retry).
+      const message = nativeErrorMessage(error);
+      if (message !== `isDBOpen: No available connection for database ${DATABASE}`
+        && message !== `No available connection for database ${DATABASE}`) throw error;
+      try {
+        await CapacitorSQLite.createConnection({
+          ...options, version: DATABASE_VERSION, encrypted: true, mode: "secret",
+        });
+      } catch (createError) {
+        // A retained native connection can appear while the bridge is
+        // reconnecting. Only accept this specific, recoverable conflict.
+        const createMessage = nativeErrorMessage(createError);
+        if (createMessage !== `CreateConnection: Connection ${DATABASE} already exists`
+          && createMessage !== `Connection ${DATABASE} already exists`) throw createError;
+        if ((await CapacitorSQLite.isDBOpen(options)).result) return;
+      }
+    }
+    await CapacitorSQLite.open(options);
   }
 
   private async restoreRuntimeSchemaState(): Promise<void> {
@@ -361,6 +396,36 @@ export class MobileDatabase {
       transaction: true,
       readonly: false,
     });
+    await CapacitorSQLite.execute({ database: DATABASE, transaction: true, readonly: false, statements: `
+      CREATE TABLE IF NOT EXISTS generation_prompt_snapshots (
+        project_id INTEGER NOT NULL,
+        task_id INTEGER NOT NULL,
+        section_number INTEGER NOT NULL,
+        prompt_version TEXT NOT NULL,
+        messages_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(task_id,section_number),
+        FOREIGN KEY(task_id) REFERENCES generation_tasks(id) ON DELETE CASCADE,
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+      CREATE TABLE IF NOT EXISTS qa_postprocess_jobs (
+        qa_record_id INTEGER PRIMARY KEY,
+        project_id INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        context_snapshot TEXT NOT NULL,
+        metadata_json TEXT,
+        applied_plan_json TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        evidence_done INTEGER NOT NULL DEFAULT 0,
+        planner_done INTEGER NOT NULL DEFAULT 0,
+        observer_done INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        FOREIGN KEY(qa_record_id) REFERENCES qa_records(id) ON DELETE CASCADE,
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );` });
+    await this.ensureColumns("qa_records", [
+      { name: "selection_range_json", definition: "selection_range_json TEXT" },
+    ]);
     await this.ensureColumns("document_terms", [
       { name: "concept_id", definition: "concept_id TEXT" },
       { name: "content_hash", definition: "content_hash TEXT" },
@@ -810,13 +875,15 @@ export class MobileDatabase {
 
   async run(statement: string, values: unknown[] = []): Promise<number> {
     await this.init();
-    const result = await CapacitorSQLite.run({ database: DATABASE, statement, values, transaction: true, readonly: false });
-    return result.changes?.lastId ?? 0;
+    return this.serializeWrite(async () => {
+      const result = await CapacitorSQLite.run({ database: DATABASE, statement, values, transaction: true, readonly: false });
+      return result.changes?.lastId ?? 0;
+    });
   }
 
   async execute(statements: string): Promise<void> {
     await this.init();
-    await CapacitorSQLite.execute({ database: DATABASE, statements, transaction: true, readonly: false });
+    await this.serializeWrite(() => CapacitorSQLite.execute({ database: DATABASE, statements, transaction: true, readonly: false }));
   }
 
   /**
@@ -826,15 +893,17 @@ export class MobileDatabase {
    */
   async transaction<T>(fn: () => Promise<T>): Promise<T> {
     await this.init();
-    await CapacitorSQLite.execute({ database: DATABASE, statements: "BEGIN IMMEDIATE", transaction: false, readonly: false });
-    try {
-      const result = await fn();
-      await CapacitorSQLite.execute({ database: DATABASE, statements: "COMMIT", transaction: false, readonly: false });
-      return result;
-    } catch (error) {
-      await CapacitorSQLite.execute({ database: DATABASE, statements: "ROLLBACK", transaction: false, readonly: false });
-      throw error;
-    }
+    return this.serializeWrite(async () => {
+      await CapacitorSQLite.execute({ database: DATABASE, statements: "BEGIN IMMEDIATE", transaction: false, readonly: false });
+      try {
+        const result = await fn();
+        await CapacitorSQLite.execute({ database: DATABASE, statements: "COMMIT", transaction: false, readonly: false });
+        return result;
+      } catch (error) {
+        await CapacitorSQLite.execute({ database: DATABASE, statements: "ROLLBACK", transaction: false, readonly: false });
+        throw error;
+      }
+    });
   }
 
   /**

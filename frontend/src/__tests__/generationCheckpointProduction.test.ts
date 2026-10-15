@@ -1,3 +1,4 @@
+import { coordinatedLessonInputHash } from "../generation/lessonCoordination";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => {
@@ -231,7 +232,7 @@ describe("Android generation checkpoint production runTask", () => {
     const checkpoint = {
       version: 1,
       taskType: "outline_lesson",
-      inputHash: "input-hash",
+      inputHash: coordinatedLessonInputHash("input-hash"),
       updatedAt: "2026-01-01",
       plan: {
         lesson_title: "第三课",
@@ -253,6 +254,10 @@ describe("Android generation checkpoint production runTask", () => {
     await provider.runTask(3);
 
     expect(provider.callLLM).toHaveBeenCalledTimes(1);
+    const prompt = provider.callLLM.mock.calls[0][0][1].content;
+    for (const section of sections) expect(prompt).toContain(`章：${section.title}`);
+    expect(prompt).toContain("第 3 章：Section 3（当前章，由你编写）");
+    expect(prompt).toContain("不能仅因概念同名就省略本章内容");
     const output = harness.writes[0].content;
     expect(output.indexOf("Section 1")).toBeLessThan(output.indexOf("Section 2"));
     expect(output.indexOf("Section 2")).toBeLessThan(output.indexOf("Section 3"));
@@ -268,7 +273,7 @@ describe("Android generation checkpoint production runTask", () => {
     const checkpoint = {
       version: 1,
       taskType: "outline_lesson",
-      inputHash: "input-hash",
+      inputHash: coordinatedLessonInputHash("input-hash"),
       updatedAt: "2026-01-01",
       plan: {
         lesson_title: "第三课",

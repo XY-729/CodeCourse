@@ -48,6 +48,18 @@ class LocalImportTests(unittest.TestCase):
         self.assertTrue((destination / "README.md").is_file())
         self.assertTrue((destination / "src" / "main.py").is_file())
 
+    def test_data_archive_cannot_be_flattened_into_one_source_project(self):
+        archive_path = self.root / "renamed.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("manifest.json", '{"format":"codecourse-data-archive"}')
+            archive.writestr("database.json", '{}')
+            archive.writestr("projects/11/generated/lesson.md", "# One")
+            archive.writestr("projects/12/generated/lesson.md", "# Two")
+        with self.assertRaises(HTTPException) as caught:
+            local_import_service.import_local_archive(str(archive_path))
+        self.assertIn("数据包", caught.exception.detail)
+        self.assertEqual(list(self.repos.iterdir()), [])
+
     def test_archive_import_rejects_path_traversal(self):
         archive_path = self.root / "unsafe.zip"
         with zipfile.ZipFile(archive_path, "w") as archive:

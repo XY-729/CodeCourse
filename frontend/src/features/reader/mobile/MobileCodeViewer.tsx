@@ -142,6 +142,7 @@ export default function MobileCodeViewer({
   const [searchInput, setSearchInput] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [activeMatch, setActiveMatch] = useState(-1);
+  const [sourceJumpRange, setSourceJumpRange] = useState<ViewerRange | null>(null);
   const [selectionAnchorLine, setSelectionAnchorLine] = useState<number | null>(null);
   const [selectionActive, setSelectionActive] = useState(false);
   const pendingSelectionRef = useRef<ViewerSelection | null>(null);
@@ -441,6 +442,7 @@ export default function MobileCodeViewer({
     // An explicit navigation on mount supersedes the passive restore snapshot.
     restoreConsumedRef.current = true;
     consumedJumpIdsRef.current.add(jumpRequest.id);
+    setSourceJumpRange(jumpRequest.selection ?? null);
     onJumpConsumed?.(jumpRequest.id);
   }, [jumpRequest, onJumpConsumed, performProgrammaticScroll]);
 
@@ -465,7 +467,8 @@ export default function MobileCodeViewer({
   // renderLine
   function renderLine(index: number, pos?: { position: "absolute"; top: number; left: 0; right: 0; height: number }) {
     const ln = index + 1;
-    const anchored = selectedRange && ln >= selectedRange.startLineNumber && ln <= selectedRange.endLineNumber;
+    const anchorRange = sourceJumpRange ?? selectedRange;
+    const anchored = anchorRange && ln >= anchorRange.startLineNumber && ln <= anchorRange.endLineNumber;
     const matched = matchSet.has(ln);
     const active = activeMatch >= 0 && matches.length > 0 && ln === matches[activeMatch];
     return (

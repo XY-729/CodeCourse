@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DiagnosticItem, LLMSettings, QARecord } from "../../../api/client";
 import MobileAssistantPanel from "./MobileAssistantPanel";
 
@@ -40,7 +40,7 @@ describe("MobileAssistantPanel", () => {
     const props = createProps();
     render(<MobileAssistantPanel {...props} />);
     expect(screen.getByText("当前上下文")).toBeTruthy();
-    expect(screen.getByText("src/App.tsx")).toBeTruthy();
+    expect(screen.getByText(/默认仅发送问题、选区/)).toBeTruthy();
   });
 
   it("updates question immediately in the local draft", () => {
@@ -80,6 +80,39 @@ describe("MobileAssistantPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "收藏 状态管理" }));
     expect(props.onToggleFavorite).toHaveBeenCalledWith(RECORD);
     expect(props.onSelectRecord).not.toHaveBeenCalled();
+  });
+
+  it("expands matching history so search results and favorite actions are visible", () => {
+    const { container } = render(<MobileAssistantPanel {...createProps()} view="history" historyQuery="状态" />);
+    expect(container.querySelector("details")?.open).toBe(true);
+  });
+
+  it("shows loading and retryable errors in history instead of claiming it is empty", () => {
+    const props = { ...createProps(), view: "history" as const, history: [], onRetryHistory: vi.fn() };
+    const { rerender } = render(<MobileAssistantPanel {...props} historyLoading />);
+    expect(screen.getByRole("status").textContent).toContain("正在加载历史记录");
+    expect(screen.queryByText("还没有提问记录")).toBeNull();
+    rerender(<MobileAssistantPanel {...props} historyError="读取记录失败" />);
+    expect(screen.getByRole("alert").textContent).toContain("读取记录失败");
+    expect(screen.queryByText("还没有提问记录")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "重试加载历史" }));
+    expect(props.onRetryHistory).toHaveBeenCalledOnce();
+  });
+
+  it("preserves both topics from one session when filtering and restoring history", () => {
+    const second = { ...RECORD, id: 2, display_title: "异步顺序" };
+    const threads = [RECORD, second].map(record => ({ sessionId: 10, topic: record.display_title!, progressSummary: "", unresolvedPoints: [], turnCount: 1, latestQaRecordId: record.id, isCurrent: false, updatedAt: record.updated_at, records: [record.id] }));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const props = { ...createProps(), view: "history" as const, threads, historyQuery: "状态" };
+      const { container, rerender } = render(<MobileAssistantPanel {...props} history={[RECORD, second]} />);
+      rerender(<MobileAssistantPanel {...props} history={[second]} />);
+      rerender(<MobileAssistantPanel {...props} history={[RECORD, second]} />);
+      expect(container.querySelectorAll("details")).toHaveLength(2);
+      expect(screen.getByRole("button", { name: "打开 状态管理" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "打开 异步顺序" })).toBeTruthy();
+      expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/);
+    } finally { consoleError.mockRestore(); }
   });
 
   it("starts follow-up only from the explicit history action", () => {
@@ -130,7 +163,7 @@ describe("MobileAssistantPanel", () => {
     render(<MobileAssistantPanel {...props} />);
     expect((screen.getByRole("tab", { name: "历史" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("tab", { name: "知识" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "取消追问" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "新对话" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("disables history actions while loading", () => {
@@ -140,4 +173,26 @@ describe("MobileAssistantPanel", () => {
     expect((screen.getByRole("button", { name: "打开 状态管理" }) as HTMLButtonElement).disabled).toBe(true);
     expect(props.onSelectRecord).not.toHaveBeenCalled();
   });
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+it("renders streamed Markdown, labels the active request, and stops it", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const onStopAnswer = vi.fn();
+  render(<MobileAssistantPanel {...createProps()} loading streamContent="**正在解释** `return`" conversationLabel="本次为新对话" canStopAnswer onStopAnswer={onStopAnswer} />);
+  expect(screen.getByText("正在解释").tagName).toBe("STRONG");
+  expect(screen.getByText("return").tagName).toBe("CODE");
+  expect(screen.getByText("本次为新对话")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "停止回答" }));
+  expect(onStopAnswer).toHaveBeenCalledTimes(1);
+});
+
+it("toggles document context and returns the answer to its original source", () => {
+  const onIncludeContextChange = vi.fn(), onReturnToSource = vi.fn();
+  render(<MobileAssistantPanel {...createProps()} includeContext onIncludeContextChange={onIncludeContextChange} selectedRecord={RECORD} onReturnToSource={onReturnToSource} />);
+  fireEvent.click(screen.getByRole("checkbox", { name: /附带上下文/ }));
+  expect(onIncludeContextChange).toHaveBeenCalledWith(false);
+  fireEvent.click(screen.getByRole("button", { name: "回到原文" }));
+  expect(onReturnToSource).toHaveBeenCalledWith(RECORD);
 });
