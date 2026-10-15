@@ -78,6 +78,9 @@ class LearningStateResponse(BaseModel):
     last_opened_at: str
     completed_at: Optional[str] = None
     updated_at: str
+    profile_status: str = "none"
+    profile_error: Optional[str] = None
+    profile_concept_count: int = 0
 
 
 class LearningScopeRequest(BaseModel):

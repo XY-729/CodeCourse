@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   resetLearningStates,
+  getLearningStates,
   updateLearningState,
 } from "../api/client";
 import type {
@@ -9,6 +10,7 @@ import type {
 } from "../api/client";
 import type { OpenItem } from "../workbench/layout";
 import { TrailingSaveScheduler } from "./trailingSaveScheduler";
+import { TEACHING_CHANGED } from "../personalization/teachingApi";
 
 type Options = {
   projectId: number | null;
@@ -55,6 +57,42 @@ export function useLearningStateController({
   const completionRequests = useRef(new Set<string>());
   const currentProjectId = useRef(projectId);
   currentProjectId.current = projectId;
+  const statusCallback = useRef(onStatus);
+  statusCallback.current = onStatus;
+  const profilePending = states.some((state) => ["pending", "running"].includes(state.profile_status ?? ""));
+
+  useEffect(() => {
+    if (!projectId) return;
+    let disposed = false;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const saved = await getLearningStates(projectId);
+        if (disposed || currentProjectId.current !== projectId) return;
+        let changed = false;
+        let finished = false;
+        const next = statesRef.current.map((old) => {
+          const latest = saved.find((item) => item.id === old.id && item.status === old.status && item.completed_at === old.completed_at);
+          if (!latest || (old.profile_status === latest.profile_status && old.profile_error === latest.profile_error && old.profile_concept_count === latest.profile_concept_count)) return old;
+          changed = true;
+          if (latest.profile_status === "completed" && ["pending", "running"].includes(old.profile_status ?? "")) {
+            finished = true;
+            statusCallback.current(`学习画像已更新，记录了 ${latest.profile_concept_count ?? 0} 个已学知识点，理解程度待验证`);
+          }
+          return { ...old, profile_status: latest.profile_status, profile_error: latest.profile_error, profile_concept_count: latest.profile_concept_count };
+        });
+        if (changed) { statesRef.current = next; setStates(next); }
+        if (finished) window.dispatchEvent(new CustomEvent(TEACHING_CHANGED, { detail: { projectId } }));
+      } catch { /* Progress stays saved; the next poll or reopening retries the read. */ }
+      finally { refreshing = false; }
+    };
+    const onChanged = () => { void refresh(); };
+    window.addEventListener(TEACHING_CHANGED, onChanged);
+    const timer = profilePending ? window.setInterval(onChanged, 1500) : undefined;
+    return () => { disposed = true; window.removeEventListener(TEACHING_CHANGED, onChanged); if (timer) window.clearInterval(timer); };
+  }, [projectId, profilePending]);
 
   useEffect(() => {
     statesRef.current = states;
@@ -238,7 +276,10 @@ export function useLearningStateController({
       position_kind: "scroll_ratio",
       position_value: existing?.position_value ?? 0,
     }, sequence);
-    if (saved) onStatus(nextStatus === "completed" ? "本课已完成" : "已恢复为学习中");
+    if (saved) {
+      onStatus(nextStatus === "completed" ? "本课已完成，正在更新学习画像" : "已恢复为学习中，并撤销本课完成产生的画像证据");
+      window.dispatchEvent(new CustomEvent(TEACHING_CHANGED, { detail: { projectId } }));
+    }
     return saved;
     } finally { completionRequests.current.delete(requestKey); }
   }, [findState, onStatus, persist, projectId, streamingPaths]);
@@ -251,6 +292,7 @@ export function useLearningStateController({
     inFlightSequences.current.clear();
     saveScheduler.current.cancelAll();
     replaceStates([]);
+    window.dispatchEvent(new CustomEvent(TEACHING_CHANGED, { detail: { projectId } }));
   }, [projectId, replaceStates]);
 
   return {

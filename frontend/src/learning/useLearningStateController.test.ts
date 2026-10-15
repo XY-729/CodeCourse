@@ -1,11 +1,23 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { updateLearningState, type LearningState } from "../api/client";
+import { updateLearningState, getLearningStates, type LearningState } from "../api/client";
+import { TEACHING_CHANGED } from "../personalization/teachingApi";
 import { useLearningStateController } from "./useLearningStateController";
-vi.mock("../api/client", () => ({ updateLearningState: vi.fn(), resetLearningStates: vi.fn() }));
+vi.mock("../api/client", () => ({ updateLearningState: vi.fn(), resetLearningStates: vi.fn(), getLearningStates: vi.fn(async () => []) }));
 const state = { source_type: "course", source_path: "lessons/lesson_1.md", status: "completed", position_kind: "scroll_ratio", position_value: 0, completed_at: "now" } as LearningState;
 beforeEach(() => vi.clearAllMocks());
 describe("explicit course completion", () => {
+  it("refreshes completed profile jobs without replacing the current reading position", async () => {
+    const pending = { ...state, id: 1, profile_status: "pending" as const, position_value: .7 };
+    vi.mocked(getLearningStates).mockResolvedValue([{ ...pending, profile_status: "completed", profile_concept_count: 3, position_value: .1 }]);
+    const onStatus = vi.fn();
+    const { result } = renderHook(() => useLearningStateController({ projectId: 1, onStatus, onError: vi.fn() }));
+    act(() => { result.current.replaceStates([pending]); });
+    await act(async () => { window.dispatchEvent(new CustomEvent(TEACHING_CHANGED)); });
+    await waitFor(() => expect(result.current.states[0].profile_status).toBe("completed"));
+    expect(result.current.states[0].position_value).toBe(.7);
+    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining("3 个已学知识点"));
+  });
   it("never reports success after a failed save and allows retry", async () => {
     const onStatus = vi.fn(), onError = vi.fn();
     vi.mocked(updateLearningState).mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(state);

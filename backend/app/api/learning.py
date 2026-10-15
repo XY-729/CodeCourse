@@ -72,6 +72,20 @@ def update_learning_state(project_id: int, payload: LearningStateUpdateRequest) 
         payload.position_kind,
         payload.position_value,
     )
+    if state.profile_status == "pending":
+        from app.services.course_completion import dispatch_completion
+        dispatch_completion(state.id)
+    return _response(state)
+
+
+@router.post("/{project_id}/learning-state/{state_id}/profile-retry", response_model=LearningStateResponse)
+def retry_completion_profile(project_id: int, state_id: int) -> LearningStateResponse:
+    _project(project_id)
+    from app.services.course_completion import retry_completion, dispatch_completion
+    state = retry_completion(project_id, state_id)
+    if state is None:
+        raise HTTPException(404, "Completed course not found")
+    dispatch_completion(state.id)
     return _response(state)
 
 

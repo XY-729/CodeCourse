@@ -428,7 +428,10 @@ def term_learning_context(project_id: int) -> str:
 
 def term_metadata_instruction(project_id: int | None = None) -> str:
     from app.services.teaching_index import teaching_context, metadata_instruction
+    from app.services.course_completion import learned_course_context
     coverage = teaching_context(project_id) if project_id is not None else metadata_instruction()
+    if project_id is not None:
+        coverage += learned_course_context(project_id)
     return coverage + """
 
 术语元数据要求：

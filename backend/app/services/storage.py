@@ -256,6 +256,9 @@ class LearningState:
     last_opened_at: str
     completed_at: Optional[str]
     updated_at: str
+    profile_status: str = "none"
+    profile_error: Optional[str] = None
+    profile_concept_count: int = 0
 
 
 @dataclass
@@ -976,6 +979,15 @@ def init_storage() -> None:
             ON learning_states(project_id, last_opened_at DESC)
             """
         )
+        learning_columns = {row[1] for row in conn.execute("PRAGMA table_info(learning_states)")}
+        for name, declaration in (
+            ("profile_status", "TEXT NOT NULL DEFAULT 'none'"),
+            ("profile_error", "TEXT"),
+            ("profile_concept_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("profile_request", "TEXT"),
+        ):
+            if name not in learning_columns:
+                conn.execute(f"ALTER TABLE learning_states ADD COLUMN {name} {declaration}")
         conn.execute(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS learning_anchors_fts USING fts5(
@@ -2025,6 +2037,9 @@ def _row_to_learning_state(row: sqlite3.Row) -> LearningState:
         last_opened_at=row["last_opened_at"],
         completed_at=row["completed_at"],
         updated_at=row["updated_at"],
+        profile_status=row["profile_status"],
+        profile_error=row["profile_error"],
+        profile_concept_count=row["profile_concept_count"],
     )
 
 
@@ -3927,6 +3942,11 @@ def rename_course_references(
                 (new_path, now, project_id, old_path),
             )
         conn.execute(
+            """UPDATE learning_evidence_v2 SET object_json=json_set(object_json,'$.sourcePath',?)
+               WHERE source='course_completion' AND json_extract(object_json,'$.projectId')=?
+                 AND json_extract(object_json,'$.sourcePath')=?""", (new_path, project_id, old_path),
+        )
+        conn.execute(
             "UPDATE knowledge_nodes SET ref_path = ?, title = ?, updated_at = ? "
             "WHERE project_id = ? AND ref_type IN ('course', 'qa') AND ref_path = ?",
             (new_path, new_title, now, project_id, old_path),
@@ -4188,6 +4208,10 @@ def upsert_learning_state(
     now = datetime.now(timezone.utc).isoformat()
     completed_at = now if status == "completed" else None
     with _connect() as conn:
+        previous = conn.execute(
+            "SELECT * FROM learning_states WHERE project_id=? AND source_type=? AND source_path=?",
+            (project_id, source_type, source_path),
+        ).fetchone()
         conn.execute(
             """
             INSERT INTO learning_states (
@@ -4218,7 +4242,6 @@ def upsert_learning_state(
                 now,
             ),
         )
-        conn.commit()
         row = conn.execute(
             """
             SELECT * FROM learning_states
@@ -4228,6 +4251,11 @@ def upsert_learning_state(
         ).fetchone()
         if row is None:
             raise RuntimeError("learning state was not persisted")
+        if source_type == "course" and (previous is None or previous["status"] != status):
+            from app.services.course_completion import prepare_completion
+            prepare_completion(conn, row)
+            row = conn.execute("SELECT * FROM learning_states WHERE id=?", (row["id"],)).fetchone()
+        conn.commit()
         return _row_to_learning_state(row)
 
 
@@ -4246,6 +4274,9 @@ def list_learning_states(project_id: int) -> list[LearningState]:
 
 def delete_learning_state(project_id: int, source_type: str, source_path: str) -> bool:
     with _connect() as conn:
+        if source_type == "course":
+            from app.services.course_completion import revoke_source
+            revoke_source(conn, project_id, source_path)
         cursor = conn.execute(
             "DELETE FROM learning_states WHERE project_id = ? AND source_type = ? AND source_path = ?",
             (project_id, source_type, source_path),
@@ -4256,6 +4287,8 @@ def delete_learning_state(project_id: int, source_type: str, source_path: str) -
 
 def reset_learning_states(project_id: int) -> int:
     with _connect() as conn:
+        from app.services.course_completion import revoke_source
+        revoke_source(conn, project_id)
         cursor = conn.execute("DELETE FROM learning_states WHERE project_id = ?", (project_id,))
         conn.commit()
         return cursor.rowcount

@@ -1243,6 +1243,8 @@ def _run_learning_plan_lesson_task(
 学习材料：
 {lesson_input}
 """
+    from app.services.course_completion import learned_course_context
+    planner_prompt += learned_course_context(project_id, lesson_title)
     _debug_dump("L" + str(lesson_number) + "-planner-prompt.txt", planner_prompt)
     plan_content = call_openai_compatible_chat(
         settings["base_url"],
@@ -1477,6 +1479,8 @@ def _run_repository_lesson_task(
 课程材料：
 {lesson_input}
 """
+    from app.services.course_completion import learned_course_context
+    planner_prompt += learned_course_context(project_id, lesson_title)
     _debug_dump("L" + str(lesson_number) + "-repo-planner-prompt.txt", planner_prompt)
     plan_content = call_openai_compatible_chat(
         settings["base_url"],

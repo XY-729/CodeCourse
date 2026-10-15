@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const native = vi.hoisted(() => ({ connected: false, opened: false, version: 6 }));
+const native = vi.hoisted(() => ({ connected: false, opened: false, version: 7 }));
 const sqlite = vi.hoisted(() => ({
   isSecretStored: vi.fn<() => Promise<{ result: boolean }>>(),
   setEncryptionSecret: vi.fn<() => Promise<void>>(),
@@ -26,7 +26,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   native.connected = false;
   native.opened = false;
-  native.version = 6;
+  native.version = 7;
   sqlite.isSecretStored.mockResolvedValue({ result: true });
   sqlite.isDBOpen.mockImplementation(async () => {
     if (!native.connected) throw new Error("isDBOpen: No available connection for database codecourse_mobile");
@@ -38,7 +38,7 @@ beforeEach(() => {
   });
   sqlite.open.mockImplementation(async () => { native.opened = true; });
   sqlite.execute.mockImplementation(async ({ statements }) => {
-    if (statements === "PRAGMA user_version = 6") native.version = 6;
+    if (statements === "PRAGMA user_version = 7") native.version = 7;
   });
   sqlite.query.mockImplementation(async ({ statement }) => {
     if (statement === "PRAGMA user_version") return { values: [{ user_version: native.version }] };
@@ -109,7 +109,7 @@ describe("MobileDatabase startup", () => {
     await expect(database.init()).rejects.toThrow("Execute: migration interrupted");
     expect(native.version).toBe(5);
     await Promise.all([database.init(), database.query("SELECT * FROM projects")]);
-    expect(native.version).toBe(6);
+    expect(native.version).toBe(7);
     expect(sqlite.createConnection).toHaveBeenCalledTimes(1);
     expect(sqlite.open).toHaveBeenCalledTimes(1);
   });
@@ -119,7 +119,7 @@ describe("MobileDatabase startup", () => {
     await Promise.all([new MobileDatabase().init(), new MobileDatabase().init()]);
     expect(sqlite.createConnection).toHaveBeenCalledTimes(1);
     expect(sqlite.open).toHaveBeenCalledTimes(1);
-    expect(sqlite.execute.mock.calls.filter(([options]) => options.statements === "PRAGMA user_version = 6")).toHaveLength(1);
+    expect(sqlite.execute.mock.calls.filter(([options]) => options.statements === "PRAGMA user_version = 7")).toHaveLength(1);
   });
 
   it("handles a native connection appearing during bridge reconnection", async () => {
@@ -166,12 +166,13 @@ it("upgrades version 5 with durable answer jobs and selection ranges", async () 
   const statements = (sqlite.execute.mock.calls as unknown as Array<[{ statements: string }]>).map(call => call[0].statements).join("\n");
   expect(statements).toContain("CREATE TABLE IF NOT EXISTS qa_postprocess_jobs");
   expect(statements).toContain("ALTER TABLE qa_records ADD COLUMN selection_range_json TEXT");
-  expect(statements).toContain("PRAGMA user_version = 6");
+  expect(statements).toContain("ALTER TABLE learning_states ADD COLUMN profile_status TEXT NOT NULL DEFAULT 'none'");
+  expect(statements).toContain("PRAGMA user_version = 7");
   expect(statements).not.toContain("DROP TABLE");
 });
 
 it("serializes foreground saves across wrappers with background transactions and releases the queue after rollback", async () => {
-  sqlite.query.mockImplementation(async ({ statement }: { statement: string }) => statement === "PRAGMA user_version" ? { values: [{ user_version: 6 }] } : { values: [] });
+  sqlite.query.mockImplementation(async ({ statement }: { statement: string }) => statement === "PRAGMA user_version" ? { values: [{ user_version: 7 }] } : { values: [] });
   const database = new MobileDatabase();
   const foregroundDatabase = new MobileDatabase();
   await Promise.all([database.init(), foregroundDatabase.init()]);

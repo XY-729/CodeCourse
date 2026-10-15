@@ -27,8 +27,10 @@ def saved_learner_summary(project_id: int) -> str:
                ORDER BY updated_at DESC LIMIT 4""", (str(project_id),)
         ).fetchall()
     summary = "\n".join(row["summary"][:600] for row in rows)
+    from app.services.course_completion import learned_course_context
     return ("<learner_context>\n" + render_preference_directives(effective_preferences(project_id))
-            + "\n" + summary + "\n历史推断仅供调整讲解，不证明已经掌握；本次明确要求优先。\n</learner_context>")
+            + "\n" + summary + "\n历史推断仅供调整讲解，不证明已经掌握；本次明确要求优先。\n</learner_context>"
+            + learned_course_context(project_id))
 
 
 def enqueue_answer(record, payload: QAAskRequest, context: str, terms: list) -> None:

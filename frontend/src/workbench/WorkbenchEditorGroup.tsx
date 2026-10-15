@@ -1,5 +1,7 @@
 import UnderstandingFeedback from "../features/teaching/UnderstandingFeedback";
 import AsyncActionButton from "../components/ui/AsyncActionButton";
+import { retryLearningProfile } from "../api/client";
+import { TEACHING_CHANGED } from "../personalization/teachingApi";
 import { lazy, memo, Suspense, useMemo, useRef, useState } from "react";
 import type { DragEvent } from "react";
 import { Check, Loader2, Pencil, Save, Star, X } from "lucide-react";
@@ -186,6 +188,15 @@ function WorkbenchEditorGroupView(props: Props) {
             <Check size={14} />{learningState?.status === "completed" ? "已完成" : "学习完成"}
           </AsyncActionButton>
         ) : null}
+        {!hasMarkdownActions && learningState?.status === "completed" && projectId ? <>
+          {["pending", "running"].includes(learningState.profile_status ?? "") ? <span role="status">画像更新中…</span> : null}
+          {learningState.profile_status === "completed" ? <span role="status" title="已学过这些内容，理解和掌握程度仍需反馈或验证">已记录 {learningState.profile_concept_count ?? 0} 个知识点</span> : null}
+          {["none", "failed"].includes(learningState.profile_status ?? "none") ? <AsyncActionButton className="secondary-button compact" title={learningState.profile_error ?? "为这份已完成课件补录已学知识"}
+            action={async () => {
+              await retryLearningProfile(projectId, learningState.id);
+              window.dispatchEvent(new CustomEvent(TEACHING_CHANGED, { detail: { projectId } }));
+            }}>{learningState.profile_status === "failed" ? "重试画像更新" : "同步已学知识"}</AsyncActionButton> : null}
+        </> : null}
         {hasMarkdownActions ? <>
         {projectId ? <UnderstandingFeedback simple projectId={projectId} sourceType="qa" sourcePath={activeItem.path} revision={activeItem.content} /> : null}
         <button

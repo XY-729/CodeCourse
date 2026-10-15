@@ -17,6 +17,7 @@ vi.mock("./database", () => ({ MobileDatabase: class {
 import { AndroidLocalProvider } from "./localProvider";
 
 type Internals = {
+  courseCompletion: { context: ReturnType<typeof vi.fn> };
   getPrompts: ReturnType<typeof vi.fn>;
   getLLMSettings: () => Promise<LLMSettings>;
   getProject: ReturnType<typeof vi.fn>;
@@ -50,6 +51,7 @@ beforeEach(() => {
     CREATE TABLE learning_anchors(project_id,term_text,summary,updated_at);
     CREATE TABLE observer_jobs(id,project_id,qa_record_id,status);`);
   provider = new AndroidLocalProvider() as unknown as typeof provider;
+  provider.courseCompletion.context = vi.fn(async () => "<completed_course_learning>已学习借用基础</completed_course_learning>");
   provider.getPrompts = vi.fn(async () => ({ "prompt.system": "保留讲解要求", "prompt.qa.answer": "问题：{question}\n材料：{context_text}\n{session_context}" }));
   provider.getLLMSettings = async () => ({ enabled: true, has_api_key: true, provider: "saved", base_url: "https://saved.test", model: "saved", masked_api_key: "***" });
   provider.getProject = vi.fn(async () => ({ id: 1, name: "测试项目", project_type: "repository" }));
@@ -92,6 +94,7 @@ it("publishes body before save, preserves selection, provider and model, and def
   const sent = JSON.parse(harness.stream.mock.calls[0][0].body);
   expect(sent).toMatchObject({ stream: true, model: "configured", max_tokens: 65536 });
   expect(sent.messages[0].content).toContain("保留讲解要求");
+  expect(sent.messages[1].content).toContain("已学习借用基础");
 });
 
 it("does not save or enqueue a canceled answer", async () => {

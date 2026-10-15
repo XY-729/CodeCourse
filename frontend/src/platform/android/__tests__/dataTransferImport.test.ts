@@ -88,7 +88,7 @@ it.each([false, true])("upgrades a v0.4.2 database with existing user data (reta
   state.opened = retained;
   const database = new MobileDatabase();
   await database.init();
-  expect(await database.query("PRAGMA user_version")).toEqual([{ user_version: 6 }]);
+  expect(await database.query("PRAGMA user_version")).toEqual([{ user_version: 7 }]);
   expect(await database.query("SELECT name FROM projects")).toEqual([{ name: "原有项目" }]);
   expect(await database.query("SELECT filename FROM course_files")).toEqual([{ filename: "lessons/lesson_01.md" }]);
   expect(await database.query("SELECT question,answer_md,selection_range_json FROM qa_records")).toEqual([{ question: "原有问题", answer_md: "# 原有回答", selection_range_json: null }]);

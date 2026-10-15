@@ -356,6 +356,9 @@ export type LearningState = {
   last_opened_at: string;
   completed_at?: string | null;
   updated_at: string;
+  profile_status?: "none" | "pending" | "running" | "completed" | "failed";
+  profile_error?: string | null;
+  profile_concept_count?: number;
 };
 
 export type LearningStateUpdate = {
@@ -917,6 +920,10 @@ export function updateLearningState(projectId: number, payload: LearningStateUpd
     method: "PUT",
     body: JSON.stringify(payload),
   });
+}
+
+export function retryLearningProfile(projectId: number, stateId: number): Promise<LearningState> {
+  return request<LearningState>(`/projects/${projectId}/learning-state/${stateId}/profile-retry`, { method: "POST" });
 }
 
 export function resetLearningStates(projectId: number): Promise<{ deleted: number }> {

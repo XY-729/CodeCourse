@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -30,6 +31,9 @@ def _setup_temp_workspace():
 
 class LearningStateTests(unittest.TestCase):
     def setUp(self):
+        dispatch = patch("app.services.course_completion.dispatch_completion")
+        dispatch.start()
+        self.addCleanup(dispatch.stop)
         self._tmpdir = _setup_temp_workspace()
         from app.main import app
 

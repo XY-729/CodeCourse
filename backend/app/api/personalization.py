@@ -563,6 +563,13 @@ def reset_profile(
         return deleted
 
     def do_tx(conn):
+        # A reset must also invalidate pending completion work so it cannot restore erased evidence.
+        if scope in {"all", "global"}:
+            conn.execute("UPDATE learning_states SET profile_request=NULL,profile_status='none',profile_error=NULL,profile_concept_count=0")
+        else:
+            conn.execute("UPDATE learning_states SET profile_request=NULL,profile_status='none',profile_error=NULL,profile_concept_count=0 WHERE project_id=?", (project_id,))
+            from app.services.course_completion import revoke_source
+            revoke_source(conn, project_id)
         if scope == "all":
             conn.execute("DELETE FROM understanding_feedback")
         else:

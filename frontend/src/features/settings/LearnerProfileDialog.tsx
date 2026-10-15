@@ -33,6 +33,7 @@ import {
 import type { TermDisplayDiagnostics } from "../../personalization/useDocumentTermsController";
 import { canonicalConceptName } from "../../personalization/conceptIdentity";
 import DocumentTermScanControl from "../teaching/DocumentTermScanControl";
+import { TEACHING_CHANGED } from "../../personalization/teachingApi";
 
 type Props = {
   open: boolean;
@@ -167,6 +168,13 @@ export default function LearnerProfileDialog({
     void load();
   }, [open, projectId]);
 
+  useEffect(() => {
+    if (!open) return;
+    const refresh = () => { void load(); };
+    window.addEventListener(TEACHING_CHANGED, refresh);
+    return () => window.removeEventListener(TEACHING_CHANGED, refresh);
+  }, [open, projectId]);
+
   const conceptsById = useMemo(
     () => new Map(profile?.concepts.map((item) => [item.concept.id, item.concept.displayName]) ?? []),
     [profile],
@@ -183,6 +191,18 @@ export default function LearnerProfileDialog({
     ),
     [profile],
   );
+  const studiedRanges = useMemo(() => {
+    const ranges = new Map<string, Set<string>>();
+    for (const evidence of profile?.learningEvidence ?? []) {
+      if (evidence.source !== "course_completion" || evidence.voided || voidedEvidenceIds.has(evidence.id)) continue;
+      const current = ranges.get(evidence.conceptId) ?? new Set<string>();
+      if (Array.isArray(evidence.result.ranges)) for (const range of evidence.result.ranges) {
+        if (range && typeof range === "object" && "aspect" in range && typeof range.aspect === "string") current.add(range.aspect);
+      }
+      ranges.set(evidence.conceptId, current);
+    }
+    return ranges;
+  }, [profile, voidedEvidenceIds]);
   const domainSummaries = useMemo(() => {
     if (!profile) return [];
     const legacyByKey = new Map(profile.domainProfiles.map((domain) => [domain.domainKey, domain]));
@@ -600,6 +620,7 @@ export default function LearnerProfileDialog({
                               ? "正在学习或明确陌生"
                               : "证据不足"
                         }</small>
+                        {studiedRanges.has(item.concept.id) ? <small>已学过：{[...studiedRanges.get(item.concept.id)!].join("、")}（课程完成记录）</small> : null}
                       </div>
                       {state ? (
                         <div className="knowledge-dimension-grid" aria-label={`${item.concept.displayName}的六维知识状态`}>

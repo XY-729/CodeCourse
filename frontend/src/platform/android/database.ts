@@ -5,7 +5,7 @@ import { repairLegacyProfile } from "../../personalization/profileRepair";
 
 const DATABASE = "codecourse_mobile";
 const DATABASE_VERSION = 1;
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 // The native connection outlives a WebView/module instance. All wrappers for
 // this database must also share the initialization and transaction queue.
@@ -425,6 +425,12 @@ export class MobileDatabase {
       );` });
     await this.ensureColumns("qa_records", [
       { name: "selection_range_json", definition: "selection_range_json TEXT" },
+    ]);
+    await this.ensureColumns("learning_states", [
+      { name: "profile_status", definition: "profile_status TEXT NOT NULL DEFAULT 'none'" },
+      { name: "profile_error", definition: "profile_error TEXT" },
+      { name: "profile_concept_count", definition: "profile_concept_count INTEGER NOT NULL DEFAULT 0" },
+      { name: "profile_request", definition: "profile_request TEXT" },
     ]);
     await this.ensureColumns("document_terms", [
       { name: "concept_id", definition: "concept_id TEXT" },
