@@ -2,9 +2,11 @@
 
 > 把陌生 GitHub 项目变成一套可以阅读、提问、复习和持续积累的课程。
 
-[下载 Windows 版](https://github.com/XY-729/CodeCourse/releases/latest) · [使用说明书](#使用说明书) · [常见问题](#常见问题) · [查看源码](https://github.com/XY-729/CodeCourse)
+[下载 Windows / Android 版](https://github.com/XY-729/CodeCourse/releases/latest) · [使用说明书](#使用说明书) · [常见问题](#常见问题) · [查看源码](https://github.com/XY-729/CodeCourse)
 
 Android 已同步最近的实时问答、停止与重试、连续会话、返回原文、后台分析和章节分工功能，详见 [Android 同步核对](docs/android-parity-20261015.md)。
+
+标记课件完成后会自动记录已学概念和范围，并供后续总纲、课件和问答使用；支持撤销、失败重试及旧课件补录，详见 [课程完成画像更新](docs/course-completion-profile-20261015.md)。
 
 前端开发与重绘请先阅读 [前端结构与重绘指南](frontend/UI_GUIDE.md)，并按 [界面清单](frontend/ui-surfaces.json) 核对主界面、移动抽屉、弹窗及独立窗口。
 
@@ -39,14 +41,16 @@ CodeCourse 是一个面向学习者的代码阅读与课程生成工具。它不
 
 ## 下载与安装
 
-打开 [v0.4.9 下载页面](https://github.com/XY-729/CodeCourse/releases/tag/v0.4.9)，在 **Assets** 中选择一个文件即可。本次仅发布 Windows 桌面版。
+打开 [v0.4.10 下载页面](https://github.com/XY-729/CodeCourse/releases/tag/v0.4.10)，在 **Assets** 中选择 Windows 安装版、便携版或 Android 正式签名 APK。
 
 | 文件 | 用途 |
 | --- | --- |
-| `CodeCourse-0.4.9-setup.exe` | Windows 安装版，按向导选择安装位置，适合日常使用 |
-| `CodeCourse-0.4.9-portable.exe` | Windows 便携版，直接启动，适合先体验 |
-| `CodeCourse-0.4.9-guide.md` | 可下载保存的本说明书 |
+| `CodeCourse-0.4.10-setup.exe` | Windows 安装版，按向导选择安装位置，适合日常使用 |
+| `CodeCourse-0.4.10-portable.exe` | Windows 便携版，直接启动，适合先体验 |
+| `CodeCourse-0.4.10-android.apk` | Android 正式签名安装包 |
+| `CodeCourse-0.4.10-guide.md` | 可下载保存的本说明书 |
 | `SHA256SUMS.txt` | 安装版和便携版的 SHA-256 校验值 |
+| `SHA256SUMS-android.txt` | Android APK 的 SHA-256 校验值 |
 
 `latest.yml` 和 `.blockmap` 是更新用的辅助文件，无需手动打开。GitHub 自动提供的 Source code 是源码，不是桌面安装包。桌面包已内置运行所需组件，无需另装 Node.js 或 Python。旧用户建议先在“更多 → 导出 CodeCourse 数据包”备份，再关闭应用并升级。
 
