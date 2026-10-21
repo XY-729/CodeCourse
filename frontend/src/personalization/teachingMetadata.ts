@@ -10,6 +10,19 @@ core 只标本次核心目标。复用历史讲解时输出 REUSE: ["提供的�
 export function coverageBody(content: string): string {
   return content.replace(/<!-- codecourse-teaching: (.*?) -->/gs, (match) => "\n".repeat((match.match(/\n/g) ?? []).length));
 }
+
+/**
+ * Markdown kept in course files also carries internal markers: teaching
+ * coverage, reuse references and outline anchors. They drive indexing,
+ * evidence and lesson links, and react-markdown would otherwise print them as
+ * escaped text, so every reading surface renders this body instead. Line
+ * breaks are preserved so data-source-line jumps still match the file.
+ */
+export function readingBody(content: string): string {
+  return coverageBody(content)
+    .replace(/<!-- codecourse-reuse: (.*?) -->/gs, (match) => "\n".repeat((match.match(/\n/g) ?? []).length))
+    .replace(/<!-- CODECOURSE_[A-Z_]+ -->/g, "");
+}
 export function teachingMetadata(raw: string): string {
   const lines: string[] = [];
   const entries: unknown[] = [];

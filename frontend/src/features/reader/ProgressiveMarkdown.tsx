@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
-import { coverageBody } from "../../personalization/teachingMetadata";
+import { readingBody } from "../../personalization/teachingMetadata";
 
 const plugins = [remarkGfm];
 const parser = unified().use(remarkParse).use(remarkGfm);
@@ -15,7 +15,7 @@ const Block = memo(function Block({ text }: { text: string }) {
 export default function ProgressiveMarkdown({ markdown, visibleLength }: { markdown: string; visibleLength: number }) {
   // Coverage metadata is stored for the teaching index, never for reading.
   const { blocks, definitions, body } = useMemo(() => {
-    const body = coverageBody(markdown);
+    const body = readingBody(markdown);
     const nodes = parser.parse(body).children;
     return {
       blocks: nodes.filter(node => node.type !== "definition").map(node => ({

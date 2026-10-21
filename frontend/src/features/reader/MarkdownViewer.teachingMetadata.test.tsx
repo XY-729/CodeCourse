@@ -32,6 +32,9 @@ const lesson = `# 第 2 课：历史阅读与三层撤销
 正文第二段。
 
 <!-- codecourse-teaching: [{"concept":"git blame","aspect":"逐行归属","kind":"explained","core":false,"dimension":"code_reading","quote":"每一行最后一次被谁改。"}] -->
+
+<!-- CODECOURSE_LESSON_LINKS_START -->
+<!-- CODECOURSE_LESSON_LINKS_END -->
 `;
 
 describe("MarkdownViewer teaching coverage metadata", () => {
@@ -41,6 +44,7 @@ describe("MarkdownViewer teaching coverage metadata", () => {
     expect(text).not.toContain("codecourse-teaching");
     expect(text).not.toContain('"concept"');
     expect(text).not.toContain("-->");
+    expect(text).not.toContain("CODECOURSE_");
   });
 
   it("keeps the readable body and reuse references intact", () => {
