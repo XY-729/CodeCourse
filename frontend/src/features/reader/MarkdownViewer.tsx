@@ -10,6 +10,7 @@ import { normalizeHighlightLanguage } from "../../utils/highlightLanguages";
 import type { Annotation } from "../../types";
 import { COLOR_VALUES } from "../../types";
 import { splitRecordInformation } from "../../utils/recordInformation";
+import { coverageBody } from "../../personalization/teachingMetadata";
 import { markDesktopPerformance } from "../../performance/desktopPerformance";
 import type { QAStreamTiming } from "../../performance/qaTiming";
 import type { ViewerSelection } from "./CodeViewer";
@@ -384,8 +385,12 @@ export default function MarkdownViewer({
   initialScrollRatio,
   onScrollRatioChange,
 }: Props) {
+  // Hidden teaching coverage metadata stays in the file for indexing, evidence
+  // and reuse, but it must never reach the reading surface. Blanking preserves
+  // line count so data-source-line jumps still match the stored document.
+  const visibleContent = useMemo(() => coverageBody(content), [content]);
   const recordContent = useMemo(() => sourceType === "qa" || /^(qa|selection_answers)\//.test(sourcePath ?? "")
-    ? splitRecordInformation(content) : { body: content, information: "" }, [content, sourceType, sourcePath]);
+    ? splitRecordInformation(visibleContent) : { body: visibleContent, information: "" }, [visibleContent, sourceType, sourcePath]);
   const articleRef = useRef<HTMLElement | null>(null);
   const jumpConsumedRef = useRef(onJumpConsumed);
   jumpConsumedRef.current = onJumpConsumed;

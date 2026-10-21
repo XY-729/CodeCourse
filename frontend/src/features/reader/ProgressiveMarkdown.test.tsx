@@ -23,3 +23,11 @@ it("folds only generated trailing metadata and leaves user sections and code int
   const code = `\`\`\`markdown\n${info}`;
   expect(splitRecordInformation(code)).toEqual({ body: code, information: "" });
 });
+it("hides stored coverage metadata from the streaming preview", () => {
+  const markdown = "## 标题\n\n正文段落。\n\n<!-- codecourse-teaching: [{\"concept\":\"git log\",\"aspect\":\"读法\",\"kind\":\"explained\",\"core\":true,\"dimension\":\"conceptual\",\"quote\":\"正文段落。\"}] -->\n\n## 下一章\n";
+  const view = render(<ProgressiveMarkdown markdown={markdown} visibleLength={markdown.length} />);
+  const text = view.container.textContent ?? "";
+  expect(text).toContain("正文段落。");
+  expect(text).not.toContain("codecourse-teaching");
+  expect(text).not.toContain('"concept"');
+});
