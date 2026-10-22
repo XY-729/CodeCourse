@@ -17,6 +17,7 @@ class LessonCoordinationTests(unittest.TestCase):
         from app.services import generation_service as generation, storage
 
         plan = json.loads((Path(__file__).parent / "fixtures/cpp_chrono_filesystem_plan.json").read_text(encoding="utf-8"))
+        plan = fixtures.responsibility_plan(plan)
         original_sections = json.dumps(plan["sections"], ensure_ascii=False)
         task = storage.create_generation_task(
             self.project.id, "outline_lesson", "recorded-cpp-plan", "test",
@@ -39,11 +40,12 @@ class LessonCoordinationTests(unittest.TestCase):
                 # A serial implementation cannot get four writers to this point.
                 barrier.wait(timeout=5)
                 section = plan["sections"][index]
-                return "## " + title + "\n\n" + "\n\n".join(
+                body = "## " + title + "\n\n" + "\n\n".join(
                     f"### {item['name']}\n\n本章重点：{item['focus']}" for item in section["items"]
                 )
+                return fixtures.response_manifest(body, section["items"])
             if "责任编辑" in prompt:
-                return "## 本课小结\n\n本课知识项通过综合应用串联。"
+                return fixtures.response_manifest("## 本课小结\n\n本课知识项通过综合应用串联。")
             return json.dumps(plan, ensure_ascii=False)
 
         with patch.object(generation, "call_openai_compatible_chat", side_effect=model) as calls:

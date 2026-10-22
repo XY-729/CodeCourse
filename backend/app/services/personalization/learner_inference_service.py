@@ -128,258 +128,24 @@ def _upsert_inference(
     direct: bool,
     evidence: dict[str, Any],
 ) -> None:
-    row = conn.execute(
-        """SELECT * FROM learner_inferences
-           WHERE subject_type = ? AND subject_key = ? AND scope_type = ? AND scope_id = ?""",
-        (subject_type, subject_key, scope_type, scope_id),
-    ).fetchone()
-    stamp = _now()
-    if row is None:
-        conn.execute(
-            """INSERT INTO learner_inferences
-               (id, subject_type, subject_key, scope_type, scope_id, state, summary,
-                confidence, direct_evidence_count, inferred_evidence_count,
-                evidence_json, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
-            (
-                str(uuid4()), subject_type, subject_key, scope_type, scope_id,
-                state, summary[:500], confidence, 1 if direct else 0,
-                0 if direct else 1, json.dumps([evidence], ensure_ascii=False),
-                stamp, stamp,
-            ),
-        )
-        return
-
-    direct_count = int(row["direct_evidence_count"]) + (1 if direct else 0)
-    inferred_count = int(row["inferred_evidence_count"]) + (0 if direct else 1)
-    old_confidence = float(row["confidence"])
-    weight = min(0.35, 1.0 / max(2, direct_count + inferred_count))
-    merged_confidence = max(0.0, min(1.0, old_confidence * (1 - weight) + confidence * weight))
-
-    # Direct evidence always outranks inferred evidence. A negative direct signal
-    # can move a concept back to learning; inferred relations can never confirm it.
-    old_state = str(row["state"])
-    next_state = state
-    if not direct and old_state in {"confirmed", "learning"}:
-        next_state = old_state
-    elif state == "confirmed" and not direct:
-        next_state = "likely_prerequisite"
-
-    conn.execute(
-        """UPDATE learner_inferences
-           SET state = ?, summary = ?, confidence = ?,
-               direct_evidence_count = ?, inferred_evidence_count = ?,
-               evidence_json = ?, status = 'active', updated_at = ?
-           WHERE id = ?""",
-        (
-            next_state, summary[:500], merged_confidence, direct_count,
-            inferred_count, _merge_evidence(row["evidence_json"], evidence),
-            stamp, row["id"],
-        ),
-    )
+    return None
 
 
 def _upsert_relation(conn, relation, observer_run_id: str, project_id: int) -> None:
-    if float(relation.confidence) < RELATION_CONFIDENCE:
-        return
-    source = _concept_row(conn, relation.source_concept_key, relation.source_concept_text, project_id)
-    target = _concept_row(conn, relation.target_concept_key, relation.target_concept_text, project_id)
-    if source is None or target is None or source["id"] == target["id"]:
-        return
-    if relation.domain and relation.domain != "general":
-        conn.execute(
-            """UPDATE concepts SET domain = ?
-               WHERE id IN (?, ?) AND (domain IS NULL OR domain = '' OR domain = 'general')""",
-            (relation.domain, source["id"], target["id"]),
-        )
-    confidence = float(relation.confidence)
-    if confidence < RELATION_CONFIDENCE:
-        return
-    stamp = _now()
-    evidence = {
-        "id": observer_run_id,
-        "rationale": relation.rationale,
-        "confidence": confidence,
-    }
-    row = conn.execute(
-        """SELECT * FROM concept_relations
-           WHERE source_concept_id = ? AND target_concept_id = ? AND relation_type = ?""",
-        (source["id"], target["id"], relation.relation_type),
-    ).fetchone()
-    if row is None:
-        conn.execute(
-            """INSERT INTO concept_relations
-               (id, source_concept_id, target_concept_id, relation_type, domain,
-                confidence, evidence_json, origin, status, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'observer', 'active', ?, ?)""",
-            (
-                str(uuid4()), source["id"], target["id"], relation.relation_type,
-                relation.domain, confidence, json.dumps([evidence], ensure_ascii=False),
-                stamp, stamp,
-            ),
-        )
-        return
-    merged_evidence = _loads(_merge_evidence(row["evidence_json"], evidence, limit=200), [])
-    merged_confidence, merged_status = _relation_confidence(merged_evidence)
-    conn.execute(
-        """UPDATE concept_relations
-           SET confidence = ?, domain = ?, evidence_json = ?, status = ?, updated_at = ?
-           WHERE id = ?""",
-        (
-            merged_confidence,
-            relation.domain,
-            json.dumps(merged_evidence, ensure_ascii=False),
-            merged_status,
-            stamp,
-            row["id"],
-        ),
-    )
+    return None
 
 
 def _survey_due(conn) -> bool:
-    prefs = conn.execute(
-        "SELECT * FROM learner_preferences WHERE scope_type = 'global' AND scope_id = ?",
-        (GLOBAL_SCOPE_ID,),
-    ).fetchone()
-    completed_answers = int(
-        conn.execute("SELECT COUNT(*) FROM qa_records WHERE answer_md <> ''").fetchone()[0]
-    )
-    if prefs is None or not bool(prefs["survey_enabled"]) or completed_answers < 5:
-        return False
-    pending = conn.execute(
-        "SELECT 1 FROM survey_candidates WHERE scope_id = ? AND status = 'pending' LIMIT 1",
-        (GLOBAL_SCOPE_ID,),
-    ).fetchone()
-    if pending is not None:
-        return False
-    latest = conn.execute(
-        """SELECT created_at FROM survey_candidates
-           WHERE scope_id = ? ORDER BY created_at DESC LIMIT 1""",
-        (GLOBAL_SCOPE_ID,),
-    ).fetchone()
-    if latest is None:
-        return True
-    try:
-        created = datetime.fromisoformat(str(latest["created_at"]).replace("Z", "+00:00"))
-        return datetime.now(timezone.utc) - created >= timedelta(days=1)
-    except ValueError:
-        return True
+    return False
 
 
 def _store_survey(conn, survey, observer_run_id: str) -> None:
-    if survey is None or survey.confidence < SURVEY_CONFIDENCE or not _survey_due(conn):
-        return
-    conn.execute(
-        """INSERT INTO survey_candidates
-           (id, scope_id, question, dimension, options_json, rationale,
-            confidence, status, observer_run_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
-        (
-            str(uuid4()), GLOBAL_SCOPE_ID, survey.question, survey.dimension,
-            json.dumps([item.model_dump() for item in survey.options], ensure_ascii=False),
-            survey.rationale, survey.confidence, observer_run_id, _now(),
-        ),
-    )
+    return None
 
 
 def _rebuild_domain_profiles(conn) -> None:
-    domains = {
-        str(row[0])
-        for row in conn.execute(
-            """SELECT DISTINCT c.domain
-               FROM concepts c
-               JOIN learner_inferences i ON i.subject_type = 'concept' AND i.subject_key = c.id
-               WHERE i.status = 'active' AND i.scope_id IN (?, 'local-user')""",
-            (GLOBAL_SCOPE_ID,),
-        ).fetchall()
-        if row[0]
-    }
-    domains.update(
-        str(row[0])
-        for row in conn.execute(
-            """SELECT DISTINCT subject_key FROM learner_inferences
-               WHERE subject_type = 'domain' AND scope_id = ? AND status = 'active'""",
-            (GLOBAL_SCOPE_ID,),
-        ).fetchall()
-        if row[0]
-    )
-
-    for domain in domains:
-        rows = conn.execute(
-            """SELECT c.id, c.display_name, i.state, i.confidence, i.evidence_json
-               FROM concepts c
-               JOIN learner_inferences i ON i.subject_type = 'concept' AND i.subject_key = c.id
-               WHERE c.domain = ? AND i.status = 'active'
-                 AND (i.scope_type = 'global' AND i.scope_id = ?)""",
-            (domain, GLOBAL_SCOPE_ID),
-        ).fetchall()
-        confirmed = [str(row["display_name"]) for row in rows if row["state"] == "confirmed"]
-        learning = [str(row["display_name"]) for row in rows if row["state"] == "learning"]
-        likely = [str(row["display_name"]) for row in rows if row["state"] == "likely_prerequisite"]
-
-        confirmed_ids = {str(row["id"]) for row in rows if row["state"] == "confirmed"}
-        if confirmed_ids:
-            placeholders = ",".join("?" * len(confirmed_ids))
-            rel_rows = conn.execute(
-                f"""SELECT c.display_name
-                    FROM concept_relations r
-                    JOIN concepts c ON c.id = r.target_concept_id
-                    WHERE r.source_concept_id IN ({placeholders})
-                      AND r.relation_type = 'prerequisite'
-                      AND r.status = 'active' AND r.confidence >= ?""",
-                (*confirmed_ids, RELATION_CONFIDENCE),
-            ).fetchall()
-            for rel_row in rel_rows:
-                name = str(rel_row["display_name"])
-                if name not in confirmed and name not in learning and name not in likely:
-                    likely.append(name)
-
-        domain_row = conn.execute(
-            """SELECT * FROM learner_inferences
-               WHERE subject_type = 'domain' AND subject_key = ?
-                 AND scope_type = 'global' AND scope_id = ? AND status = 'active'""",
-            (domain, GLOBAL_SCOPE_ID),
-        ).fetchone()
-        if domain_row is not None:
-            summary = str(domain_row["summary"])
-            confidence = float(domain_row["confidence"])
-            evidence = _loads(domain_row["evidence_json"], [])
-        else:
-            parts = []
-            if confirmed:
-                parts.append(f"已有直接证据：{', '.join(confirmed[:4])}")
-            if learning:
-                parts.append(f"正在学习：{', '.join(learning[:4])}")
-            if not parts:
-                parts.append("目前证据不足")
-            summary = "；".join(parts)
-            confidence = max([float(row["confidence"]) for row in rows] or [0.0])
-            evidence = []
-
-        stamp = _now()
-        conn.execute(
-            """INSERT INTO domain_profiles
-               (domain_key, scope_id, summary, confidence, confirmed_json,
-                learning_json, likely_prerequisites_json, evidence_json,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(domain_key, scope_id) DO UPDATE SET
-                 summary = excluded.summary,
-                 confidence = excluded.confidence,
-                 confirmed_json = excluded.confirmed_json,
-                 learning_json = excluded.learning_json,
-                 likely_prerequisites_json = excluded.likely_prerequisites_json,
-                 evidence_json = excluded.evidence_json,
-                 updated_at = excluded.updated_at""",
-            (
-                domain, GLOBAL_SCOPE_ID, summary, confidence,
-                json.dumps(confirmed[:20], ensure_ascii=False),
-                json.dumps(learning[:20], ensure_ascii=False),
-                json.dumps(likely[:20], ensure_ascii=False),
-                json.dumps(evidence[:20], ensure_ascii=False),
-                stamp, stamp,
-            ),
-        )
+    """Historical model summaries are retained, never rebuilt for new teaching."""
+    return None
 
 
 def apply_inference_updates(
@@ -390,143 +156,8 @@ def apply_inference_updates(
     observation: InteractionObservation,
     conn,
 ) -> None:
-    for relation in observation.concept_relations:
-        _upsert_relation(conn, relation, observer_run_id, project_id)
-
-    for index, evidence in enumerate(observation.knowledge_evidence):
-        if evidence.confidence < DIRECT_CONFIDENCE or evidence.direction == "uncertain":
-            continue
-        concept = _concept_row(conn, evidence.concept_key, evidence.concept_text, project_id)
-        if concept is None:
-            continue
-        scope_type, scope_id = _scope_for_concept(concept, project_id)
-        # Legacy projection stays readable, but Observer no longer decides
-        # mastery. Positive observations remain insufficient until verified.
-        state = "insufficient" if evidence.direction == "positive" else "learning"
-        _upsert_inference(
-            conn,
-            subject_type="concept",
-            subject_key=str(concept["id"]),
-            scope_type=scope_type,
-            scope_id=scope_id,
-            state=state,
-            summary=evidence.explanation,
-            confidence=evidence.confidence,
-            direct=evidence.direction == "negative",
-            evidence={
-                "id": f"{observer_run_id}:knowledge:{index}",
-                "qaRecordId": qa_record_id,
-                "quote": evidence.evidence_quote,
-                "dimension": evidence.dimension,
-                "direction": evidence.direction,
-            },
-        )
-        from app.services.personalization.knowledge_state_service import append_evidence
-        append_evidence(
-            {
-                "id": f"{observer_run_id}:knowledge-v2:{index}",
-                "idempotencyKey": f"{observer_run_id}:knowledge-v2:{index}",
-                "conceptId": str(concept["id"]),
-                "scopeType": scope_type,
-                "scopeId": scope_id,
-                "dimension": (
-                    "conceptual"
-                    if evidence.dimension == "conceptual_understanding"
-                    else evidence.dimension
-                ),
-                "direction": (
-                    "positive"
-                    if evidence.direction == "positive"
-                    else "negative"
-                    if evidence.direction == "negative"
-                    else "neutral"
-                ),
-                "strength": evidence.strength,
-                "reliability": min(0.65, evidence.confidence),
-                "source": "observer",
-                "action": "candidate_accepted",
-                "object": {
-                    "type": "concept",
-                    "conceptText": evidence.concept_text,
-                },
-                "result": {
-                    "evidenceQuote": evidence.evidence_quote,
-                    "explanation": evidence.explanation,
-                },
-                "qaRecordId": qa_record_id,
-                "modelVersion": observer_run_id.split(":")[0],
-            },
-            conn=conn,
-        )
-
-    for index, assessment in enumerate(observation.domain_assessments):
-        for concept_key in assessment.concept_keys:
-            concept = _concept_row(conn, concept_key, concept_key, project_id)
-            if concept is not None and assessment.domain_key != "general":
-                conn.execute(
-                    """UPDATE concepts SET domain = ?
-                       WHERE id = ? AND (domain IS NULL OR domain = '' OR domain = 'general')""",
-                    (assessment.domain_key, concept["id"]),
-                )
-        assessment_keys = {
-            str(value).strip().casefold()
-            for value in assessment.concept_keys
-            if str(value).strip()
-        }
-
-        def belongs_to_assessment(item) -> bool:
-            candidates = {
-                str(item.concept_text or "").strip().casefold(),
-                str(item.concept_key or "").strip().casefold(),
-            }
-            if assessment_keys and any(value in assessment_keys for value in candidates if value):
-                return True
-            concept_row = _concept_row(conn, item.concept_key, item.concept_text, project_id)
-            return bool(
-                concept_row is not None
-                and str(concept_row["domain"] or "").strip().casefold()
-                == assessment.domain_key.strip().casefold()
-            )
-
-        direct_positive = any(
-            item.direction == "positive"
-            and item.confidence >= DIRECT_CONFIDENCE
-            and belongs_to_assessment(item)
-            for item in observation.knowledge_evidence
-        )
-        direct_negative = any(
-            item.direction == "negative"
-            and item.confidence >= DIRECT_CONFIDENCE
-            and belongs_to_assessment(item)
-            for item in observation.knowledge_evidence
-        )
-        state = assessment.state
-        direct = False
-        if state == "confirmed":
-            # A domain-level model assessment is a teaching hint, never proof.
-            state = "likely_prerequisite"
-        elif state == "learning":
-            direct = direct_negative
-        _upsert_inference(
-            conn,
-            subject_type="domain",
-            subject_key=assessment.domain_key,
-            scope_type="project",
-            scope_id=str(project_id),
-            state=state,
-            summary=assessment.summary,
-            confidence=assessment.confidence,
-            direct=direct,
-            evidence={
-                "id": f"{observer_run_id}:domain:{index}",
-                "qaRecordId": qa_record_id,
-                "quotes": assessment.evidence_quotes,
-                "conceptKeys": assessment.concept_keys,
-            },
-        )
-
-    _store_survey(conn, observation.survey_candidate, observer_run_id)
-    _rebuild_domain_profiles(conn)
+    """Retired observer writer. Validated manifests and user actions own state."""
+    return None
 
 
 def record_model_call(
@@ -575,175 +206,29 @@ def record_model_call(
 
 
 def profile_payload(project_id: int) -> dict[str, Any]:
+    """Expose model usage audit, never old inferred abilities as current facts."""
     from app.services.storage import _connect
     with _connect() as conn:
-        domains = [
-            {
-                "domainKey": row["domain_key"],
-                "summary": row["summary"],
-                "confidence": float(row["confidence"]),
-                "confirmed": _loads(row["confirmed_json"], []),
-                "learning": _loads(row["learning_json"], []),
-                "likelyPrerequisites": _loads(row["likely_prerequisites_json"], []),
-                "evidence": _loads(row["evidence_json"], []),
-                "updatedAt": row["updated_at"],
-            }
-            for row in conn.execute(
-                "SELECT * FROM domain_profiles WHERE scope_id = ? ORDER BY updated_at DESC",
-                (GLOBAL_SCOPE_ID,),
-            ).fetchall()
-        ]
-        inferences = [
-            {
-                "id": row["id"],
-                "subjectType": row["subject_type"],
-                "subjectKey": row["subject_key"],
-                "displayName": row["display_name"],
-                "scopeType": row["scope_type"],
-                "scopeId": row["scope_id"],
-                "state": row["state"],
-                "summary": row["summary"],
-                "confidence": float(row["confidence"]),
-                "directEvidenceCount": int(row["direct_evidence_count"]),
-                "inferredEvidenceCount": int(row["inferred_evidence_count"]),
-                "evidence": _loads(row["evidence_json"], []),
-                "updatedAt": row["updated_at"],
-            }
-            for row in conn.execute(
-                """SELECT i.*, c.display_name
-                   FROM learner_inferences i
-                   LEFT JOIN concepts c
-                     ON i.subject_type = 'concept' AND c.id = i.subject_key
-                   WHERE i.status = 'active'
-                     AND ((scope_type = 'global' AND scope_id = ?)
-                       OR (scope_type = 'project' AND scope_id = ?))
-                   ORDER BY i.updated_at DESC LIMIT 200""",
-                (GLOBAL_SCOPE_ID, str(project_id)),
-            ).fetchall()
-        ]
-        relations = [
-            {
-                "id": row["id"],
-                "sourceConceptId": row["source_concept_id"],
-                "targetConceptId": row["target_concept_id"],
-                "sourceName": row["source_name"],
-                "targetName": row["target_name"],
-                "updatedAt": row["updated_at"],
-                "relationType": row["relation_type"],
-                "domain": row["domain"],
-                "confidence": float(row["confidence"]),
-                "evidence": _loads(row["evidence_json"], []),
-            }
-            for row in conn.execute(
-                """SELECT r.*, s.display_name source_name, t.display_name target_name
-                   FROM concept_relations r JOIN concepts s ON s.id=r.source_concept_id
-                   JOIN concepts t ON t.id=r.target_concept_id
-                   WHERE r.status='active'
-                     AND (s.concept_key NOT LIKE 'project:%' OR s.concept_key LIKE ?)
-                     AND (t.concept_key NOT LIKE 'project:%' OR t.concept_key LIKE ?)
-                   ORDER BY r.updated_at DESC LIMIT 200""",
-                (f"project:{project_id}:%", f"project:{project_id}:%"),
-            ).fetchall()
-        ]
-        survey = conn.execute(
-            """SELECT * FROM survey_candidates
-               WHERE scope_id = ? AND status = 'pending'
-               ORDER BY created_at DESC LIMIT 1""",
-            (GLOBAL_SCOPE_ID,),
-        ).fetchone()
-        audits = [
-            {
-                "id": row["id"],
-                "projectId": row["project_id"],
-                "purpose": row["purpose"],
-                "provider": row["provider"],
-                "model": row["model"],
-                "status": row["status"],
-                "inputTokens": row["input_tokens"],
-                "outputTokens": row["output_tokens"],
-                "estimatedCost": row["estimated_cost"],
-                "latencyMs": row["latency_ms"],
-                "errorMessage": row["error_message"],
-                "createdAt": row["created_at"],
-            }
-            for row in conn.execute(
-                "SELECT * FROM model_call_audit WHERE project_id=? ORDER BY created_at DESC LIMIT 50",
-                (project_id,),
-            ).fetchall()
-        ]
-    # A project summary supplements reusable concept knowledge; it must not
-    # become another project's narrative about what the learner is doing now.
-    by_domain = {item["domainKey"]: item for item in domains}
-    for item in inferences:
-        if item["subjectType"] == "domain" and item["scopeType"] == "project":
-            key = item["subjectKey"]
-            previous = by_domain.get(key, {})
-            by_domain[key] = {
-                "domainKey": key, "summary": item["summary"], "confidence": item["confidence"],
-                "confirmed": previous.get("confirmed", []), "learning": previous.get("learning", []),
-                "likelyPrerequisites": previous.get("likelyPrerequisites", []),
-                "evidence": item["evidence"], "updatedAt": item["updatedAt"],
-            }
-    return {
-        "domainProfiles": list(by_domain.values()),
-        "inferences": inferences,
-        "relations": relations,
-        "surveyCandidate": None if survey is None else {
-            "id": survey["id"],
-            "question": survey["question"],
-            "dimension": survey["dimension"],
-            "options": _loads(survey["options_json"], []),
-            "rationale": survey["rationale"],
-            "confidence": float(survey["confidence"]),
-            "createdAt": survey["created_at"],
-        },
-        "modelCalls": audits,
-    }
+        audits = [dict(row) for row in conn.execute(
+            "SELECT * FROM model_call_audit WHERE project_id=? ORDER BY created_at DESC LIMIT 50",
+            (project_id,),
+        ).fetchall()]
+    return {"domainProfiles": [], "inferences": [], "relations": [],
+            "surveyCandidate": None, "modelCalls": [
+                {"id": row["id"], "projectId": row["project_id"], "purpose": row["purpose"],
+                 "provider": row["provider"], "model": row["model"], "status": row["status"],
+                 "inputTokens": row["input_tokens"], "outputTokens": row["output_tokens"],
+                 "estimatedCost": row["estimated_cost"], "latencyMs": row["latency_ms"],
+                 "errorMessage": row["error_message"], "createdAt": row["created_at"]}
+                for row in audits]}
 
 
 def answer_survey(project_id: int, survey_id: str, choice: str) -> dict[str, Any]:
-    from app.services.personalization_service import apply_preference_feedback
-    from app.services.storage import _connect
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM survey_candidates WHERE id = ? AND scope_id = ?",
-            (survey_id, GLOBAL_SCOPE_ID),
-        ).fetchone()
-        if row is None:
-            raise ValueError("survey not found")
-        if row["status"] != "pending":
-            return {"status": row["status"]}
-        options = _loads(row["options_json"], [])
-        if choice not in {str(option.get("value")) for option in options if isinstance(option, dict)}:
-            raise ValueError("invalid survey choice")
-        conn.execute(
-            """UPDATE survey_candidates
-               SET status = 'answered', answer = ?, answered_at = ? WHERE id = ?""",
-            (choice, _now(), survey_id),
-        )
-        conn.commit()
-        dimension = str(row["dimension"])
-    apply_preference_feedback(
-        project_id,
-        dimension=dimension,
-        choice=choice,
-        source="survey",
-        idempotency_key=f"dynamic-survey:{survey_id}",
-        scope="global",
-    )
-    return {"status": "answered"}
+    return {"status": "disabled", "reason": "preference_surveys_retired", "applied": False}
 
 
 def dismiss_survey(survey_id: str) -> dict[str, Any]:
-    from app.services.storage import _connect
-    with _connect() as conn:
-        conn.execute(
-            """UPDATE survey_candidates SET status = 'dismissed', dismissed_at = ?
-               WHERE id = ? AND scope_id = ? AND status = 'pending'""",
-            (_now(), survey_id, GLOBAL_SCOPE_ID),
-        )
-        conn.commit()
-    return {"status": "dismissed"}
+    return {"status": "disabled", "reason": "preference_surveys_retired", "applied": False}
 
 
 def void_inference(inference_id: str) -> dict[str, Any]:
@@ -867,86 +352,25 @@ def relevant_teaching_context(
     project_id: int,
     concept_ids: list[str],
 ) -> dict[str, Any]:
-    if not concept_ids:
-        return {"domains": [], "inferences": [], "explanations": []}
-    from app.services.storage import _connect
-    placeholders = ",".join("?" * len(concept_ids))
-    with _connect() as conn:
-        concept_rows = conn.execute(
-            f"SELECT id, domain FROM concepts WHERE id IN ({placeholders})",
-            concept_ids,
-        ).fetchall()
-        domains = sorted({str(row["domain"]) for row in concept_rows if row["domain"]})
-        domain_rows = []
-        if domains:
-            domain_placeholders = ",".join("?" * len(domains))
-            domain_rows = conn.execute(
-                f"""SELECT * FROM domain_profiles
-                    WHERE scope_id = ? AND domain_key IN ({domain_placeholders})""",
-                (GLOBAL_SCOPE_ID, *domains),
-            ).fetchall()
-        inference_rows = conn.execute(
-            f"""SELECT * FROM learner_inferences
-                WHERE subject_type = 'concept' AND subject_key IN ({placeholders})
-                  AND status = 'active'
-                  AND ((scope_type = 'global' AND scope_id = ?)
-                    OR (scope_type = 'project' AND scope_id = ?))""",
-            (*concept_ids, GLOBAL_SCOPE_ID, str(project_id)),
-        ).fetchall()
-        prerequisite_rows = conn.execute(
-            f"""SELECT DISTINCT c.id, c.display_name
-                FROM concept_relations r
-                JOIN concepts c ON c.id = r.target_concept_id
-                WHERE r.source_concept_id IN ({placeholders})
-                  AND r.relation_type = 'prerequisite'
-                  AND r.status = 'active'
-                ORDER BY r.confidence DESC LIMIT 8""",
-            concept_ids,
-        ).fetchall()
-        explanation_rows = conn.execute(
-            f"""SELECT e.concept_id, e.project_id, e.qa_record_id, e.title
-                FROM concept_explanations e
-                JOIN qa_records q ON q.id = e.qa_record_id AND q.project_id = e.project_id
-                JOIN projects p ON p.id = e.project_id
-                WHERE e.concept_id IN ({placeholders}) AND e.status = 'active'
-                GROUP BY e.concept_id
-                ORDER BY e.updated_at DESC""",
-            concept_ids,
-        ).fetchall()
-    return {
-        "domains": [
-            {
-                "domainKey": row["domain_key"],
-                "summary": row["summary"],
-                "confirmed": _loads(row["confirmed_json"], []),
-                "learning": _loads(row["learning_json"], []),
-                "likelyPrerequisites": _loads(row["likely_prerequisites_json"], []),
-                "confidence": float(row["confidence"]),
-            }
-            for row in domain_rows
-        ],
-        "inferences": [
-            {
-                "conceptId": row["subject_key"],
-                "state": row["state"],
-                "summary": row["summary"],
-                "confidence": float(row["confidence"]),
-                "directEvidenceCount": int(row["direct_evidence_count"]),
-            }
-            for row in inference_rows
-        ],
-        "prerequisites": [
-            {"conceptId": row["id"], "displayName": row["display_name"]}
-            for row in prerequisite_rows
-        ],
-        "explanations": [
-            {
-                "conceptId": row["concept_id"],
-                "projectId": int(row["project_id"]),
-                "qaRecordId": int(row["qa_record_id"]),
-                "title": row["title"],
-                "url": f"https://codecourse.local/qa/{int(row['project_id'])}/{int(row['qa_record_id'])}",
-            }
-            for row in explanation_rows
-        ],
-    }
+    """Reuse saved explanations, without applying inferred knowledge or styles."""
+    from app.services.storage import get_concept
+    accessible = []
+    for concept_id in concept_ids:
+        concept = get_concept(concept_id)
+        if concept is None:
+            continue
+        try:
+            from app.services.personalization_service import concept_scope
+            concept_scope(concept, project_id)
+        except ValueError:
+            continue
+        accessible.append(concept_id)
+    explanations = []
+    for concept_id in sorted(set(accessible)):
+        explanation = find_concept_explanation(concept_id)
+        if explanation:
+            qa = explanation["qa"]
+            explanations.append({"conceptId": concept_id, "projectId": qa["project_id"],
+                "qaRecordId": qa["id"], "title": qa["display_title"] or qa["question"],
+                "url": f"https://codecourse.local/qa/{qa['project_id']}/{qa['id']}"})
+    return {"domains": [], "inferences": [], "prerequisites": [], "explanations": explanations}

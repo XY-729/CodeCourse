@@ -1,11 +1,12 @@
 import { TEACHING_SCHEMA } from "./teachingSchema";
+import { KNOWLEDGE_FOREST_LEGACY_NORMALIZATION, KNOWLEDGE_FOREST_SCHEMA } from "./knowledgeForestSchema";
 import { CapacitorSQLite } from "@capacitor-community/sqlite";
 import { CodeCourseSecureStore } from "../runtime";
 import { repairLegacyProfile } from "../../personalization/profileRepair";
 
 const DATABASE = "codecourse_mobile";
 const DATABASE_VERSION = 1;
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 9;
 
 // The native connection outlives a WebView/module instance. All wrappers for
 // this database must also share the initialization and transaction queue.
@@ -463,6 +464,36 @@ export class MobileDatabase {
     }
     // Personalization tables
     await this.createPersonalizationSchema();
+    // Authoritative concept forest (schema v8). Columns are added before the
+    // normalization below derives scope from legacy concept keys.
+    await this.ensureColumns("concepts", [
+      { name: "scope_type", definition: "scope_type TEXT NOT NULL DEFAULT 'global'" },
+      { name: "scope_id", definition: "scope_id TEXT NOT NULL DEFAULT 'local-user'" },
+    ]);
+    await CapacitorSQLite.execute({
+      database: DATABASE,
+      statements: KNOWLEDGE_FOREST_SCHEMA,
+      transaction: true,
+      readonly: false,
+    });
+    await this.normalizeKnowledgeForest();
+  }
+
+  /** Idempotent, model-free normalization shared by migration and archive import. */
+  async normalizeKnowledgeForest(): Promise<void> {
+    await CapacitorSQLite.execute({ database: DATABASE, statements: "BEGIN IMMEDIATE", transaction: false, readonly: false });
+    try {
+      await CapacitorSQLite.execute({
+        database: DATABASE,
+        statements: KNOWLEDGE_FOREST_LEGACY_NORMALIZATION,
+        transaction: false,
+        readonly: false,
+      });
+      await CapacitorSQLite.execute({ database: DATABASE, statements: "COMMIT", transaction: false, readonly: false });
+    } catch (error) {
+      await CapacitorSQLite.execute({ database: DATABASE, statements: "ROLLBACK", transaction: false, readonly: false });
+      throw error;
+    }
   }
 
   private async createPersonalizationSchema(): Promise<void> {

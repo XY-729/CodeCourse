@@ -12,6 +12,9 @@ import { buildPreliminaryTermDecision } from "./termDisplayDecision";
 import { allocateTermDisplays } from "./termDisplayAllocator";
 import type { MarkdownTermAnalysis } from "./termOccurrences";
 
+/** Bumped when annotation rules change so cached decisions can be invalidated. */
+export const TERM_ANNOTATION_RULES_VERSION = "manifest-v2";
+
 function normalizeText(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -25,14 +28,29 @@ function simpleHash(content: string): string {
   return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
-function buildContentRevisionKey(sourceKey: string, content: string): string {
-  return `${sourceKey}:${simpleHash(content)}`;
+/**
+ * Annotation cache identity: document version + tree state version + rules
+ * version. A confirmed or withdrawn understanding changes the tree state, so
+ * the same body is re-annotated without regenerating the content.
+ */
+function buildContentRevisionKey(
+  sourceKey: string,
+  content: string,
+  treeStateVersion: number,
+): string {
+  return [
+    sourceKey,
+    simpleHash(content),
+    `tree:${treeStateVersion}`,
+    TERM_ANNOTATION_RULES_VERSION,
+  ].join(":");
 }
 
 export function createNeutralTermProfile(conceptKey: string): TermPersonalizationProfile {
   return {
     conceptKey,
     manualStatus: null,
+    familiarity: "unrecorded",
     mastery: null,
     uncertainty: null,
     shadowFamiliarity: null,
@@ -46,7 +64,6 @@ function computeTermDisplay(props: {
   occurrences: TermCandidateInput[];
   paragraphCount: number;
   termProfiles: Map<string, TermPersonalizationProfile>;
-  terminologyDensity: number;
   profileAvailable: boolean;
 }): {
   decisions: Map<string, TermDisplayDecision>;
@@ -54,13 +71,13 @@ function computeTermDisplay(props: {
   visibleCandidateIds: Set<string>;
   tiersById: Map<string, TermDisplayTier>;
 } {
-  const { occurrences, paragraphCount, termProfiles, terminologyDensity, profileAvailable } = props;
+  const { occurrences, paragraphCount, termProfiles, profileAvailable } = props;
 
   const preliminary = occurrences.map((occ) =>
     buildPreliminaryTermDecision(
       occ,
       termProfiles.get(occ.conceptKey),
-      { terminologyDensity },
+      {},
       { profileAvailable, paragraphCount },
     ),
   );
@@ -68,7 +85,6 @@ function computeTermDisplay(props: {
   const allocations = allocateTermDisplays({
     preliminary,
     paragraphCount,
-    terminologyDensity,
     profileAvailable,
   });
 
@@ -104,7 +120,8 @@ export interface UseTermDisplayParams {
   sourceKey: string;
   content: string;
   rawTerms: DocumentTerm[];
-  terminologyDensity: number;
+  /** Tree state version; every confirmed or withdrawn understanding bumps it. */
+  stateVersion?: number;
   profileRevision?: number;
   loadProfiles: (
     projectId: number,
@@ -143,7 +160,15 @@ const EMPTY_MARKDOWN_ANALYSIS: MarkdownTermAnalysis = {
 };
 
 export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResult {
-  const { projectId, sourceKey, content, rawTerms, terminologyDensity, profileRevision = 0, loadProfiles } = params;
+  const {
+    projectId,
+    sourceKey,
+    content,
+    rawTerms,
+    stateVersion = 0,
+    profileRevision = 0,
+    loadProfiles,
+  } = params;
 
   const [profiles, setProfiles] = useState<Map<string, TermPersonalizationProfile>>(new Map());
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "fallback">("idle");
@@ -156,11 +181,14 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     return () => { mountedRef.current = false; };
   }, []);
 
-  const revisionKey = buildContentRevisionKey(sourceKey, content);
+  const revisionKey = buildContentRevisionKey(sourceKey, content, stateVersion);
   const profileRequestRevision = `${revisionKey}:profile:${profileRevision}`;
 
+  // A saved manifest already selected these terms for this body, so a missing
+  // or failed profile request never hides them: unknown state is not evidence
+  // of either knowing or not knowing a concept.
   useEffect(() => {
-    if (projectId == null || !content || rawTerms.length === 0 || terminologyDensity <= 0) {
+    if (projectId == null || !content || rawTerms.length === 0) {
       setProfiles((current) => current.size === 0 ? current : EMPTY_PROFILES);
       setStatus((current) => current === "idle" ? current : "idle");
       return;
@@ -210,7 +238,7 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     return () => {
       controller.abort();
     };
-  }, [projectId, profileRequestRevision, content, rawTerms, terminologyDensity, loadProfiles]);
+  }, [projectId, profileRequestRevision, content, rawTerms, loadProfiles]);
 
   const patchProfile = useCallback(
     (conceptKey: string, patch: Partial<TermPersonalizationProfile>) => {
@@ -266,12 +294,7 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
   }, [markdownAnalysis]);
 
   const computed = useMemo(() => {
-    if (
-      terminologyDensity <= 0
-      || markdownAnalysis.failed
-      || status === "idle"
-      || status === "loading"
-    ) {
+    if (markdownAnalysis.failed) {
       return {
         decisions: new Map() as ReadonlyMap<string, TermDisplayDecision>,
         visibleOccurrences: [] as VisibleTermOccurrence[],
@@ -279,16 +302,14 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
         tiersById: EMPTY_TIERS,
       };
     }
-    const effectiveProfiles =
-      status === "ready" ? profiles : neutralProfiles;
+    const effectiveProfiles = status === "ready" ? profiles : neutralProfiles;
     return computeTermDisplay({
       occurrences: markdownAnalysis.analysis.occurrences,
       paragraphCount: markdownAnalysis.analysis.paragraphCount,
       termProfiles: effectiveProfiles,
-      terminologyDensity,
       profileAvailable: status === "ready" && profileAvailable,
     });
-  }, [markdownAnalysis, neutralProfiles, profiles, terminologyDensity, profileAvailable, status]);
+  }, [markdownAnalysis, neutralProfiles, profiles, profileAvailable, status]);
 
   const diagnostics = useMemo<TermDisplayDiagnostics>(() => {
     const reasonCounts: Record<string, number> = {};
@@ -316,3 +337,5 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
     patchProfile,
   };
 }
+
+export type { TermDisplayResult };

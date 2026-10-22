@@ -48,33 +48,19 @@ class ProfileSemanticsTests(unittest.TestCase):
             _execute_observer_run(self.project, record.id)
             return model
 
-    def test_observer_real_storage_hierarchy_context_and_idempotence(self):
+    def test_retired_observer_never_calls_a_model_or_writes_a_profile(self):
         from app.services import storage
         self.qa('EARLIER_IN_THIS_PROJECT')
-        self.qa('FOREIGN_PROJECT_SECRET', self.other)
         record = self.qa('vector 和 stack 的用途有什么不同？')
-        self.qa('FUTURE_QUESTION')
         model = self.execute(record, self.observation(record.question))
-        messages = model.call_args.args[0]
-        prompt = messages[1]['content']
-        self.assertIn('EARLIER_IN_THIS_PROJECT', prompt)
-        self.assertNotIn('FOREIGN_PROJECT_SECRET', prompt)
-        self.assertNotIn('FUTURE_QUESTION', prompt)
+        model.assert_not_called()
         with storage._connect() as conn:
-            run = conn.execute('SELECT * FROM observer_runs WHERE qa_record_id=?', (record.id,)).fetchone()
-            self.assertEqual(run['status'], 'completed', run['error_message'])
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM interaction_observations WHERE status='accepted_shadow'").fetchone()[0], 1)
-            edge = conn.execute('SELECT * FROM concept_relations').fetchone()
-            self.assertEqual(edge['relation_type'], 'is_a')
-            self.assertEqual(conn.execute('SELECT canonical_name FROM concepts WHERE id=?', (edge['source_concept_id'],)).fetchone()[0], 'std::vector')
-            domain = conn.execute("SELECT * FROM learner_inferences WHERE subject_type='domain'").fetchone()
-            self.assertEqual((domain['scope_type'], domain['scope_id']), ('project', str(self.project)))
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM observer_runs').fetchone()[0], 0)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM concept_relations').fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM learner_inferences").fetchone()[0], 0)
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM learning_evidence_v2').fetchone()[0], 0)
-        self.assertEqual(self.execute(record, self.observation(record.question)).call_count, 0)
-        other_profile = self.client.get(f'/api/projects/{self.other}/personalization/profile').json()
-        self.assertFalse(any(item['subjectType'] == 'domain' for item in other_profile['inferences']))
 
-    def test_assistant_and_selected_source_do_not_prove_knowledge(self):
+    def test_observer_payload_cannot_create_evidence_or_inferences(self):
         from app.services import storage
         record = self.qa('请继续解释', selected='vector 提供连续内存', answer='vector 提供连续内存')
         value = self.observation('vector 提供连续内存')
@@ -85,13 +71,18 @@ class ProfileSemanticsTests(unittest.TestCase):
         }]
         self.execute(record, value)
         with storage._connect() as conn:
-            self.assertEqual(conn.execute('SELECT status FROM observer_runs').fetchone()[0], 'completed')
             self.assertEqual(conn.execute('SELECT COUNT(*) FROM learning_evidence_v2').fetchone()[0], 0)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM learner_inferences WHERE subject_type='domain'").fetchone()[0], 0)
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM interaction_observations WHERE status='rejected'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM learner_inferences").fetchone()[0], 0)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM interaction_observations').fetchone()[0], 0)
 
-    def test_valid_learner_evidence_is_applied(self):
+    def test_only_explicit_user_actions_create_evidence(self):
         from app.services import storage
+        from app.services.personalization.knowledge_state_service import append_evidence
+        concept = storage.upsert_concept(
+            concept_id='vector-concept', concept_key='global:general:std::vector',
+            canonical_name='std::vector', display_name='std::vector',
+            domain='general', concept_type='theory', aliases_json='[]', difficulty=.5,
+        )
         record = self.qa('我还不能判断 vector 扩容后迭代器是否有效')
         value = self.observation(record.question)
         value['knowledge_evidence'] = [{
@@ -101,13 +92,21 @@ class ProfileSemanticsTests(unittest.TestCase):
         }]
         self.execute(record, value)
         with storage._connect() as conn:
-            run = conn.execute('SELECT * FROM observer_runs').fetchone()
-            self.assertEqual(run['status'], 'completed', run['error_message'])
-            evidence = conn.execute('SELECT * FROM learning_evidence_v2').fetchone()
-            self.assertEqual(evidence['dimension'], 'conceptual')
-            self.assertIn('仍需澄清', evidence['result_json'])
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM learning_evidence_v2').fetchone()[0], 0)
+        appended = append_evidence({
+            'id': 'needs-help', 'conceptId': concept.id, 'scopeType': 'global', 'scopeId': 'local-user',
+            'dimension': 'familiarity', 'direction': 'negative', 'strength': .6, 'reliability': .72,
+            'source': 'summary', 'action': 'self_needs_help',
+            'result': {'aspect': '扩容后迭代器失效', 'dimension': 'conceptual'},
+            'eventTime': '2026-10-21T00:00:00+00:00',
+        })
+        self.assertTrue(appended)
+        with storage._connect() as conn:
+            evidence = conn.execute("SELECT * FROM learning_evidence_v2 WHERE id='needs-help'").fetchone()
+            self.assertEqual(evidence['source'], 'summary')
+            self.assertIn('扩容后迭代器失效', evidence['result_json'])
 
-    def test_legacy_repair_is_idempotent_preserves_manual_and_requeues_only_storage_failure(self):
+    def test_legacy_repair_is_idempotent_preserves_manual_and_retires_observer_jobs(self):
         from app.services import storage
         from app.services.personalization.knowledge_state_service import append_evidence
         from app.services.personalization.profile_repair import REPAIR_KEY, repair_legacy_profile
@@ -119,10 +118,13 @@ class ProfileSemanticsTests(unittest.TestCase):
                 'dimension': 'familiarity', 'direction': 'negative' if source == 'question' else 'positive',
                 'strength': .7, 'source': source, 'action': action})
         record = self.qa('旧问题')
-        from app.services.personalization.interaction_observer import _enqueue_observer_job, _set_observer_job_status
-        _enqueue_observer_job(self.project, record.id, 'followup')
-        _set_observer_job_status(self.project, record.id, 'failed', 'observer_failed')
         with storage._connect() as conn:
+            conn.execute(
+                """INSERT INTO observer_jobs(id,project_id,qa_record_id,reason,payload_json,status,
+                   attempt_count,available_at,created_at,updated_at)
+                   VALUES('legacy-job',?,?,'followup','{}','pending',0,?,?,?)""",
+                (self.project, record.id, '2026-10-01', '2026-10-01', '2026-10-01'),
+            )
             conn.execute('DELETE FROM app_settings WHERE key=?', (REPAIR_KEY,))
             repair_legacy_profile(conn)
             question = conn.execute("SELECT * FROM learning_evidence_v2 WHERE id='question'").fetchone()
@@ -131,10 +133,12 @@ class ProfileSemanticsTests(unittest.TestCase):
             self.assertNotEqual(question['concept_id'], concept.id)
             manual = conn.execute("SELECT * FROM learning_evidence_v2 WHERE id='manual'").fetchone()
             self.assertEqual((manual['direction'], manual['concept_id']), ('positive', concept.id))
-            self.assertEqual(conn.execute('SELECT status FROM observer_jobs').fetchone()[0], 'pending')
-            conn.execute("UPDATE observer_jobs SET status='failed'")
+            # Legacy queues stay retired across restarts and repeated repairs.
+            self.assertNotIn(conn.execute("SELECT status FROM observer_jobs WHERE id='legacy-job'").fetchone()[0],
+                             ('pending', 'queued', 'running', 'retry'))
             repair_legacy_profile(conn)
-            self.assertEqual(conn.execute('SELECT status FROM observer_jobs').fetchone()[0], 'failed')
+            self.assertNotIn(conn.execute("SELECT status FROM observer_jobs WHERE id='legacy-job'").fetchone()[0],
+                             ('pending', 'queued', 'running', 'retry'))
 
     def test_row_models_are_dataclasses_and_foreign_keys_rejected(self):
         from app.services import storage

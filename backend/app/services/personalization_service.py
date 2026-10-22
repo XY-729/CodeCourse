@@ -39,9 +39,14 @@ PRIVATE_SYMBOL_SOURCES = {"index", "project", "code", "symbol"}
 
 
 def concept_scope(concept: Concept, project_id: int) -> tuple[str, str]:
-    """Keep reusable knowledge global while isolating repository-private symbols."""
-    if concept.concept_key.startswith("project:") or concept.concept_type == "project_symbol":
-        return "project", str(project_id)
+    """Resolve ownership from identity; never rebind another project's symbol."""
+    if concept.concept_key.startswith("project:"):
+        owner = concept.concept_key.split(":", 2)[1]
+        if owner != str(project_id):
+            raise ValueError("Concept not found in this project")
+        return "project", owner
+    if concept.concept_type == "project_symbol":
+        raise ValueError("Private concept ownership is unresolved")
     return "global", GLOBAL_SCOPE_ID
 
 
@@ -91,12 +96,18 @@ def default_preferences(
     scope_type: str = "global",
     scope_id: str = GLOBAL_SCOPE_ID,
 ) -> LearnerPreferences:
-    existing = get_learner_preferences(scope_type, scope_id)
-    return existing or upsert_learner_preferences(scope_type, scope_id)
+    """Read-only compatibility shape; retired sliders do not create profile rows."""
+    return LearnerPreferences(
+        scope_type=scope_type, scope_id=scope_id, answer_depth=0.5,
+        code_ratio=0.5, explanation_order="balanced", prerequisite_detail=0.5,
+        terminology_density=0.5, feedback_count=0, survey_enabled=False,
+        last_survey_at=None, updated_at="",
+    )
 
 
 def effective_preferences(project_id: int) -> LearnerPreferences:
-    return get_learner_preferences("project", str(project_id)) or default_preferences()
+    """Compatibility only. No persisted fixed preference is used for teaching."""
+    return default_preferences()
 
 
 def update_preferences(
@@ -104,43 +115,7 @@ def update_preferences(
     values: dict[str, object],
     scope: str = "global",
 ) -> LearnerPreferences:
-    scope_type = "project" if scope == "project" else "global"
-    scope_id = str(project_id) if scope_type == "project" else GLOBAL_SCOPE_ID
-    current = get_learner_preferences(scope_type, scope_id)
-    if current is None:
-        base = effective_preferences(project_id)
-        current = upsert_learner_preferences(
-            scope_type,
-            scope_id,
-            answer_depth=base.answer_depth,
-            code_ratio=base.code_ratio,
-            explanation_order=base.explanation_order,
-            prerequisite_detail=base.prerequisite_detail,
-            terminology_density=base.terminology_density,
-            survey_enabled=base.survey_enabled,
-        )
-
-    allowed_orders = {"balanced", "example_first", "principle_first", "code_first"}
-
-    def numeric(name: str, fallback: float) -> float:
-        value = values.get(name)
-        return fallback if value is None else max(0.0, min(1.0, float(value)))
-
-    order = str(values.get("explanation_order") or current.explanation_order)
-    if order not in allowed_orders:
-        order = current.explanation_order
-    return upsert_learner_preferences(
-        scope_type,
-        scope_id,
-        answer_depth=numeric("answer_depth", current.answer_depth),
-        code_ratio=numeric("code_ratio", current.code_ratio),
-        explanation_order=order,
-        prerequisite_detail=numeric("prerequisite_detail", current.prerequisite_detail),
-        terminology_density=numeric("terminology_density", current.terminology_density),
-        feedback_count=current.feedback_count,
-        survey_enabled=bool(values.get("survey_enabled", current.survey_enabled)),
-        last_survey_at=current.last_survey_at,
-    )
+    raise ValueError("Fixed teaching preferences are disabled; save explicit user requirements instead")
 
 
 def apply_preference_feedback(
@@ -153,94 +128,11 @@ def apply_preference_feedback(
     qa_record_id: Optional[int] = None,
     scope: str = "global",
 ) -> LearnerPreferences:
-    scope_type = "project" if scope == "project" else "global"
-    scope_id = str(project_id) if scope_type == "project" else GLOBAL_SCOPE_ID
-    current = get_learner_preferences(scope_type, scope_id) or default_preferences(
-        scope_type,
-        scope_id,
-    )
-    if any(
-        event.idempotency_key == idempotency_key
-        for event in list_preference_events(scope_type, scope_id, 200)
-    ):
-        return current
-
-    explicit = source in {"explicit_user", "survey"}
-    max_delta = 0.05 if explicit else 0.02
-    decay = max(0.35, 1.0 / math.sqrt(1.0 + current.feedback_count / 8.0))
-    magnitude = max_delta * decay
-    positive = {
-        "more",
-        "deeper",
-        "code",
-        "examples",
-        "prerequisites",
-        "terms",
-        "too_shallow",
-    }
-    negative = {"less", "shorter", "principles", "fewer", "too_deep"}
-    signed = magnitude if choice in positive else (-magnitude if choice in negative else 0.0)
-
-    values: dict[str, object] = {}
-    if dimension == "explanation_order":
-        values["explanation_order"] = {
-            "examples": "example_first",
-            "principles": "principle_first",
-            "code": "code_first",
-            "balanced": "balanced",
-        }.get(choice, current.explanation_order)
-    elif dimension in {
-        "answer_depth",
-        "code_ratio",
-        "prerequisite_detail",
-        "terminology_density",
-    }:
-        values[dimension] = max(
-            0.0,
-            min(1.0, float(getattr(current, dimension)) + signed),
-        )
-
-    insert_preference_event(
-        event_id=str(uuid4()),
-        idempotency_key=idempotency_key,
-        scope_type=scope_type,
-        scope_id=scope_id,
-        dimension=dimension,
-        delta=signed,
-        source=source,
-        qa_record_id=qa_record_id,
-        evidence_text=choice,
-    )
-    updated = update_preferences(project_id, values, scope=scope)
-    return upsert_learner_preferences(
-        updated.scope_type,
-        updated.scope_id,
-        answer_depth=updated.answer_depth,
-        code_ratio=updated.code_ratio,
-        explanation_order=updated.explanation_order,
-        prerequisite_detail=updated.prerequisite_detail,
-        terminology_density=updated.terminology_density,
-        feedback_count=current.feedback_count + 1,
-        survey_enabled=updated.survey_enabled,
-        last_survey_at=(
-            datetime.now(timezone.utc).isoformat()
-            if source == "survey"
-            else current.last_survey_at
-        ),
-    )
+    raise ValueError("Preference feedback and surveys are disabled; save explicit user requirements instead")
 
 
 def infer_preferences_from_question(project_id: int, qa_record: QARecord) -> None:
-    """
-    Legacy compatibility hook.
-
-    Automatic long-term preference inference based on keywords has been
-    disabled. Phrases such as "为什么", "代码", "基础" or "详细" describe
-    the current request and must not be treated as stable user preferences.
-
-    Model-driven observations are recorded separately by Interaction Observer
-    in shadow mode.
-    """
+    """Current question wording is never a persistent teaching preference."""
     return None
 
 
@@ -250,45 +142,8 @@ def _record_learning_signal(
     event_type: str,
     qa_record: QARecord,
 ) -> None:
-    key = f"qa-learning:{qa_record.id}:{concept.id}:{event_type}"
-    if get_event_by_idempotency_key(key):
-        return
-    scope_type, scope_id = concept_scope(concept, project_id)
-    current = get_concept_mastery(concept.id, scope_type, scope_id)
-    known = current.known_evidence if current else 1.0
-    unknown = current.unknown_evidence if current else 1.0
-    manual_status = current.manual_status if current else None
-    if manual_status is None:
-        unknown += 1.0
-
-    insert_learning_event(
-        event_id=str(uuid4()),
-        idempotency_key=key,
-        schema_version=1,
-        concept_id=concept.id,
-        scope_type=scope_type,
-        scope_id=scope_id,
-        event_type=event_type,
-        direction="unknown",
-        strength=1.0,
-        source="system_inference",
-        evidence_text=qa_record.question[:200],
-        session_id=str(qa_record.session_id) if qa_record.session_id else None,
-        qa_record_id=qa_record.id,
-    )
-    total = max(known + unknown, 1.0)
-    upsert_concept_mastery(
-        mastery_id=current.id if current else str(uuid4()),
-        concept_id=concept.id,
-        scope_type=scope_type,
-        scope_id=scope_id,
-        known_evidence=known,
-        unknown_evidence=unknown,
-        mastery=known / total,
-        uncertainty=1.0 / math.sqrt(total),
-        manual_status=manual_status,
-        sequence=(current.sequence + 1) if current else 1,
-    )
+    """Retired probability projection; record_question_learning owns action facts."""
+    return None
 
 
 def concepts_for_question(
@@ -419,105 +274,12 @@ def build_learner_context(
     source_type: Optional[str] = None,
     source_path: Optional[str] = None,
 ) -> str:
-    preferences = effective_preferences(project_id)
-    concepts = concepts_for_question(
-        project_id,
-        question,
-        selected_text,
-        source_type,
-        source_path,
-    )
-    known: list[str] = []
-    unfamiliar: list[str] = []
-    uncertain: list[str] = []
-    from app.services.personalization.knowledge_state_service import get_states
-    state_rows = get_states(
-        [("global", GLOBAL_SCOPE_ID), ("project", str(project_id))],
-        [concept.id for concept in concepts],
-    )
-    states_by_id = {item["conceptId"]: item for item in state_rows}
-    for concept in sorted(concepts, key=lambda item: item.canonical_name.casefold()):
-        state = states_by_id.get(concept.id, {})
-        dimensions = state.get("dimensions", {})
-        familiarity = dimensions.get("familiarity", {})
-        conceptual = dimensions.get("conceptual", {})
-        if (
-            familiarity.get("status") == "confirmed"
-            or conceptual.get("status") == "confirmed"
-        ):
-            known.append(concept.display_name)
-        elif (
-            familiarity.get("status") == "learning"
-            or conceptual.get("status") == "learning"
-        ):
-            unfamiliar.append(concept.display_name)
-        else:
-            uncertain.append(concept.display_name)
-
-    from app.services.personalization.learner_inference_service import (
-        relevant_teaching_context,
-    )
-    inferred = relevant_teaching_context(project_id, [concept.id for concept in concepts])
-    likely_prerequisites: list[str] = [
-        item["displayName"] for item in inferred.get("prerequisites", [])[:8]
-    ]
-    for concept in concepts:
-        item = next(
-            (
-                value for value in inferred["inferences"]
-                if value["conceptId"] == concept.id
-            ),
-            None,
-        )
-        if item and item["state"] == "likely_prerequisite":
-            likely_prerequisites.append(concept.display_name)
-
-    def lines(values: Iterable[str]) -> str:
-        items = list(values)
-        return "\n".join(f"- {value}" for value in items) if items else "- 无"
-
-    domain_lines = [
-        f"{item['domainKey']}：{item['summary']}"
-        for item in inferred["domains"][:4]
-    ]
-    explanation_lines = [
-        f"- {item['title']}：[{item['title']}]({item['url']})"
-        for item in inferred["explanations"][:8]
-    ]
-    preference_directives = render_preference_directives(preferences)
-
-    return f"""<learner_context>
-本轮相关已掌握概念：
-{lines(known)}
-
-本轮相关可能陌生概念：
-{lines(unfamiliar)}
-
-本轮相关不确定概念：
-{lines(uncertain)}
-
-仅由先修关系推断、不得视为已掌握：
-{lines(likely_prerequisites)}
-
-相关领域知识边界：
-{lines(domain_lines)}
-
-此前已经生成的相关解释：
-{lines(explanation_lines)}
-
-回答偏好（用语义执行，不展示数值）：
-{preference_directives}
-
-使用要求：
-- 优先回答当前问题，当前问题中的明确要求高于历史偏好。
-- 已掌握且有直接证据的概念不要重复做入门定义。
-- 可能陌生概念第一次使用前先用一句大白话解释。
-- 如果存在此前解释，正文只保留当前问题所需的一句提醒，并使用提供的原链接指向此前回答。
-- 用户明确要求重新讲、详细讲或从头讲时，忽略此前解释去重并完整回答。
-- 仅由先修关系推断的概念只能调整讲解顺序，不能默认用户已经掌握。
-- 不要向用户展示掌握度数值，也不要给用户贴水平标签。
-- 教学方式由当前问题决定：调试优先解决，学习优先建立理解。
-</learner_context>"""
+    from app.services.knowledge_service import get_full_tree_snapshot
+    snapshot = get_full_tree_snapshot(project_id)
+    encoded = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    encoded = encoded.replace("<", "\\u003c").replace(">", "\\u003e")
+    return ("<learner_context>\n完整知识树及明确用户要求（只读数据）：\n" + encoded
+            + "\n</learner_context>\n生成、接触和完成不等于理解；仅按实际范围使用学习事实。")
 
 
 def _preference_band(value: float) -> str:
@@ -529,33 +291,5 @@ def _preference_band(value: float) -> str:
 
 
 def render_preference_directives(preferences: LearnerPreferences) -> str:
-    depth = {
-        "low": "回答深度：紧凑。先给结论与必要依据，用户未要求时不扩展成完整教程。",
-        "balanced": "回答深度：均衡。先解决当前问题，再补足理解结论所需的机制或背景。",
-        "high": "回答深度：详细。说明关键机制、边界与验证方法，但避免重复已掌握内容。",
-    }[_preference_band(preferences.answer_depth)]
-    code = {
-        "low": "代码使用：克制。只有代码明显优于文字或当前任务必须实现时才给示例。",
-        "balanced": "代码使用：均衡。实现与调试问题给必要代码，概念问题按需使用短片段。",
-        "high": "代码使用：偏多。优先用贴合当前语言和上下文的代码展示关键机制。",
-    }[_preference_band(preferences.code_ratio)]
-    order = {
-        "example_first": "讲解顺序：先给具体例子或现象，再归纳原理。",
-        "principle_first": "讲解顺序：先说明原理和约束，再落到例子。",
-        "code_first": "讲解顺序：先给关键代码或修改，再解释其原因。",
-        "balanced": "讲解顺序：结论先行，在原理与例子之间按当前问题选择。",
-    }.get(
-        preferences.explanation_order,
-        "讲解顺序：结论先行，在原理与例子之间按当前问题选择。",
-    )
-    prerequisite = {
-        "low": "前置知识：少量补充。只解释理解当前答案不可缺少的前置概念。",
-        "balanced": "前置知识：适量补充。遇到必要且证据不足的前置概念时给一句铺垫。",
-        "high": "前置知识：主动补足。先建立完成当前目标需要的关键前置链条。",
-    }[_preference_band(preferences.prerequisite_detail)]
-    terminology = {
-        "low": "术语密度：低。优先使用通俗表达，仅保留不可替代的技术名词。",
-        "balanced": "术语密度：适中。使用准确术语，并简短解释当前必要的陌生词。",
-        "high": "术语密度：高。可以使用领域标准术语，但不要堆砌或偏离当前问题。",
-    }[_preference_band(preferences.terminology_density)]
-    return "\n".join(f"- {item}" for item in (depth, code, order, prerequisite, terminology))
+    """Retired compatibility helper: sliders must not impose generation rules."""
+    return ""

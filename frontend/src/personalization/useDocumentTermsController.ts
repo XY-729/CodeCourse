@@ -17,8 +17,9 @@ type Params = {
   sourceType: SourceType | null;
   sourcePath: string;
   content: string;
-  terminologyDensity: number;
   profileRevision: number;
+  /** Authoritative tree state version from the loaded snapshot, when known. */
+  stateVersion?: number;
   onError?: (message: string) => void;
 };
 
@@ -44,8 +45,8 @@ export function useDocumentTermsController(params: Params): DocumentTermsControl
     sourceType,
     sourcePath,
     content,
-    terminologyDensity,
     profileRevision,
+    stateVersion = 0,
     onError,
   } = params;
   const [termsBySource, setTermsBySource] = useState<Record<string, DocumentTerm[]>>({});
@@ -76,12 +77,15 @@ export function useDocumentTermsController(params: Params): DocumentTermsControl
   const activeKey = projectId && sourceType && sourcePath ? sourceKey(projectId, sourceType, sourcePath) : "";
   const rawTerms = activeKey ? termsBySource[activeKey] ?? EMPTY_DOCUMENT_TERMS : EMPTY_DOCUMENT_TERMS;
   const scanStatus = activeKey ? statusBySource[activeKey] ?? null : null;
+  // Terms are bound to the tree snapshot they were verified against; using it
+  // as the cache key refreshes annotations after understanding is confirmed.
+  const effectiveStateVersion = stateVersion || rawTerms.find((term) => term.tree_snapshot)?.tree_snapshot?.state_version || 0;
   const display = useTermDisplay({
     projectId,
     sourceKey: sourceType && sourcePath ? `${sourceType}:${sourcePath}` : "",
     content,
     rawTerms,
-    terminologyDensity,
+    stateVersion: effectiveStateVersion,
     profileRevision,
     loadProfiles: getTermDisplayProfiles,
   });

@@ -6,6 +6,8 @@ import {
 } from "../dataTransfer/archive";
 import type { TermPersonalizationProfile } from "../personalization/termDisplayTypes";
 
+export type PlanRootStatus = "ready" | "pending" | "failed" | "unassigned";
+
 export type Project = {
   id: number;
   name: string;
@@ -14,6 +16,10 @@ export type Project = {
   status: string;
   project_type: "repository" | "learning_plan";
   course_files: string[];
+  /** Authoritative plan roots, resolved by the backend knowledge tree service. */
+  root_status?: PlanRootStatus | string;
+  root_concept_ids?: string[];
+  root_error?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -234,6 +240,9 @@ export type QAAskPayload = {
   include_context?: boolean;
   defer_metadata?: boolean;
   request_id?: string;
+  concept_id?: string | null;
+  source_content_hash?: string | null;
+  tree_snapshot?: { topology_version: number; state_version: number } | null;
   source_type: SourceType;
   source_path?: string | null;
   selected_text: string;
@@ -272,12 +281,15 @@ export type DocumentTerm = {
   source_type: "course" | "qa";
   source_path: string;
   term_text: string;
-  detection_source: "model" | "index" | "rule" | string;
+  detection_source: "model" | "manifest" | "index" | "rule" | string;
   confidence: number;
   status: "candidate" | "linked" | "known" | "dismissed" | string;
   link_origin?: TermLinkOrigin | string;
   qa_record_id?: number | null;
   concept_id?: string | null;
+  concept_ref?: string | null;
+  quote?: string | null;
+  tree_snapshot?: { topology_version: number; state_version: number };
   content_hash?: string | null;
   canonical_name?: string | null;
   category?: string | null;
@@ -567,10 +579,23 @@ export function importLocalProject(path: string): Promise<Project> {
   });
 }
 
-export function createLearningPlan(name: string): Promise<Project> {
+export type CreateLearningPlanOptions = {
+  /** User-selected existing forest roots. Empty lets root recognition decide. */
+  rootConceptIds?: string[];
+  topologyVersion?: number;
+};
+
+export function createLearningPlan(
+  name: string,
+  options: CreateLearningPlanOptions = {},
+): Promise<Project> {
   return request<Project>("/projects/learning-plan", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({
+      name,
+      root_concept_ids: options.rootConceptIds ?? [],
+      topology_version: options.topologyVersion ?? null,
+    }),
   });
 }
 
@@ -594,6 +619,21 @@ export function getLLMSettings(): Promise<LLMSettings> {
   return request<LLMSettings>("/settings/llm");
 }
 
+export interface LearningSettings {
+  primary_programming_language: string;
+}
+
+export function getLearningSettings(): Promise<LearningSettings> {
+  return request<LearningSettings>("/settings/learning");
+}
+
+export function saveLearningSettings(payload: LearningSettings): Promise<LearningSettings> {
+  return request<LearningSettings>("/settings/learning", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function saveLLMSettings(payload: SaveLLMSettingsPayload): Promise<LLMSettings> {
   return request<LLMSettings>("/settings/llm", {
     method: "PUT",
@@ -604,19 +644,6 @@ export function saveLLMSettings(payload: SaveLLMSettingsPayload): Promise<LLMSet
 export function testLLMSettings(): Promise<LLMTestResponse> {
   return request<LLMTestResponse>("/settings/llm/test", {
     method: "POST",
-  });
-}
-
-export function getPersonalizationRuntimeSettings(): Promise<PersonalizationRuntimeSettings> {
-  return request<PersonalizationRuntimeSettings>("/settings/personalization");
-}
-
-export function savePersonalizationRuntimeSettings(
-  payload: SavePersonalizationRuntimeSettingsPayload,
-): Promise<PersonalizationRuntimeSettings> {
-  return request<PersonalizationRuntimeSettings>("/settings/personalization", {
-    method: "PUT",
-    body: JSON.stringify(payload),
   });
 }
 
@@ -1363,6 +1390,9 @@ export type PersonalizationConcept = {
   aliases: string[];
   difficulty: number;
   createdAt: string;
+  parent_id?: string | null;
+  scope?: "global" | "project";
+  project_id?: number | null;
 };
 
 export type PersonalizationScope = {
@@ -1783,45 +1813,6 @@ export function resolvePersonalizationTerms(
   });
 }
 
-export function getLearnerPreferences(projectId: number): Promise<LearnerPreferences> {
-  return request<LearnerPreferences>(`/projects/${projectId}/personalization/preferences`);
-}
-
-export function updateLearnerPreferences(
-  projectId: number,
-  payload: Partial<{
-    answer_depth: number;
-    code_ratio: number;
-    explanation_order: LearnerPreferences["explanationOrder"];
-    prerequisite_detail: number;
-    terminology_density: number;
-    survey_enabled: boolean;
-    scope: "global" | "project";
-  }>,
-): Promise<LearnerPreferences> {
-  return request<LearnerPreferences>(`/projects/${projectId}/personalization/preferences`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
-}
-
-export function submitAnswerFeedback(
-  projectId: number,
-  payload: {
-    dimension: string;
-    choice: string;
-    qa_record_id?: number;
-    source?: "explicit_user" | "survey" | "implicit_question";
-    idempotency_key: string;
-    scope?: "global" | "project";
-  },
-): Promise<LearnerPreferences> {
-  return request<LearnerPreferences>(`/projects/${projectId}/personalization/answer-feedback`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-}
-
 export function recordTermImpressions(
   projectId: number,
   impressions: Array<Record<string, unknown>>,
@@ -1875,19 +1866,6 @@ export function submitTeachingFeedback(
 
 export function voidLearnerInference(projectId: number, inferenceId: string): Promise<{ status: string; id: string }> {
   return request(`/projects/${projectId}/personalization/inferences/${encodeURIComponent(inferenceId)}/void`, {
-    method: "POST",
-  });
-}
-
-export function answerDynamicSurvey(projectId: number, surveyId: string, choice: string): Promise<{ status: string }> {
-  return request(`/projects/${projectId}/personalization/surveys/${encodeURIComponent(surveyId)}/answer`, {
-    method: "POST",
-    body: JSON.stringify({ choice }),
-  });
-}
-
-export function dismissDynamicSurvey(projectId: number, surveyId: string): Promise<{ status: string }> {
-  return request(`/projects/${projectId}/personalization/surveys/${encodeURIComponent(surveyId)}/dismiss`, {
     method: "POST",
   });
 }
@@ -1960,33 +1938,6 @@ export function rebuildKnowledgeProfile(projectId: number): Promise<{
   policyVersion: string;
 }> {
   return request(`/projects/${projectId}/personalization/rebuild`, { method: "POST" });
-}
-
-export function getPendingDiagnostic(projectId: number): Promise<{ item: DiagnosticItem | null }> {
-  return request(`/projects/${projectId}/personalization/diagnostics/pending`);
-}
-
-export function answerDiagnostic(
-  projectId: number,
-  itemId: string,
-  answer: unknown,
-): Promise<{ status: string; correct: boolean; attemptId: string }> {
-  return request(`/projects/${projectId}/personalization/diagnostics/${encodeURIComponent(itemId)}/answer`, {
-    method: "POST",
-    body: JSON.stringify({ answer }),
-  });
-}
-
-export function dismissDiagnostic(projectId: number, itemId: string): Promise<{ status: string }> {
-  return request(`/projects/${projectId}/personalization/diagnostics/${encodeURIComponent(itemId)}/dismiss`, {
-    method: "POST",
-  });
-}
-
-export function flagDiagnostic(projectId: number, itemId: string): Promise<{ status: string }> {
-  return request(`/projects/${projectId}/personalization/diagnostics/${encodeURIComponent(itemId)}/flag`, {
-    method: "POST",
-  });
 }
 
 export type GenerationPreview = {

@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 
 from app.models.schemas import (
+    LearningSettingsRequest,
+    LearningSettingsResponse,
     LLMSettingsRequest,
     LLMSettingsResponse,
     LLMTestResponse,
@@ -10,6 +12,7 @@ from app.models.schemas import (
     PersonalizationRuntimeSettingsResponse,
 )
 from app.services.llm_client import call_openai_compatible_chat, mask_api_key
+from app.services.learning_preferences import read_learning_preferences, save_learning_preferences
 from app.services.storage import get_llm_settings, get_setting, save_llm_settings, set_setting
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -45,16 +48,24 @@ def write_llm_settings(payload: LLMSettingsRequest) -> LLMSettingsResponse:
     return _response_from_settings(settings)
 
 
+@router.get("/learning", response_model=LearningSettingsResponse)
+def read_learning_settings() -> LearningSettingsResponse:
+    return LearningSettingsResponse(**read_learning_preferences())
+
+
+@router.put("/learning", response_model=LearningSettingsResponse)
+def write_learning_settings(payload: LearningSettingsRequest) -> LearningSettingsResponse:
+    return LearningSettingsResponse(**save_learning_preferences(payload.primary_programming_language))
+
+
 @router.get("/personalization", response_model=PersonalizationRuntimeSettingsResponse)
 def read_personalization_runtime_settings() -> PersonalizationRuntimeSettingsResponse:
+    """Legacy switches describe the always-on local teaching/evidence flow.
+
+    The observer flag no longer schedules a second model observation.
+    """
     return PersonalizationRuntimeSettingsResponse(
-        supported=True,
-        teacher_planner_enabled=(
-            get_setting("personalization.teacher_planner.enabled") == "true"
-        ),
-        observer_enabled=(
-            get_setting("personalization.observer.enabled") == "true"
-        ),
+        supported=True, teacher_planner_enabled=True, observer_enabled=True,
     )
 
 
@@ -62,18 +73,9 @@ def read_personalization_runtime_settings() -> PersonalizationRuntimeSettingsRes
 def write_personalization_runtime_settings(
     payload: PersonalizationRuntimeSettingsRequest,
 ) -> PersonalizationRuntimeSettingsResponse:
-    if payload.teacher_planner_enabled is not None:
-        set_setting(
-            "personalization.teacher_planner.enabled",
-            "true" if payload.teacher_planner_enabled else "false",
-        )
-        set_setting("personalization.teacher_planner.mode", "assist")
-    if payload.observer_enabled is not None:
-        set_setting(
-            "personalization.observer.enabled",
-            "true" if payload.observer_enabled else "false",
-        )
-        set_setting("personalization.observer.mode", "shadow")
+    # Older clients can submit false, but cannot turn off authoritative facts.
+    for key in ("personalization.teacher_planner.enabled", "personalization.observer.enabled"):
+        set_setting(key, "true")
     return read_personalization_runtime_settings()
 
 

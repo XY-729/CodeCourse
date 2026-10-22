@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from teaching_manifest_fixture import with_manifest
+
 
 def _setup_temp_workspace():
     import app.core.config as cfg
@@ -75,7 +77,10 @@ class LearningPlanProjectTests(unittest.TestCase):
 
     def test_learning_plan_outline_generation_uses_instructions(self):
         project = self.client.post("/api/projects/learning-plan", json={"name": "算法复习计划"}).json()
-        generated_outline = "# 学习计划总纲\n\n生成方式：AI 生成\n\n## 学习目标\n\n围绕动态规划建立学习路径。"
+        generated_outline = with_manifest(
+            "# 学习计划总纲\n\n生成方式：AI 生成\n\n## 学习目标\n\n围绕动态规划建立学习路径。",
+            [("动态规划", "围绕动态规划建立学习路径。", "课程目标", "planned")],
+        )
 
         with patch("app.services.generation_service.call_openai_compatible_chat", return_value=generated_outline) as mocked:
             task = self.client.post(
@@ -98,7 +103,11 @@ class LearningPlanProjectTests(unittest.TestCase):
         self.assertEqual(outline.status_code, 200)
         self.assertIn("动态规划", outline.json()["content"])
         prompt = mocked.call_args.args[3][1]["content"]
-        self.assertIn("正式出版物", prompt)
+        # The learning-plan outline prompt states the real publication target and
+        # still excludes the retired repository-only sections.
+        self.assertIn("学习计划总纲", prompt)
+        self.assertIn("### 第 X 课", prompt)
+        self.assertIn("我想系统学习动态规划", prompt)
         self.assertNotIn("## 三、推荐代码阅读顺序", prompt)
         self.assertNotIn("**涉及文件**", prompt)
         self.assertNotIn("RAG 索引检索片段：", prompt)
@@ -106,7 +115,10 @@ class LearningPlanProjectTests(unittest.TestCase):
 
     def test_survey_answers_invalidate_cached_outline_reuse(self):
         project = self.client.post("/api/projects/learning-plan", json={"name": "DP 强化"}).json()
-        generated_outline = "# 学习计划总纲\n\n生成方式：AI 生成\n\n## 学习目标\n\n围绕动态规划建立学习路径。"
+        generated_outline = with_manifest(
+            "# 学习计划总纲\n\n生成方式：AI 生成\n\n## 学习目标\n\n围绕动态规划建立学习路径。",
+            [("动态规划", "围绕动态规划建立学习路径。", "课程目标", "planned")],
+        )
 
         with patch("app.services.generation_service.call_openai_compatible_chat", return_value=generated_outline) as mocked:
             first = self.client.post(
@@ -159,25 +171,96 @@ class LearningPlanProjectTests(unittest.TestCase):
             "position": "建立异步程序的执行模型。",
             "objectives": ["能够解释协程如何由事件循环调度"],
             "sections": [
-                {"title": "协程直觉", "items": [{"name": "协程", "kind": "concept", "focus": "执行暂停与恢复"}]},
-                {"title": "异步函数", "items": [{"name": "async", "kind": "function", "focus": "声明异步函数"}]},
-                {"title": "等待结果", "items": [{"name": "await", "kind": "function", "focus": "让出控制权"}]},
-                {"title": "调度机制", "items": [{"name": "事件循环", "kind": "concept", "focus": "任务调度"}]},
+                {
+                    "section_id": "s1", "title": "协程直觉", "depends_on": [],
+                    "reference_only": [], "avoid_repeat": [],
+                    "items": [{
+                        "name": "协程", "kind": "concept", "focus": "执行暂停与恢复",
+                        "concept_ref": "coroutine", "existing_id": None,
+                        "aspect": "执行暂停与恢复", "dimension": "conceptual",
+                        "owner_section_id": "s1", "teaching_mode": "first_explanation",
+                        "reference_section_ids": [],
+                    }],
+                },
+                {
+                    "section_id": "s2", "title": "异步函数", "depends_on": ["s1"],
+                    "reference_only": [], "avoid_repeat": [],
+                    "items": [{
+                        "name": "async", "kind": "function", "focus": "声明异步函数",
+                        "concept_ref": "async_function", "existing_id": None,
+                        "aspect": "声明异步函数", "dimension": "implementation",
+                        "owner_section_id": "s2", "teaching_mode": "first_explanation",
+                        "reference_section_ids": [],
+                    }],
+                },
+                {
+                    "section_id": "s3", "title": "等待结果", "depends_on": ["s2"],
+                    "reference_only": [], "avoid_repeat": [],
+                    "items": [{
+                        "name": "await", "kind": "function", "focus": "让出控制权",
+                        "concept_ref": "await_expression", "existing_id": None,
+                        "aspect": "让出控制权", "dimension": "implementation",
+                        "owner_section_id": "s3", "teaching_mode": "first_explanation",
+                        "reference_section_ids": [],
+                    }],
+                },
+                {
+                    "section_id": "s4", "title": "调度机制", "depends_on": ["s3"],
+                    "reference_only": [], "avoid_repeat": [],
+                    "items": [{
+                        "name": "事件循环", "kind": "concept", "focus": "任务调度",
+                        "concept_ref": "event_loop", "existing_id": None,
+                        "aspect": "任务调度", "dimension": "conceptual",
+                        "owner_section_id": "s4", "teaching_mode": "first_explanation",
+                        "reference_section_ids": [],
+                    }],
+                },
             ],
             "textbooks": [
                 {"id": "fluent-python-2", "topics": ["concurrency"]}
             ],
         }
-        responses = [json.dumps(plan, ensure_ascii=False)] + [
-            "## 协程直觉\n\n### 协程\n\n定义、直觉、过程、例子、误区与练习。",
-            "## 异步函数\n\n### async\n\n用途、形式、执行步骤、教学示例、错误与练习。",
-            "## 等待结果\n\n### await\n\n用途、形式、执行步骤、教学示例、错误与练习。",
-            "## 调度机制\n\n### 事件循环\n\n定义、直觉、过程、例子、误区与练习。",
+        section_payloads = {
+            "协程直觉": with_manifest(
+                "## 协程直觉\n\n### 协程\n\n协程在暂停点保存自己的执行状态。",
+                [{"ref": "coroutine", "name": "协程", "aspect": "执行暂停与恢复",
+                  "dimension": "conceptual", "quote": "协程在暂停点保存自己的执行状态。"}]),
+            "异步函数": with_manifest(
+                "## 异步函数\n\n### async\n\nasync 关键字声明一个可等待的异步函数。",
+                [{"ref": "async_function", "name": "async", "aspect": "声明异步函数",
+                  "dimension": "implementation", "quote": "async 关键字声明一个可等待的异步函数。"}]),
+            "等待结果": with_manifest(
+                "## 等待结果\n\n### await\n\nawait 表达式让出控制权等待结果就绪。",
+                [{"ref": "await_expression", "name": "await", "aspect": "让出控制权",
+                  "dimension": "implementation", "quote": "await 表达式让出控制权等待结果就绪。"}]),
+            "调度机制": with_manifest(
+                "## 调度机制\n\n### 事件循环\n\n事件循环负责安排就绪任务继续执行。",
+                [{"ref": "event_loop", "name": "事件循环", "aspect": "任务调度",
+                  "dimension": "conceptual", "quote": "事件循环负责安排就绪任务继续执行。"}]),
+        }
+        synthesis_payload = with_manifest(
             "## 综合串联\n\n协程通过 async 声明，在 await 处让出控制权，由事件循环继续调度。\n\n"
             "## 练习与自测\n\n解释一次暂停与恢复过程，并检查四个知识项之间的关系。",
-        ]
+            [],
+        )
 
-        with patch("app.services.generation_service.call_openai_compatible_chat", side_effect=responses) as mocked:
+        def respond(*args, **kwargs):
+            # Sections are generated concurrently, so answer from the prompt
+            # instead of relying on call order.
+            messages = args[3]
+            content = messages[-1]["content"]
+            if "<lesson_responsibility_contract>" in content:
+                return json.dumps(plan, ensure_ascii=False)
+            if "责任编辑" in content:
+                return synthesis_payload
+            for title, payload in section_payloads.items():
+                # The shared responsibility map repeats every section title, so
+                # only the current writer's own section heading identifies it.
+                if f"章节标题：{title}" in content:
+                    return payload
+            raise AssertionError(f"unexpected planner/section prompt: {content[:200]}")
+
+        with patch("app.services.generation_service.call_openai_compatible_chat", side_effect=respond) as mocked:
             created = self.client.post(
                 f"/api/projects/{project['id']}/lessons/outline",
                 json={"lesson_number": 1, "title": "异步编程基础", "instructions": "面向初学者"},
@@ -186,7 +269,7 @@ class LearningPlanProjectTests(unittest.TestCase):
         self.assertEqual(created.status_code, 200)
         task_id = created.json()["id"]
         task = self.client.get(f"/api/projects/{project['id']}/tasks/{task_id}").json()
-        self.assertEqual(task["status"], "completed")
+        self.assertTrue(task["status"] == "completed", task)
         # Progress includes publishing the finished document, not just LLM calls.
         self.assertEqual(task["progress_current"], task["progress_total"])
         self.assertGreaterEqual(task["progress_total"], mocked.call_count)

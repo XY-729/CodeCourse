@@ -1,16 +1,13 @@
-import { Check, ChevronDown, CircleHelp, X } from "lucide-react";
+import { ChevronDown, CircleHelp } from "lucide-react";
 import { useState } from "react";
 import {
   getTeachingTrial,
-  submitAnswerFeedback,
-  submitTeachingFeedback,
 } from "../../api/client";
 import type { TeachingTrial } from "../../api/client";
 
 type Props = {
   projectId: number;
   qaRecordId: number;
-  onChanged?: () => void;
   compact?: boolean;
 };
 
@@ -37,7 +34,6 @@ const STRATEGY_LABELS: Record<string, string> = {
 export default function TeachingRationale({
   projectId,
   qaRecordId,
-  onChanged,
   compact = false,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -55,45 +51,6 @@ export default function TeachingRationale({
       setTrial(await getTeachingTrial(projectId, qaRecordId));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "读取教学依据失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function sendFeedback(
-    result: "successful" | "partially_successful" | "unsuccessful",
-  ) {
-    setLoading(true);
-    setMessage("");
-    try {
-      await submitTeachingFeedback(projectId, qaRecordId, result);
-      // 把讲解有效性映射到偏好维度，慢速微调后续讲解尺度。
-      // "讲懂了"不改变偏好（当前尺度恰好合适）；部分明白多给例子；仍不懂则补前置知识、简化术语。
-      const preferenceSignals: Array<{ dimension: string; choice: string }> =
-        result === "successful"
-          ? []
-          : result === "unsuccessful"
-            ? [
-                { dimension: "prerequisite_detail", choice: "more" },
-                { dimension: "terminology_density", choice: "less" },
-              ]
-            : [{ dimension: "code_ratio", choice: "more" }];
-      await Promise.all(
-        preferenceSignals.map((signal) =>
-          submitAnswerFeedback(projectId, {
-            dimension: signal.dimension,
-            choice: signal.choice,
-            qa_record_id: qaRecordId,
-            source: "explicit_user",
-            idempotency_key: `teaching:${qaRecordId}:${result}:${signal.dimension}`,
-          }),
-        ),
-      );
-      setTrial(await getTeachingTrial(projectId, qaRecordId));
-      setMessage("已记录，你的反馈会影响后续讲解方式");
-      onChanged?.();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "保存反馈失败");
     } finally {
       setLoading(false);
     }
@@ -141,11 +98,6 @@ export default function TeachingRationale({
               {trial.assumedKnown.length ? (
                 <p><b>本次简化：</b>{trial.assumedKnown.join("、")}</p>
               ) : null}
-              <div className="teaching-rationale-feedback" aria-label="这次讲解是否有效">
-                <button type="button" disabled={loading} onClick={() => void sendFeedback("successful")}><Check size={13} />讲懂了</button>
-                <button type="button" disabled={loading} onClick={() => void sendFeedback("partially_successful")}>部分明白</button>
-                <button type="button" disabled={loading} onClick={() => void sendFeedback("unsuccessful")}><X size={13} />仍不懂</button>
-              </div>
             </>
           ) : null}
           {message ? <small className="teaching-rationale-message">{message}</small> : null}

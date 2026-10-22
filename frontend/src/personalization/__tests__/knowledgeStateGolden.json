@@ -1,5 +1,5 @@
 {
-  "policyVersion": "knowledge-v2.2",
+  "policyVersion": "knowledge-facts-v1",
   "conceptId": "golden-concept",
   "scopeType": "global",
   "scopeId": "local-user",
@@ -18,6 +18,12 @@
         "reliableCorrectSessions": 0,
         "manualStatus": null,
         "lastEvidenceAt": null
+      },
+      "expectedFacts": {
+        "familiarity": "unrecorded",
+        "ranges": [],
+        "evidence_ids": [],
+        "source_count": 0
       }
     },
     {
@@ -43,6 +49,33 @@
         "reliableCorrectSessions": 0,
         "manualStatus": null,
         "lastEvidenceAt": "2026-06-30T00:00:00Z"
+      },
+      "expectedFacts": {
+        "familiarity": "encountered",
+        "ranges": [
+          {
+            "aspect": "",
+            "dimension": "familiarity",
+            "familiarity": "encountered",
+            "evidence_ids": [
+              "question-1"
+            ],
+            "source_count": 1,
+            "sources": [
+              {
+                "source_type": "question",
+                "source_path": null,
+                "project_id": null,
+                "content_hash": null
+              }
+            ],
+            "last_evidence_at": "2026-06-30T00:00:00Z"
+          }
+        ],
+        "evidence_ids": [
+          "question-1"
+        ],
+        "source_count": 1
       }
     },
     {
@@ -81,6 +114,12 @@
         "reliableCorrectSessions": 2,
         "manualStatus": null,
         "lastEvidenceAt": "2026-07-01T00:00:00Z"
+      },
+      "expectedFacts": {
+        "familiarity": "unrecorded",
+        "ranges": [],
+        "evidence_ids": [],
+        "source_count": 0
       }
     },
     {
@@ -119,6 +158,12 @@
         "reliableCorrectSessions": 1,
         "manualStatus": null,
         "lastEvidenceAt": "2026-07-01T00:00:00Z"
+      },
+      "expectedFacts": {
+        "familiarity": "unrecorded",
+        "ranges": [],
+        "evidence_ids": [],
+        "source_count": 0
       }
     },
     {
@@ -155,6 +200,33 @@
         "reliableCorrectSessions": 1,
         "manualStatus": "unknown",
         "lastEvidenceAt": "2026-07-01T00:00:00Z"
+      },
+      "expectedFacts": {
+        "familiarity": "needs_help",
+        "ranges": [
+          {
+            "aspect": "",
+            "dimension": "familiarity",
+            "familiarity": "needs_help",
+            "evidence_ids": [
+              "manual-1"
+            ],
+            "source_count": 1,
+            "sources": [
+              {
+                "source_type": "manual",
+                "source_path": null,
+                "project_id": null,
+                "content_hash": null
+              }
+            ],
+            "last_evidence_at": "2026-07-01T00:00:00Z"
+          }
+        ],
+        "evidence_ids": [
+          "manual-1"
+        ],
+        "source_count": 1
       }
     },
     {
@@ -189,6 +261,12 @@
         "reliableCorrectSessions": 0,
         "manualStatus": null,
         "lastEvidenceAt": null
+      },
+      "expectedFacts": {
+        "familiarity": "unrecorded",
+        "ranges": [],
+        "evidence_ids": [],
+        "source_count": 0
       }
     },
     {
@@ -224,6 +302,12 @@
         "reliableCorrectSessions": 0,
         "manualStatus": null,
         "lastEvidenceAt": null
+      },
+      "expectedFacts": {
+        "familiarity": "unrecorded",
+        "ranges": [],
+        "evidence_ids": [],
+        "source_count": 0
       }
     },
     {
@@ -249,6 +333,459 @@
         "reliableCorrectSessions": 0,
         "manualStatus": null,
         "lastEvidenceAt": "2025-01-01T00:00:00Z"
+      },
+      "expectedFacts": {
+        "familiarity": "unrecorded",
+        "ranges": [],
+        "evidence_ids": [],
+        "source_count": 0
+      }
+    },
+    {
+      "id": "understood-range",
+      "events": [
+        {
+          "id": "summary-1",
+          "source": "summary",
+          "action": "self_understood",
+          "strength": 0.65,
+          "reliability": 0.72,
+          "eventTime": "2026-06-01T00:00:00Z",
+          "object": {
+            "type": "course",
+            "sourcePath": "lessons/lesson_01.md",
+            "sourceType": "course",
+            "projectId": 1,
+            "contentHash": "hash-1"
+          },
+          "result": {
+            "aspect": "连续存储",
+            "dimension": "conceptual",
+            "ranges": [
+              {
+                "aspect": "连续存储",
+                "dimension": "conceptual",
+                "kind": "explained"
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "probability": 0.35,
+        "uncertainty": 0.92,
+        "status": "uncertain",
+        "evidenceCount": 0,
+        "directEvidenceCount": 0,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": null
+      },
+      "expectedFacts": {
+        "familiarity": "self_reported_understood",
+        "ranges": [
+          {
+            "aspect": "连续存储",
+            "dimension": "conceptual",
+            "familiarity": "self_reported_understood",
+            "evidence_ids": [
+              "summary-1"
+            ],
+            "source_count": 1,
+            "sources": [
+              {
+                "source_type": "course",
+                "source_path": "lessons/lesson_01.md",
+                "project_id": 1,
+                "content_hash": "hash-1"
+              }
+            ],
+            "last_evidence_at": "2026-06-01T00:00:00Z"
+          }
+        ],
+        "evidence_ids": [
+          "summary-1"
+        ],
+        "source_count": 1
+      }
+    },
+    {
+      "id": "later_needs_help_wins_same_range",
+      "events": [
+        {
+          "id": "summary-1",
+          "source": "summary",
+          "action": "self_understood",
+          "strength": 0.65,
+          "reliability": 0.72,
+          "eventTime": "2026-06-01T00:00:00Z",
+          "object": {
+            "type": "course",
+            "sourcePath": "lessons/a.md",
+            "projectId": 1
+          },
+          "result": {
+            "ranges": [
+              {
+                "aspect": "扩容",
+                "dimension": "conceptual",
+                "kind": "explained"
+              }
+            ]
+          }
+        },
+        {
+          "id": "summary-2",
+          "source": "summary",
+          "action": "self_needs_help",
+          "strength": 0.65,
+          "reliability": 0.72,
+          "eventTime": "2026-06-02T00:00:00Z",
+          "object": {
+            "type": "course",
+            "sourcePath": "lessons/b.md",
+            "projectId": 1
+          },
+          "result": {
+            "ranges": [
+              {
+                "aspect": "扩容",
+                "dimension": "conceptual",
+                "kind": "explained"
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "probability": 0.35,
+        "uncertainty": 0.92,
+        "status": "uncertain",
+        "evidenceCount": 0,
+        "directEvidenceCount": 0,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": null
+      },
+      "expectedFacts": {
+        "familiarity": "needs_help",
+        "ranges": [
+          {
+            "aspect": "扩容",
+            "dimension": "conceptual",
+            "familiarity": "needs_help",
+            "evidence_ids": [
+              "summary-1",
+              "summary-2"
+            ],
+            "source_count": 2,
+            "sources": [
+              {
+                "source_type": "course",
+                "source_path": "lessons/a.md",
+                "project_id": 1,
+                "content_hash": null
+              },
+              {
+                "source_type": "course",
+                "source_path": "lessons/b.md",
+                "project_id": 1,
+                "content_hash": null
+              }
+            ],
+            "last_evidence_at": "2026-06-02T00:00:00Z"
+          }
+        ],
+        "evidence_ids": [
+          "summary-1",
+          "summary-2"
+        ],
+        "source_count": 2
+      }
+    },
+    {
+      "id": "partial_plus_other_range_is_mixed",
+      "events": [
+        {
+          "id": "summary-1",
+          "source": "summary",
+          "action": "self_partial",
+          "strength": 0,
+          "reliability": 0.72,
+          "eventTime": "2026-06-01T00:00:00Z",
+          "result": {
+            "ranges": [
+              {
+                "aspect": "迭代器",
+                "dimension": "conceptual",
+                "kind": "brief"
+              }
+            ]
+          }
+        },
+        {
+          "id": "summary-2",
+          "source": "summary",
+          "action": "self_understood",
+          "strength": 0.65,
+          "reliability": 0.72,
+          "eventTime": "2026-06-02T00:00:00Z",
+          "result": {
+            "ranges": [
+              {
+                "aspect": "生成器",
+                "dimension": "conceptual",
+                "kind": "explained"
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "probability": 0.35,
+        "uncertainty": 0.92,
+        "status": "uncertain",
+        "evidenceCount": 0,
+        "directEvidenceCount": 0,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": null
+      },
+      "expectedFacts": {
+        "familiarity": "mixed",
+        "ranges": [
+          {
+            "aspect": "生成器",
+            "dimension": "conceptual",
+            "familiarity": "self_reported_understood",
+            "evidence_ids": [
+              "summary-2"
+            ],
+            "source_count": 1,
+            "sources": [
+              {
+                "source_type": "summary",
+                "source_path": null,
+                "project_id": null,
+                "content_hash": null
+              }
+            ],
+            "last_evidence_at": "2026-06-02T00:00:00Z"
+          },
+          {
+            "aspect": "迭代器",
+            "dimension": "conceptual",
+            "familiarity": "partially_understood",
+            "evidence_ids": [
+              "summary-1"
+            ],
+            "source_count": 1,
+            "sources": [
+              {
+                "source_type": "summary",
+                "source_path": null,
+                "project_id": null,
+                "content_hash": null
+              }
+            ],
+            "last_evidence_at": "2026-06-01T00:00:00Z"
+          }
+        ],
+        "evidence_ids": [
+          "summary-1",
+          "summary-2"
+        ],
+        "source_count": 1
+      }
+    },
+    {
+      "id": "course_completion_is_studied_not_understood",
+      "events": [
+        {
+          "id": "completion-1",
+          "source": "course_completion",
+          "action": "course_studied",
+          "direction": "positive",
+          "strength": 0.25,
+          "reliability": 0.6,
+          "eventTime": "2026-06-03T00:00:00Z",
+          "object": {
+            "projectId": 1,
+            "sourcePath": "lessons/c.md"
+          },
+          "result": {
+            "ranges": [
+              {
+                "aspect": "内存模型",
+                "dimension": "conceptual",
+                "kind": "explained"
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "probability": 0.3656,
+        "uncertainty": 0.705,
+        "status": "uncertain",
+        "evidenceCount": 1,
+        "directEvidenceCount": 1,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": "2026-06-03T00:00:00Z"
+      },
+      "expectedFacts": {
+        "familiarity": "studied",
+        "ranges": [
+          {
+            "aspect": "内存模型",
+            "dimension": "conceptual",
+            "familiarity": "studied",
+            "evidence_ids": [
+              "completion-1"
+            ],
+            "source_count": 1,
+            "sources": [
+              {
+                "source_type": "course_completion",
+                "source_path": "lessons/c.md",
+                "project_id": 1,
+                "content_hash": null
+              }
+            ],
+            "last_evidence_at": "2026-06-03T00:00:00Z"
+          }
+        ],
+        "evidence_ids": [
+          "completion-1"
+        ],
+        "source_count": 1
+      }
+    },
+    {
+      "id": "planned_range_never_becomes_familiarity",
+      "events": [
+        {
+          "id": "completion-1",
+          "source": "course_completion",
+          "action": "course_studied",
+          "direction": "positive",
+          "strength": 0.25,
+          "reliability": 0.6,
+          "eventTime": "2026-06-03T00:00:00Z",
+          "result": {
+            "ranges": [
+              {
+                "aspect": "线程池",
+                "dimension": "conceptual",
+                "kind": "explained"
+              },
+              {
+                "aspect": "协程",
+                "dimension": "conceptual",
+                "kind": "planned"
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "probability": 0.3656,
+        "uncertainty": 0.705,
+        "status": "uncertain",
+        "evidenceCount": 1,
+        "directEvidenceCount": 1,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": "2026-06-03T00:00:00Z"
+      },
+      "expectedFacts": {
+        "familiarity": "studied",
+        "ranges": [
+          {
+            "aspect": "线程池",
+            "dimension": "conceptual",
+            "familiarity": "studied",
+            "evidence_ids": [
+              "completion-1"
+            ],
+            "source_count": 1,
+            "sources": [
+              {
+                "source_type": "course_completion",
+                "source_path": null,
+                "project_id": null,
+                "content_hash": null
+              }
+            ],
+            "last_evidence_at": "2026-06-03T00:00:00Z"
+          }
+        ],
+        "evidence_ids": [
+          "completion-1"
+        ],
+        "source_count": 1
+      }
+    },
+    {
+      "id": "manual_known_then_clear",
+      "events": [
+        {
+          "id": "manual-1",
+          "source": "manual",
+          "action": "manual_known",
+          "strength": 1,
+          "reliability": 1,
+          "eventTime": "2026-06-01T00:00:00Z",
+          "result": {
+            "ranges": [
+              {
+                "aspect": "指针",
+                "dimension": "conceptual",
+                "kind": "explained"
+              }
+            ]
+          }
+        },
+        {
+          "id": "manual-2",
+          "source": "manual",
+          "action": "manual_clear",
+          "strength": 0,
+          "reliability": 1,
+          "eventTime": "2026-06-02T00:00:00Z",
+          "result": {
+            "ranges": [
+              {
+                "aspect": "指针",
+                "dimension": "conceptual",
+                "kind": "explained"
+              }
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "probability": 0.35,
+        "uncertainty": 0.92,
+        "status": "uncertain",
+        "evidenceCount": 0,
+        "directEvidenceCount": 0,
+        "objectiveAttemptCount": 0,
+        "reliableCorrectSessions": 0,
+        "manualStatus": null,
+        "lastEvidenceAt": null
+      },
+      "expectedFacts": {
+        "familiarity": "unrecorded",
+        "ranges": [],
+        "evidence_ids": [],
+        "source_count": 0
       }
     }
   ]

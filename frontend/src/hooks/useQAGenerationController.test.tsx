@@ -366,7 +366,9 @@ it("publishes the first body before completion and retains partial text on failu
   act(() => { token = result.current.beginOperation()!; });
   let request!: Promise<QARecord>;
   act(() => { request = result.current.runStreamingQuestion(PAYLOAD, "draft:1", token); });
-  expect(askMock).toHaveBeenCalledWith(1, expect.objectContaining({ defer_metadata: true }), expect.any(Object), expect.any(AbortSignal));
+  // The answer and its knowledge manifest arrive in the same response, so the
+  // old deferral that forbade a manifest is gone.
+  expect(askMock).toHaveBeenCalledWith(1, expect.objectContaining({ defer_metadata: false }), expect.any(Object), expect.any(AbortSignal));
   act(() => handlers.onDelta?.("首段 **正文**"));
   expect(result.current.generations["draft:1"].partial).toBe("首段 **正文**");
   expect(onComplete).not.toHaveBeenCalled();

@@ -32,16 +32,30 @@ export function buildPreliminaryTermDecision(
     return { ...decision, eligible: true, score: 1, tier: "prominent", reason: "explicit_manual_link" };
   }
 
-  if (candidate.source !== "model") {
+  if (candidate.source !== "model" && candidate.source !== "manifest") {
     return { ...decision, reason: "untrusted_candidate" };
   }
-  if (candidate.isInHeading || !candidate.normalizedText.trim()) return decision;
+  if (!candidate.normalizedText.trim()) return decision;
+
+  // An explicit "I do not know this" outranks generated or inferred state.
+  if (profile?.manualStatus === "unknown") {
+    return { ...decision, eligible: true, score: 1, tier: "prominent", reason: "manual_unknown", manualUnknown: true };
+  }
+
+  // Recorded facts win over legacy probability/BKT compatibility fields, but
+  // "no record yet" must never hide a term the saved manifest selected.
+  if (profile?.familiarity && profile.familiarity !== "unrecorded") {
+    if (profile.familiarity === "declared_known" || profile.familiarity === "self_reported_understood") {
+      return { ...decision, reason: profile.familiarity };
+    }
+    if (profile.familiarity === "needs_help") {
+      return { ...decision, eligible: true, score: 1, tier: "prominent", reason: "needs_help", manualUnknown: true };
+    }
+    return { ...decision, eligible: true, score: 0.5, tier: "subtle", reason: "model_selected" };
+  }
 
   if (profile?.manualStatus === "known") {
     return { ...decision, reason: "manual_known" };
-  }
-  if (profile?.manualStatus === "unknown") {
-    return { ...decision, eligible: true, score: 1, tier: "prominent", reason: "manual_unknown", manualUnknown: true };
   }
   if (profile?.knowledgeStatus === "confirmed") {
     return { ...decision, reason: "confirmed_knowledge" };
@@ -49,6 +63,6 @@ export function buildPreliminaryTermDecision(
 
   // The model selected this term with the document and learning context in
   // view. A missing profile is not evidence of unfamiliarity; keep its choice
-  // subtle, then apply only reading-density and repetition limits.
+  // subtle, then share one entry for repeated occurrences of the concept.
   return { ...decision, eligible: true, score: 0.5, tier: "subtle", reason: "model_selected" };
 }

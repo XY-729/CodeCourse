@@ -353,8 +353,6 @@ class ShadowUpdaterTests(unittest.TestCase):
     def test_capability_update_actual_db(self):
         from app.services.personalization.shadow_learner_model_updater import (
             _upsert_concept_capability,
-            clamp01,
-            DEFAULT_CAPABILITY,
         )
         from app.services.personalization_service import GLOBAL_SCOPE_ID
         conn = sqlite3.connect(":memory:")
@@ -376,6 +374,8 @@ class ShadowUpdaterTests(unittest.TestCase):
                 PRIMARY KEY(concept_id, scope_type, scope_id)
             )"""
         )
+        # Observed prose is retired as a capability writer: the legacy table stays
+        # read-only so an old queue cannot revive guessed abilities.
         _upsert_concept_capability(
             concept_id="test-concept-1",
             scope_type="global",
@@ -389,9 +389,7 @@ class ShadowUpdaterTests(unittest.TestCase):
             "SELECT * FROM concept_capabilities WHERE concept_id = ?",
             ("test-concept-1",),
         ).fetchone()
-        self.assertIsNotNone(row)
-        self.assertAlmostEqual(float(row[4]), DEFAULT_CAPABILITY + 0.03, places=3)
-        self.assertEqual(int(row[10]), 1)
+        self.assertIsNone(row)
         conn.close()
 
 

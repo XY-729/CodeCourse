@@ -12,10 +12,7 @@ from app.services.generation_service import (
     build_outline_input,
 )
 from app.services.llm_client import call_openai_compatible_chat
-from app.services.personalization_service import (
-    apply_preference_feedback,
-    effective_preferences,
-)
+from app.services.personalization.teaching.generation_context import build_generation_context, apply_generation_context
 from app.services.prompt_contracts import compose_system_prompt
 from app.services.prompt_store import load_prompt
 from app.services.storage import (
@@ -39,18 +36,9 @@ def _llm_settings_or_error() -> dict[str, str]:
 
 
 def _preferences_summary(project_id: int) -> str:
-    try:
-        prefs = effective_preferences(project_id)
-    except Exception:
-        return "暂无"
-    parts = [
-        f"回答深度: {prefs.answer_depth:.2f}",
-        f"代码比例: {prefs.code_ratio:.2f}",
-        f"讲解顺序: {prefs.explanation_order}",
-        f"前置知识: {prefs.prerequisite_detail:.2f}",
-        f"术语密度: {prefs.terminology_density:.2f}",
-    ]
-    return "；".join(parts)
+    """Legacy placeholder now carries explicit user text, never slider values."""
+    from app.services.knowledge_tree_service import list_requirements
+    return json.dumps(list_requirements(project_id), ensure_ascii=False)
 
 
 def _build_questionnaire_messages(
@@ -73,7 +61,7 @@ def _build_questionnaire_messages(
         preferences_summary=_preferences_summary(project_id),
         prompt_input=prompt_input,
     )
-    return [
+    return apply_generation_context([
         {
             "role": "system",
             "content": compose_system_prompt(
@@ -81,7 +69,7 @@ def _build_questionnaire_messages(
             ),
         },
         {"role": "user", "content": prompt},
-    ]
+    ], build_generation_context(project_id, instructions))
 
 
 def _parse_questions(content: str) -> list[dict]:
@@ -176,43 +164,8 @@ def serialize_learning_intent(answers: list[dict]) -> str:
 
 
 def persist_prerequisite_answers(project_id: int, answers: list[dict]) -> None:
-    """Only prerequisite-level answers persist to learner_preferences via survey feedback."""
-    for answer in answers:
-        if not isinstance(answer, dict):
-            continue
-        if answer.get("dimension") != PREREQUISITE_DIMENSION:
-            continue
-        selected = answer.get("selected", answer.get("answer"))
-        if isinstance(selected, list):
-            selected = selected[0] if selected else None
-        if selected is None or str(selected).strip() == "":
-            continue
-        choice = str(selected).strip()
-        # Map survey choices to apply_preference_feedback signal semantics.
-        low_map = {
-            "none": "less",
-            "novice": "prerequisites",
-            "beginner": "prerequisites",
-            "some": "prerequisites",
-            "basic": "prerequisites",
-            "little": "prerequisites",
-            "unfamiliar": "prerequisites",
-        }
-        signal = low_map.get(choice.lower())
-        if signal is None:
-            # Fall back to "more prerequisite help" unless the user is clearly familiar.
-            familiar = {"familiar", "good", "experienced", "advanced", "proficient", "comfortable"}
-            signal = "less" if choice.lower() in familiar else "prerequisites"
-        try:
-            apply_preference_feedback(
-                project_id,
-                dimension="prerequisite_detail",
-                choice=signal,
-                source="survey",
-                idempotency_key=f"outline-preflight:{project_id}:{answer.get('_key', uuid4().hex[:8])}",
-            )
-        except Exception:
-            continue
+    """Retired: preflight answers stay task-scoped raw intent, not preferences."""
+    return None
 
 
 def resolve_preflight(preflight_id: str) -> Optional[dict]:

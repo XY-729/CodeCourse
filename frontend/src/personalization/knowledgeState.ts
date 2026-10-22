@@ -1,4 +1,6 @@
-export const KNOWLEDGE_POLICY_VERSION = "knowledge-v2.2";
+import type { FamiliarityState } from "./conceptForest";
+
+export const KNOWLEDGE_POLICY_VERSION = "knowledge-facts-v1";
 
 export const KNOWLEDGE_DIMENSIONS = [
   "familiarity",
@@ -67,11 +69,32 @@ export interface DimensionKnowledgeState {
   lastEvidenceAt: string | null;
 }
 
+export interface KnowledgeRangeSource {
+  source_type: string | null;
+  source_path: string | null;
+  project_id: unknown;
+  content_hash: string | null;
+}
+
+export interface KnowledgeRangeState {
+  aspect: string;
+  dimension: KnowledgeDimension;
+  familiarity: FamiliarityState;
+  evidence_ids: string[];
+  source_count: number;
+  sources: KnowledgeRangeSource[];
+  last_evidence_at: string | null;
+}
+
 export interface ConceptKnowledgeState {
   conceptId: string;
   scopeType: "global" | "project";
   scopeId: string;
   dimensions: Record<KnowledgeDimension, DimensionKnowledgeState>;
+  familiarity: FamiliarityState;
+  ranges: KnowledgeRangeState[];
+  evidence_ids: string[];
+  source_count: number;
   policyVersion: string;
   evidenceVersion: number;
   updatedAt: string;
@@ -110,6 +133,13 @@ export function resolveKnowledgeState(
   evidence: LearningEvidenceV2[],
   now = new Date().toISOString(),
 ): ConceptKnowledgeState {
+  // A caller may pass a shared ledger. Concept and scope are part of identity,
+  // including for void markers, and must be checked before replay.
+  evidence = evidence.filter((item) => (
+    String(item.conceptId ?? conceptId) === conceptId
+    && (item.scopeType ?? scopeType) === scopeType
+    && String(item.scopeId ?? scopeId) === scopeId
+  ));
   const voidedTargets = new Set(
     evidence
       .filter((item) => item.targetEvidenceId && !item.voided)
@@ -126,18 +156,157 @@ export function resolveKnowledgeState(
   const dimensions = Object.fromEntries(
     KNOWLEDGE_DIMENSIONS.map((dimension) => [
       dimension,
-      resolveDimension(dimension, active.filter((item) => item.dimension === dimension), now),
+      resolveDimension(
+        dimension,
+        active.filter((item) => item.dimension === dimension && !(
+          ["implementation", "debugging", "transfer"].includes(dimension)
+          && ["summary", "course_completion", "question"].includes(item.source)
+        )),
+        now,
+      ),
     ]),
   ) as Record<KnowledgeDimension, DimensionKnowledgeState>;
+  const facts = resolveFamiliarity(active);
 
   return {
     conceptId,
     scopeType,
     scopeId,
     dimensions,
+    ...facts,
     policyVersion: KNOWLEDGE_POLICY_VERSION,
     evidenceVersion: active.length,
     updatedAt: now,
+  };
+}
+
+/** Maps observable actions, never a model score or an inferred direction. */
+export function evidenceFamiliarity(event: LearningEvidenceV2): FamiliarityState | null {
+  if (event.source === "manual") {
+    return ({ manual_known: "declared_known", manual_unknown: "needs_help" } as const)[event.action as "manual_known"] ?? null;
+  }
+  if (event.source === "question" && [
+    "asked_definition", "asked_clarification", "asked_question", "observed",
+    "selected_range", "located_range", "encountered",
+  ].includes(event.action)) return "encountered";
+  if (event.source === "course_completion" && ["course_studied", "studied"].includes(event.action)) return "studied";
+  if (event.source === "summary") {
+    const result = (event.result ?? {}) as Record<string, unknown>;
+    const hasRange = String(result.aspect ?? "").trim().length > 0
+      || Boolean(result.ranges) || Boolean(result.range);
+    if (!hasRange) return null;
+    return ({
+      self_understood: "self_reported_understood",
+      saved_understanding: "self_reported_understood",
+      self_partial: "partially_understood",
+      self_needs_help: "needs_help",
+    } as const)[event.action as "self_understood"] ?? null;
+  }
+  return null;
+}
+
+type RangeEvent = { event: LearningEvidenceV2; state: FamiliarityState | null };
+
+function eventRanges(event: LearningEvidenceV2): Array<[string, KnowledgeDimension]> {
+  const result = (event.result ?? {}) as Record<string, unknown>;
+  const raw = result.ranges !== undefined && result.ranges !== null
+    ? result.ranges
+    : [result.range ?? { aspect: result.aspect ?? "", dimension: event.dimension }];
+  if (!Array.isArray(raw)) return [];
+  const ranges = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const dimension = String(record.dimension ?? event.dimension ?? "familiarity");
+    if (!(KNOWLEDGE_DIMENSIONS as readonly string[]).includes(dimension)) continue;
+    if (record.kind === "planned" || record.kind === "mentioned") continue;
+    ranges.add(JSON.stringify([String(record.aspect ?? "").trim(), dimension]));
+  }
+  return [...ranges].map((key) => JSON.parse(key) as [string, KnowledgeDimension]);
+}
+
+function sourceRef(event: LearningEvidenceV2): KnowledgeRangeSource {
+  const object = (event.object ?? {}) as Record<string, unknown>;
+  const context = (event.context ?? {}) as Record<string, unknown>;
+  const result = (event.result ?? {}) as Record<string, unknown>;
+  return {
+    source_type: (object.sourceType ?? object.type ?? context.sourceType ?? event.source) as string | null,
+    source_path: (object.sourcePath ?? context.sourcePath ?? null) as string | null,
+    project_id: object.projectId ?? context.projectId ?? null,
+    content_hash: (object.contentHash ?? result.contentHash ?? null) as string | null,
+  };
+}
+
+/** Deterministic factual reduction by aspect and dimension. */
+export function resolveFamiliarity(active: LearningEvidenceV2[]): {
+  familiarity: FamiliarityState;
+  ranges: KnowledgeRangeState[];
+  evidence_ids: string[];
+  source_count: number;
+} {
+  const grouped = new Map<string, RangeEvent[]>();
+  for (const event of active) {
+    const state = evidenceFamiliarity(event);
+    const isClear = event.source === "manual" && event.action === "manual_clear";
+    if (state === null && !isClear) continue;
+    for (const [aspect, dimension] of eventRanges(event)) {
+      const key = JSON.stringify([aspect, dimension]);
+      grouped.set(key, [...(grouped.get(key) ?? []), { event, state }]);
+    }
+  }
+  const ranges: KnowledgeRangeState[] = [];
+  const keys = [...grouped.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const key of keys) {
+    const [aspect, dimension] = JSON.parse(key) as [string, KnowledgeDimension];
+    const events = grouped.get(key)!;
+    let manual: FamiliarityState | null = null;
+    let explicit: FamiliarityState | null = null;
+    let exposure: FamiliarityState | "unrecorded" = "unrecorded";
+    for (const { event, state } of events) {
+      if (event.source === "manual") manual = state;
+      else if (state && ["self_reported_understood", "partially_understood", "needs_help"].includes(state)) explicit = state;
+      else if (state === "studied" || exposure === "unrecorded") exposure = state ?? exposure;
+    }
+    const current = manual ?? explicit ?? exposure;
+    const effective = events.filter(({ event, state }) => Boolean(state) && (
+      event.source !== "manual" || manual !== null
+    ));
+    if (!effective.length) continue;
+    const sources: KnowledgeRangeSource[] = [];
+    for (const { event } of effective) {
+      const source = sourceRef(event);
+      const seen = sources.some((item) => JSON.stringify(item) === JSON.stringify(source));
+      if (!seen) sources.push(source);
+    }
+    const sortKey = (item: KnowledgeRangeSource) => [
+      item.source_type, item.source_path, item.project_id, item.content_hash,
+    ].map((value) => String(value ?? ""));
+    sources.sort((a, b) => {
+      const left = sortKey(a), right = sortKey(b);
+      for (let index = 0; index < left.length; index += 1) {
+        if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+      }
+      return 0;
+    });
+    ranges.push({
+      aspect,
+      dimension,
+      familiarity: current,
+      evidence_ids: [...new Set(effective.map(({ event }) => String(event.id)))].sort(),
+      source_count: sources.length,
+      sources,
+      last_evidence_at: effective.map(({ event }) => event.eventTime ?? "")
+        .reduce<string | null>((latest, value) => (latest === null || value > latest ? value : latest), null),
+    });
+  }
+  const distinct = new Set(ranges.map((range) => range.familiarity));
+  return {
+    familiarity: distinct.size === 1 ? [...distinct][0] : distinct.size > 1 ? "mixed" : "unrecorded",
+    ranges,
+    evidence_ids: [...new Set(ranges.flatMap((range) => range.evidence_ids))].sort(),
+    source_count: new Set(ranges.flatMap((range) => range.sources.map((source) =>
+      JSON.stringify([source.source_type, source.source_path, source.project_id, source.content_hash]),
+    ))).size,
   };
 }
 

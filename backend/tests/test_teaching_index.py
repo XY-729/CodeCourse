@@ -50,12 +50,45 @@ class TeachingIndexTests(unittest.TestCase):
         self.assertNotEqual(knowledge[0]['dimensions']['conceptual']['status'], 'confirmed')
         self.assertEqual(self.feedback(state, 'clear', 'undo')['status'], 'pending')
 
-    def test_same_aspect_updates_other_course_but_not_other_aspects(self):
+    def test_outline_keeps_real_explanations_but_planned_targets_are_not_understanding(self):
+        from app.services import storage, teaching_index as index
+        state = self.document('outline.md')
+        # A real explanation inside an outline keeps its declared kind instead of
+        # being downgraded to a future plan.
+        self.assertEqual(state['passages'][0]['kind'], 'explained')
+        self.assertEqual(self.feedback(state, 'understood', 'outline-explained')['status'], 'understood')
+        target = storage.GENERATED_ROOT / str(self.project) / 'outline-planned.md'
+        items = [{'concept': '规划项', 'aspect': '后续目标', 'kind': 'planned', 'core': True,
+                  'quote': '规划项将在后续课程展开。', 'scope': 'global'}]
+        target.write_text(
+            index.prepare_metadata('TEACHING: ' + json.dumps(items) + '\n# 总纲\n\n规划项将在后续课程展开。', self.project),
+            encoding='utf-8',
+        )
+        planned = index.document_state(self.project, 'course', 'outline-planned.md')
+        self.assertEqual(planned['passages'][0]['kind'], 'planned')
+        with self.assertRaises(ValueError):
+            self.feedback(planned, 'understood', 'planned-only')
+
+    def test_same_range_is_shared_but_other_aspects_stay_pending(self):
+        from app.services import storage, teaching_index as index
+        from app.services.personalization.knowledge_state_service import get_states
         state = self.document()
-        second = self.document('lessons/lesson_2.md')
-        self.feedback(state, 'understood', 'once')
-        from app.services.teaching_index import document_state
-        self.assertEqual(document_state(self.project, 'course', second['sourcePath'])['status'], 'understood')
+        self.feedback(state, 'understood', 'range-shared')
+        concept = state['passages'][0]['concept_id']
+        ranges = get_states([('global', 'local-user')], [concept])[0]['ranges']
+        matched = next(item for item in ranges if item['aspect'] == '基本原理')
+        self.assertEqual(matched['familiarity'], 'self_reported_understood')
+        # Confirming one range never confirms another aspect of the same concept.
+        target = storage.GENERATED_ROOT / str(self.project) / 'lessons/lesson_2.md'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        items = [{'concept': '知识点0', 'aspect': '进阶应用', 'kind': 'explained', 'core': True,
+                  'quote': '知识点0 在进阶场景下的新应用。', 'scope': 'global'}]
+        target.write_text(
+            index.prepare_metadata('TEACHING: ' + json.dumps(items) + '\n# 第二课\n\n知识点0 在进阶场景下的新应用。', self.project),
+            encoding='utf-8',
+        )
+        second = index.document_state(self.project, 'course', 'lessons/lesson_2.md')
+        self.assertEqual(second['status'], 'pending')
 
     def test_feedback_dimension_and_void_are_respected(self):
         from app.services import storage, teaching_index as index
@@ -83,12 +116,6 @@ class TeachingIndexTests(unittest.TestCase):
         summaries = self.client.get(f'/api/projects/{self.project}/teaching/courses').json()
         self.assertTrue(next(d for d in summaries if d['sourcePath'] == 'legacy.md')['documentConfirmed'])
         self.assertFalse(self.feedback(state, 'clear', 'legacy-undo')['documentConfirmed'])
-
-    def test_outline_is_only_planned(self):
-        state = self.document('outline.md')
-        self.assertEqual(state['passages'][0]['kind'], 'planned')
-        with self.assertRaises(ValueError):
-            self.feedback(state, 'understood', 'bad')
 
     def test_rename_keeps_reference_and_edit_refuses_wrong_anchor(self):
         state = self.document()

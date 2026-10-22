@@ -41,7 +41,7 @@ class DeferredMetadataTests(unittest.TestCase):
         self.assertEqual(record.answer_md, "`return` 返回结果。")
         with storage._connect() as conn:
             job = conn.execute("SELECT * FROM qa_postprocess_jobs WHERE qa_record_id=?", (record.id,)).fetchone()
-        self.assertEqual(job["metadata_done"], 0)
+        self.assertEqual(job["metadata_done"], 1)
         self.assertNotIn("UNAUTHORIZED_FILE", job["context_snapshot"])
 
     def test_deferred_prompt_preserves_all_substantive_instructions_and_inputs(self):
@@ -51,12 +51,11 @@ class DeferredMetadataTests(unittest.TestCase):
         payload = self.payload().model_copy(update={"session_id": prior.session_id})
         deferred = qa.prepare_question(self.project.id, payload)
         legacy = qa.prepare_question(self.project.id, payload.model_copy(update={"defer_metadata": False, "session_id": deferred.session_id}))
-        metadata_section = "## 元数据" + DEFAULT_QA_ANSWER_PROMPT.split("## 元数据", 1)[1]
-        self.assertEqual(deferred.messages[1]["content"].strip(), legacy.messages[1]["content"].replace(metadata_section, "").strip())
+        self.assertEqual(deferred.messages, legacy.messages)
         self.assertEqual(deferred.settings, legacy.settings)
         self.assertIn("必须保留的较早约束", deferred.messages[1]["content"])
         self.assertIn("此前讲解中的例子、推导和边界", deferred.messages[1]["content"])
-        self.assertIn("回答深度、推导、例子和限制条件按原任务要求决定", deferred.messages[0]["content"])
+        self.assertIn("TEACHING", deferred.messages[0]["content"])
 
     def test_stream_completes_and_next_question_can_start_before_metadata(self):
         from app.api.qa import ask_stream
@@ -85,19 +84,18 @@ class DeferredMetadataTests(unittest.TestCase):
 
     def test_crash_after_metadata_result_does_not_call_model_again(self):
         record = self.record()
-        metadata = {"terms": [], "handoff": None}
-        with (patch("app.services.qa_metadata.extract_answer_metadata", return_value=metadata) as extract,
-              patch("app.services.continuity_service.persist_teaching_handoff", side_effect=OSError("interrupted"))):
+        with (patch("app.services.qa_metadata.extract_answer_metadata", side_effect=AssertionError("second extraction")) as extract,
+              patch.object(qa, "postprocess_answer", side_effect=OSError("interrupted"))):
             background._run(self.project.id, record.id)
         with storage._connect() as conn:
             self.assertEqual(conn.execute("SELECT status FROM qa_postprocess_jobs WHERE qa_record_id=?", (record.id,)).fetchone()[0], "failed")
-        with (patch("app.services.qa_metadata.extract_answer_metadata", side_effect=AssertionError("repeat metadata")),
+        with (patch("app.services.qa_metadata.extract_answer_metadata", side_effect=AssertionError("second extraction")),
               patch.object(qa, "postprocess_answer") as evidence,
-              patch("app.services.personalization.interaction_observer.schedule_interaction_observation"),
-              patch("app.services.personalization.teaching.planner_scheduler._should_plan", return_value=False)):
+              patch("app.services.personalization.interaction_observer.schedule_interaction_observation", side_effect=AssertionError("observer")),
+              patch("app.services.personalization.teaching.teacher_planner.execute_teacher_planner", side_effect=AssertionError("planner"))):
             background._run(self.project.id, record.id)
             background._run(self.project.id, record.id)
-        extract.assert_called_once()
+        extract.assert_not_called()
         evidence.assert_called_once()
         with storage._connect() as conn:
             job = conn.execute("SELECT * FROM qa_postprocess_jobs WHERE qa_record_id=?", (record.id,)).fetchone()
@@ -105,17 +103,15 @@ class DeferredMetadataTests(unittest.TestCase):
 
     def test_metadata_uses_entire_answer_and_saved_scope_without_reopening_files(self):
         from app.services.qa_metadata import extract_answer_metadata
-        answer = "`return` 返回结果。\n尾部独有信息"
-        record = self.record(answer)
-        raw = json.dumps({"terms": [{"display_name": "return", "canonical_name": "return", "category": "symbol", "confidence": 0.9, "source_span": {"text": "return"}}], "handoff": None})
-        with (patch("app.services.llm_client.call_openai_compatible_chat_result", return_value=SimpleNamespace(content=raw)) as model,
+        from test_generation_alignment_b import response
+        _, _, raw = response()
+        record = self.record(raw)
+        with (patch("app.services.llm_client.call_openai_compatible_chat_result", side_effect=AssertionError("second model")) as model,
               patch.object(qa, "read_text_file", side_effect=AssertionError("file read"))):
             result = extract_answer_metadata(record, self.payload(), "AUTHORIZED_SNAPSHOT")
-        transmitted = model.call_args.args[3][1]["content"]
-        self.assertIn("尾部独有信息", transmitted)
-        self.assertIn("AUTHORIZED_SNAPSHOT", transmitted)
-        self.assertNotIn("UNAUTHORIZED_FILE", transmitted)
-        self.assertEqual(result["terms"][0]["display_name"], "return")
+        model.assert_not_called()
+        self.assertEqual(result["terms"][0]["display_name"], "Term0")
+        self.assertEqual(result["metadata_status"], "validated")
 
     def test_old_background_handoff_does_not_overwrite_newer_learning_topic(self):
         from app.services.continuity_service import persist_teaching_handoff

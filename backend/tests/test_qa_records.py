@@ -723,9 +723,11 @@ class QARecordEndpointTests(unittest.TestCase):
         self.assertIn("prompt.outline_lesson", prompts)
         self.assertIn("prompt.learning_plan.outline", prompts)
         self.assertIn("prompt.learning_plan.lesson", prompts)
-        self.assertIn("TITLE:", prompts["prompt.qa.answer"])
+        self.assertIn("TITLE:", __import__("app.services.prompt_contracts", fromlist=["compose_system_prompt"]).compose_system_prompt(prompts["prompt.system"], "qa"))
         self.assertIn("{user_instructions}", prompts["prompt.learning_plan.outline"])
-        self.assertIn("4-10", prompts["prompt.learning_plan.outline"])
+        # No fixed lesson/section count: the plan must follow the real material.
+        self.assertIn("### 第 X 课", prompts["prompt.learning_plan.outline"])
+        self.assertNotIn("4-10", prompts["prompt.learning_plan.outline"])
 
 
     def test_answer_terms_create_child_branch_in_same_session(self):

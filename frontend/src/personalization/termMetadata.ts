@@ -1,13 +1,24 @@
-import { teachingMetadata, TEACHING_CONTRACT } from "./teachingMetadata";
+import { teachingMetadata } from "./teachingMetadata";
 import { validateTermCandidate, type StructuredTermCandidate, type TermCandidateInput } from "./termCandidate";
 
-export const TERM_SELECTION_RULES = `陌生术语由你结合当前学习画像、问题和正文语境自主选择。
-已确认掌握的概念不要标；未记录不等于不会，问过或讲过不等于掌握。只选择理解当前内容确有帮助、用户可能需要解释的独立技术名词。
-不要选择整句、强调句、标题、临时变量、示例输出、函数调用/签名、命令、路径或代码块中的词。行内代码中的技术名词可以选择。
-正文原词必须逐字出现在普通正文或行内代码中，不能仅出现在标题、已有链接或代码块。不要为了凑数量选择术语，允许 0 个。`;
+/**
+ * Term selection rules shared by the v2 teaching manifest and the retired
+ * legacy TERMS line. There is deliberately no quota: the candidate pool must
+ * cover every technical term in the visible body, and the software decides
+ * what to annotate from the current tree state.
+ */
+export const TERM_SELECTION_RULES = `陌生术语由你结合当前完整知识树、当前问题和正文语境自主选择候选池。
+已确认掌握的概念不必再标；未记录不等于不会，问过或讲过不等于掌握，刚解释过也不等于用户已理解。
+只选择理解当前内容确有帮助的独立技术名词；不要选择整句、强调句、临时变量、示例输出、函数调用/签名、命令、路径或代码块中的词。行内代码、表格、标题中的真实技术名词可以选择。
+正文原词必须逐字出现在正文可见文本中，且能由 quote 唯一定位。不按数量、段落或全文密度删减候选；没有合适术语时输出空数组。`;
 
+/**
+ * @deprecated Legacy single-line TERMS protocol. The authoritative pool now
+ * lives in `terms` inside the v2 TEACHING manifest; this helper is kept only
+ * for callers that still emit the old format.
+ */
 export function termMetadataInstruction(limit = 12): string {
-  return TEACHING_CONTRACT + `<term_output_contract>\n${TERM_SELECTION_RULES}\n在 Markdown 正文前输出单行 TERMS: [...]，最多 ${limit} 项，数组项为 {"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文原词"}}。没有合适术语时输出 TERMS: []。元数据后再输出正文标题，正文中不要重复元数据。\n</term_output_contract>`;
+  return `<term_output_contract>\n${TERM_SELECTION_RULES}\n如需兼容旧协议：在 Markdown 正文前输出单行 TERMS: [...]，数组项为 {"display_name":"正文原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文原词"}}。新协议下请改为在正文末尾的单行 TEACHING 对象里返回完整 terms，最多 ${limit} 项的旧限制不再适用。元数据后再输出正文标题，正文中不要重复元数据。\n</term_output_contract>`;
 }
 
 /** Strip reserved metadata outside code examples, even when its JSON is invalid. */
@@ -50,10 +61,10 @@ export function parseTermMetadata(raw: string): { content: string; terms: TermCa
         if (lines[index].trim() === "]") break;
       }
     }
-    if (json.length > 16_000) continue;
+    if (json.length > 512_000) continue;
     try {
       const parsed: unknown = JSON.parse(json);
-      if (Array.isArray(parsed) && parsed.length <= 12) {
+      if (Array.isArray(parsed)) {
         valid ||= parsed.length === 0 || parsed.some((item) => typeof item === "string" || (item != null && typeof item === "object" && !Array.isArray(item)));
         terms.push(...parsed.filter((item): item is TermCandidateInput => typeof item === "string"
           || (item != null && typeof item === "object" && !Array.isArray(item))));
@@ -72,7 +83,7 @@ export function anchorModelTerms(inputs: TermCandidateInput[], content: string):
       const key = term.canonical_name.toLocaleLowerCase();
       if (seen.has(key)) return false;
       seen.add(key); return true;
-    }).slice(0, 24);
+    });
 }
 
 export function relocateModelTerms(terms: StructuredTermCandidate[], content: string): StructuredTermCandidate[] {

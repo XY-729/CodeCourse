@@ -21,6 +21,7 @@ VALID_SOURCES = {
     "observer",
     "course_completion",
     "migration",
+    "contact",
 }
 VALID_DIRECTIONS = {"positive", "negative", "neutral"}
 
@@ -79,9 +80,28 @@ def append_evidence(payload: dict[str, Any], conn=None) -> dict[str, Any]:
             raise ValueError(f"Unsupported evidence direction: {direction}")
         if source not in VALID_SOURCES:
             raise ValueError(f"Unsupported evidence source: {source}")
+        if source in {"observer", "diagnostic"}:
+            raise ValueError("Inferred/diagnostic profiling is retired")
         event_id = str(payload.get("id") or uuid4())
         idempotency_key = str(payload.get("idempotencyKey") or event_id)
         event_time = str(payload.get("eventTime") or _now())
+        _validate_scope(database, str(payload["conceptId"]), str(payload["scopeType"]), str(payload["scopeId"]))
+        existing = database.execute(
+            "SELECT * FROM learning_evidence_v2 WHERE idempotency_key=? OR id=?",
+            (idempotency_key, event_id),
+        ).fetchone()
+        if existing is not None:
+            if (existing["concept_id"], existing["scope_type"], existing["scope_id"], existing["action"], existing["target_evidence_id"]) != (
+                str(payload["conceptId"]), str(payload["scopeType"]), str(payload["scopeId"]),
+                str(payload.get("action") or "observed"), payload.get("targetEvidenceId"),
+            ):
+                raise ValueError("Evidence action ID is already bound to another action or scope")
+            if any(existing[field] != value for field, value in (
+                ("dimension", dimension), ("direction", direction), ("source", source),
+            )) or json.loads(existing["object_json"] or "{}") != (payload.get("object") or {}) or json.loads(existing["result_json"] or "{}") != (payload.get("result") or {}):
+                raise ValueError("Evidence action ID is already bound to another payload")
+            evidence = _row_to_evidence(existing)
+            return {"evidence": evidence, "state": rebuild_state(evidence["conceptId"], evidence["scopeType"], evidence["scopeId"], conn=database), "idempotent": True}
         database.execute(
             """INSERT OR IGNORE INTO learning_evidence_v2
                (id, idempotency_key, schema_version, concept_id, scope_type,
@@ -137,10 +157,26 @@ def append_evidence(payload: dict[str, Any], conn=None) -> dict[str, Any]:
         )
         if owns_connection:
             database.commit()
-        return {"evidence": evidence, "state": state}
+        return {"evidence": evidence, "state": state, "idempotent": False}
     finally:
         if owns_connection:
             database.close()
+
+
+def _validate_scope(conn, concept_id: str, scope_type: str, scope_id: str) -> None:
+    row = conn.execute("SELECT * FROM concepts WHERE id=?", (concept_id,)).fetchone()
+    if row is None:
+        raise ValueError("Evidence concept does not exist")
+    from app.services.knowledge_tree_schema import concept_scope
+    if (scope_type, scope_id) != concept_scope(row):
+        raise ValueError("Evidence scope does not match concept ownership")
+
+
+def _fact_signature(state: dict[str, Any] | None) -> str:
+    state = state or {}
+    return _json({key: state.get(key, default) for key, default in (
+        ("familiarity", "unrecorded"), ("ranges", []), ("evidence_ids", []), ("source_count", 0),
+    )})
 
 
 def list_evidence(
@@ -194,6 +230,13 @@ def rebuild_state(
             evidence,
             current_time,
         )
+        old = database.execute(
+            "SELECT state_json FROM knowledge_states_v2 WHERE concept_id=? AND scope_type=? AND scope_id=?",
+            (concept_id, scope_type, scope_id),
+        ).fetchone()
+        previous = json.loads(old["state_json"]) if old else None
+        if _fact_signature(previous) != _fact_signature(state):
+            database.execute("UPDATE knowledge_tree_versions SET state_version=state_version+1 WHERE id=1")
         database.execute(
             """INSERT INTO knowledge_states_v2
                (concept_id, scope_type, scope_id, state_json, policy_version,
@@ -225,9 +268,14 @@ def rebuild_state(
 def get_states(
     scopes: Iterable[tuple[str, str]],
     concept_ids: list[str] | None = None,
+    conn=None,
 ) -> list[dict[str, Any]]:
     scope_list = list(scopes)
-    with _connect() as conn:
+    if not scope_list:
+        return []
+    if conn is None:
+        return run_in_transaction(lambda database: get_states(scope_list, concept_ids, conn=database))
+    if conn is not None:
         pairs = conn.execute(
             """SELECT DISTINCT concept_id, scope_type, scope_id
                FROM learning_evidence_v2"""
@@ -235,6 +283,10 @@ def get_states(
         for pair in pairs:
             scope = (pair["scope_type"], pair["scope_id"])
             if scope not in scope_list:
+                continue
+            try:
+                _validate_scope(conn, pair["concept_id"], *scope)
+            except ValueError:
                 continue
             if concept_ids and pair["concept_id"] not in concept_ids:
                 continue
@@ -249,7 +301,6 @@ def get_states(
                 or cached["policy_version"] != POLICY_VERSION
             ):
                 rebuild_state(pair["concept_id"], *scope, conn=conn)
-        conn.commit()
         query = "SELECT * FROM knowledge_states_v2 WHERE " + " OR ".join(
             "(scope_type = ? AND scope_id = ?)" for _ in scope_list
         )
@@ -258,7 +309,14 @@ def get_states(
             query = f"SELECT * FROM ({query}) WHERE concept_id IN ({','.join('?' for _ in concept_ids)})"
             params.extend(concept_ids)
         rows = conn.execute(query, params).fetchall()
-        return [json.loads(row["state_json"]) for row in rows]
+        result = []
+        for row in sorted(rows, key=lambda row: (row["concept_id"], row["scope_type"], row["scope_id"])):
+            try:
+                _validate_scope(conn, row["concept_id"], row["scope_type"], row["scope_id"])
+            except ValueError:
+                continue
+            result.append(json.loads(row["state_json"]))
+        return result
 
 
 def rebuild_profile(project_id: int | None = None) -> dict[str, Any]:
@@ -293,6 +351,13 @@ def void_evidence(
         ).fetchone()
         if target is None:
             raise ValueError("Evidence not found")
+        prior = conn.execute(
+            "SELECT * FROM learning_evidence_v2 WHERE target_evidence_id=? AND action='void_evidence' AND voided=0 ORDER BY event_time,id LIMIT 1",
+            (evidence_id,),
+        ).fetchone()
+        if prior is not None:
+            evidence = _row_to_evidence(prior)
+            return {"evidence": evidence, "state": rebuild_state(target["concept_id"], target["scope_type"], target["scope_id"], conn=conn), "idempotent": True}
         return append_evidence(
             {
                 "idempotencyKey": idempotency_key,
@@ -312,6 +377,29 @@ def void_evidence(
         )
 
     return transaction(conn) if conn is not None else run_in_transaction(transaction)
+
+
+def invalidate_source_evidence(conn, project_id: int, source_type: str,
+                               source_path: str, content_hash: str | None = None,
+                               reason: str = "source_invalidated") -> int:
+    """Void one source/version without disturbing another source's statements."""
+    affected = 0
+    for row in conn.execute("SELECT * FROM learning_evidence_v2 WHERE action<>'void_evidence' AND voided=0 ORDER BY event_time,id").fetchall():
+        event = _row_to_evidence(row)
+        obj, context = event["object"], event["context"]
+        bound_project = obj.get("projectId", context.get("projectId"))
+        bound_path = obj.get("sourcePath", context.get("sourcePath"))
+        bound_type = obj.get("sourceType") or obj.get("type") or context.get("sourceType")
+        bound_hash = obj.get("contentHash") or event["result"].get("contentHash")
+        if str(bound_project) != str(project_id) or str(bound_path or "").replace("\\", "/") != source_path.replace("\\", "/") or bound_type != source_type:
+            continue
+        if content_hash is not None and bound_hash != content_hash:
+            continue
+        if conn.execute("SELECT 1 FROM learning_evidence_v2 WHERE target_evidence_id=? AND action='void_evidence' AND voided=0", (event["id"],)).fetchone():
+            continue
+        void_evidence(event["id"], f"source-invalidated:{event['id']}", reason, conn=conn)
+        affected += 1
+    return affected
 
 
 def record_manual_feedback_v2(
@@ -386,88 +474,8 @@ def create_diagnostic_item(
     teaching_trial_id: str | None = None,
     conn=None,
 ) -> dict[str, Any] | None:
-    concept_ids = [str(value) for value in candidate.get("concept_ids", []) if value][:4]
-    source_refs = candidate.get("source_refs") or []
-    answer_key = candidate.get("answer_key")
-    if not concept_ids or not _is_objective_diagnostic_candidate(candidate):
-        return None
-    if candidate.get("dimension") not in DIMENSIONS:
-        return None
-    if conn is None:
-        return run_in_transaction(
-            lambda database: create_diagnostic_item(
-                project_id,
-                candidate,
-                source_qa_record_id,
-                session_id,
-                strategy_version,
-                teaching_trial_id,
-                conn=database,
-            )
-        )
-    owns_connection = False
-    database = conn
-    try:
-        pending = database.execute(
-            "SELECT id FROM diagnostic_items WHERE project_id = ? AND status = 'pending' LIMIT 1",
-            (project_id,),
-        ).fetchone()
-        if pending:
-            return None
-        last = database.execute(
-            """SELECT COALESCE(MAX(source_qa_record_id), 0) AS last_qa
-               FROM diagnostic_items WHERE project_id = ?""",
-            (project_id,),
-        ).fetchone()
-        successful_since = database.execute(
-            """SELECT COUNT(*) FROM qa_records
-               WHERE project_id = ? AND id > ? AND answer_md <> ''""",
-            (project_id, int(last["last_qa"] or 0)),
-        ).fetchone()[0]
-        if int(successful_since) < 5:
-            return None
-        item_id = f"diagnostic:{uuid4()}"
-        created = _now()
-        if teaching_trial_id is None:
-            trial = database.execute(
-                """SELECT id FROM teaching_trials
-                   WHERE project_id = ? AND qa_record_id = ?
-                   ORDER BY created_at DESC LIMIT 1""",
-                (project_id, source_qa_record_id),
-            ).fetchone()
-            teaching_trial_id = str(trial["id"]) if trial else None
-        database.execute(
-            """INSERT INTO diagnostic_items
-               (id, project_id, session_id, source_qa_record_id, teaching_trial_id,
-                concept_ids_json, dimension, item_type, prompt, options_json,
-                answer_key_json, source_refs_json, rationale, difficulty,
-                strategy_version, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
-            (
-                item_id,
-                project_id,
-                session_id,
-                source_qa_record_id,
-                teaching_trial_id,
-                _json(concept_ids),
-                candidate["dimension"],
-                candidate["item_type"],
-                candidate["prompt"],
-                _json(candidate.get("options") or []),
-                _json(answer_key),
-                _json(source_refs),
-                str(candidate.get("rationale") or ""),
-                max(0.0, min(1.0, float(candidate.get("difficulty", 0.5)))),
-                strategy_version,
-                created,
-            ),
-        )
-        if owns_connection:
-            database.commit()
-        return get_pending_diagnostic(project_id, conn=database)
-    finally:
-        if owns_connection:
-            database.close()
+    """Retired: diagnostic scores do not enter the factual teaching flow."""
+    return None
 
 
 def _diagnostic_response(row) -> dict[str, Any]:
@@ -490,22 +498,8 @@ def _diagnostic_response(row) -> dict[str, Any]:
 
 
 def get_pending_diagnostic(project_id: int, conn=None) -> dict[str, Any] | None:
-    if conn is None:
-        with _connect() as database:
-            return get_pending_diagnostic(project_id, conn=database)
-    owns_connection = False
-    database = conn
-    try:
-        row = database.execute(
-            """SELECT * FROM diagnostic_items
-               WHERE project_id = ? AND status = 'pending'
-               ORDER BY created_at DESC LIMIT 1""",
-            (project_id,),
-        ).fetchone()
-        return _diagnostic_response(row) if row else None
-    finally:
-        if owns_connection:
-            database.close()
+    """Retired: diagnostic scores do not enter the factual teaching flow."""
+    return None
 
 
 def submit_diagnostic_answer(
@@ -513,147 +507,19 @@ def submit_diagnostic_answer(
     item_id: str,
     answer: Any,
 ) -> dict[str, Any]:
-    def transaction(conn):
-        item = conn.execute(
-            "SELECT * FROM diagnostic_items WHERE id = ? AND project_id = ?",
-            (item_id, project_id),
-        ).fetchone()
-        if item is None or item["status"] != "pending":
-            raise ValueError("Diagnostic item is not available")
-        expected = json.loads(item["answer_key_json"])
-        correct = _canonical_answer(answer) == _canonical_answer(expected)
-        attempt_id = f"diagnostic-attempt:{uuid4()}"
-        evidence_ids: list[str] = []
-        for concept_id in json.loads(item["concept_ids_json"]):
-            concept_row = conn.execute(
-                "SELECT concept_key FROM concepts WHERE id = ?",
-                (concept_id,),
-            ).fetchone()
-            scope_type = (
-                "project"
-                if concept_row and str(concept_row["concept_key"]).startswith("project:")
-                else "global"
-            )
-            scope_id = str(project_id) if scope_type == "project" else "local-user"
-            evidence_id = f"{attempt_id}:{concept_id}"
-            append_evidence(
-                {
-                    "id": evidence_id,
-                    "idempotencyKey": evidence_id,
-                    "conceptId": concept_id,
-                    "scopeType": scope_type,
-                    "scopeId": scope_id,
-                    "dimension": item["dimension"],
-                    "direction": "positive" if correct else "negative",
-                    "strength": 1,
-                    "reliability": 0.9,
-                    "source": "diagnostic",
-                    "action": "answered",
-                    "object": {"diagnosticItemId": item_id},
-                    "result": {"answer": answer},
-                    "context": {},
-                    "sessionId": item["session_id"],
-                    "qaRecordId": item["source_qa_record_id"],
-                    "diagnosticAttemptId": attempt_id,
-                    "objectiveCorrect": correct,
-                },
-                conn=conn,
-            )
-            evidence_ids.append(evidence_id)
-        conn.execute(
-            """INSERT INTO diagnostic_attempts
-               (id, item_id, project_id, session_id, teaching_trial_id,
-                answer_json, is_correct,
-                evidence_ids_json, answered_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                attempt_id,
-                item_id,
-                project_id,
-                item["session_id"],
-                item["teaching_trial_id"],
-                _json(answer),
-                int(correct),
-                _json(evidence_ids),
-                _now(),
-            ),
-        )
-        teaching_outcome = None
-        if item["teaching_trial_id"]:
-            from app.services.personalization.teaching.outcome_service import (
-                record_teaching_outcome,
-            )
-            teaching_outcome = record_teaching_outcome(
-                conn=conn,
-                idempotency_key=f"diagnostic-outcome:{attempt_id}",
-                project_id=project_id,
-                teaching_trial_id=str(item["teaching_trial_id"]),
-                result="successful" if correct else "unsuccessful",
-                confidence=0.95,
-                reason=(
-                    "The learner answered an objective understanding check correctly."
-                    if correct
-                    else "The learner answered an objective understanding check incorrectly."
-                ),
-                evidence_quote=_json(answer),
-                evidence_type="objective_diagnostic",
-                evidence_ref_id=item_id,
-                evaluation_qa_record_id=item["source_qa_record_id"],
-                diagnostic_attempt_id=attempt_id,
-            )
-        conn.execute(
-            "UPDATE diagnostic_items SET status = 'answered', shown_at = COALESCE(shown_at, ?) WHERE id = ?",
-            (_now(), item_id),
-        )
-        return {
-            "status": "answered",
-            "correct": correct,
-            "attemptId": attempt_id,
-            "teachingOutcome": teaching_outcome,
-        }
-
-    return run_in_transaction(transaction)
+    """Retired: diagnostic scores do not enter the factual teaching flow."""
+    raise ValueError("Diagnostic profiling is retired; historical records are read-only")
 
 
 def dismiss_diagnostic(project_id: int, item_id: str) -> dict[str, Any]:
-    with _connect() as conn:
-        cursor = conn.execute(
-            """UPDATE diagnostic_items SET status = 'dismissed', dismissed_at = ?
-               WHERE id = ? AND project_id = ? AND status = 'pending'""",
-            (_now(), item_id, project_id),
-        )
-        conn.commit()
-    return {"status": "dismissed", "changed": cursor.rowcount}
+    """Retired: diagnostic scores do not enter the factual teaching flow."""
+    raise ValueError("Diagnostic profiling is retired; historical records are read-only")
 
 
 def flag_diagnostic(project_id: int, item_id: str) -> dict[str, Any]:
     # void_evidence owns its transaction, so avoid nesting on the same handle.
-    with _connect() as conn:
-        attempt = conn.execute(
-            """SELECT * FROM diagnostic_attempts
-               WHERE item_id = ? AND project_id = ?
-               ORDER BY answered_at DESC LIMIT 1""",
-            (item_id, project_id),
-        ).fetchone()
-    if attempt:
-        for evidence_id in json.loads(attempt["evidence_ids_json"]):
-            void_evidence(
-                evidence_id,
-                f"diagnostic-flag:{item_id}:{evidence_id}",
-                "user_flagged_item",
-            )
-    with _connect() as conn:
-        if attempt:
-            conn.execute(
-                "UPDATE diagnostic_attempts SET user_flagged = 1 WHERE id = ?",
-                (attempt["id"],),
-            )
-        conn.execute(
-            "UPDATE diagnostic_items SET status = 'flagged' WHERE id = ? AND project_id = ?",
-            (item_id, project_id),
-        )
-        conn.commit()
-    return {"status": "flagged"}
+    """Retired: diagnostic scores do not enter the factual teaching flow."""
+    raise ValueError("Diagnostic profiling is retired; historical records are read-only")
 
 
 def _canonical_answer(value: Any) -> str:

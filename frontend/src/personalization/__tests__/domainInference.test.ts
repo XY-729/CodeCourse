@@ -78,15 +78,16 @@ describe("domain inference safety", () => {
     });
   });
 
-  it("parses dynamic surveys from model output instead of a fixed question", () => {
+  it("ignores a model-proposed style questionnaire", () => {
+    // Automatic questionnaires are retired: even a well-formed candidate is
+    // dropped instead of being stored as a fixed preference question.
     const parsed = parseObserverResult(`\`\`\`json
 {"knowledge_evidence":[],"concept_relations":[],"domain_assessments":[],"survey_candidate":{"question":"讲网络 API 时，你更希望先看调用示例还是生命周期？","dimension":"explanation_order","options":[{"value":"examples","label":"先看调用示例"},{"value":"principles","label":"先讲生命周期"}],"rationale":"本轮顺序偏好不明确","confidence":0.8}}
 \`\`\``);
-    expect(parsed.surveyCandidate?.question).toContain("网络 API");
-    expect(parsed.surveyCandidate?.options).toHaveLength(2);
+    expect(parsed.surveyCandidate).toBeNull();
   });
 
-  it("accepts a sourced diagnostic with one unambiguous answer", () => {
+  it("ignores a model-proposed diagnostic item", () => {
     const parsed = parseObserverResult(JSON.stringify({
       knowledge_evidence: [],
       concept_relations: [],
@@ -111,10 +112,10 @@ describe("domain inference safety", () => {
         difficulty: 0.4,
       },
     }));
-    expect(parsed.diagnosticCandidate?.answerKey).toBe("address");
+    expect(parsed.diagnosticCandidate).toBeNull();
   });
 
-  it("drops diagnostics with duplicate or source-less answers", () => {
+  it("keeps dropping diagnostics with duplicate or source-less answers", () => {
     const parsed = parseObserverResult(JSON.stringify({
       knowledge_evidence: [],
       concept_relations: [],

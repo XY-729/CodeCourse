@@ -82,7 +82,10 @@ def _scope_for_concept(project_id: int, concept_id: str) -> tuple[str, str]:
     concept = get_concept(concept_id)
     if concept is None:
         raise HTTPException(status_code=404, detail="Concept not found")
-    return concept_scope(concept, project_id)
+    try:
+        return concept_scope(concept, project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Concept not found") from exc
 
 
 # ---- Helpers ----
@@ -310,7 +313,7 @@ def _atomic_feedback(
     concept = get_concept(concept_id)
     if concept is None:
         raise HTTPException(status_code=404, detail="Concept not found")
-    scope_type, scope_id = concept_scope(concept, project_id)
+    scope_type, scope_id = _scope_for_concept(project_id, concept_id)
 
     def do_tx(conn):
         now = datetime.now(timezone.utc).isoformat()
@@ -319,6 +322,8 @@ def _atomic_feedback(
         # Idempotency check
         existing_evt = get_event_by_idempotency_key(idempotency_key, conn=conn)
         if existing_evt is not None:
+            if (existing_evt.concept_id, existing_evt.scope_type, existing_evt.scope_id, existing_evt.event_type) != (concept_id, scope_type, scope_id, event_type):
+                raise HTTPException(409, "Idempotency key is bound to another action")
             # Return current mastery for idempotent calls
             m = get_concept_mastery(concept_id, scope_type, scope_id, conn=conn)
             return {
@@ -732,25 +737,13 @@ def get_preferences(project_id: int) -> dict:
 @router.put("/{project_id}/personalization/preferences")
 def put_preferences(project_id: int, body: LearnerPreferencesUpdate) -> dict:
     _require_project(project_id)
-    values = body.model_dump(exclude_none=True, exclude={"scope"})
-    return _preferences_response(
-        update_preferences(project_id, values, scope=body.scope)
-    )
+    raise HTTPException(410, "固定教学偏好已退出，请保存用户原文要求")
 
 
 @router.post("/{project_id}/personalization/answer-feedback")
 def answer_feedback(project_id: int, body: AnswerFeedbackRequest) -> dict:
     _require_project(project_id)
-    preferences = apply_preference_feedback(
-        project_id,
-        dimension=body.dimension,
-        choice=body.choice,
-        source=body.source,
-        idempotency_key=body.idempotency_key,
-        qa_record_id=body.qa_record_id,
-        scope=body.scope,
-    )
-    return _preferences_response(preferences)
+    raise HTTPException(410, "偏好问卷已退出，请保存用户原文要求")
 
 
 @router.post("/{project_id}/personalization/term-impressions/batch")
@@ -780,165 +773,40 @@ def record_term_impressions(
 @router.get("/{project_id}/personalization/profile")
 def get_profile(project_id: int) -> dict:
     _require_project(project_id)
-    from app.services.personalization.knowledge_state_service import get_states
-    knowledge_states = get_states(
-        [("global", GLOBAL_SCOPE_ID), ("project", str(project_id))]
-    )
-    knowledge_by_concept = {
-        item["conceptId"]: item for item in knowledge_states
-    }
-    entries = []
-    from app.services.personalization.concept_identity import canonical_concept_name
-    for concept in list_all_concepts():
-        if concept.concept_key.startswith("project:") and not concept.concept_key.startswith(f"project:{project_id}:"):
-            continue
-        scope_type, scope_id = concept_scope(concept, project_id)
-        mastery = get_concept_mastery(concept.id, scope_type, scope_id)
-        state = knowledge_by_concept.get(concept.id)
-        familiarity = (state or {}).get("dimensions", {}).get("familiarity", {})
-        if mastery is None and state is None:
-            continue
-        judgement = mastery.manual_status if mastery else familiarity.get("manualStatus")
-        if not judgement and canonical_concept_name(concept.canonical_name) != concept.canonical_name:
-            continue
-        if judgement == "unknown":
-            judgement = "unfamiliar"
-        if not judgement:
-            judgement = (
-                "known"
-                if familiarity.get("status") == "confirmed"
-                or (state is None and mastery is not None and mastery.mastery >= 0.75)
-                else "unfamiliar"
-                if familiarity.get("status") == "learning"
-                or (state is None and mastery is not None and mastery.mastery <= 0.35)
-                else "uncertain"
-            )
-        entries.append(
-            {
-                "concept": _concept_response(concept),
-                "mastery": _mastery_response(mastery) if mastery else {
-                    "id": f"v2:{concept.id}",
-                    "conceptId": concept.id,
-                    "scope": {
-                        "type": state["scopeType"],
-                        "id": state["scopeId"],
-                    },
-                    "knownEvidence": 1,
-                    "unknownEvidence": 1,
-                    "mastery": float(familiarity.get("probability", 0.5)),
-                    "uncertainty": float(familiarity.get("uncertainty", 1)),
-                    "manualStatus": familiarity.get("manualStatus"),
-                    "sequence": int(state.get("evidenceVersion", 0)),
-                    "lastSeenAt": familiarity.get("lastEvidenceAt") or state["updatedAt"],
-                    "updatedAt": state["updatedAt"],
-                },
-                "judgement": judgement,
-            }
-        )
-    entries.sort(
-        key=lambda item: (
-            {"unfamiliar": 0, "uncertain": 1, "known": 2}.get(
-                item["judgement"],
-                1,
-            ),
-            item["concept"]["displayName"].casefold(),
-        )
-    )
-    global_events = list_preference_events("global", GLOBAL_SCOPE_ID, 50)
-    project_events = list_preference_events("project", str(project_id), 50)
+    from app.services.knowledge_service import get_full_tree_snapshot
+    from app.services.personalization.knowledge_state_service import get_states, _row_to_evidence
     from app.services.personalization.learner_inference_service import profile_payload
-    intelligence = profile_payload(project_id)
-    from app.services.storage import _connect as profile_connect
-    with profile_connect() as conn:
-        evidence_rows = conn.execute(
-            """SELECT * FROM learning_evidence_v2
-               WHERE (scope_type = 'global' AND scope_id = ?)
-                  OR (scope_type = 'project' AND scope_id = ?)
-               ORDER BY event_time DESC LIMIT 100""",
-            (GLOBAL_SCOPE_ID, str(project_id)),
-        ).fetchall()
-        from app.services.personalization.teaching.outcome_service import (
-            teaching_evidence_summary,
-        )
-        teaching_summary = teaching_evidence_summary(project_id, conn)
-    verified_concepts = [
-        {
-            "conceptId": item["concept"]["id"],
-            "displayName": item["concept"]["displayName"],
-            "domain": item["concept"]["domain"],
-        }
-        for item in entries
-        if item["judgement"] == "known"
-    ][:20]
-    learning_concepts = [
-        {
-            "conceptId": item["concept"]["id"],
-            "displayName": item["concept"]["displayName"],
-            "domain": item["concept"]["domain"],
-        }
-        for item in entries
-        if item["judgement"] == "unfamiliar"
-    ][:20]
-    insufficient_concepts = [
-        {
-            "conceptId": item["concept"]["id"],
-            "displayName": item["concept"]["displayName"],
-            "domain": item["concept"]["domain"],
-        }
-        for item in entries
-        if item["judgement"] == "uncertain"
-    ][:20]
-    return {
-        "preferences": _preferences_response(effective_preferences(project_id)),
-        "concepts": entries,
-        "preferenceEvidence": [
-            {
-                "id": event.id,
-                "dimension": event.dimension,
-                "delta": event.delta,
-                "source": event.source,
-                "evidenceText": event.evidence_text,
-                "qaRecordId": event.qa_record_id,
-                "createdAt": event.created_at,
-            }
-            for event in sorted(
-                [*global_events, *project_events],
-                key=lambda event: event.created_at,
-                reverse=True,
-            )[:50]
-        ],
-        "knowledgeStates": knowledge_states,
-        "learningEvidence": [
-            {
-                "id": row["id"],
-                "conceptId": row["concept_id"],
-                "scopeType": row["scope_type"],
-                "scopeId": row["scope_id"],
-                "dimension": row["dimension"],
-                "direction": row["direction"],
-                "strength": float(row["strength"]),
-                "reliability": float(row["reliability"]),
-                "source": row["source"],
-                "action": row["action"],
-                "object": json.loads(row["object_json"] or "{}"),
-                "result": json.loads(row["result_json"] or "{}"),
-                "context": json.loads(row["context_json"] or "{}"),
-                "eventTime": row["event_time"],
-                "sessionId": row["session_id"],
-                "qaRecordId": row["qa_record_id"],
-                "targetEvidenceId": row["target_evidence_id"],
-                "voided": bool(row["voided"]),
-            }
-            for row in evidence_rows
-        ],
-        "evidenceSummary": {
-            "verified": verified_concepts,
-            "learning": learning_concepts,
-            "insufficient": insufficient_concepts,
-            "teaching": teaching_summary,
-        },
-        **intelligence,
-    }
+    from app.services.personalization.teaching.outcome_service import teaching_evidence_summary
+    from app.services.storage import _connect
+    forest = get_full_tree_snapshot(project_id)
+    states = get_states([("global", GLOBAL_SCOPE_ID), ("project", str(project_id))])
+    by_id = {state["conceptId"]: state for state in states}
+    entries = []
+    for node in forest["nodes"]:
+        concept = get_concept(node["id"])
+        state = by_id.get(node["id"], {})
+        fact = node["familiarity"]
+        judgement = "known" if fact in {"declared_known", "self_reported_understood"} else "unfamiliar" if fact in {"needs_help", "partially_understood"} else "uncertain"
+        compatibility = state.get("dimensions", {}).get("familiarity", {})
+        entries.append({"concept": _concept_response(concept), "judgement": judgement,
+            "familiarity": fact, "ranges": node["ranges"],
+            "mastery": {"id": "facts:" + node["id"], "conceptId": node["id"],
+                "scope": {"type": node["scope"], "id": node["scope_id"]},
+                "knownEvidence": 0, "unknownEvidence": 0, "mastery": 0.5, "uncertainty": 1,
+                "manualStatus": compatibility.get("manualStatus"), "sequence": state.get("evidenceVersion", 0),
+                "lastSeenAt": state.get("updatedAt"), "updatedAt": state.get("updatedAt")}})
+    with _connect() as conn:
+        evidence = [_row_to_evidence(row) for row in conn.execute(
+            "SELECT * FROM learning_evidence_v2 WHERE (scope_type='global' AND scope_id=?) OR (scope_type='project' AND scope_id=?) ORDER BY event_time DESC,id",
+            (GLOBAL_SCOPE_ID, str(project_id))) if row["concept_id"] in by_id]
+        teaching = teaching_evidence_summary(project_id, conn)
+    def concepts(judgement):
+        return [{"conceptId": item["concept"]["id"], "displayName": item["concept"]["displayName"], "domain": item["concept"]["domain"]} for item in entries if item["judgement"] == judgement]
+    return {"preferences": _preferences_response(effective_preferences(project_id)),
+        "concepts": entries, "forest": forest, "preferenceEvidence": [], "knowledgeStates": states,
+        "learningEvidence": evidence, "evidenceSummary": {"verified": concepts("known"),
+            "learning": concepts("unfamiliar"), "insufficient": concepts("uncertain"), "teaching": teaching},
+        **profile_payload(project_id)}
 
 
 # ---- Verifiable teacher V2 contract ----
@@ -952,7 +820,7 @@ def get_knowledge_state_v2(
     from app.services.personalization.knowledge_state_service import get_states
     ids = [item.strip() for item in concept_ids.split(",") if item.strip()]
     return {
-        "policyVersion": "knowledge-v2.1",
+        "policyVersion": "knowledge-facts-v1",
         "states": get_states(
             [("global", GLOBAL_SCOPE_ID), ("project", str(project_id))],
             ids or None,
@@ -968,7 +836,14 @@ def submit_learning_evidence_v2(project_id: int, body: dict) -> dict:
     if get_concept(concept_id) is None:
         raise HTTPException(status_code=404, detail="Concept not found")
     scope_type, scope_id = _scope_for_concept(project_id, concept_id)
-    payload = {**body, "conceptId": concept_id, "scopeType": scope_type, "scopeId": scope_id}
+    if body.get("source") != "manual" or body.get("action") not in {"manual_known", "manual_unknown", "manual_clear"}:
+        raise HTTPException(422, "学习范围反馈必须通过已校验的教学清单提交")
+    key = str(body.get("action_id") or body.get("idempotencyKey") or "")
+    if not key:
+        raise HTTPException(422, "缺少用户动作 action_id")
+    payload = {**body, "id": None, "idempotencyKey": key, "conceptId": concept_id,
+               "scopeType": scope_type, "scopeId": scope_id, "eventTime": datetime.now(timezone.utc).isoformat(),
+               "targetEvidenceId": None, "voided": False}
     try:
         return append_evidence(payload)
     except (KeyError, TypeError, ValueError) as exc:
@@ -979,6 +854,14 @@ def submit_learning_evidence_v2(project_id: int, body: dict) -> dict:
 def void_learning_evidence_v2(project_id: int, evidence_id: str, body: dict = {}) -> dict:
     _require_project(project_id)
     from app.services.personalization.knowledge_state_service import void_evidence
+    from app.services.storage import _connect
+    with _connect() as conn:
+        target = conn.execute("SELECT * FROM learning_evidence_v2 WHERE id=?", (evidence_id,)).fetchone()
+    if target is None:
+        raise HTTPException(404, "Evidence not found")
+    scope = _scope_for_concept(project_id, target["concept_id"])
+    if scope != (target["scope_type"], target["scope_id"]):
+        raise HTTPException(404, "Evidence not found")
     try:
         return void_evidence(
             evidence_id,
@@ -999,8 +882,26 @@ def rebuild_knowledge_profile_v2(project_id: int) -> dict:
 @router.get("/{project_id}/personalization/diagnostics/pending")
 def pending_diagnostic(project_id: int) -> dict:
     _require_project(project_id)
-    from app.services.personalization.knowledge_state_service import get_pending_diagnostic
-    return {"item": get_pending_diagnostic(project_id)}
+    # Diagnostic questions are retired; a compat caller sees an explicit, empty state.
+    return {"item": None, "retired": True}
+
+
+@router.post("/{project_id}/personalization/diagnostics/{item_id}/answer")
+def answer_diagnostic(project_id: int, item_id: str, body: dict) -> dict:
+    _require_project(project_id)
+    raise HTTPException(410, "诊断题已停用，学习事实只来自已校验清单和用户明确反馈")
+
+
+@router.post("/{project_id}/personalization/diagnostics/{item_id}/dismiss")
+def dismiss_diagnostic_item(project_id: int, item_id: str) -> dict:
+    _require_project(project_id)
+    raise HTTPException(410, "诊断题已停用，学习事实只来自已校验清单和用户明确反馈")
+
+
+@router.post("/{project_id}/personalization/diagnostics/{item_id}/flag")
+def flag_diagnostic_item(project_id: int, item_id: str) -> dict:
+    _require_project(project_id)
+    raise HTTPException(410, "诊断题已停用，学习事实只来自已校验清单和用户明确反馈")
 
 
 @router.get("/{project_id}/personalization/teaching/{qa_record_id}")
@@ -1039,30 +940,6 @@ def submit_teaching_feedback(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.post("/{project_id}/personalization/diagnostics/{item_id}/answer")
-def answer_diagnostic(project_id: int, item_id: str, body: dict) -> dict:
-    _require_project(project_id)
-    from app.services.personalization.knowledge_state_service import submit_diagnostic_answer
-    try:
-        return submit_diagnostic_answer(project_id, item_id, body.get("answer"))
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/{project_id}/personalization/diagnostics/{item_id}/dismiss")
-def dismiss_diagnostic_item(project_id: int, item_id: str) -> dict:
-    _require_project(project_id)
-    from app.services.personalization.knowledge_state_service import dismiss_diagnostic
-    return dismiss_diagnostic(project_id, item_id)
-
-
-@router.post("/{project_id}/personalization/diagnostics/{item_id}/flag")
-def flag_diagnostic_item(project_id: int, item_id: str) -> dict:
-    _require_project(project_id)
-    from app.services.personalization.knowledge_state_service import flag_diagnostic
-    return flag_diagnostic(project_id, item_id)
-
-
 @router.post("/{project_id}/personalization/inferences/{inference_id}/void")
 def void_profile_inference(project_id: int, inference_id: str) -> dict:
     _require_project(project_id)
@@ -1076,21 +953,13 @@ def void_profile_inference(project_id: int, inference_id: str) -> dict:
 @router.post("/{project_id}/personalization/surveys/{survey_id}/answer")
 def answer_profile_survey(project_id: int, survey_id: str, body: dict) -> dict:
     _require_project(project_id)
-    choice = str(body.get("choice", "")).strip()
-    if not choice:
-        raise HTTPException(status_code=400, detail="Survey choice is required")
-    from app.services.personalization.learner_inference_service import answer_survey
-    try:
-        return answer_survey(project_id, survey_id, choice)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    raise HTTPException(410, "偏好问卷已停用，请直接保存用户原文要求")
 
 
 @router.post("/{project_id}/personalization/surveys/{survey_id}/dismiss")
 def dismiss_profile_survey(project_id: int, survey_id: str) -> dict:
     _require_project(project_id)
-    from app.services.personalization.learner_inference_service import dismiss_survey
-    return dismiss_survey(survey_id)
+    raise HTTPException(410, "偏好问卷已停用，请直接保存用户原文要求")
 
 
 @router.get("/{project_id}/personalization/concepts/{concept_id}/explanation")
@@ -1122,7 +991,9 @@ def _set_observer_setting(key: str, value: str) -> None:
 @router.get("/observer-settings")
 def get_observer_settings() -> dict:
     return {
-        "enabled": _get_observer_setting("enabled", "false"),
+        "enabled": "true",
+        "flow": "local_facts",
+        "legacy_observer_retired": True,
         "mode": _get_observer_setting("mode", "shadow"),
         "provider": _get_observer_setting("provider", "inherit"),
         "base_url": _get_observer_setting("base_url", "inherit"),
@@ -1142,8 +1013,9 @@ def put_observer_settings(body: dict) -> dict:
         "store_raw_output",
     }
     for key, value in body.items():
-        if key in allowed and isinstance(value, str):
+        if key in allowed and isinstance(value, str) and key != "enabled":
             _set_observer_setting(key, value)
+    _set_observer_setting("enabled", "true")
     return get_observer_settings()
 
 

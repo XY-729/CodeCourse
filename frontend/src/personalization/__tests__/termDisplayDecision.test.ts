@@ -16,14 +16,23 @@ function decide(overrides: Partial<TermCandidateInput> = {}, profile: Partial<Te
     conceptKey: "global:move", manualStatus: null, mastery: null, uncertainty: null,
     shadowFamiliarity: null, shadowConfidence: null, shadowEvidenceCount: 0, domainPrior: null,
     ...profile,
-  }, { terminologyDensity: 0.5 }, { profileAvailable: true, paragraphCount: 5 });
+  }, {}, { profileAvailable: true, paragraphCount: 5 });
 }
 
 describe("model-selected term display", () => {
   it("keeps model-selected terms subtle when knowledge is unrecorded", () => {
     expect(decide()).toMatchObject({ eligible: true, tier: "subtle", reason: "model_selected", manualUnknown: false });
+    expect(decide({}, { familiarity: "unrecorded" })).toMatchObject({ eligible: true, reason: "model_selected" });
     expect(decide({ text: "栈", normalizedText: "栈" }).eligible).toBe(true);
   });
+
+  it("never hides a saved manifest term just because no record exists yet", () => {
+    // "no record" is unknown, not "the user already knows it".
+    expect(decide({ source: "manifest" }, { familiarity: "unrecorded" })).toMatchObject({
+      eligible: true, tier: "subtle", reason: "model_selected",
+    });
+  });
+
   it("does not invent knowledge from mastery, shadow scores, difficulty or a hash", () => {
     const neutral = decide();
     const changed = decide({ paragraphId: "other:p45", difficulty: 1, sourceConfidence: 0.3 }, {
@@ -33,21 +42,33 @@ describe("model-selected term display", () => {
     expect(changed.reason).toBe("model_selected");
     expect(changed.tier).toBe("subtle");
   });
+
   it("honors explicit known, confirmed knowledge, and a later unknown correction", () => {
     expect(decide({}, { manualStatus: "known" })).toMatchObject({ eligible: false, reason: "manual_known" });
     expect(decide({}, { knowledgeStatus: "confirmed" })).toMatchObject({ eligible: false, reason: "confirmed_knowledge" });
     expect(decide({}, { knowledgeStatus: "confirmed", manualStatus: "unknown" })).toMatchObject({ eligible: true, tier: "prominent", reason: "manual_unknown" });
   });
+
+  it("uses factual familiarity states instead of probabilities", () => {
+    expect(decide({}, { familiarity: "self_reported_understood" })).toMatchObject({ eligible: false, reason: "self_reported_understood" });
+    expect(decide({}, { familiarity: "declared_known" })).toMatchObject({ eligible: false, reason: "declared_known" });
+    expect(decide({}, { familiarity: "needs_help" })).toMatchObject({ eligible: true, tier: "prominent", reason: "needs_help" });
+    expect(decide({}, { familiarity: "studied" })).toMatchObject({ eligible: true, reason: "model_selected" });
+    expect(decide({}, { familiarity: "partially_understood" })).toMatchObject({ eligible: true, reason: "model_selected" });
+  });
+
   it("cannot resurrect a non-model candidate from an unknown profile", () => {
     expect(decide({ source: "unknown" }, { manualStatus: "unknown" })).toMatchObject({ eligible: false, reason: "untrusted_candidate" });
   });
+
   it("keeps user-created links, but never nests them in links or code blocks", () => {
     expect(decide({ manualLink: true }, { manualStatus: "known" })).toMatchObject({ eligible: true, reason: "explicit_manual_link" });
     expect(decide({ manualLink: true, isInCodeBlock: true }).eligible).toBe(false);
     expect(decide({ manualLink: true, source: "existing_link" }).eligible).toBe(false);
   });
-  it("skips headings and supports model-selected inline terms and comparison tables", () => {
-    expect(decide({ isInHeading: true }).eligible).toBe(false);
+
+  it("supports real technical terms in headings, inline code and tables", () => {
+    expect(decide({ isInHeading: true }).eligible).toBe(true);
     expect(decide({ isInlineCode: true }).eligible).toBe(true);
     expect(decide({ isInTable: true }).eligible).toBe(true);
   });

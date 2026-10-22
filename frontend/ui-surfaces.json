@@ -460,15 +460,17 @@
       ],
       "entry": "桌面偏好；移动端我的→学习者画像",
       "files": [
-        "src/features/settings/LearnerProfileDialog.tsx"
+        "src/features/settings/LearnerProfileDialog.tsx",
+        "src/features/settings/ConceptForestPanel.tsx"
       ],
       "styles": [
         "src/styles/learner-profile.css",
         "src/styles/apple-overlays.css"
       ],
       "states": [
-        "全局/项目偏好",
-        "知识掌握",
+        "概念树父子归属",
+        "计划根识别状态",
+        "事实学习状态与人工纠正",
         "术语诊断/重新扫描",
         "加载/保存/失败",
         "重置确认"

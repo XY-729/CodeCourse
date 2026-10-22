@@ -28,6 +28,9 @@ export type StructuredTermCandidate = {
   confidence: number;
   source_span: TermSourceSpan;
   source: string;
+  concept_ref?: string;
+  concept_id?: string;
+  quote?: string;
 };
 
 export type TermCandidateInput =
@@ -39,6 +42,10 @@ export type TermCandidateInput =
       confidence?: unknown;
       source_span?: unknown;
       text?: unknown;
+      concept_ref?: unknown;
+      concept_id?: unknown;
+      quote?: unknown;
+      source?: unknown;
     };
 
 const STOP_TERMS = new Set([
@@ -50,7 +57,6 @@ const FILE_PATH_RE = /(?:[A-Za-z]:[\\/]|(?:^|[\s`])(?:\.\.?[\\/]|[/\\])|\.(?:py|
 const ERROR_RE = /(?:\b(?:fatal\s+)?error\s*:|\bwarning\s*:|traceback|exception\s*:|unrecognized command line option|undefined reference)/i;
 const MARKDOWN_RE = /(?:```|^\s{0,3}(?:#{1,6}|[-+*>])\s|\[[^\]]*\]\([^)]*\)|!\[[^\]]*\])/m;
 const SENTENCE_PUNCTUATION_RE = /[。！？!?；;，,]\s*$|[。！？!?；;]/;
-const MARKDOWN_LINK_RE = /!?\[[^\]\n]+\]\([^)]+\)/g;
 
 function balancedDelimiters(value: string): boolean {
   const stack: string[] = [];
@@ -66,7 +72,7 @@ export function cleanTermText(value: unknown): string {
   const original = String(value ?? "");
   const term = original
     .trim()
-    .replace(/^[`*_#，。；：、]+|[`*_#，。；：、]+$/g, "")
+    .replace(/^[`*_，。；：、]+|[`*_，。；：、]+$/g, "")
     .replace(/\s+/g, " ");
   if (
     term.length < 2
@@ -91,42 +97,39 @@ export function cleanTermText(value: unknown): string {
   return chineseCount <= 16 ? term : "";
 }
 
-function excludedRanges(content: string): Array<[number, number]> {
-  const ranges: Array<[number, number]> = [];
-  let fence: { marker: string; length: number; start: number } | null = null;
-  let offset = 0;
-  for (const line of content.split("\n")) {
-    const match = line.match(/^ {0,3}(`{3,}|~{3,})/);
-    if (fence) {
-      if (match && match[1][0] === fence.marker && match[1].length >= fence.length
-        && line.slice(match[0].length).trim() === "") {
-        ranges.push([fence.start, offset + line.length]); fence = null;
-      }
-    } else if (match) fence = { marker: match[1][0], length: match[1].length, start: offset };
-    else if (/^ {0,3}#{1,6}\s/.test(line)) ranges.push([offset, offset + line.length]);
-    offset += line.length + 1;
-  }
-  if (fence) ranges.push([fence.start, content.length]);
-  for (const regex of [MARKDOWN_LINK_RE]) {
-    regex.lastIndex = 0;
-    for (const match of content.matchAll(regex)) {
-      const start = match.index ?? -1;
-      if (start >= 0) ranges.push([start, start + match[0].length]);
-    }
-  }
-  return ranges.sort((left, right) => left[0] - right[0]);
-}
+type LocationNode = { type: string; value?: string; children?: LocationNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } } };
 
-function isVisible(start: number, end: number, excluded: Array<[number, number]>): boolean {
-  return excluded.every(([left, right]) => end <= left || start >= right);
+/** All matching and anchoring uses Markdown locations, including headings and tables. */
+export function visibleTermRanges(content: string, text: string): Array<[number, number]> {
+  const tree = unified().use(remarkParse).use(remarkGfm).parse(content) as LocationNode;
+  const ranges: Array<[number, number]> = [];
+  const visit = (node: LocationNode): void => {
+    if (["code", "html", "link", "linkReference", "definition", "image", "imageReference"].includes(node.type)) return;
+    if (node.type === "text" || node.type === "inlineCode") {
+      if (node.type === "inlineCode" && node.value !== text) return;
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start != null && end != null) ranges.push([start, end]);
+      return;
+    }
+    node.children?.forEach(visit);
+  };
+  visit(tree);
+  return ranges;
 }
 
 function visibleSpan(
   content: string,
   text: string,
   requested?: Record<string, unknown>,
+  quote?: string,
 ): TermSourceSpan | null {
-  const excluded = excludedRanges(content);
+  const allowed = visibleTermRanges(content, text);
+  const quoteStart = quote ? content.indexOf(quote) : -1;
+  if (quote && (quoteStart < 0 || content.indexOf(quote, quoteStart + 1) >= 0 || !quote.includes(text))) return null;
+  const isVisible = (start: number, end: number) => allowed.some(([left, right]) => start >= left && end <= right)
+    && (!quote || (start >= quoteStart && end <= quoteStart + quote.length));
   const wholeWord = (start: number, end: number) => !(
     (/[A-Za-z0-9_]/.test(text[0]) && /[A-Za-z0-9_]/.test(content[start - 1] || ""))
     || (/[A-Za-z0-9_]/.test(text[text.length - 1]) && /[A-Za-z0-9_]/.test(content[end] || ""))
@@ -140,7 +143,7 @@ function visibleSpan(
       || start < 0
       || end !== start + text.length
       || content.slice(start, end) !== text
-      || !isVisible(start, end, excluded)
+      || !isVisible(start, end)
       || !wholeWord(start, end)
     ) return null;
     return { text, start, end };
@@ -148,7 +151,7 @@ function visibleSpan(
   let start = content.indexOf(text);
   while (start >= 0) {
     const end = start + text.length;
-    if (isVisible(start, end, excluded) && wholeWord(start, end)) return { text, start, end };
+    if (isVisible(start, end) && wholeWord(start, end)) return { text, start, end };
     start = content.indexOf(text, start + 1);
   }
   return null;
@@ -163,8 +166,14 @@ export function validateTermCandidate(
   const rawDisplay = typeof input === "string"
     ? input
     : String(record?.display_name ?? record?.text ?? "");
-  const displayName = cleanTermText(rawDisplay);
-  const canonicalName = cleanTermText(
+  const source = defaults.source ?? (typeof record?.source === "string" ? record.source : "model");
+  // A validated manifest already carries semantic selection. Local legacy
+  // heuristics must not discard names such as R, Markdown or C# from it.
+  const clean = source === "manifest"
+    ? (value: string) => value.trim() && !/[\r\n]/.test(value) ? value.trim() : ""
+    : cleanTermText;
+  const displayName = clean(rawDisplay);
+  const canonicalName = clean(
     typeof input === "string"
       ? input
       : String(record?.canonical_name ?? rawDisplay),
@@ -176,7 +185,8 @@ export function validateTermCandidate(
     ? rawSpan as Record<string, unknown>
     : undefined;
   if (requestedSpan && String(requestedSpan.text ?? "") !== rawDisplay.trim()) return null;
-  const sourceSpan = visibleSpan(content, displayName, requestedSpan);
+  const quote = typeof record?.quote === "string" ? record.quote : undefined;
+  const sourceSpan = visibleSpan(content, displayName, requestedSpan, quote);
   if (!sourceSpan) return null;
 
   const requestedCategory = String(record?.category ?? "other").toLocaleLowerCase();
@@ -192,10 +202,17 @@ export function validateTermCandidate(
     category,
     confidence: Math.max(0, Math.min(1, rawConfidence)),
     source_span: sourceSpan,
-    source: defaults.source ?? "model",
+    source,
+    ...(typeof record?.concept_ref === "string" ? { concept_ref: record.concept_ref } : {}),
+    ...(typeof record?.concept_id === "string" ? { concept_id: record.concept_id } : {}),
+    ...(quote ? { quote } : {}),
   };
 }
 
 export function isMalformedTermText(value: unknown): boolean {
   return !cleanTermText(value);
 }
+import { unified } from "unified";
+import remarkParse from "remark-parse";
+import remarkGfm from "remark-gfm";
+

@@ -24,7 +24,6 @@ import {
   getCallGuide,
   getCourseContent,
   getCourseFiles,
-  getLearnerPreferences,
   getLearningAnchor,
   getLearningStates,
   getLLMSettings,
@@ -374,7 +373,6 @@ export default function useAppController() {
   const [qaFollowUpRecord, setQAFollowUpRecord] = useState<QARecord | null>(null);
   const [qaSessionId, setQASessionId] = useState<number | null>(null);
   const [qaSessionTree, setQASessionTree] = useState<QARecord[]>([]);
-  const [terminologyDensity, setTerminologyDensity] = useState(0.5);
   const [termAction, setTermAction] = useState<{ term: DocumentTerm; position?: { x: number; y: number } } | null>(null);
   const [learningAnchor, setLearningAnchor] = useState<LearningAnchor | null>(null);
   const [qaPanelError, setQAPanelError] = useState("");
@@ -443,20 +441,9 @@ export default function useAppController() {
   const {
     revision: personalizationRevision,
     bumpRevision: bumpPersonalizationRevision,
-    surveyCandidate: dynamicSurvey,
-    diagnosticItem,
-    diagnosticResult,
     scheduleRefresh: schedulePersonalizationRefresh,
-    answerSurvey: handleDynamicSurveyAnswer,
-    dismissSurvey: handleDynamicSurveyDismiss,
-    disableSurveys: handleDisableDynamicSurveys,
-    submitDiagnostic: handleDiagnosticAnswer,
-    dismissDiagnostic: handleDiagnosticDismiss,
-    flagDiagnostic: handleDiagnosticFlag,
   } = usePersonalizationController({
     projectId: project?.id ?? null,
-    onError: setQAPanelError,
-    onToast: setToast,
   });
   const [permissionNotice, setPermissionNotice] = useState<PermissionNotice>(null);
   const dismissedPermissionStatusRef = useRef<string | null>(null);
@@ -486,7 +473,6 @@ export default function useAppController() {
     sourceType: activeTermSource?.sourceType ?? null,
     sourcePath: activeTermSource?.sourcePath ?? "",
     content: activeTermContent,
-    terminologyDensity,
     profileRevision: personalizationRevision,
     onError: setQAPanelError,
   });
@@ -2209,7 +2195,6 @@ export default function useAppController() {
       setTree(nextTree);
       setCourses(nextCourses);
       setLLMSettings(null);
-      setTerminologyDensity(0.5);
       bumpPersonalizationRevision();
       setIndexStatus(null);
       setLearningStates([]);
@@ -2252,12 +2237,10 @@ export default function useAppController() {
       void Promise.all([
         getLLMSettings().catch(() => null),
         getProjectIndexStatus(freshProject.id).catch(() => null),
-        getLearnerPreferences(freshProject.id).catch(() => null),
         mobileRuntime ? Promise.resolve([]) : listCallGuides(freshProject.id).catch(() => []),
-      ]).then(([settings, nextIndexStatus, nextPreferences, nextCallGuides]) => {
+      ]).then(([settings, nextIndexStatus, nextCallGuides]) => {
         if (currentProjectIdRef.current !== freshProject.id) return;
         setLLMSettings(settings);
-        setTerminologyDensity(nextPreferences?.terminologyDensity ?? 0.5);
         bumpPersonalizationRevision();
         setIndexStatus(nextIndexStatus);
         setIndexBuilding(nextIndexStatus?.status === "building");
@@ -3327,12 +3310,7 @@ export default function useAppController() {
               term.term_text,
 
             question:
-              `请结合当前项目解释` +
-              `"${term.term_text}"：` +
-              `它是什么、为什么会出现在这里，` +
-              `以及接下来应该看哪里。` +
-              `讲解深度由本轮 learner_context ` +
-              `和我的当前要求决定。`,
+              `这里的“${term.term_text}”是什么？请结合当前内容解释。`,
 
             provider:
               llmSettings.provider,
@@ -3356,6 +3334,20 @@ export default function useAppController() {
             include_context: true,
             term_candidate_id:
               term.id,
+
+            // A term explanation is a normal answer: it carries the real
+            // concept, source version and tree snapshot it was opened from.
+            concept_id:
+              term.concept_id ??
+              null,
+
+            source_content_hash:
+              term.content_hash ??
+              null,
+
+            tree_snapshot:
+              term.tree_snapshot ??
+              null,
           },
 
           generationKey,
@@ -3477,7 +3469,10 @@ export default function useAppController() {
   }
 
   useEffect(() => {
-    const refresh = () => bumpPersonalizationRevision();
+    const refresh = () => {
+      bumpPersonalizationRevision();
+      setKnowledgeRefreshKey((value) => value + 1);
+    };
     window.addEventListener(TEACHING_CHANGED, refresh);
     return () => window.removeEventListener(TEACHING_CHANGED, refresh);
   }, [bumpPersonalizationRevision]);
@@ -3788,10 +3783,7 @@ export default function useAppController() {
               term,
 
             question:
-              `请解释"${term}"：` +
-              `先用通俗语言说明它是什么，` +
-              `再说明它在当前上下文中的作用，` +
-              `并给出下一步学习建议。`,
+              `这里的“${term}”是什么？请结合当前内容解释。`,
 
             provider:
               llmSettings.provider,
@@ -4943,9 +4935,6 @@ export default function useAppController() {
     qaFavoriteOnly,
     qaFollowUpTarget,
     activeQASessionId,
-    dynamicSurvey,
-    diagnosticItem,
-    diagnosticResult,
     llmSettings,
     qaPanelError,
     setQAUpperTab,
@@ -4968,12 +4957,6 @@ export default function useAppController() {
     handleDismissContinuity,
     handleTeachingNextAction,
     openSettings,
-    handleDynamicSurveyAnswer,
-    handleDynamicSurveyDismiss,
-    handleDisableDynamicSurveys,
-    handleDiagnosticAnswer,
-    handleDiagnosticDismiss,
-    handleDiagnosticFlag,
     setAssistantOpen,
     mobileAssistantView,
     setMobileAssistantView,
@@ -4982,7 +4965,6 @@ export default function useAppController() {
     indexStatus,
     completedLessonCount,
     lessonFilesForProgress,
-    terminologyDensity,
     indexBuilding,
     mobileMeBusy,
     themeMode,
@@ -5085,7 +5067,6 @@ export default function useAppController() {
     handleDismissTerm,
     settingsOpen,
     openExternal,
-    setTerminologyDensity,
     setSettingsDialogBusy,
     closeSettingsDialog,
     learnerProfileOpen,

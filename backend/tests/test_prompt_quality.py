@@ -45,10 +45,14 @@ class PromptQualityTests(unittest.TestCase):
 
         self.assertEqual(resolved, bundled)
 
-    def test_quick_lookup_is_not_forced_into_a_tutorial(self):
+    def test_qa_uses_current_context_without_prescribing_teaching_modes(self):
         prompt = DEFAULT_QA_ANSWER_PROMPT
-        self.assertIn("quick_lookup", prompt)
-        self.assertIn("代码、表格、常见坑和延伸阅读都不是必选项", prompt)
+        self.assertIn("自主决定", prompt)
+        self.assertIn("{question}", prompt)
+        self.assertIn("{session_context}", prompt)
+        self.assertIn("{context_text}", prompt)
+        self.assertNotIn("quick_lookup", prompt)
+        self.assertNotIn("## 各模式的教学尺度", prompt)
         self.assertNotIn("学习者大多是初学者", prompt)
         self.assertNotIn("必须有代码例子", prompt)
         self.assertNotIn("至少 2-3 个相关术语", prompt)
@@ -71,8 +75,11 @@ class PromptQualityTests(unittest.TestCase):
         ):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(forbidden, combined)
-        self.assertIn("没有充分证据", PROMPT_DEFAULTS["prompt.file_lesson.template"])
-        self.assertIn("不设固定数量", PROMPT_DEFAULTS["prompt.outline_lesson"])
+        self.assertIn("真实材料", PROMPT_DEFAULTS["prompt.file_lesson.template"])
+        self.assertIn("自主决定", PROMPT_DEFAULTS["prompt.outline_lesson"])
+        for value in PROMPT_DEFAULTS.values():
+            for quota in ("生成 5—8 节课", "安排 4-10 节", "用 3—6 句话", "列出 3—5 个"):
+                self.assertNotIn(quota, value)
 
     def test_json_contract_never_requires_markdown(self):
         system = compose_system_prompt("优先解决当前任务。", "json")
@@ -91,9 +98,11 @@ class PromptQualityTests(unittest.TestCase):
         self.assertIn("输出 Markdown 正文", markdown)
         self.assertNotIn("只输出一个有效 JSON", markdown)
         self.assertIn("TITLE: 简短标题", qa)
-        self.assertIn("TERMS: [...]", qa)
+        self.assertIn("TEACHING:", qa)
+        self.assertIn('"schema_version":2', qa)
+        self.assertIn('"coverage"', qa)
 
-    def test_python_preference_directives_match_shared_vectors(self):
+    def test_legacy_style_sliders_do_not_impose_teaching_preferences(self):
         vectors = json.loads(
             (ROOT / "shared" / "preference-directive-vectors.json").read_text(
                 encoding="utf-8"
@@ -114,9 +123,8 @@ class PromptQualityTests(unittest.TestCase):
                 last_survey_at=None,
                 updated_at="2026-01-01T00:00:00Z",
             )
-            expected = "\n".join(f"- {item}" for item in vector["expected"])
             with self.subTest(vector=vector["name"]):
-                self.assertEqual(render_preference_directives(preferences), expected)
+                self.assertEqual(render_preference_directives(preferences), "")
 
     def test_bibliography_accepts_only_curated_ids_and_topics(self):
         selections = validate_bibliography_selections(
@@ -196,6 +204,10 @@ class PromptQualityTests(unittest.TestCase):
             ).read_text(encoding="utf-8")
         )
         self.assertEqual(mobile, PROMPT_DEFAULTS)
+        self.assertEqual(
+            json.loads((ROOT / "shared/default-prompts.json").read_text(encoding="utf-8")),
+            PROMPT_DEFAULTS,
+        )
 
     def test_missing_and_unknown_placeholders_are_rejected(self):
         missing = DEFAULT_QA_ANSWER_PROMPT.replace("{context_text}", "")
@@ -281,6 +293,24 @@ class PromptQualityTests(unittest.TestCase):
             str(PROMPT_SCHEMA_VERSION),
         )
         add_revision.assert_called_once()
+
+    def test_version_four_default_with_trailing_newline_preserves_user_suffix(self):
+        import hashlib
+
+        key = "prompt.outline_lesson"
+        legacy = "已知第四版默认模板\n"
+        directive = "教学示例优先使用 Rust。"
+        values = {key: legacy + "\n" + directive, f"prompt.schema_version.{key}": "4"}
+        with (
+            patch("app.services.prompt_store.get_setting", side_effect=values.get),
+            patch("app.services.prompt_store.set_setting", side_effect=values.__setitem__),
+            patch("app.services.prompt_store.add_prompt_revision"),
+            patch.dict("app.services.prompt_store.LEGACY_DEFAULT_HASHES", {key: hashlib.sha256(legacy.encode()).hexdigest()}),
+        ):
+            state = _resolve_prompt_state(key)
+        self.assertEqual(state["current"], PROMPT_DEFAULTS[key].rstrip() + "\n\n" + directive)
+        self.assertEqual(state["upgrade_status"], "migrated_with_custom_directives")
+        self.assertEqual(values[f"prompt.schema_version.{key}"], str(PROMPT_SCHEMA_VERSION))
 
     def test_unknown_legacy_custom_prompt_is_preserved_and_flagged(self):
         key = "prompt.qa.answer"

@@ -2,12 +2,12 @@ import MarkdownViewer from "../../reader/MarkdownViewer";
 import UnderstandingFeedback from "../../teaching/UnderstandingFeedback";
 import { normalizeOutputPath } from "../../../app/appUtils";
 import {
-  CornerUpLeft, Square, ArrowDown, ArrowUp, Bot, BrainCircuit, Edit3, ExternalLink, FileText,
+  CornerUpLeft, Square, Bot, BrainCircuit, Edit3, ExternalLink, FileText,
   History as HistoryIcon, Loader2, MessageCircle, Search, Send,
   Settings as SettingsIcon, Sparkles, Star, Trash2, X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { DiagnosticItem, DynamicSurveyCandidate, LLMSettings, QARecord, QAThreadSummary, SourceType, TeachingHandoff, TeachingNextAction } from "../../../api/client";
+import type { LLMSettings, QARecord, QAThreadSummary, SourceType, TeachingHandoff, TeachingNextAction } from "../../../api/client";
 import type { AssistantContextSummary, SelectionSummary } from "../ExplainPanel";
 import { DeferredLiftInput, DeferredLiftTextarea, type DeferredLiftTextareaHandle } from "../../../components/ui/DeferredLiftText";
 import SlidingSelectionIndicator from "../../../components/ui/SlidingSelectionIndicator";
@@ -45,9 +45,6 @@ type Props = {
   selectedRecord: QARecord | null;
   followUpRecord: QARecord | null;
   selectedRecordReadOnly?: boolean;
-  surveyCandidate?: DynamicSurveyCandidate | null;
-  diagnosticItem?: DiagnosticItem | null;
-  diagnosticResult?: boolean | null;
   settings: LLMSettings | null;
   panelError: string;
   knowledgeContent?: ReactNode;
@@ -72,12 +69,6 @@ type Props = {
   onDismissContinuity?: (handoff: TeachingHandoff) => void;
   onTeachingNextAction?: (action: TeachingNextAction, handoff: TeachingHandoff) => void;
   onOpenSettings: () => void;
-  onAnswerSurvey?: (choice: string) => void;
-  onDismissSurvey?: () => void;
-  onDisableSurveys?: () => void;
-  onAnswerDiagnostic?: (answer: unknown) => void;
-  onDismissDiagnostic?: () => void;
-  onFlagDiagnostic?: () => void;
 };
 
 function sourceLabel(sourceType: SourceType) {
@@ -130,18 +121,14 @@ export default function MobileAssistantPanel({
   includeContext = false, onIncludeContextChange, conversationActive = false, conversationLabel, canStopAnswer = false, onStopAnswer, onReturnToSource,
   view, onViewChange, selection, contextSummary, contextFiles, onOpenFilePicker, onRemoveContextFile, question, loading, loadingLabel, streamContent,
   history, historyLoading = false, historyError = "", onRetryHistory, threads = [], continuity = null, historyQuery, favoriteOnly, selectedRecord, followUpRecord, selectedRecordReadOnly = false,
-  surveyCandidate, diagnosticItem, diagnosticResult, settings, panelError,
+  settings, panelError,
   knowledgeContent, knowledgeDisabled = false,
   onQuestionChange, onSelectionTextChange, onClearSelection, onAsk, onNewConversation,
   onHistoryQueryChange, onFavoriteOnlyChange, onSelectRecord, onFollowUp, onOpenRecord,
   onDeleteRecord, onRenameRecord, onToggleFavorite, onResumeContinuity = () => {}, onOpenContinuitySource = () => {}, onDismissContinuity = () => {}, onTeachingNextAction = () => {}, onOpenSettings,
-  onAnswerSurvey, onDismissSurvey, onDisableSurveys,
-  onAnswerDiagnostic, onDismissDiagnostic, onFlagDiagnostic,
   resetToken,
 }: Props) {
   const composerRef = useRef<DeferredLiftTextareaHandle | null>(null);
-  const [diagnosticAnswer, setDiagnosticAnswer] = useState<unknown>(null);
-  const [diagnosticOrder, setDiagnosticOrder] = useState<string[]>([]);
   /*
    * The composer draft lives here instead of App state so typing does not
    * re-render the whole app (which was the source of input lag). The parent
@@ -152,14 +139,6 @@ export default function MobileAssistantPanel({
     setQuestionDraft(question);
   }, [question, resetToken]);
 
-  useEffect(() => {
-    setDiagnosticAnswer(null);
-    setDiagnosticOrder(
-      diagnosticItem?.itemType === "step_order"
-        ? diagnosticItem.options.map((option) => String(option.value))
-        : [],
-    );
-  }, [diagnosticItem?.id]);
 
   const suggestions = useMemo(
     () => buildSuggestions(selection, contextSummary),
@@ -295,61 +274,6 @@ export default function MobileAssistantPanel({
             </section>
 
             {!loading && selectedRecord && !selectedRecordReadOnly ? <UnderstandingFeedback projectId={selectedRecord.project_id} sourceType="qa" sourcePath={normalizeOutputPath(selectedRecord.output_path, selectedRecord.id, selectedRecord.project_id)} /> : null}
-            {!loading && surveyCandidate ? (
-              <section className="mobile-assistant-survey-card">
-                <header><strong>帮我更了解你的习惯</strong></header>
-                <p>{surveyCandidate.question}</p>
-                <div className="mobile-assistant-option-list">
-                  {surveyCandidate.options.map((option) => (
-                    <button type="button" key={option.value} onClick={() => onAnswerSurvey?.(option.value)}>{option.label}</button>
-                  ))}
-                </div>
-                <footer>
-                  <button type="button" onClick={onDismissSurvey}>稍后</button>
-                  <button type="button" onClick={onDisableSurveys}>以后不再询问</button>
-                </footer>
-              </section>
-            ) : null}
-
-            {!loading && diagnosticItem ? (
-              <section className="mobile-assistant-diagnostic-card" aria-label="快速理解检查">
-                <header><strong>快速理解检查</strong><span>{diagnosticItem.dimension}</span></header>
-                <p>{diagnosticItem.prompt}</p>
-                {diagnosticItem.itemType === "step_order" ? (
-                  <div className="mobile-assistant-order-list">
-                    {diagnosticOrder.map((value, index) => {
-                      const label = diagnosticItem.options.find((option) => String(option.value) === value)?.label || value;
-                      return (
-                        <div key={value}>
-                          <span>{index + 1}. {label}</span>
-                          <button type="button" aria-label={`上移 ${label}`} disabled={index === 0 || diagnosticResult != null} onClick={() => setDiagnosticOrder((items) => { const next = [...items]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; return next; })}><ArrowUp size={16} /></button>
-                          <button type="button" aria-label={`下移 ${label}`} disabled={index === diagnosticOrder.length - 1 || diagnosticResult != null} onClick={() => setDiagnosticOrder((items) => { const next = [...items]; [next[index + 1], next[index]] = [next[index], next[index + 1]]; return next; })}><ArrowDown size={16} /></button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : diagnosticItem.options.length ? (
-                  <div className="mobile-assistant-option-list">
-                    {diagnosticItem.options.map((option) => (
-                      <button type="button" key={String(option.value)} className={diagnosticAnswer === option.value ? "selected" : ""} disabled={diagnosticResult != null} onClick={() => setDiagnosticAnswer(option.value)}>{option.label}</button>
-                    ))}
-                  </div>
-                ) : (
-                  <input className="mobile-assistant-diagnostic-input" value={String(diagnosticAnswer ?? "")} disabled={diagnosticResult != null} onChange={(event) => setDiagnosticAnswer(event.target.value)} placeholder="输入你的判断" aria-label="理解检查答案" />
-                )}
-                {diagnosticResult != null ? (
-                  <div className={`mobile-assistant-diagnostic-result ${diagnosticResult ? "correct" : "incorrect"}`}>
-                    <span>{diagnosticResult ? "回答正确，已记为一次验证证据。" : "这次没有答对，老师会补充这一处。"}</span>
-                    <button type="button" onClick={onFlagDiagnostic}>题目有问题</button>
-                  </div>
-                ) : (
-                  <footer>
-                    <button type="button" className="primary" disabled={diagnosticItem.itemType === "step_order" ? !diagnosticOrder.length : diagnosticAnswer == null || diagnosticAnswer === ""} onClick={() => onAnswerDiagnostic?.(diagnosticItem.itemType === "step_order" ? diagnosticOrder : diagnosticAnswer)}>提交</button>
-                    <button type="button" onClick={onDismissDiagnostic}>跳过</button>
-                  </footer>
-                )}
-              </section>
-            ) : null}
           </div>
 
           <div className="mobile-assistant-composer">

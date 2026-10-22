@@ -13,9 +13,10 @@ class Feedback(BaseModel):
     sourceType: Literal["course", "qa"]
     sourcePath: str = Field(min_length=1, max_length=1000)
     result: Literal["understood", "partial", "needs_help", "clear"]
-    passageIds: list[str] = Field(default_factory=list, max_length=1000)
+    passageIds: list[str] = Field(default_factory=list)
     contentHash: str
     requestKey: str = Field(min_length=1, max_length=150)
+    actionId: str | None = Field(default=None, min_length=1, max_length=150)
 
 
 class ReindexRequest(BaseModel):
@@ -69,7 +70,7 @@ def feedback(project_id: int, payload: Feedback):
     project_exists(project_id)
     try:
         return service.save_feedback(project_id, payload.sourceType, payload.sourcePath,
-                                     payload.result, payload.passageIds, payload.contentHash, payload.requestKey)
+                                     payload.result, payload.passageIds, payload.contentHash, payload.requestKey, payload.actionId)
     except FileNotFoundError as error:
         raise HTTPException(404, str(error)) from error
     except ValueError as error:

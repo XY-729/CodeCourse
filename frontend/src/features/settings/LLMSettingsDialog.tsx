@@ -1,6 +1,4 @@
 import {
-  BookOpen,
-  BrainCircuit,
   ClipboardPaste,
   ExternalLink,
   KeyRound,
@@ -13,26 +11,16 @@ import {
 import { FormEvent, useEffect, useState } from "react";
 import {
   getLLMSettings,
-  getLearnerPreferences,
-  getPersonalizationRuntimeSettings,
+  getLearningSettings,
   resetPersonalizationProfile,
   saveLLMSettings,
-  savePersonalizationRuntimeSettings,
+  saveLearningSettings,
   testLLMSettings,
-  updateLearnerPreferences,
   type LLMSettings,
-  type PersonalizationRuntimeSettings,
+  type LearningSettings,
 } from "../../api/client";
 
 const DEEPSEEK_API_KEY_URL = "https://platform.deepseek.com/api_keys";
-
-const DEFAULT_RUNTIME_SETTINGS: PersonalizationRuntimeSettings = {
-  supported: false,
-  teacher_planner_enabled: false,
-  observer_enabled: false,
-  teacher_planner_mode: "assist",
-  observer_mode: "shadow",
-};
 
 type Props = {
   open: boolean;
@@ -40,7 +28,6 @@ type Props = {
   onClose: () => void;
   onConfirm: (title: string, message: string, options?: { confirmText?: string; danger?: boolean; skipKey?: string }) => Promise<boolean>;
   onOpenExternal: (url: string) => void;
-  onPreferencesChanged?: (terminologyDensity: number) => void;
   onBusyChange?: (busy: boolean) => void;
 };
 
@@ -50,12 +37,10 @@ export default function LLMSettingsDialog({
   onClose,
   onConfirm,
   onOpenExternal,
-  onPreferencesChanged,
   onBusyChange,
 }: Props) {
   const [settings, setSettings] = useState<LLMSettings | null>(null);
-  const [runtimeSettings, setRuntimeSettings] = useState<PersonalizationRuntimeSettings | null>(null);
-  const [terminologyDensity, setTerminologyDensity] = useState(0.5);
+  const [learningSettings, setLearningSettings] = useState<LearningSettings | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [clearApiKey, setClearApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -91,14 +76,10 @@ export default function LLMSettingsDialog({
     setApiKey("");
     setClearApiKey(false);
     setSettings(null);
-    setRuntimeSettings(null);
+    setLearningSettings(null);
 
     void (async () => {
-      const [llmResult, runtimeResult, preferencesResult] = await Promise.allSettled([
-        getLLMSettings(),
-        getPersonalizationRuntimeSettings(),
-        projectId != null ? getLearnerPreferences(projectId) : Promise.resolve(null),
-      ]);
+      const [llmResult, learningResult] = await Promise.allSettled([getLLMSettings(), getLearningSettings()]);
       if (cancelled) return;
 
       if (llmResult.status === "fulfilled") {
@@ -106,15 +87,10 @@ export default function LLMSettingsDialog({
       } else {
         setMessage(llmResult.reason instanceof Error ? llmResult.reason.message : "读取模型配置失败");
       }
-
-      setRuntimeSettings(
-        runtimeResult.status === "fulfilled"
-          ? runtimeResult.value
-          : DEFAULT_RUNTIME_SETTINGS,
-      );
-
-      if (preferencesResult.status === "fulfilled" && preferencesResult.value) {
-        setTerminologyDensity(preferencesResult.value.terminologyDensity);
+      if (learningResult.status === "fulfilled") {
+        setLearningSettings(learningResult.value);
+      } else {
+        setMessage(learningResult.reason instanceof Error ? learningResult.reason.message : "读取学习设置失败");
       }
     })();
 
@@ -127,7 +103,7 @@ export default function LLMSettingsDialog({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!settings) return;
+    if (!settings || !learningSettings) return;
 
     setSaving(true);
     setMessage("");
@@ -146,33 +122,13 @@ export default function LLMSettingsDialog({
       setClearApiKey(false);
       savedParts.push("模型 API");
 
-      if (runtimeSettings?.supported) {
-        const savedRuntime = await savePersonalizationRuntimeSettings({
-          teacher_planner_enabled: runtimeSettings.teacher_planner_enabled,
-          observer_enabled: runtimeSettings.observer_enabled,
-        });
-        setRuntimeSettings(savedRuntime);
-        savedParts.push("个性化教学");
-      }
+      const savedLearning = await saveLearningSettings({
+        primary_programming_language: learningSettings.primary_programming_language.trim(),
+      });
+      setLearningSettings(savedLearning);
+      savedParts.push("学习设置");
 
-      if (projectId != null) {
-        const preferences = await updateLearnerPreferences(projectId, {
-          terminology_density: terminologyDensity,
-          scope: "global",
-        });
-        setTerminologyDensity(preferences.terminologyDensity);
-        onPreferencesChanged?.(preferences.terminologyDensity);
-        savedParts.push("术语提示");
-      }
-
-      const needsModel = Boolean(
-        runtimeSettings?.supported
-        && (runtimeSettings.teacher_planner_enabled || runtimeSettings.observer_enabled),
-      );
-      const inactiveNotice = needsModel && (!saved.enabled || !saved.has_api_key)
-        ? " 个性化开关已保存，但需启用模型 API 并保存 Key 后才会生效。"
-        : "";
-      setMessage(`已保存：${savedParts.join("、")}。API Key 仅保存在本机。${inactiveNotice}`);
+      setMessage(`已保存：${savedParts.join("、")}。API Key 仅保存在本机。`);
     } catch (caught) {
       const prefix = savedParts.length > 0 ? `已保存 ${savedParts.join("、")}；` : "";
       setMessage(`${prefix}${caught instanceof Error ? caught.message : "保存失败"}`);
@@ -219,9 +175,6 @@ export default function LLMSettingsDialog({
     setMessage("");
     try {
       const result = await resetPersonalizationProfile(projectId, scope);
-      const preferences = await getLearnerPreferences(projectId);
-      setTerminologyDensity(preferences.terminologyDensity);
-      onPreferencesChanged?.(preferences.terminologyDensity);
       const total = result.deletedMasteryCount
         + result.deletedEventCount
         + (result.deletedShadowCount ?? 0);
@@ -271,6 +224,32 @@ export default function LLMSettingsDialog({
         </div>
 
         <div className="settings-scroll">
+          <section className="settings-section" aria-labelledby="settings-learning-title">
+            <h3 id="settings-learning-title">学习设置</h3>
+            {learningSettings ? (
+              <div className="settings-grid">
+                <label>
+                  <span>你的主要编程语言是：</span>
+                  <input
+                    value={learningSettings.primary_programming_language}
+                    onChange={(event) => setLearningSettings({ primary_programming_language: event.target.value })}
+                    list="primary-programming-languages"
+                    maxLength={80}
+                    placeholder="留空由 AI 选择，也可以输入其他语言"
+                    disabled={controlsDisabled}
+                    autoCapitalize="none"
+                    spellCheck={false}
+                  />
+                  <datalist id="primary-programming-languages">
+                    {["Python", "JavaScript", "TypeScript", "Java", "C", "C++", "C#", "Go", "Rust", "Kotlin", "Swift", "PHP", "Ruby"].map((language) => (
+                      <option key={language} value={language} />
+                    ))}
+                  </datalist>
+                </label>
+              </div>
+            ) : <div className="empty settings-loading">读取中...</div>}
+            <p className="settings-note">课程和问答举例会优先使用这门语言；学习目标语言和本次明确要求优先。项目原有代码保持原语言。清空后保存即可由 AI 选择。</p>
+          </section>
           <section className="settings-section" aria-labelledby="settings-model-title">
             <h3 id="settings-model-title"><KeyRound size={16} />模型 API</h3>
             {settings ? (
@@ -342,65 +321,6 @@ export default function LLMSettingsDialog({
             )}
           </section>
 
-          <section className="settings-section" aria-labelledby="settings-personalization-title">
-            <h3 id="settings-personalization-title"><BrainCircuit size={16} />个性化教学</h3>
-            {runtimeSettings ? (
-              runtimeSettings.supported ? (
-                <div className="settings-grid settings-grid--single">
-                  <label className="toggle-row settings-toggle-card">
-                    <input
-                      type="checkbox"
-                      checked={runtimeSettings.teacher_planner_enabled}
-                      onChange={(event) => setRuntimeSettings({ ...runtimeSettings, teacher_planner_enabled: event.target.checked })}
-                    />
-                    <span>
-                      <strong>使用个性化教学</strong>
-                      <small>只在连续追问或需要深入讲解时选择讲解方式；普通问题保持原有速度，失败或超时自动回退。</small>
-                    </span>
-                  </label>
-                  <label className="toggle-row settings-toggle-card">
-                    <input
-                      type="checkbox"
-                      checked={runtimeSettings.observer_enabled}
-                      onChange={(event) => setRuntimeSettings({ ...runtimeSettings, observer_enabled: event.target.checked })}
-                    />
-                    <span>
-                      <strong>分析学习过程</strong>
-                      <small>问答完成后异步提取学习证据，不阻塞当前回答。</small>
-                    </span>
-                  </label>
-                  <p className="settings-note">两个功能会产生额外模型调用。建议先由你自己试用，再开放给其他用户。</p>
-                </div>
-              ) : (
-                <div className="settings-platform-note">
-                  当前运行环境未提供 Planner 与 Observer；普通问答和术语反馈仍可使用。
-                </div>
-              )
-            ) : (
-              <div className="empty settings-loading">读取中...</div>
-            )}
-          </section>
-
-          <section className="settings-section" aria-labelledby="settings-reading-title">
-            <h3 id="settings-reading-title"><BookOpen size={16} />阅读</h3>
-            <div className="settings-grid settings-grid--single">
-              <label>
-                <span>陌生术语提示</span>
-                <select
-                  value={String(terminologyDensity)}
-                  disabled={projectId == null}
-                  onChange={(event) => setTerminologyDensity(Number(event.target.value))}
-                >
-                  <option value="0">关闭</option>
-                  <option value="0.25">少</option>
-                  <option value="0.5">标准</option>
-                  <option value="0.75">多</option>
-                </select>
-                <small>只调整自动术语提示数量。手动创建的术语链接仍会显示。</small>
-              </label>
-            </div>
-          </section>
-
           <section className="settings-section settings-section--danger" aria-labelledby="settings-privacy-title">
             <h3 id="settings-privacy-title"><ShieldCheck size={16} />数据与隐私</h3>
             <div className="settings-danger-actions">
@@ -436,7 +356,7 @@ export default function LLMSettingsDialog({
             <TestTube2 size={15} />
             {testing ? "测试中..." : "测试"}
           </button>
-          <button type="submit" className="primary-button" disabled={controlsDisabled || !settings}>
+          <button type="submit" className="primary-button" disabled={controlsDisabled || !settings || !learningSettings}>
             <Save size={15} />
             {saving ? "保存中..." : "保存"}
           </button>

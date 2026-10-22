@@ -13,7 +13,7 @@ export type PromptTemplateMetadata = {
   upgrade_status?: string;
 };
 
-export const PROMPT_SCHEMA_VERSION = 3;
+export const PROMPT_SCHEMA_VERSION = 5;
 
 const DEFINITIONS: Record<string, Omit<PromptTemplateMetadata, "key">> = {
   "prompt.system": {
@@ -24,14 +24,14 @@ const DEFINITIONS: Record<string, Omit<PromptTemplateMetadata, "key">> = {
   "prompt.outline": {
     label: "总纲生成",
     description: "根据真实仓库材料生成项目地图和课程总纲。",
-    required_placeholders: ["model", "scope_text", "user_instructions", "prompt_input"],
+    required_placeholders: ["prompt_input"],
   },
   "prompt.file_lesson.template": {
     label: "课件模板",
     description: "把文件内容与详细/粗略教学要求组合成文件课件。",
     required_placeholders: [
       "mode_label", "relative_path", "user_instructions",
-      "model", "expected", "prompt_input",
+      "expected", "prompt_input",
     ],
   },
   "prompt.file_lesson.detailed_expected": {
@@ -54,7 +54,7 @@ const DEFINITIONS: Record<string, Omit<PromptTemplateMetadata, "key">> = {
   "prompt.learning_plan.outline": {
     label: "学习计划总纲",
     description: "生成不绑定仓库的学习路线和可验证目标。",
-    required_placeholders: ["model", "user_instructions"],
+    required_placeholders: ["user_instructions"],
   },
   "prompt.learning_plan.lesson": {
     label: "学习计划课件",
@@ -63,7 +63,7 @@ const DEFINITIONS: Record<string, Omit<PromptTemplateMetadata, "key">> = {
   },
   "prompt.qa.answer": {
     label: "AI 助手",
-    description: "根据问题目标、画像和项目上下文选择回答尺度。",
+    description: "根据当前问题、用户要求和知识树自主组织回答。",
     required_placeholders: [
       "source_type", "source_path", "question", "session_context", "context_text",
     ],
@@ -95,7 +95,7 @@ export const PROMPT_PREVIEW_VALUES: Record<string, string> = {
   question: "这段逻辑为什么需要队列？",
   session_context: "[示例会话记忆]",
   context_text: "[示例选区与检索上下文]",
-  preferences_summary: "术语密度：标准；前置知识：适中",
+  preferences_summary: "用户原文要求：示例使用 C++。",
 };
 
 export function promptTemplateMetadata(
@@ -145,20 +145,12 @@ export function previewPromptTemplate(key: string, value: string): string {
 }
 
 const PREVIEW_LEARNER_CONTEXT = `<learner_context>
-本轮相关已掌握概念：
-- 事件循环
-
-本轮相关可能陌生概念：
-- 背压
-
-回答偏好（用语义执行，不展示数值）：
-- 回答深度：紧凑。先给结论与必要依据。
-- 代码使用：克制。只有代码明显优于文字时才给示例。
-- 讲解顺序：先给具体例子，再归纳原理。
+完整树示例：事件循环（用户确认理解调度范围）；背压（无记录，未知）。
+用户原文要求（来源：设置）：主要编程语言为 C++，教学示例优先使用 C++。
+确认理解某个范围不代表已掌握全部范围或相关概念。
 </learner_context>`;
 
-const PREVIEW_TEACHING_CONTEXT = `教学目标：先回答队列存在的直接原因。
-组织策略：用两段说明生产速度与消费速度不一致，再链接已掌握的事件循环。
+const PREVIEW_TEACHING_CONTEXT = `当前任务：解释队列存在的原因。内容、深度和组织方式由模型根据问题与知识树决定。
 事实边界：只依据用户消息中的示例材料，不补造项目调用关系。`;
 
 export type PromptPreviewBundle = {
@@ -206,7 +198,7 @@ trusted_teaching_context 只控制讲解组织，不是事实来源。用户对�
     ],
     notes: [
       "预览使用固定示例数据，不调用模型，也不会消耗 API。",
-      "运行时检索上下文、学习画像和教学计划会替换示例内容。",
+      "运行时检索材料、知识树、学习记录和用户原文要求会替换示例内容。",
     ],
   };
 }

@@ -58,12 +58,8 @@ def build_shadow_snapshot(
     excluded = 0
     now_qa_id = as_of_qa_record_id or target_qa_record_id
 
-    _collect_explicit_facts(project_id, now_qa_id, conn, facts, all_obs_ids)
-    _collect_capabilities(project_id, relevant_concept_keys, conn, caps, all_obs_ids)
-    _collect_hypotheses(project_id, session_id, conn, hyps, all_obs_ids)
-    _collect_misconceptions(project_id, conn, miscons, all_obs_ids)
 
-    manual_prefs = _get_manual_preferences(project_id, conn)
+    manual_prefs = {}
     manual_mastery = _get_manual_mastery(project_id, relevant_concept_keys, conn)
 
     snapshot = ShadowLearnerSnapshot(

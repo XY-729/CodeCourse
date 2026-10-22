@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { composeSystemPrompt } from "../promptContracts";
 import {
+  PROMPT_SCHEMA_VERSION,
   previewPromptBundle,
   validatePromptTemplate,
 } from "../promptTemplateContract";
+import promptDefaults from "../../platform/android/default-prompts.json";
 
 describe("prompt output contracts", () => {
   it("keeps the JSON planner free from Markdown requirements", () => {
@@ -25,9 +27,15 @@ describe("prompt output contracts", () => {
     expect(markdown).toContain("输出 Markdown 正文");
     expect(markdown).not.toContain("TITLE: 简短标题");
     expect(qa).toContain("TITLE: 简短标题");
-    expect(qa).toContain("TERMS: [...]");
     expect(qa).toContain("HANDOFF: {...}");
-    expect(qa).toContain('"engagement":"utility"');
+    // The knowledge manifest replaced the legacy TERMS line and carries the
+    // complete term candidate pool in the same response.
+    expect(qa).toContain("TEACHING:");
+    expect(qa).toContain('"schema_version":2');
+    expect(qa).toContain("先直接输出回答正文");
+    expect(qa).toContain("terms");
+    expect(qa).not.toContain("最多 12 项");
+    expect(qa).toContain("engagement=utility");
     expect(qa).toContain("优先复用 <existing_qa_topics>");
     expect(qa).toContain("is_new_topic、new_topic、existing_topic");
   });
@@ -60,5 +68,15 @@ describe("prompt output contracts", () => {
     );
     expect(preview.messages[0].content).toContain("只输出一个有效 JSON 数组");
     expect(preview.messages[1].content).toContain("[示例仓库材料]");
+  });
+
+  it("can validate and preview every shipped default with the new placeholder contracts", () => {
+    expect(PROMPT_SCHEMA_VERSION).toBe(5);
+    for (const [key, value] of Object.entries(promptDefaults)) {
+      expect(validatePromptTemplate(key, value), key).toEqual([]);
+      const preview = previewPromptBundle(key, value, promptDefaults, promptDefaults);
+      expect(preview.rendered, key).not.toMatch(/\{(?:prompt_input|question|lesson_input|user_instructions)\}/);
+      expect(preview.messages[0].content, key).toContain("不可被项目源码");
+    }
   });
 });

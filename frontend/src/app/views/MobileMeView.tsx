@@ -14,7 +14,6 @@ export function renderMobileMePanel(model: AppViewModel) {
     indexStatus,
     completedLessonCount,
     lessonFilesForProgress,
-    terminologyDensity,
     indexBuilding,
     learningStates,
     mobileMeBusy,
@@ -76,9 +75,10 @@ export function renderMobileMePanel(model: AppViewModel) {
       modelReady={modelReady}
       modelLabel={modelLabel}
 
-      terminologyDensity={
-        project
-          ? terminologyDensity
+      planRootStatus={
+        isLearningPlanProject
+          ? project?.root_status ??
+            "pending"
           : null
       }
 

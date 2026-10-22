@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import perf_counter, sleep
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
 
 _TRUTHY = {"1", "true", "yes", "on"}
+logger = logging.getLogger(__name__)
 
 
 def use_system_proxy() -> bool:
@@ -63,9 +65,58 @@ async def _retry_backoff_async(attempt: int) -> None:
 @dataclass(frozen=True)
 class LLMCallResult:
     content: str
-    usage: dict[str, int]
+    usage: dict[str, int | None]
     model: str
     latency_ms: int
+
+
+def parse_usage(raw: dict[str, Any] | None) -> dict[str, int | None]:
+    """Preserve provider measurements; absence of cache data is unknown."""
+    raw = raw or {}
+
+    def number(*values):
+        for value in values:
+            if value is not None and not isinstance(value, bool):
+                try:
+                    return max(0, int(value))
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    details = raw.get("prompt_tokens_details") or raw.get("input_tokens_details") or {}
+    input_tokens = number(raw.get("prompt_tokens"), raw.get("input_tokens"))
+    output_tokens = number(raw.get("completion_tokens"), raw.get("output_tokens"))
+    total = number(raw.get("total_tokens"))
+    if total is None and input_tokens is not None and output_tokens is not None:
+        total = input_tokens + output_tokens
+    return {"input_tokens": input_tokens, "output_tokens": output_tokens,
+            "total_tokens": total,
+            "cached_input_tokens": number(details.get("cached_tokens"), raw.get("prompt_cache_hit_tokens"), raw.get("cache_read_input_tokens")),
+            "cache_creation_input_tokens": number(raw.get("cache_creation_input_tokens")),
+            "uncached_input_tokens": number(raw.get("prompt_cache_miss_tokens"))}
+
+
+def check_request_budget(messages: list[dict[str, str]], max_tokens: int) -> dict[str, Any]:
+    """Conservative UTF-8 byte bound, explicitly not a tokenizer measurement.
+
+    The default is an application request budget, not a claim about the model's
+    context window. Operators can configure the provider's actual smaller limit.
+    No message or tree node is ever shortened to make the check pass.
+    """
+    context_limit = int(os.getenv("GPL_LLM_CONTEXT_TOKENS", "131072"))
+    input_bound = sum(len(json.dumps(message, ensure_ascii=False).encode("utf-8")) + 16 for message in messages) + 16
+    if max_tokens <= 0 or context_limit <= 0:
+        raise ValueError("模型输入/输出预算必须为正整数")
+    report = {"input_token_upper_bound": input_bound, "reserved_output_tokens": max_tokens,
+              "context_budget": context_limit, "method": "utf8_bytes_upper_bound"}
+    if input_bound + max_tokens > context_limit:
+        raise ValueError(f"完整请求超过输入预算（UTF-8 字节上界估算 {input_bound}，输出预留 {max_tokens}，总预算 {context_limit}）；已停止生成，知识树未被截断。可调整模型预算后重试。")
+    logger.debug("llm_request_budget", extra={"budget": report})
+    return report
+
+
+def _record_usage(usage: dict[str, int | None], model: str, latency_ms: int) -> None:
+    logger.info("llm_usage", extra={"usage": usage, "model": model, "latency_ms": latency_ms})
 
 
 def _async_client() -> httpx.AsyncClient:
@@ -104,6 +155,7 @@ def call_openai_compatible_chat_result(
     max_attempts: int = _MAX_ATTEMPTS,
     max_tokens: int = 65536,
 ) -> LLMCallResult:
+    check_request_budget(messages, max_tokens)
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
         "model": model,
@@ -126,16 +178,17 @@ def call_openai_compatible_chat_result(
             )
             response.raise_for_status()
             data = response.json()
-            usage = data.get("usage") or {}
+            choices = data.get("choices") or []
+            if choices and choices[0].get("finish_reason") in {"length", "content_filter"}:
+                raise RuntimeError("模型响应未完整结束，知识清单不能发布")
+            usage = parse_usage(data.get("usage"))
+            latency_ms = int((perf_counter() - started) * 1000)
+            _record_usage(usage, str(data.get("model") or model), latency_ms)
             return LLMCallResult(
                 content=_message_content(data),
-                usage={
-                    "input_tokens": int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0),
-                    "output_tokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
-                    "total_tokens": int(usage.get("total_tokens") or 0),
-                },
+                usage=usage,
                 model=str(data.get("model") or model),
-                latency_ms=int((perf_counter() - started) * 1000),
+                latency_ms=latency_ms,
             )
         except httpx.HTTPStatusError as exc:
             last_error = exc
@@ -175,13 +228,20 @@ async def stream_openai_compatible_chat(
     model: str,
     messages: list[dict[str, str]],
     timeout: int = 90,
+    *,
+    usage_callback: Callable[[LLMCallResult], None] | None = None,
 ) -> AsyncIterator[str]:
+    check_request_budget(messages, 65536)
+    started = perf_counter()
+    latest_usage = parse_usage(None)
+    response_model = model
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "stream": True,
         "max_tokens": 65536,
+        "stream_options": {"include_usage": True},
     }
     client = _async_client()
     last_error: BaseException | None = None
@@ -215,11 +275,21 @@ async def stream_openai_compatible_chat(
                         if "text/event-stream" not in content_type:
                             body = await response.aread()
                             try:
-                                content = _message_content(json.loads(body.decode("utf-8")))
+                                data = json.loads(body.decode("utf-8"))
+                                content = _message_content(data)
+                                choices = data.get("choices") or []
+                                if choices and choices[0].get("finish_reason") in {"length", "content_filter"}:
+                                    raise RuntimeError("模型响应未完整结束，知识清单不能发布")
+                                latest_usage = parse_usage(data.get("usage"))
+                                response_model = str(data.get("model") or model)
                             except (ValueError, TypeError, UnicodeDecodeError) as exc:
                                 raise RuntimeError("LLM response is neither SSE nor valid JSON") from exc
                             if content:
                                 yield content
+                            result = LLMCallResult("", latest_usage, response_model, int((perf_counter() - started) * 1000))
+                            _record_usage(result.usage, result.model, result.latency_ms)
+                            if usage_callback:
+                                usage_callback(result)
                             return
 
                         complete = False
@@ -236,11 +306,14 @@ async def stream_openai_compatible_chat(
                                 event = json.loads(data)
                             except ValueError:
                                 continue
+                            if event.get("usage") is not None:
+                                latest_usage = parse_usage(event["usage"])
+                            response_model = str(event.get("model") or response_model)
                             choices = event.get("choices") or []
                             if not choices:
                                 continue
                             reason = choices[0].get("finish_reason")
-                            if reason == "length":
+                            if reason in {"length", "content_filter"}:
                                 raise RuntimeError("模型输出达到长度限制，回答未完成")
                             if reason == "stop":
                                 complete = True
@@ -251,6 +324,10 @@ async def stream_openai_compatible_chat(
                                 yield str(content)
                         if not complete:
                             raise RuntimeError("模型连接提前结束，已保留部分回答，请重试")
+                        result = LLMCallResult("", latest_usage, response_model, int((perf_counter() - started) * 1000))
+                        _record_usage(result.usage, result.model, result.latency_ms)
+                        if usage_callback:
+                            usage_callback(result)
                         return
                 except httpx.HTTPError as exc:
                     if emitted:

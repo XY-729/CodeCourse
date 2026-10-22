@@ -13,6 +13,23 @@ export const PORTABLE_TABLES = [
   "qa_sessions",
   "prompt_revisions",
   "concepts",
+  // Authoritative concept forest. Identity and topology travel with the facts
+  // so a restored device keeps the same tree instead of rebuilding it. Desktop
+  // and Android use different physical names for the same concepts; both are
+  // listed and each side skips the tables it does not have.
+  "concept_tree_nodes",
+  "concept_alias_bindings",
+  "knowledge_tree_versions",
+  "knowledge_tree_issues",
+  "project_knowledge_roots",
+  "project_root_status",
+  "concept_placements",
+  "concept_aliases",
+  "plan_concept_roots",
+  "plan_root_status",
+  "teaching_manifests",
+  "knowledge_topology_conflicts",
+  "user_teaching_requirements",
   "qa_records",
   "teaching_handoffs",
   "generation_tasks",
@@ -46,6 +63,29 @@ export const PORTABLE_TABLES = [
   "teaching_passages",
   "understanding_feedback",
 ] as const;
+
+/**
+ * Teaching and evidence analysis are always on. An imported archive may still
+ * carry the retired opt-out switches; restoring them must never turn the flow
+ * back off or revive a fixed style profile.
+ */
+export function sanitizePortableSettings(
+  settings: Record<string, string>,
+): Record<string, string> {
+  const next = { ...settings };
+  for (const key of [
+    "personalization.teacher_planner.enabled",
+    "personalization.observer.enabled",
+  ]) {
+    next[key] = "true";
+  }
+  for (const key of Object.keys(next)) {
+    if (/^(?:learner\.|personalization\.)(?:preferences|answer_depth|code_ratio|explanation_order|prerequisite_detail|terminology_density|survey_enabled)/.test(key)) {
+      delete next[key];
+    }
+  }
+  return next;
+}
 
 export type PortableTableName = (typeof PORTABLE_TABLES)[number];
 export type PortableValue = string | number | null;
@@ -181,9 +221,9 @@ export function validateDataArchiveDatabase(value: unknown): DataArchiveDatabase
     tables[name as PortableTableName] = rawTable as unknown as PortableTable;
   }
   if (!tables.projects) throw new Error("数据包缺少项目数据。");
-  const settings = Object.fromEntries(
+  const settings = sanitizePortableSettings(Object.fromEntries(
     Object.entries(value.settings).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-  );
+  ));
   return { settings, tables };
 }
 

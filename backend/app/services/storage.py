@@ -1897,6 +1897,8 @@ def init_storage() -> None:
         )
         from app.services.personalization.profile_repair import repair_legacy_profile
         repair_legacy_profile(conn)
+        from app.services.knowledge_tree_schema import initialize as initialize_knowledge_tree
+        initialize_knowledge_tree(conn)
         conn.commit()
 
 
@@ -2231,8 +2233,9 @@ def create_learning_plan_project(name: str, local_path: Path) -> ProjectRecord:
             """,
             (name, f"learning-plan://{name}", f"learning_plan:{now}", str(local_path), "learning_plan", "learning_plan", now, now),
         )
-        conn.commit()
         project_id = int(cursor.lastrowid)
+        conn.execute("INSERT INTO project_root_status(project_id,status,updated_at) VALUES(?,'pending',?)", (project_id, now))
+        conn.commit()
     project = get_project(project_id)
     if project is None:
         raise RuntimeError("learning plan project was not persisted")
@@ -2251,6 +2254,11 @@ def delete_project(project_id: int) -> bool:
     with _connect() as conn:
         from app.services.teaching_index import remove_documents
         remove_documents(conn, project_id)
+        # Reusable global identities survive plan deletion. Only this plan's
+        # associations and private identities disappear.
+        conn.execute("DELETE FROM project_knowledge_roots WHERE project_id=?", (project_id,))
+        conn.execute("DELETE FROM project_root_status WHERE project_id=?", (project_id,))
+        conn.execute("DELETE FROM user_teaching_requirements WHERE project_id=?", (project_id,))
         project_concept_ids = [
             row["id"]
             for row in conn.execute(
@@ -2260,6 +2268,9 @@ def delete_project(project_id: int) -> bool:
         ]
         if project_concept_ids:
             placeholders = ",".join("?" * len(project_concept_ids))
+            conn.execute(f"DELETE FROM concept_alias_bindings WHERE concept_id IN ({placeholders})", project_concept_ids)
+            conn.execute(f"DELETE FROM concept_tree_nodes WHERE concept_id IN ({placeholders})", project_concept_ids)
+            conn.execute("UPDATE knowledge_tree_versions SET topology_version=topology_version+1 WHERE id=1")
             conn.execute(
                 f"""DELETE FROM concept_relations
                     WHERE source_concept_id IN ({placeholders})
@@ -2476,6 +2487,7 @@ def update_generation_task(
     progress_current: Optional[int] = None,
     progress_total: Optional[int] = None,
     stage_label: Optional[str] = None,
+    input_hash: Optional[str] = None,
 ) -> Optional[GenerationTask]:
     now = datetime.now(timezone.utc).isoformat()
     with _connect() as conn:
@@ -2488,6 +2500,7 @@ def update_generation_task(
                 progress_current = COALESCE(?, progress_current),
                 progress_total = COALESCE(?, progress_total),
                 stage_label = COALESCE(?, stage_label),
+                input_hash = COALESCE(?, input_hash),
                 updated_at = ?
             WHERE id = ?
             """,
@@ -2498,6 +2511,7 @@ def update_generation_task(
                 progress_current,
                 progress_total,
                 stage_label,
+                input_hash,
                 now,
                 task_id,
             ),

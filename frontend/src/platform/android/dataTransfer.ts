@@ -64,6 +64,22 @@ async function exportTable(db: MobileDatabase, table: PortableTableName): Promis
   };
 }
 
+/** Desktop archives address alias bindings by canonical name. */
+async function exportAliasBindings(db: MobileDatabase): Promise<PortableTable> {
+  const columns = ["scope_type", "scope_id", "domain", "alias", "concept_id"];
+  if (!(await tableExists(db, "concept_aliases"))) return { columns, rows: [] };
+  const rows = await db.query<Row>(
+    "SELECT scope_type,scope_id,domain,alias,concept_id FROM concept_aliases",
+  );
+  return {
+    columns,
+    rows: rows.map((row) => columns.map((column) => {
+      const value = row[column];
+      return value == null ? null : String(value);
+    })),
+  };
+}
+
 async function portableSettings(db: MobileDatabase): Promise<Record<string, string>> {
   const settings: Record<string, string> = {};
   for (const row of await db.query<Row>("SELECT key,value FROM settings")) {
@@ -118,9 +134,11 @@ export async function exportAndroidDataArchive(db: MobileDatabase): Promise<{ bl
 
   const tables: DataArchiveDatabase["tables"] = {};
   for (const table of PORTABLE_TABLES) {
+    if (table === "concept_alias_bindings") continue; // written below from concept_aliases
     const snapshot = table === "qa_sessions" ? await synthesizeQASessions(db) : await exportTable(db, table);
     if (snapshot) tables[table] = snapshot;
   }
+  tables.concept_alias_bindings = await exportAliasBindings(db);
 
   const zip = new JSZip();
   const projects: DataArchiveProject[] = [];
@@ -393,6 +411,12 @@ function normalizeImportedTaskRows(table: string, snapshot: PortableTable): Port
 }
 
 async function insertSnapshotTable(db: MobileDatabase, table: PortableTableName, snapshot: PortableTable): Promise<void> {
+  if (table === "concept_alias_bindings") {
+    // Desktop name for the Android alias binding table.
+    const { importAliasBindings } = await import("./teachingRebuild");
+    await importAliasBindings(db, snapshot);
+    return;
+  }
   if (!(await tableExists(db, table))) return;
   const targetColumns = new Set(await tableColumns(db, table));
   const selected = snapshot.columns.filter((column) => targetColumns.has(column));
@@ -513,6 +537,13 @@ export async function importAndroidDataArchive(db: MobileDatabase, blob: Blob): 
       throw error;
     }
     await cleanupBackupDirectories(projectsBackup, generatedBackup);
+    // Imported archives never invent taxonomy and never reactivate retired
+    // queues: scopes and placements are normalized locally, old jobs stay retired.
+    await db.normalizeKnowledgeForest();
+    // Manifests arrive inside the manuscripts; publish and index them locally so
+    // the restored tree, coverage and terms match the exported device.
+    const { rebuildTeachingState } = await import("./teachingRebuild");
+    await rebuildTeachingState(db);
   } finally {
     await removeDirectory(stageRoot);
   }

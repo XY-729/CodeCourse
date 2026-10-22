@@ -10,6 +10,13 @@ export type TeachingDocument = {
   documentId: string; sourceType: "course" | "qa"; sourcePath: string;
   contentHash: string; indexStatus: "complete" | "partial" | "pending";
   documentConfirmed?: boolean;
+  artifactKind?: "outline" | "lesson" | "answer";
+  artifact_kind?: "outline" | "lesson" | "answer";
+  metadataStatus?: string;
+  metadata_status?: string;
+  contentStatus?: string;
+  content_status?: string;
+  metadataErrors?: string[];
   status: UnderstandingStatus; coreCount: number; understoodCount: number;
   passages: TeachingPassage[];
   feedback: Array<{ id: string; passage_id: string | null; result: string }>;
@@ -24,6 +31,18 @@ export const understandingLabels: Record<UnderstandingStatus, string> = {
 export const TEACHING_CHANGED = "codecourse-teaching-changed";
 export const OPEN_TEACHING = "codecourse-open-teaching";
 
+export function teachingMetadataReady(document: TeachingDocument): boolean {
+  const metadata = document.metadataStatus ?? document.metadata_status;
+  const content = document.contentStatus ?? document.content_status;
+  return (!content || ["published", "complete", "ready"].includes(content))
+    && (metadata ? ["valid", "validated", "ready", "complete"].includes(metadata) : document.indexStatus === "complete");
+}
+
+export function isPlanOnly(document: TeachingDocument): boolean {
+  return !document.passages.some((p) => ["brief", "explained"].includes(p.kind))
+    && ((document.artifactKind ?? document.artifact_kind) === "outline" || document.passages.some((p) => p.kind === "planned"));
+}
+
 export function getTeachingDocument(projectId: number, sourceType: "course" | "qa", sourcePath: string) {
   return providerRequest<TeachingDocument>(`/projects/${projectId}/teaching/document?${new URLSearchParams({ sourceType, sourcePath })}`);
 }
@@ -36,6 +55,6 @@ export function getTeachingReference(projectId: number, id: string) {
 export function saveUnderstanding(projectId: number, document: TeachingDocument, result: "understood" | "partial" | "needs_help" | "clear", passageIds: string[], requestKey: string) {
   return providerRequest<TeachingDocument>(`/projects/${projectId}/teaching/understanding`, {
     method: "POST", body: JSON.stringify({ sourceType: document.sourceType, sourcePath: document.sourcePath,
-      contentHash: document.contentHash, result, passageIds, requestKey }),
+      contentHash: document.contentHash, result, passageIds, requestKey, action_id: requestKey }),
   });
 }

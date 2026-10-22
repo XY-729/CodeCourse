@@ -29,7 +29,8 @@ type Props = {
   modelReady: boolean;
   modelLabel: string;
 
-  terminologyDensity: number | null;
+  /** Authoritative plan root state from the backend tree service. */
+  planRootStatus?: string | null;
 
   indexLabel: string;
   indexBusy: boolean;
@@ -62,26 +63,17 @@ type ActionRowProps = {
   danger?: boolean;
 };
 
-function terminologyLabel(
-  density: number | null,
-) {
-  if (density == null) {
-    return "打开项目后可设置";
+function planRootLabel(status: string | null | undefined) {
+  if (!status || status === "unassigned") {
+    return "个性化教学常开";
   }
-
-  if (density <= 0) {
-    return "陌生术语提示已关闭";
+  if (status === "ready") {
+    return "计划根已识别";
   }
-
-  if (density <= 0.25) {
-    return "陌生术语提示：少";
+  if (status === "failed") {
+    return "计划根识别失败，可重试";
   }
-
-  if (density <= 0.5) {
-    return "陌生术语提示：标准";
-  }
-
-  return "陌生术语提示：多";
+  return "计划根待识别";
 }
 
 function ActionRow({
@@ -135,7 +127,7 @@ export default function MobileMePanel({
   modelReady,
   modelLabel,
 
-  terminologyDensity,
+  planRootStatus,
 
   indexLabel,
   indexBusy,
@@ -289,8 +281,8 @@ export default function MobileMePanel({
             </strong>
 
             <small>
-              {terminologyLabel(
-                terminologyDensity,
+              {planRootLabel(
+                planRootStatus,
               )}
             </small>
           </article>

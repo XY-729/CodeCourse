@@ -88,7 +88,7 @@ it.each([false, true])("upgrades a v0.4.2 database with existing user data (reta
   state.opened = retained;
   const database = new MobileDatabase();
   await database.init();
-  expect(await database.query("PRAGMA user_version")).toEqual([{ user_version: 7 }]);
+  expect(await database.query("PRAGMA user_version")).toEqual([{ user_version: 9 }]);
   expect(await database.query("SELECT name FROM projects")).toEqual([{ name: "原有项目" }]);
   expect(await database.query("SELECT filename FROM course_files")).toEqual([{ filename: "lessons/lesson_01.md" }]);
   expect(await database.query("SELECT question,answer_md,selection_range_json FROM qa_records")).toEqual([{ question: "原有问题", answer_md: "# 原有回答", selection_range_json: null }]);
@@ -114,6 +114,90 @@ it("restores separate projects with the same Markdown filename and excludes gene
   zip.file("manifest.json", JSON.stringify({ format: "codecourse-data-archive", version: 1, source_platform: "desktop", secrets_included: false, project_count: 3, file_count: 5, projects }));
   zip.file("database.json", JSON.stringify({ settings: {}, tables: { projects: { columns: ["id", "name", "project_type", "status", "created_at", "updated_at"], rows: projects.map(project => [project.id, project.name, project.project_type, "ready", "2026-10-15", "2026-10-15"]) } } }));
   await verifyRestore(new Blob([await zip.generateAsync({ type: "arraybuffer" })]));
+});
+
+it("restores the authoritative concept forest, plan roots and user requirements from a desktop-shaped archive", async () => {
+  const manifestComment = `<!-- codecourse-teaching: ${JSON.stringify({
+    schema_version: 2,
+    concepts: [
+      { ref: "c1", existing_id: null, name: "std::vector", domain: "cpp", scope: "global", parent_ref: null, aliases: ["vector"] },
+    ],
+    coverage: [{ concept_ref: "c1", aspect: "连续存储", kind: "explained", dimension: "conceptual", core: true, quote: "vector 连续存储元素。" }],
+    terms: [{ concept_ref: "c1", text: "vector", quote: "vector 连续存储元素。" }],
+  })} -->`;
+  const text = `# 课件\n\nvector 连续存储元素。\n\n${manifestComment}\n`;
+  const zip = new JSZip();
+  zip.file("projects/21/generated/lessons/lesson_01.md", text);
+  zip.file("manifest.json", JSON.stringify({
+    format: "codecourse-data-archive", version: 1, source_platform: "desktop", secrets_included: false,
+    project_count: 1, file_count: 1,
+    projects: [{
+      id: 21, name: "迁移计划", project_type: "learning_plan", source_files: [],
+      course_files: [{ filename: "lessons/lesson_01.md", title: "课件", group: "课程", size: new TextEncoder().encode(text).length }],
+    }],
+  }));
+  zip.file("database.json", JSON.stringify({
+    settings: { "personalization.observer.enabled": "false", "personalization.answer_depth": "0.9" },
+    tables: {
+      projects: {
+        columns: ["id", "name", "project_type", "status", "created_at", "updated_at"],
+        rows: [[21, "迁移计划", "learning_plan", "ready", "2026-10-15", "2026-10-15"]],
+      },
+      concepts: {
+        columns: ["id", "concept_key", "canonical_name", "display_name", "domain", "concept_type", "aliases_json", "difficulty", "created_at"],
+        rows: [["concept-cpp", "global:local-user:cpp:c++", "C++", "C++", "cpp", "theory", "[]", 0.5, "2026-10-15"],
+          ["concept-vector", "global:local-user:cpp:std::vector", "std::vector", "std::vector", "cpp", "theory", '["vector"]', 0.5, "2026-10-15"]],
+      },
+      concept_placements: {
+        columns: ["concept_id", "parent_concept_id", "placement_status", "provenance_json"],
+        rows: [["concept-cpp", null, "root", "{}"], ["concept-vector", "concept-cpp", "placed", "{}"]],
+      },
+      concept_alias_bindings: {
+        columns: ["scope_type", "scope_id", "domain", "alias", "concept_id"],
+        rows: [["global", "local-user", "cpp", "vector", "concept-vector"]],
+      },
+      plan_concept_roots: {
+        columns: ["project_id", "concept_id"],
+        rows: [[21, "concept-cpp"]],
+      },
+      plan_root_status: {
+        columns: ["project_id", "status", "error_message"],
+        rows: [[21, "ready", null]],
+      },
+      knowledge_tree_versions: {
+        columns: ["id", "topology_version", "state_version"],
+        rows: [[1, 4, 2]],
+      },
+      user_teaching_requirements: {
+        columns: ["id", "project_id", "scope_type", "scope_id", "text", "source", "action_id", "active", "created_at", "updated_at"],
+        rows: [["req-1", 21, "project", "21", "只讲 vector 的扩容", "manual", "action-1", 1, "2026-10-15", "2026-10-15"]],
+      },
+    },
+  }));
+  const database = await verifyRestore(new Blob([await zip.generateAsync({ type: "arraybuffer" })]));
+  // Parent edges and plan roots survive instead of collapsing into pending.
+  expect(await database.query(
+    "SELECT parent_concept_id,placement_status FROM concept_placements WHERE concept_id='concept-vector'",
+  )).toEqual([{ parent_concept_id: "concept-cpp", placement_status: "placed" }]);
+  expect(await database.query("SELECT concept_id FROM plan_concept_roots WHERE project_id=21"))
+    .toEqual([{ concept_id: "concept-cpp" }]);
+  expect(await database.query("SELECT status FROM plan_root_status WHERE project_id=21"))
+    .toEqual([{ status: "ready" }]);
+  expect(await database.query("SELECT text FROM user_teaching_requirements WHERE project_id=21"))
+    .toEqual([{ text: "只讲 vector 的扩容" }]);
+  // Canonical alias bindings are adopted by the Android binding table.
+  expect(await database.query("SELECT concept_id FROM concept_aliases WHERE alias_key='vector'"))
+    .toEqual([{ concept_id: "concept-vector" }]);
+  // Retired opt-outs never come back as false, and the manifest is republished
+  // locally without any model call.
+  expect(await database.query("SELECT value FROM settings WHERE key='personalization.observer.enabled'"))
+    .toEqual([{ value: "true" }]);
+  expect(await database.query("SELECT count(*) AS count FROM settings WHERE key='personalization.answer_depth'"))
+    .toEqual([{ count: 0 }]);
+  expect(await database.query("SELECT metadata_status FROM teaching_manifests WHERE source_path='lessons/lesson_01.md'"))
+    .toEqual([{ metadata_status: "complete" }]);
+  expect(await database.query("SELECT index_status FROM teaching_documents WHERE source_path='lessons/lesson_01.md'"))
+    .toEqual([{ index_status: "complete" }]);
 });
 
 it.skipIf(!process.env.CODECOURSE_TEST_ARCHIVE)("restores the user's actual desktop archive with project and Markdown contents intact", async () => {

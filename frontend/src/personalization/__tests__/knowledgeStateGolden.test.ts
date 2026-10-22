@@ -52,6 +52,12 @@ describe("KnowledgeStateResolver V2 golden vectors", () => {
       );
       expect(state.policyVersion).toBe(vectors.policyVersion);
       expect(state.dimensions.familiarity).toEqual(vector.expected);
+      expect({
+        familiarity: state.familiarity,
+        ranges: state.ranges,
+        evidence_ids: state.evidence_ids,
+        source_count: state.source_count,
+      }).toEqual((vector as { expectedFacts: unknown }).expectedFacts);
       for (const dimension of KNOWLEDGE_DIMENSIONS.filter((item) => item !== "familiarity")) {
         expect(state.dimensions[dimension]).toEqual({
           probability: 0.35,

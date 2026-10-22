@@ -86,6 +86,8 @@ def _project_root(project_id: int) -> Path:
 
 
 def _to_project_response(project) -> ProjectResponse:
+    from app.services.knowledge_tree_service import get_root_status
+    root_state = get_root_status(project.id)
     course_files = []
     root = Path(project.local_path)
     if root.exists():
@@ -98,6 +100,9 @@ def _to_project_response(project) -> ProjectResponse:
         status=project.status,
         project_type=project.project_type,
         course_files=course_files,
+        root_status=root_state["status"],
+        root_concept_ids=root_state["root_concept_ids"],
+        root_error=root_state["error"],
         created_at=project.created_at,
         updated_at=project.updated_at,
     )
@@ -201,9 +206,17 @@ def _safe_plan_dir_name(name: str) -> str:
 
 @router.post("/projects/learning-plan", response_model=ProjectResponse)
 def create_learning_plan(payload: CreateLearningPlanRequest) -> ProjectResponse:
+    from app.services.knowledge_tree_service import link_project_roots, TreeVersionConflict
     name = payload.name.strip()
     root = REPOS_ROOT / "_learning_plans" / _safe_plan_dir_name(name)
     project = create_learning_plan_project(name, root)
+    if payload.root_concept_ids:
+        try:
+            link_project_roots(project.id, payload.root_concept_ids, payload.topology_version)
+        except TreeVersionConflict as exc:
+            raise HTTPException(status_code=409, detail={"project_id": project.id, "root_status": "pending", "error": str(exc)}) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail={"project_id": project.id, "root_status": "pending", "error": str(exc)}) from exc
     return _to_project_response(project)
 
 

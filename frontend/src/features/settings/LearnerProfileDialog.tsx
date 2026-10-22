@@ -11,33 +11,35 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
-  answerDynamicSurvey,
   clearConceptOverride,
-  dismissDynamicSurvey,
-  getLearnerPreferences,
   getPersonalizationProfile,
   markConceptKnown,
   markConceptUnknown,
   resetPersonalizationProfile,
-  updateLearnerPreferences,
   voidLearningEvidence,
   voidLearnerInference,
   type KnowledgeDimension,
   type KnowledgeStateV2,
   type LearnerInference,
-  type LearnerPreferences,
   type LearningEvidenceV2,
   type PersonalizationProfile,
+  type PlanRootStatus,
   type TermScanStatus,
 } from "../../api/client";
 import type { TermDisplayDiagnostics } from "../../personalization/useDocumentTermsController";
 import { canonicalConceptName } from "../../personalization/conceptIdentity";
 import DocumentTermScanControl from "../teaching/DocumentTermScanControl";
+import ConceptForestPanel from "./ConceptForestPanel";
 import { TEACHING_CHANGED } from "../../personalization/teachingApi";
 
 type Props = {
   open: boolean;
   projectId: number | null;
+  projectName?: string | null;
+  /** Authoritative plan root state from the backend knowledge tree service. */
+  planRootStatus?: PlanRootStatus | string | null;
+  planRootConceptIds?: string[];
+  planRootError?: string | null;
   onClose: () => void;
   onChanged?: () => void;
   onConfirm?: (title: string, message: string, options?: { confirmText?: string; danger?: boolean }) => Promise<boolean>;
@@ -46,7 +48,7 @@ type Props = {
   onRescanTerms?: () => Promise<void>;
 };
 
-type View = "overview" | "concepts" | "evidence" | "calls" | "preferences";
+type View = "overview" | "concepts" | "evidence" | "calls" | "terms";
 
 const STATE_LABELS: Record<LearnerInference["state"], string> = {
   confirmed: "有直接掌握证据",
@@ -54,15 +56,6 @@ const STATE_LABELS: Record<LearnerInference["state"], string> = {
   likely_prerequisite: "可能具备的前置知识",
   insufficient: "证据不足",
 };
-
-const DIMENSIONS: KnowledgeDimension[] = [
-  "familiarity",
-  "conceptual",
-  "code_reading",
-  "implementation",
-  "debugging",
-  "transfer",
-];
 
 const DIMENSION_LABELS: Record<KnowledgeDimension, string> = {
   familiarity: "认识",
@@ -97,14 +90,6 @@ const STRATEGY_LABELS: Record<string, string> = {
   detailed_derivation: "详细推导",
 };
 
-function dimensionStatusLabel(
-  status: KnowledgeStateV2["dimensions"][KnowledgeDimension]["status"],
-): string {
-  if (status === "confirmed") return "有可靠证据";
-  if (status === "learning") return "正在学习";
-  return "证据不足";
-}
-
 function evidenceSummary(evidence: LearningEvidenceV2): string {
   const candidates = [
     evidence.result.explanation,
@@ -132,6 +117,10 @@ function confidenceLabel(value: number): string {
 export default function LearnerProfileDialog({
   open,
   projectId,
+  projectName,
+  planRootStatus,
+  planRootConceptIds,
+  planRootError,
   onClose,
   onChanged,
   onConfirm,
@@ -145,8 +134,7 @@ export default function LearnerProfileDialog({
   const [message, setMessage] = useState("");
   const [expandedInference, setExpandedInference] = useState<string | null>(null);
   const [expandedEvidence, setExpandedEvidence] = useState<string | null>(null);
-  const [preferences, setPreferences] = useState<LearnerPreferences | null>(null);
-  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [evidenceFilter, setEvidenceFilter] = useState<string | null>(null);
 
   async function load() {
     if (projectId == null) return;
@@ -154,7 +142,6 @@ export default function LearnerProfileDialog({
     setMessage("");
     try {
       setProfile(await getPersonalizationProfile(projectId));
-      setPreferences(await getLearnerPreferences(projectId));
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "读取学习档案失败");
     } finally {
@@ -191,18 +178,6 @@ export default function LearnerProfileDialog({
     ),
     [profile],
   );
-  const studiedRanges = useMemo(() => {
-    const ranges = new Map<string, Set<string>>();
-    for (const evidence of profile?.learningEvidence ?? []) {
-      if (evidence.source !== "course_completion" || evidence.voided || voidedEvidenceIds.has(evidence.id)) continue;
-      const current = ranges.get(evidence.conceptId) ?? new Set<string>();
-      if (Array.isArray(evidence.result.ranges)) for (const range of evidence.result.ranges) {
-        if (range && typeof range === "object" && "aspect" in range && typeof range.aspect === "string") current.add(range.aspect);
-      }
-      ranges.set(evidence.conceptId, current);
-    }
-    return ranges;
-  }, [profile, voidedEvidenceIds]);
   const domainSummaries = useMemo(() => {
     if (!profile) return [];
     const legacyByKey = new Map(profile.domainProfiles.map((domain) => [domain.domainKey, domain]));
@@ -298,68 +273,13 @@ export default function LearnerProfileDialog({
     }
   }
 
-  async function answerSurvey(choice: string) {
-    if (projectId == null || !profile?.surveyCandidate) return;
-    try {
-      await answerDynamicSurvey(projectId, profile.surveyCandidate.id, choice);
-      await load();
-      onChanged?.();
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "保存选择失败");
-    }
-  }
-
-  async function dismissSurvey() {
-    if (projectId == null || !profile?.surveyCandidate) return;
-    await dismissDynamicSurvey(projectId, profile.surveyCandidate.id);
-    await load();
-  }
-
-  async function disableSurveys() {
-    if (projectId == null) return;
-    try {
-      if (profile?.surveyCandidate) {
-        await dismissDynamicSurvey(projectId, profile.surveyCandidate.id);
-      }
-      await updateLearnerPreferences(projectId, {
-        survey_enabled: false,
-        scope: "global",
-      });
-      await load();
-      onChanged?.();
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "关闭风格询问失败");
-    }
-  }
-
-  async function setConceptStatus(
-    conceptId: string,
-    status: "known" | "unknown" | "clear",
-  ) {
-    if (projectId == null) return;
-    const key = `profile:${status}:${conceptId}:${Date.now()}`;
-    try {
-      if (status === "known") {
-        await markConceptKnown(projectId, conceptId, key, "用户在学习档案中纠正");
-      } else if (status === "unknown") {
-        await markConceptUnknown(projectId, conceptId, key, "用户在学习档案中纠正");
-      } else {
-        await clearConceptOverride(projectId, conceptId, key);
-      }
-      await load();
-      onChanged?.();
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "修改概念状态失败");
-    }
-  }
-
   async function resetProfile(scope: "project" | "all") {
     if (projectId == null) return;
     const approved = onConfirm
       ? await onConfirm(
         scope === "all" ? "重置全部学习档案" : "重置当前项目画像",
         scope === "all"
-          ? "将清除本机所有项目的知识判断、偏好证据和后台观察记录。课程与问答正文不会删除。"
+          ? "将清除本机所有项目的知识判断、学习证据和后台观察记录。课程与问答正文不会删除。"
           : "将清除当前项目私有符号和当前项目的观察记录。通用知识判断仍会保留。",
         { confirmText: "重置", danger: true },
       )
@@ -368,38 +288,6 @@ export default function LearnerProfileDialog({
     await resetPersonalizationProfile(projectId, scope);
     await load();
     onChanged?.();
-  }
-
-  async function savePreferences(patch: Partial<{
-    answer_depth: number;
-    code_ratio: number;
-    explanation_order: LearnerPreferences["explanationOrder"];
-    prerequisite_detail: number;
-    terminology_density: number;
-  }>) {
-    if (projectId == null) return;
-    setPreferencesSaving(true);
-    setMessage("");
-    try {
-      setPreferences(await updateLearnerPreferences(projectId, { ...patch, scope: "global" }));
-      setMessage("偏好已保存");
-      onChanged?.();
-    } catch (caught) {
-      setMessage(caught instanceof Error ? caught.message : "保存偏好失败");
-    } finally {
-      setPreferencesSaving(false);
-    }
-  }
-
-  async function resetPreferences() {
-    if (projectId == null || !preferences) return;
-    await savePreferences({
-      answer_depth: 0.5,
-      code_ratio: 0.5,
-      explanation_order: "balanced",
-      prerequisite_detail: 0.5,
-      terminology_density: 0.5,
-    });
   }
 
   return (
@@ -418,7 +306,7 @@ export default function LearnerProfileDialog({
           <button className={view === "concepts" ? "active" : ""} onClick={() => setView("concepts")}>概念状态</button>
           <button className={view === "evidence" ? "active" : ""} onClick={() => setView("evidence")}>判断依据</button>
           <button className={view === "calls" ? "active" : ""} onClick={() => setView("calls")}>模型调用</button>
-          <button className={view === "preferences" ? "active" : ""} onClick={() => setView("preferences")}>讲解偏好</button>
+          <button className={view === "terms" ? "active" : ""} onClick={() => setView("terms")}>术语提示</button>
         </nav>
 
         <div className="learner-profile-content">
@@ -427,23 +315,6 @@ export default function LearnerProfileDialog({
 
           {profile && view === "overview" ? (
             <>
-              {profile.surveyCandidate ? (
-                <section className="learner-survey-card">
-                  <div><Sparkles size={16} /><strong>{profile.surveyCandidate.question}</strong></div>
-                  <div className="learner-survey-options">
-                    {profile.surveyCandidate.options.map((option) => (
-                      <button type="button" key={option.value} onClick={() => void answerSurvey(option.value)}>
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="learner-survey-secondary-actions">
-                    <button type="button" className="text-button" onClick={() => void dismissSurvey()}>暂时不回答</button>
-                    <button type="button" className="text-button" onClick={() => void disableSurveys()}>以后不再询问</button>
-                  </div>
-                </section>
-              ) : null}
-
               {profile.evidenceSummary ? (
                 <section className="learner-evidence-overview" aria-label="学习证据摘要">
                   <article>
@@ -531,7 +402,14 @@ export default function LearnerProfileDialog({
 
           {profile && view === "evidence" ? (
             <div className="learner-evidence-list">
-              {(profile.learningEvidence ?? []).length ? (profile.learningEvidence ?? []).map((evidence) => {
+              {evidenceFilter ? (
+                <div className="learner-evidence-filter">
+                  <span>只看：{conceptsById.get(evidenceFilter) || evidenceFilter}</span>
+                  <button type="button" onClick={() => setEvidenceFilter(null)}>显示全部依据</button>
+                </div>
+              ) : null}
+              {(profile.learningEvidence ?? []).filter((evidence) => !evidenceFilter || evidence.conceptId === evidenceFilter).length
+                ? (profile.learningEvidence ?? []).filter((evidence) => !evidenceFilter || evidence.conceptId === evidenceFilter).map((evidence) => {
                 const voided = evidence.voided || voidedEvidenceIds.has(evidence.id);
                 return (
                 <article
@@ -604,64 +482,21 @@ export default function LearnerProfileDialog({
                 <button type="button" className="secondary-button" onClick={() => void resetProfile("project")}>重置当前项目</button>
                 <button type="button" className="secondary-button danger" onClick={() => void resetProfile("all")}>重置全部档案</button>
               </div>
-              <div className="learner-concept-list">
-                {profile.concepts.length ? profile.concepts.map((item) => {
-                  const state = statesByConceptId.get(item.concept.id);
-                  const manualStatus = state?.dimensions.familiarity.manualStatus ?? item.mastery.manualStatus;
-                  return (
-                  <article className="learner-concept-row" key={item.concept.id}>
-                    <div className="learner-concept-summary">
-                      <div>
-                        <strong>{item.concept.displayName}</strong>
-                        <small>{item.concept.domain} · {
-                          item.judgement === "known"
-                            ? "有可靠证据"
-                            : item.judgement === "unfamiliar"
-                              ? "正在学习或明确陌生"
-                              : "证据不足"
-                        }</small>
-                        {studiedRanges.has(item.concept.id) ? <small>已学过：{[...studiedRanges.get(item.concept.id)!].join("、")}（课程完成记录）</small> : null}
-                      </div>
-                      {state ? (
-                        <div className="knowledge-dimension-grid" aria-label={`${item.concept.displayName}的六维知识状态`}>
-                          {DIMENSIONS.map((dimension) => {
-                            const dimensionState = state.dimensions[dimension];
-                            return (
-                              <div
-                                className={`knowledge-dimension state-${dimensionState.status}`}
-                                key={dimension}
-                                title={`${dimensionStatusLabel(dimensionState.status)}，${dimensionState.evidenceCount} 条证据`}
-                              >
-                                <span>{DIMENSION_LABELS[dimension]}</span>
-                                <div>
-                                  <i style={{ width: `${Math.round(dimensionState.probability * 100)}%` }} />
-                                </div>
-                                <small>{dimensionStatusLabel(dimensionState.status)}</small>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : <small className="knowledge-state-legacy-note">等待 V2 证据重算</small>}
-                    </div>
-                    <div className="learner-concept-buttons">
-                      <button
-                        type="button"
-                        className={manualStatus === "known" ? "active" : ""}
-                        onClick={() => void setConceptStatus(item.concept.id, "known")}
-                      >认识</button>
-                      <button
-                        type="button"
-                        className={manualStatus === "unknown" ? "active" : ""}
-                        onClick={() => void setConceptStatus(item.concept.id, "unknown")}
-                      >不认识</button>
-                      {manualStatus ? (
-                        <button type="button" onClick={() => void setConceptStatus(item.concept.id, "clear")}>撤销</button>
-                      ) : null}
-                    </div>
-                  </article>
-                  );
-                }) : <div className="learner-profile-empty"><CircleHelp size={22} /><span>还没有概念记录。</span></div>}
-              </div>
+              {projectId != null ? (
+                <ConceptForestPanel
+                  projectId={projectId}
+                  projectName={projectName}
+                  planRootStatus={planRootStatus}
+                  planRootConceptIds={planRootConceptIds}
+                  planRootError={planRootError}
+                  refreshKey={profile.knowledgeStates?.length ?? 0}
+                  onChanged={onChanged}
+                  onOpenEvidence={(conceptId) => {
+                    setEvidenceFilter(conceptId);
+                    setView("evidence");
+                  }}
+                />
+              ) : null}
             </div>
           ) : null}
 
@@ -677,76 +512,14 @@ export default function LearnerProfileDialog({
             </div>
           ) : null}
 
-          {preferences && view === "preferences" ? (
-            <div className="learner-preference-view">
-              <p className="learner-preference-hint">
-                这些偏好决定 AI 老师默认怎样讲解。你可以在一次问答后点"这次讲解是否有效"微调，此处手动调整立即生效。
-              </p>
-              <label className="learner-preference-row">
-                <span><strong>回答深度</strong><small>讲得详细还是紧凑</small></span>
-                <input
-                  type="range" min="0" max="1" step="0.05"
-                  value={preferences.answerDepth}
-                  onChange={(event) => setPreferences({ ...preferences, answerDepth: Number(event.target.value) })}
-                  onBlur={() => void savePreferences({ answer_depth: preferences.answerDepth })}
-                />
-                <output>{Math.round(preferences.answerDepth * 100)}%</output>
-              </label>
-              <label className="learner-preference-row">
-                <span><strong>代码比例</strong><small>多给代码示例还是少给</small></span>
-                <input
-                  type="range" min="0" max="1" step="0.05"
-                  value={preferences.codeRatio}
-                  onChange={(event) => setPreferences({ ...preferences, codeRatio: Number(event.target.value) })}
-                  onBlur={() => void savePreferences({ code_ratio: preferences.codeRatio })}
-                />
-                <output>{Math.round(preferences.codeRatio * 100)}%</output>
-              </label>
-              <label className="learner-preference-row">
-                <span><strong>讲解顺序</strong><small>先讲例子还是先讲原理</small></span>
-                <select
-                  value={preferences.explanationOrder}
-                  onChange={(event) => {
-                    const next = event.target.value as LearnerPreferences["explanationOrder"];
-                    setPreferences({ ...preferences, explanationOrder: next });
-                    void savePreferences({ explanation_order: next });
-                  }}
-                >
-                  <option value="balanced">均衡</option>
-                  <option value="example_first">例子优先</option>
-                  <option value="principle_first">原理优先</option>
-                  <option value="code_first">代码优先</option>
-                </select>
-              </label>
-              <label className="learner-preference-row">
-                <span><strong>前置知识详细度</strong><small>需要多少前置知识铺垫</small></span>
-                <input
-                  type="range" min="0" max="1" step="0.05"
-                  value={preferences.prerequisiteDetail}
-                  onChange={(event) => setPreferences({ ...preferences, prerequisiteDetail: Number(event.target.value) })}
-                  onBlur={() => void savePreferences({ prerequisite_detail: preferences.prerequisiteDetail })}
-                />
-                <output>{Math.round(preferences.prerequisiteDetail * 100)}%</output>
-              </label>
-              <label className="learner-preference-row">
-                <span><strong>术语密度</strong><small>专业名词解释到什么程度</small></span>
-                <input
-                  type="range" min="0" max="1" step="0.05"
-                  value={preferences.terminologyDensity}
-                  onChange={(event) => setPreferences({ ...preferences, terminologyDensity: Number(event.target.value) })}
-                  onBlur={() => void savePreferences({ terminology_density: preferences.terminologyDensity })}
-                />
-                <output>{Math.round(preferences.terminologyDensity * 100)}%</output>
-              </label>
+          {view === "terms" ? (
+            <div>
               <div className="learner-term-diagnostics" aria-label="当前文档术语提示状态">
                 <div>
                   <strong>当前文档术语提示</strong>
                   {!termScanStatus ? <small>打开课件或回答后可查看</small> : null}
                 </div>
                 <DocumentTermScanControl status={termScanStatus} onRescan={onRescanTerms} showDescription />
-              </div>
-              <div className="learner-preference-actions">
-                <button type="button" className="secondary-button" disabled={preferencesSaving} onClick={() => void resetPreferences()}>重置为默认</button>
               </div>
             </div>
           ) : null}

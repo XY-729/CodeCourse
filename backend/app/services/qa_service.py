@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import HTTPException
 
@@ -61,6 +62,8 @@ from app.services.storage import (
     upsert_learning_anchor,
 )
 from app.services.term_service import parse_term_metadata, register_document_terms, term_learning_context
+from app.services.personalization.teaching.generation_context import build_generation_context, apply_generation_context
+from app.services.personalization.teaching.manifest import parse_manifest, canonical_comment
 
 
 TITLE_LINE_RE = re.compile(r"^\s*(?:TITLE|标题)\s*[:：]\s*(.+?)\s*$", re.IGNORECASE)
@@ -561,6 +564,8 @@ class PreparedQuestion:
     existing_record: Optional[QARecord] = None
     planner_failure: Optional[str] = None
     authorized_context: str = ""
+    tree_snapshot: dict | None = None
+    generation_id: str | None = None
 
 
 def _saved_retrieval_sources(record: QARecord) -> list[dict[str, object]]:
@@ -575,9 +580,16 @@ def _saved_retrieval_sources(record: QARecord) -> list[dict[str, object]]:
 
 def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion:
     term = get_document_term(project_id, payload.term_candidate_id) if payload.term_candidate_id else None
-    if term and term.qa_record_id:
+    if term and term.qa_record_id and not payload.question.strip():
         existing = get_qa_record(project_id, term.qa_record_id)
-        if existing:
+        if existing and existing.output_path and existing.selected_text.strip() == term.term_text.strip() and term.concept_id:
+            from app.services.teaching_index import document_state
+            prior = document_state(project_id, "qa", str(existing.output_path))
+            reusable = prior.get("indexStatus") == "complete" and any(
+                passage.get("concept_id") == term.concept_id for passage in prior.get("passages", []))
+        else:
+            reusable = False
+        if reusable:
             return PreparedQuestion(
                 project_id=project_id,
                 payload=payload,
@@ -610,9 +622,6 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
     session_context = _session_context(project_id, session.id)
 
     template = load_prompt("prompt.qa.answer")
-    if payload.defer_metadata:
-        from app.services.qa_metadata import body_only_template
-        template = body_only_template(template)
     base_prompt = _render_prompt_template(
         template,
         {
@@ -624,11 +633,10 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
             "session_context": session_context,
         },
     )
-    from app.services.qa_background import saved_learner_summary
-    learner_context = saved_learner_summary(project_id)
+    teaching_context = build_generation_context(project_id, current_requirements=question)
     topics = json.dumps(existing_qa_topics(project_id), ensure_ascii=False)
     topics_context = f"\n<existing_qa_topics>{topics}</existing_qa_topics>"
-    prompt = f"{learner_context}{topics_context}\n\n{base_prompt}"
+    prompt = f"{topics_context}\n\n{base_prompt}"
     return PreparedQuestion(
         project_id=project_id,
         payload=payload,
@@ -641,13 +649,15 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
         retrieval_trace=retrieval_trace,
         retrieval_sources=retrieval_sources,
         authorized_context=context_text,
-        messages=[
+        tree_snapshot=teaching_context.tree_snapshot,
+        generation_id=str(uuid4()),
+        messages=apply_generation_context([
             {
                 "role": "system",
-                "content": compose_system_prompt(load_prompt("prompt.system"), "qa_body" if payload.defer_metadata else "qa"),
+                "content": compose_system_prompt(load_prompt("prompt.system"), "qa"),
             },
             {"role": "user", "content": prompt},
-        ],
+        ], teaching_context),
     )
 
 
@@ -663,22 +673,26 @@ def finalize_question(
     selected_text = prepared.selected_text
     question = prepared.question
     project_id = prepared.project_id
-    raw_answer = raw_answer.strip()
-    if payload.defer_metadata:
-        # The persisted body matches the preview, including code-fenced literals.
-        from app.services.metadata_stream import StreamingMetadataFilter
-        metadata_filter = StreamingMetadataFilter()
-        answer_without_terms = "".join(metadata_filter.push(raw_answer) + metadata_filter.finish())
-        handoff_metadata, model_terms = None, []
-    else:
-        answer_without_handoff, handoff_metadata = parse_handoff_metadata(
-            raw_answer,
-            source_type=payload.source_type,
-            source_path=payload.source_path,
-            existing_topics=existing_qa_topics(project_id),
-        )
-        answer_without_terms, model_terms = parse_term_metadata(answer_without_handoff, project_id, question)
-    title, answer = _parse_answer_title(answer_without_terms, question, selected_text, payload.source_path)
+    raw_answer = raw_answer.replace("\r\n", "\n").replace("\r", "\n").strip()
+    answer_without_handoff, handoff_metadata = parse_handoff_metadata(
+        raw_answer, source_type=payload.source_type, source_path=payload.source_path,
+        existing_topics=existing_qa_topics(project_id))
+    title, titled_body = _parse_answer_title(answer_without_handoff, question, selected_text, payload.source_path)
+    parsed = parse_manifest(titled_body)
+    errors = list(parsed.errors)
+    try:
+        answer, model_terms = parse_term_metadata(titled_body, project_id, question)
+    except ValueError as exc:
+        model_terms = []
+        errors.append(str(exc))
+        # Preserve invalid payload for A's audit/status; never substitute TERMS.
+        from app.services.teaching_index import prepare_metadata
+        answer = prepare_metadata(titled_body)
+    if parsed.status != "valid" or errors:
+        if parsed.status == "legacy":
+            answer += '\n\n<!-- codecourse-teaching: {"schema_version":2,"concepts":[],"coverage":[],"terms":[],"_parse_errors":["新回答缺少 TeachingManifest v2"]} -->'
+        if parsed.status != "absent":
+            answer += "\n\n> 知识清单未就绪：本回答可阅读，知识范围暂不能确认理解。"
     if not answer:
         raise RuntimeError("模型返回为空内容，未创建问答记录。")
 
@@ -708,6 +722,10 @@ def finalize_question(
             raise RuntimeError("QA record disappeared during path update")
 
         written = _write_record_markdown(record_with_path)
+        from app.services.teaching_index import index_document
+        index_document(project_id, "qa", str(written.output_path), written.answer_md,
+                       artifact_kind="answer", tree_snapshot=prepared.tree_snapshot,
+                       generation_id=prepared.generation_id)
         persist_teaching_handoff(written, handoff_metadata)
         _refresh_session_memory(
             project_id,
@@ -716,7 +734,10 @@ def finalize_question(
         )
 
         from app.services.qa_background import enqueue_answer
-        enqueue_answer(written, payload, prepared.authorized_context, model_terms)
+        enqueue_answer(written, payload, prepared.authorized_context, model_terms,
+                       metadata={"metadata_status": "invalid" if errors else "valid" if parsed.manifest else "pending",
+                                 "content_status": "draft" if errors or not parsed.manifest else "published",
+                                 "errors": errors, "manifest": parsed.manifest})
         return written
     except Exception:
         # Roll back partial records when the filesystem save fails.
@@ -1254,47 +1275,20 @@ def read_session_tree(project_id: int, session_id: int) -> list[QARecord]:
     return list_qa_session_records(project_id, session_id)
 
 
-def save_understanding(project_id: int, record_id: int, summary: str, term_text: Optional[str]) -> LearningAnchor:
+def save_understanding(project_id: int, record_id: int, summary: str, term_text: Optional[str],
+                       action_id: str | None = None) -> LearningAnchor:
     record = get_qa_record(project_id, record_id)
     if record is None:
         raise RuntimeError("问答记录不存在。")
     anchor = upsert_learning_anchor(project_id, record_id, summary.strip(), term_text.strip() if term_text else None)
     attach_learning_anchor(record, anchor)
-    try:
-        from app.services.personalization_service import concepts_for_question, concept_scope
-        from app.services.personalization.knowledge_state_service import append_evidence
-        concepts = concepts_for_question(
-            project_id,
-            f"{record.question}\n{term_text or ''}",
-            record.selected_text,
-            record.source_type,
-            record.source_path,
-        )
-        for concept in concepts:
-            scope_type, scope_id = concept_scope(concept, project_id)
-            append_evidence(
-                {
-                    "idempotencyKey": f"summary-v2:{record_id}:{concept.id}",
-                    "conceptId": concept.id,
-                    "scopeType": scope_type,
-                    "scopeId": scope_id,
-                    "dimension": "conceptual",
-                    "direction": "positive",
-                    "strength": 0.65,
-                    "reliability": 0.72,
-                    "source": "summary",
-                    "action": "saved_understanding",
-                    "object": {"type": "qa", "qaRecordId": record_id},
-                    "result": {"summary": summary[:500]},
-                    "sessionId": str(record.session_id) if record.session_id else None,
-                    "qaRecordId": record_id,
-                }
-            )
-    except Exception:
-        logger.exception(
-            "Failed to record understanding evidence",
-            extra={"project_id": project_id, "qa_record_id": record_id},
-        )
+    if record.output_path:
+        from app.services.teaching_index import document_state, save_feedback
+        state = document_state(project_id, "qa", str(record.output_path))
+        if state["indexStatus"] == "complete":
+            passages = [p["id"] for p in state["passages"] if p["kind"] in {"brief", "explained"}]
+            save_feedback(project_id, "qa", str(record.output_path), "understood", passages,
+                          state["contentHash"], action_id or str(uuid4()))
     return anchor
 
 
@@ -1302,31 +1296,16 @@ def read_understanding(project_id: int, record_id: int) -> Optional[LearningAnch
     return get_learning_anchor(project_id, record_id)
 
 
-def remove_understanding(project_id: int, record_id: int) -> bool:
+def remove_understanding(project_id: int, record_id: int, action_id: str | None = None) -> bool:
+    record = get_qa_record(project_id, record_id)
     removed = delete_learning_anchor(project_id, record_id)
     if removed:
         remove_learning_anchor_node(project_id, record_id)
-        try:
-            from app.services.personalization.knowledge_state_service import void_evidence
-            from app.services.storage import _connect
-            with _connect() as conn:
-                rows = conn.execute(
-                    """SELECT id FROM learning_evidence_v2
-                       WHERE qa_record_id = ? AND source = 'summary'
-                         AND action = 'saved_understanding'""",
-                    (record_id,),
-                ).fetchall()
-            for row in rows:
-                void_evidence(
-                    row["id"],
-                    f"void-summary-v2:{record_id}:{row['id']}",
-                    "understanding_removed",
-                )
-        except Exception:
-            logger.exception(
-                "Failed to void removed understanding evidence",
-                extra={"project_id": project_id, "qa_record_id": record_id},
-            )
+        if record and record.output_path:
+            from app.services.teaching_index import document_state, save_feedback
+            state = document_state(project_id, "qa", str(record.output_path))
+            save_feedback(project_id, "qa", str(record.output_path), "clear", [], state["contentHash"],
+                          action_id or str(uuid4()))
     return removed
 
 

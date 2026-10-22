@@ -80,6 +80,10 @@ class KnowledgeStateV2GoldenTests(unittest.TestCase):
                     state["dimensions"]["familiarity"],
                     vector["expected"],
                 )
+                self.assertEqual(
+                    {key: state[key] for key in ("familiarity", "ranges", "evidence_ids", "source_count")},
+                    vector["expectedFacts"],
+                )
                 for dimension, value in state["dimensions"].items():
                     if dimension != "familiarity":
                         self.assertEqual(value, empty_dimension)

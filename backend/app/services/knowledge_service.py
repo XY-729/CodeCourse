@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+
+def get_full_tree_snapshot(project_id: int):
+    """One authoritative full snapshot for generation, UI and final term checks."""
+    from app.services.knowledge_tree_service import get_tree_snapshot, list_requirements
+    from app.services.storage import run_in_transaction
+    def operation(conn):
+        snapshot = get_tree_snapshot(project_id, conn=conn)
+        snapshot["requirements"] = list_requirements(project_id, conn=conn)
+        return snapshot
+    return run_in_transaction(operation)
+
 import re
 from typing import Optional
 

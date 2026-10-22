@@ -10,7 +10,8 @@ from datetime import datetime
 from math import isfinite
 from typing import Any
 
-POLICY_VERSION = "knowledge-v2.2"
+POLICY_VERSION = "knowledge-facts-v1"
+LEGACY_POLICY_VERSION = "knowledge-v2.2"
 DIMENSIONS = (
     "familiarity",
     "conceptual",
@@ -59,10 +60,18 @@ def resolve_knowledge_state(
     evidence: list[dict[str, Any]],
     now: str,
 ) -> dict[str, Any]:
+    # A caller may pass a shared ledger. Scope and concept are part of identity,
+    # including for void markers, and must be checked before replay.
+    evidence = [item for item in evidence if (
+        str(item.get("conceptId", concept_id)) == concept_id
+        and item.get("scopeType", scope_type) == scope_type
+        and str(item.get("scopeId", scope_id)) == scope_id
+    )]
     voided_targets = {
         str(item["targetEvidenceId"])
         for item in evidence
-        if item.get("targetEvidenceId") and not item.get("voided", False)
+        if item.get("action") == "void_evidence"
+        and item.get("targetEvidenceId") and not item.get("voided", False)
     }
     active = sorted(
         [
@@ -73,23 +82,138 @@ def resolve_knowledge_state(
                 and item.get("id") not in voided_targets
             )
         ],
-        key=lambda item: (item["eventTime"], item["id"]),
+        key=lambda item: (item.get("eventTime", ""), item["id"]),
     )
     dimensions = {
         dimension: _resolve_dimension(
-            [item for item in active if item["dimension"] == dimension],
+            [item for item in active if item["dimension"] == dimension and not (
+                dimension in {"implementation", "debugging", "transfer"}
+                and item.get("source") in {"summary", "course_completion", "question"}
+            )],
             now,
         )
         for dimension in DIMENSIONS
     }
+    facts = resolve_familiarity(active)
     return {
         "conceptId": concept_id,
         "scopeType": scope_type,
         "scopeId": scope_id,
         "dimensions": dimensions,
+        **facts,
         "policyVersion": POLICY_VERSION,
         "evidenceVersion": len(active),
         "updatedAt": now,
+    }
+
+
+def evidence_familiarity(event: dict[str, Any]) -> str | None:
+    """Map observable actions, never a model score or an inferred direction."""
+    source, action = event.get("source"), event.get("action")
+    if source == "manual":
+        return {"manual_known": "declared_known", "manual_unknown": "needs_help"}.get(action)
+    if source == "question" and action in {
+        "asked_definition", "asked_clarification", "asked_question", "observed",
+        "selected_range", "located_range", "encountered",
+    }:
+        return "encountered"
+    if source == "course_completion" and action in {"course_studied", "studied"}:
+        return "studied"
+    if source == "summary":
+        result = event.get("result") or {}
+        if not (str(result.get("aspect") or "").strip() or result.get("ranges") or result.get("range")):
+            return None
+        return {
+            "self_understood": "self_reported_understood",
+            "saved_understanding": "self_reported_understood",
+            "self_partial": "partially_understood",
+            "self_needs_help": "needs_help",
+        }.get(action)
+    if source == "contact" and action in {"selected_range", "located_range", "encountered"}:
+        return "encountered"
+    return None
+
+
+def _event_ranges(event: dict[str, Any]) -> list[tuple[str, str]]:
+    result = event.get("result") or {}
+    raw = result.get("ranges")
+    if raw is None:
+        raw = [result.get("range") or {
+            "aspect": result.get("aspect", ""), "dimension": event.get("dimension", "familiarity"),
+        }]
+    if not isinstance(raw, list):
+        return []
+    return sorted({
+        (str(item.get("aspect") or "").strip(), str(item.get("dimension") or event.get("dimension", "familiarity")))
+        for item in raw if isinstance(item, dict)
+        and item.get("dimension", event.get("dimension", "familiarity")) in DIMENSIONS
+        and item.get("kind") not in {"planned", "mentioned"}
+    })
+
+
+def _source_ref(event: dict[str, Any]) -> dict[str, Any]:
+    obj, context = event.get("object") or {}, event.get("context") or {}
+    return {
+        "source_type": obj.get("sourceType") or obj.get("type") or context.get("sourceType") or event.get("source"),
+        "source_path": obj.get("sourcePath") or context.get("sourcePath"),
+        "project_id": obj.get("projectId") or context.get("projectId"),
+        "content_hash": obj.get("contentHash") or (event.get("result") or {}).get("contentHash"),
+    }
+
+
+def resolve_familiarity(active: list[dict[str, Any]]) -> dict[str, Any]:
+    """Deterministically reduce factual events by aspect and dimension.
+
+    Exposure/completion cannot erase an explicit understanding declaration.
+    A later explicit declaration can change the current range while all active
+    historical evidence remains inspectable. Manual clear removes its override.
+    """
+    grouped: dict[tuple[str, str], list[tuple[dict[str, Any], str | None]]] = {}
+    for event in active:
+        state = evidence_familiarity(event)
+        is_clear = event.get("source") == "manual" and event.get("action") == "manual_clear"
+        if state is None and not is_clear:
+            continue
+        for key in _event_ranges(event):
+            grouped.setdefault(key, []).append((event, state))
+    ranges = []
+    for (aspect, dimension), events in sorted(grouped.items()):
+        manual = None
+        explicit = None
+        exposure = "unrecorded"
+        for event, state in events:
+            if event.get("source") == "manual":
+                manual = state
+            elif state in {"self_reported_understood", "partially_understood", "needs_help"}:
+                explicit = state
+            elif state == "studied" or exposure == "unrecorded":
+                exposure = state or exposure
+        state = manual or explicit or exposure
+        # Cleared declarations remain in the audit ledger, not in the active
+        # knowledge references of the projected range.
+        effective = [event for event, value in events if value and (
+            event.get("source") != "manual" or manual is not None
+        )]
+        if not effective:
+            continue
+        sources = []
+        for event in effective:
+            source = _source_ref(event)
+            if source not in sources:
+                sources.append(source)
+        sources.sort(key=lambda item: tuple(str(item[field] or "") for field in ("source_type", "source_path", "project_id", "content_hash")))
+        ranges.append({
+            "aspect": aspect, "dimension": dimension, "familiarity": state,
+            "evidence_ids": sorted({str(event["id"]) for event in effective}),
+            "source_count": len(sources), "sources": sources,
+            "last_evidence_at": max((event.get("eventTime", "") for event in effective), default=None),
+        })
+    states = {item["familiarity"] for item in ranges}
+    return {
+        "familiarity": next(iter(states)) if len(states) == 1 else "mixed" if states else "unrecorded",
+        "ranges": ranges,
+        "evidence_ids": sorted({value for item in ranges for value in item["evidence_ids"]}),
+        "source_count": len({tuple(str(source[field] or "") for field in ("source_type", "source_path", "project_id", "content_hash")) for item in ranges for source in item["sources"]}),
     }
 
 

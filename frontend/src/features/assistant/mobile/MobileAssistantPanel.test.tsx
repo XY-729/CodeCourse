@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { DiagnosticItem, LLMSettings, QARecord } from "../../../api/client";
+import type { LLMSettings, QARecord } from "../../../api/client";
 import MobileAssistantPanel from "./MobileAssistantPanel";
 
 const SETTINGS: LLMSettings = { provider: "openai", base_url: "", model: "test-model", enabled: true, has_api_key: true, masked_api_key: "***" };
@@ -22,7 +22,6 @@ function createProps() {
     question: "", loading: false, loadingLabel: "", streamContent: "",
     history: [RECORD], historyQuery: "", favoriteOnly: false,
     selectedRecord: null, followUpRecord: null, selectedRecordReadOnly: false,
-    surveyCandidate: null, diagnosticItem: null, diagnosticResult: null,
     settings: SETTINGS, panelError: "",
     knowledgeContent: <div>测试知识网络</div>, knowledgeDisabled: false,
     onQuestionChange: vi.fn(), onSelectionTextChange: vi.fn(), onClearSelection: vi.fn(),
@@ -30,8 +29,6 @@ function createProps() {
     onHistoryQueryChange: vi.fn(), onFavoriteOnlyChange: vi.fn(),
     onSelectRecord: vi.fn(), onFollowUp: vi.fn(), onOpenRecord: vi.fn(), onDeleteRecord: vi.fn(),
     onRenameRecord: vi.fn(), onToggleFavorite: vi.fn(), onOpenSettings: vi.fn(),
-    onAnswerSurvey: vi.fn(), onDismissSurvey: vi.fn(), onDisableSurveys: vi.fn(),
-    onAnswerDiagnostic: vi.fn(), onDismissDiagnostic: vi.fn(), onFlagDiagnostic: vi.fn(),
   };
 }
 
@@ -144,18 +141,13 @@ describe("MobileAssistantPanel", () => {
     expect(props.onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("submits diagnostic answers", () => {
-    const diagnostic: DiagnosticItem = {
-      id: "diagnostic-1", projectId: 1, conceptIds: [], dimension: "conceptual",
-      itemType: "single_choice", prompt: "哪个选项正确？",
-      options: [{ value: "a", label: "选项 A" }, { value: "b", label: "选项 B" }],
-      sourceRefs: [], rationale: "", difficulty: 0.5, createdAt: "2026-07-30T00:00:00Z",
-    };
-    const props = { ...createProps(), diagnosticItem: diagnostic };
+  it("no longer renders automatic surveys or understanding checks", () => {
+    // The retired profile flow must not reappear as cards in the answer view.
+    const props = createProps();
     render(<MobileAssistantPanel {...props} />);
-    fireEvent.click(screen.getByRole("button", { name: "选项 A" }));
-    fireEvent.click(screen.getByRole("button", { name: "提交" }));
-    expect(props.onAnswerDiagnostic).toHaveBeenCalledWith("a");
+    expect(screen.queryByText("帮我更了解你的习惯")).toBeNull();
+    expect(screen.queryByText("快速理解检查")).toBeNull();
+    expect(screen.queryByRole("button", { name: "提交" })).toBeNull();
   });
 
   it("locks session-changing actions while loading", () => {

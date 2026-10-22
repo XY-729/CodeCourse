@@ -10,6 +10,8 @@ export type BaseCheckpoint = {
   taskType: string;
   inputHash: string;
   updatedAt: string;
+  /** Frozen knowledge-tree versions; a changed tree invalidates resumed work. */
+  treeSnapshot?: { topology_version: number; state_version: number } | null;
 };
 
 export type OutlineCheckpoint = BaseCheckpoint & {
@@ -63,7 +65,17 @@ export function parseOutlineCheckpoint(
     version: cp.version as number, taskType: expectedTaskType,
     inputHash: expectedInputHash, updatedAt: cp.updatedAt as string,
     generated: true, generatedContent: cp.generatedContent,
+    treeSnapshot: readTreeSnapshot(cp.treeSnapshot),
   };
+}
+
+function readTreeSnapshot(value: unknown): { topology_version: number; state_version: number } | null {
+  if (!value || typeof value !== "object") return null;
+  const snapshot = value as Record<string, unknown>;
+  const topology = Number(snapshot.topology_version);
+  const state = Number(snapshot.state_version);
+  if (!Number.isFinite(topology) || !Number.isFinite(state)) return null;
+  return { topology_version: topology, state_version: state };
 }
 
 /** Full parser for detailed lesson — validates ALL fields and returns them. */
@@ -124,6 +136,7 @@ export function parseDetailedLessonCheckpoint(
     version: cp.version as number, taskType: "outline_lesson",
     inputHash: expectedInputHash, updatedAt: cp.updatedAt as string,
     plan, generatedByIndex: gbi, repairGenerated,
+    treeSnapshot: readTreeSnapshot(cp.treeSnapshot),
   };
 }
 

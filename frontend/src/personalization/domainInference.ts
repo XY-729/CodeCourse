@@ -32,6 +32,7 @@ export type ObserverDomainAssessment = {
   evidenceQuotes: string[];
 };
 
+/** @deprecated Historical archives only; new observers do not produce surveys. */
 export type ObserverSurveyCandidate = {
   question: string;
   dimension: string;
@@ -40,6 +41,7 @@ export type ObserverSurveyCandidate = {
   confidence: number;
 };
 
+/** @deprecated Historical archives only; new observers do not produce diagnoses. */
 export type ObserverDiagnosticCandidate = {
   concepts: string[];
   dimension: "familiarity" | "conceptual" | "code_reading" | "implementation" | "debugging" | "transfer";
@@ -69,7 +71,9 @@ export type ObserverResult = {
   knowledgeEvidence: ObserverKnowledgeEvidence[];
   conceptRelations: ObserverConceptRelation[];
   domainAssessments: ObserverDomainAssessment[];
+  /** @deprecated Always null on new reads. */
   surveyCandidate: ObserverSurveyCandidate | null;
+  /** @deprecated Always null on new reads. */
   diagnosticCandidate: ObserverDiagnosticCandidate | null;
   previousTeachingOutcome: ObserverTeachingOutcome | null;
 };
@@ -223,69 +227,6 @@ export function parseObserverResult(raw: string): ObserverResult {
     })
     .filter((item): item is ObserverDomainAssessment => item !== null);
 
-  const surveyValue = value.survey_candidate ?? value.surveyCandidate;
-  let surveyCandidate: ObserverSurveyCandidate | null = null;
-  if (surveyValue && typeof surveyValue === "object" && !Array.isArray(surveyValue)) {
-    const item = surveyValue as Record<string, unknown>;
-    const options = arrayOfRecords(item.options)
-      .map((option) => ({
-        value: cleanText(option.value, 80),
-        label: cleanText(option.label, 120),
-      }))
-      .filter((option) => option.value && option.label)
-      .slice(0, 3);
-    const question = cleanText(item.question, 240);
-    if (question && options.length >= 2) {
-      surveyCandidate = {
-        question,
-        dimension: cleanText(item.dimension, 80),
-        options,
-        rationale: cleanText(item.rationale),
-        confidence: finiteScore(item.confidence),
-      };
-    }
-  }
-
-  const diagnosticValue = value.diagnostic_candidate ?? value.diagnosticCandidate;
-  let diagnosticCandidate: ObserverDiagnosticCandidate | null = null;
-  if (diagnosticValue && typeof diagnosticValue === "object" && !Array.isArray(diagnosticValue)) {
-    const item = diagnosticValue as Record<string, unknown>;
-    const dimension = cleanText(item.dimension);
-    const itemType = cleanText(item.item_type ?? item.itemType);
-    const prompt = cleanText(item.prompt, 1200);
-    const concepts = (Array.isArray(item.concept_keys ?? item.concepts)
-      ? (item.concept_keys ?? item.concepts) as unknown[]
-      : []).map((entry) => cleanText(entry, 120)).filter(Boolean).slice(0, 4);
-    const sourceRefs = arrayOfRecords(item.source_refs ?? item.sourceRefs).slice(0, 4);
-    const answerKey = item.answer_key ?? item.answerKey;
-    if (
-      concepts.length
-      && prompt
-      && sourceRefs.length
-      && answerKey != null
-      && ["familiarity", "conceptual", "code_reading", "implementation", "debugging", "transfer"].includes(dimension)
-      && ["single_choice", "true_false", "code_output", "error_location", "step_order"].includes(itemType)
-    ) {
-      const parsedCandidate: ObserverDiagnosticCandidate = {
-        concepts,
-        dimension: dimension as ObserverDiagnosticCandidate["dimension"],
-        itemType: itemType as ObserverDiagnosticCandidate["itemType"],
-        prompt,
-        options: arrayOfRecords(item.options).slice(0, 8).map((option) => ({
-          value: option.value,
-          label: cleanText(option.label, 180),
-        })).filter((option) => option.label),
-        answerKey,
-        sourceRefs,
-        rationale: cleanText(item.rationale),
-        difficulty: finiteScore(item.difficulty),
-      };
-      if (isObjectiveDiagnosticCandidate(parsedCandidate)) {
-        diagnosticCandidate = parsedCandidate;
-      }
-    }
-  }
-
   const outcomeValue = value.previous_teaching_outcome ?? value.previousTeachingOutcome;
   let previousTeachingOutcome: ObserverTeachingOutcome | null = null;
   if (outcomeValue && typeof outcomeValue === "object" && !Array.isArray(outcomeValue)) {
@@ -318,8 +259,8 @@ export function parseObserverResult(raw: string): ObserverResult {
     knowledgeEvidence,
     conceptRelations,
     domainAssessments,
-    surveyCandidate,
-    diagnosticCandidate,
+    surveyCandidate: null,
+    diagnosticCandidate: null,
     previousTeachingOutcome,
   };
 }
@@ -423,9 +364,7 @@ export function buildObserverPrompt(input: {
 - 不推断年龄、学历、智力、人格或其他敏感属性。
 - socket、bind 等网络概念的证据不能扩散为数据结构、线程池等其他领域已掌握。
 - 只有提供了上一轮教学策略时才评估 previous_teaching_outcome；证据必须逐字来自当前用户消息。
-- 动态偏好问题必须针对本轮暴露出的真实不确定项，不使用固定问卷。回答数少于 5 时 survey_candidate 必须为 null。
-- 理解检查只能在已完成回答数是 5 的倍数时提出，并且必须完全依据下方真实来源摘录。
-- 理解检查必须有唯一、可本地判定的答案；没有可靠来源、答案存在歧义或当前已有检查时，diagnostic_candidate 必须为 null。
+- 不输出偏好问卷或自动诊断；用户原文要求保持原文，不转换为固定风格数值。
 
 用户问题：
 ${input.question}
@@ -463,7 +402,7 @@ ${input.unfamiliarConcepts.join("、") || "(无)"}
 
 当前真实来源：${input.sourceType || "(无)"} ${input.sourcePath || "(无)"}
 来源摘录：
-${input.sourceExcerpt?.slice(0, 2200) || "(无可靠来源，diagnostic_candidate 必须为 null)"}
+${input.sourceExcerpt?.slice(0, 2200) || "(无可靠来源)"}
 
 只输出 JSON：
 {
@@ -491,28 +430,11 @@ ${input.sourceExcerpt?.slice(0, 2200) || "(无可靠来源，diagnostic_candidat
     "concepts": ["概念"],
     "evidence_quotes": ["用户原文"]
   }],
-  "survey_candidate": null,
   "previous_teaching_outcome": ${input.previousAppliedTeaching ? `{
     "result": "successful|partially_successful|unsuccessful|advanced_followup|topic_changed|unknown",
     "confidence": 0.0,
     "reason": "只根据当前用户消息判断上一轮讲解效果",
     "evidence_quote": "当前用户消息中的原文"
-  }` : "null"},
-  "diagnostic_candidate": {
-    "concept_keys": ["概念名"],
-    "dimension": "familiarity|conceptual|code_reading|implementation|debugging|transfer",
-    "item_type": "single_choice|true_false|code_output|error_location|step_order",
-    "prompt": "基于当前来源、答案唯一的问题",
-    "options": [{"value": "稳定答案键", "label": "用户看到的选项"}],
-    "answer_key": "与唯一正确选项 value 完全一致；步骤排序时为 value 数组",
-    "source_refs": [{
-      "source_type": "course|file|qa",
-      "source_path": "${input.sourcePath || "实际来源路径"}",
-      "excerpt": "上方来源摘录中的原文",
-      "start_line": 1
-    }],
-    "rationale": "为什么答案可由来源唯一确定",
-    "difficulty": 0.0
-  }
+  }` : "null"}
 }`;
 }

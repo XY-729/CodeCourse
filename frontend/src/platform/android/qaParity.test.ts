@@ -2,6 +2,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import type { QAAskPayload, QARecord, LLMSettings } from "../../api/client";
+import { parseTeachingManifest } from "./teachingManifest";
 
 const harness = vi.hoisted(() => ({ sql: null as unknown as DatabaseSync, stream: vi.fn(), http: vi.fn(), readRepo: vi.fn(), readGenerated: vi.fn() }));
 vi.mock("./llmStream", () => ({ streamAndroidLLM: harness.stream }));
@@ -17,21 +18,16 @@ vi.mock("./database", () => ({ MobileDatabase: class {
 import { AndroidLocalProvider } from "./localProvider";
 
 type Internals = {
-  courseCompletion: { context: ReturnType<typeof vi.fn> };
   getPrompts: ReturnType<typeof vi.fn>;
   getLLMSettings: () => Promise<LLMSettings>;
   getProject: ReturnType<typeof vi.fn>;
-  getLearnerPreferences: ReturnType<typeof vi.fn>;
   setting: ReturnType<typeof vi.fn>;
   setSetting: ReturnType<typeof vi.fn>;
-  upsertCourse: ReturnType<typeof vi.fn>;
+  teachingContext: ReturnType<typeof vi.fn>;
+  finalizeAnswer: ReturnType<typeof vi.fn>;
   getQA: (project: number, id: number) => Promise<QARecord>;
   listQAThreads: ReturnType<typeof vi.fn>;
   getCurrentHandoff: ReturnType<typeof vi.fn>;
-  termLearningContext: ReturnType<typeof vi.fn>;
-  postprocessAnswer: ReturnType<typeof vi.fn>;
-  teacherStrategyForQuestion: ReturnType<typeof vi.fn>;
-  runAndroidObserver: ReturnType<typeof vi.fn>;
   resumeAnswerJobs: ReturnType<typeof vi.fn>;
   processAnswerJobs: () => Promise<void>;
   callLLM: (messages: Array<{ role: string; content: string }>) => Promise<string>;
@@ -46,19 +42,16 @@ beforeEach(() => {
   harness.sql = new DatabaseSync(":memory:");
   harness.sql.exec(`CREATE TABLE qa_records(id INTEGER PRIMARY KEY,project_id,session_id,parent_qa_id,relation_type,source_type,source_path,display_title,selected_text,question,answer_md,provider,model,output_path,retrieval_trace,favorite,created_at,updated_at,selection_range_json);
     CREATE TABLE qa_postprocess_jobs(qa_record_id INTEGER PRIMARY KEY,project_id,payload_json,context_snapshot,metadata_json,applied_plan_json,status DEFAULT 'pending',evidence_done DEFAULT 0,planner_done DEFAULT 0,observer_done DEFAULT 0,last_error);
-    CREATE TABLE learner_inferences(scope_type,scope_id,status,summary,updated_at);
     CREATE TABLE teaching_handoffs(project_id,qa_record_id);
-    CREATE TABLE learning_anchors(project_id,term_text,summary,updated_at);
-    CREATE TABLE observer_jobs(id,project_id,qa_record_id,status);`);
+    CREATE TABLE learning_anchors(project_id,term_text,summary,updated_at);`);
   provider = new AndroidLocalProvider() as unknown as typeof provider;
-  provider.courseCompletion.context = vi.fn(async () => "<completed_course_learning>已学习借用基础</completed_course_learning>");
   provider.getPrompts = vi.fn(async () => ({ "prompt.system": "保留讲解要求", "prompt.qa.answer": "问题：{question}\n材料：{context_text}\n{session_context}" }));
   provider.getLLMSettings = async () => ({ enabled: true, has_api_key: true, provider: "saved", base_url: "https://saved.test", model: "saved", masked_api_key: "***" });
   provider.getProject = vi.fn(async () => ({ id: 1, name: "测试项目", project_type: "repository" }));
-  provider.getLearnerPreferences = vi.fn(async () => ({}));
   provider.setting = vi.fn(async () => null);
   provider.setSetting = vi.fn();
-  provider.upsertCourse = vi.fn();
+  provider.teachingContext = vi.fn(async () => "<teaching_context><knowledge_tree>闭包</knowledge_tree><user_requirements>解释 return</user_requirements></teaching_context>");
+  provider.finalizeAnswer = vi.fn(async () => undefined);
   provider.getQA = async (project, id) => {
     const row = harness.sql.prepare("SELECT * FROM qa_records WHERE project_id=? AND id=?").get(project, id);
     if (!row) throw new Error("回答不存在");
@@ -66,10 +59,6 @@ beforeEach(() => {
   };
   provider.listQAThreads = vi.fn(async () => []);
   provider.getCurrentHandoff = vi.fn(async () => null);
-  provider.termLearningContext = vi.fn(async () => "已有画像");
-  provider.postprocessAnswer = vi.fn();
-  provider.teacherStrategyForQuestion = vi.fn(async () => null);
-  provider.runAndroidObserver = vi.fn();
   provider.resumeAnswerJobs = vi.fn();
   provider.search = vi.fn(async () => []);
   harness.readRepo.mockResolvedValue("授权参考文件正文");
@@ -77,24 +66,50 @@ beforeEach(() => {
 });
 afterEach(() => { harness.sql.close(); vi.unstubAllGlobals(); });
 
-it("publishes body before save, preserves selection, provider and model, and defers every model analysis", async () => {
+it("publishes the body before save with only one model call and no background analysis", async () => {
   let finish!: () => void;
   harness.stream.mockImplementation((_options, onDelta) => { onDelta("**首段**"); return new Promise<string>(resolve => { finish = () => resolve("**首段**"); }); });
   const onDelta = vi.fn();
   const pending = provider.askQuestionStream(1, payload, { onDelta });
   await vi.waitFor(() => expect(onDelta).toHaveBeenCalledWith("**首段**"));
   expect(harness.sql.prepare("SELECT * FROM qa_records").all()).toHaveLength(0);
-  expect(provider.teacherStrategyForQuestion).not.toHaveBeenCalled();
-  expect(harness.readRepo).not.toHaveBeenCalled();
   expect(harness.readGenerated).not.toHaveBeenCalled();
   finish();
   const record = await pending;
   expect(record).toMatchObject({ session_id: record.id, provider: "test", model: "configured", answer_md: "**首段**", selection_range: payload.selection_range });
   expect(harness.sql.prepare("SELECT * FROM qa_postprocess_jobs").all()).toHaveLength(1);
+  expect(harness.stream).toHaveBeenCalledTimes(1);
+  expect(harness.http).not.toHaveBeenCalled();
   const sent = JSON.parse(harness.stream.mock.calls[0][0].body);
   expect(sent).toMatchObject({ stream: true, model: "configured", max_tokens: 65536 });
   expect(sent.messages[0].content).toContain("保留讲解要求");
-  expect(sent.messages[1].content).toContain("已学习借用基础");
+  expect(sent.messages[0].content).toContain("TEACHING");
+  expect(sent.messages[1].content).toContain("<teaching_context>");
+  expect(sent.messages[1].content).toContain("解释 return");
+  expect(provider.finalizeAnswer).toHaveBeenCalledTimes(1);
+});
+
+it("keeps the same-response manifest as a hidden sidecar and parses HANDOFF locally", async () => {
+  const manifest = {
+    schema_version: 2,
+    concepts: [{ ref: "c", existing_id: null, name: "闭包", domain: "general", scope: "global", parent_ref: null, aliases: [] }],
+    coverage: [{ concept_ref: "c", aspect: "基本原理", kind: "explained", dimension: "conceptual", core: true, quote: "闭包用于组织变量关系。" }],
+    terms: [{ concept_ref: "c", text: "闭包", quote: "闭包用于组织变量关系。" }],
+    placement_changes: [],
+  };
+  harness.stream.mockImplementation(async (_options, onDelta) => {
+    onDelta(`# 回答\n\n闭包用于组织变量关系。\nTEACHING: ${JSON.stringify(manifest)}\n`);
+    return "";
+  });
+  const record = await provider.askQuestionStream(1, payload, {});
+  expect(record.answer_md.startsWith("# 回答")).toBe(true);
+  expect(record.answer_md).toContain("<!-- codecourse-teaching:");
+  expect(record.answer_md).not.toContain("\nTEACHING:");
+  const parsed = parseTeachingManifest(record.answer_md);
+  expect(parsed.status).toBe("complete");
+  expect(parsed.manifest?.coverage[0].quote).toBe("闭包用于组织变量关系。");
+  expect(harness.stream).toHaveBeenCalledTimes(1);
+  expect(harness.http).not.toHaveBeenCalled();
 });
 
 it("does not save or enqueue a canceled answer", async () => {
@@ -128,18 +143,14 @@ it("lets new background model calls yield until the foreground answer saves", as
   await expect(background).resolves.toBe("后台结果");
 });
 
-it("resumes persisted metadata without another model call after a partial failure", async () => {
-  const onEnriched = vi.fn();
-  window.addEventListener("codecourse:qa-enriched", onEnriched);
+it("replays only local publication after a crash, never another model call", async () => {
   harness.stream.mockImplementation(async (_options, onDelta) => { onDelta("正文"); return "正文"; });
   const record = await provider.askQuestionStream(1, payload, {});
-  const metadata = 'TITLE: 标题\nTERMS: []\nHANDOFF: {"engagement":"utility","continuity":"preserve","topic":"主题","is_new_topic":true,"new_topic":"主题","existing_topic":"","used_prior_context":false}';
-  harness.sql.prepare("UPDATE qa_postprocess_jobs SET metadata_json=?,evidence_done=1,planner_done=1,status='failed' WHERE qa_record_id=?").run(metadata, record.id);
+  expect(provider.finalizeAnswer).toHaveBeenCalledTimes(1);
+  harness.sql.prepare("UPDATE qa_postprocess_jobs SET status='failed' WHERE qa_record_id=?").run(record.id);
   await provider.processAnswerJobs();
+  expect(provider.finalizeAnswer).toHaveBeenCalledTimes(2);
+  expect(harness.stream).toHaveBeenCalledTimes(1);
   expect(harness.http).not.toHaveBeenCalled();
-  expect(provider.postprocessAnswer).not.toHaveBeenCalled();
-  expect(provider.teacherStrategyForQuestion).not.toHaveBeenCalled();
-  expect(provider.runAndroidObserver).toHaveBeenCalledTimes(1);
-  expect(harness.sql.prepare("SELECT status FROM qa_postprocess_jobs").get()).toMatchObject({ status: "completed" });
-  expect(onEnriched).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ detail: { projectId: 1, qaRecordId: record.id } }));
+  expect(harness.sql.prepare("SELECT status FROM qa_postprocess_jobs").get()).toMatchObject({ status: "running" });
 });

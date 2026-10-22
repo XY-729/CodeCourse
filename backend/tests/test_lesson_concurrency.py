@@ -44,6 +44,55 @@ def _setup_temp_workspace():
     return tmpdir, workspace, generated
 
 
+def responsibility_plan(plan):
+    """Upgrade recorded content to the frozen range contract without changing it."""
+    refs = {}
+    for number, section in enumerate(plan["sections"], 1):
+        section.update(section_id=f"section-{number}", depends_on=[], reference_only=[], avoid_repeat=[])
+        for item in section["items"]:
+            ref = refs.setdefault(item["name"], f"concept-{len(refs)}")
+            item.update(concept_ref=ref, existing_id=None, aspect=item.get("focus") or item["name"],
+                        dimension="conceptual", owner_section_id=section["section_id"],
+                        teaching_mode="first_explanation", reference_section_ids=[])
+    return plan
+
+
+def response_manifest(body, items=(), terms=()):
+    concepts, coverage, candidates = [], [], []
+    for item in items:
+        ref = item["concept_ref"]
+        concepts.append({"ref": ref, "existing_id": item.get("existing_id"), "name": item["name"],
+                         "domain": "test", "scope": "global", "parent_ref": None, "aliases": []})
+        marker = f"### {item['name']}"
+        if marker in body:
+            start = body.index(marker)
+            end = body.find("\n### ", start + len(marker))
+            quote = body[start:end if end >= 0 else len(body)].strip()
+        else:
+            quote = body.strip()
+        coverage.append({"concept_ref": ref, "aspect": item["aspect"], "kind": "explained",
+                         "dimension": item["dimension"], "core": True, "quote": quote})
+    for number, text in enumerate(terms):
+        ref = f"term-{number}"
+        concepts.append({"ref": ref, "existing_id": None, "name": text, "domain": "test", "scope": "global", "parent_ref": None, "aliases": []})
+        quote = next(line for line in body.splitlines() if text in line)
+        candidates.append({"concept_ref": ref, "text": text, "quote": quote})
+    manifest = {"schema_version": 2, "concepts": concepts, "coverage": coverage, "terms": candidates}
+    return body + "\nTEACHING: " + json.dumps(manifest, ensure_ascii=False)
+
+
+def response_model(responses):
+    plan = json.loads(responses[0])
+    def model(*args, **kwargs):
+        prompt = args[3][-1]["content"]
+        if "核心正文章节" in prompt:
+            title = prompt.split("章节标题：", 1)[1].splitlines()[0]
+            number = next(i for i, section in enumerate(plan["sections"], 1) if section["title"] == title)
+            return responses[number]
+        return responses[-1] if "责任编辑" in prompt else responses[0]
+    return model
+
+
 class RepositoryLessonConcurrencyTests(unittest.TestCase):
     def setUp(self):
         self._tmpdir, self.workspace, self.generated = _setup_temp_workspace()
@@ -81,7 +130,7 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
 
     def _plan(self):
         return json.dumps(
-            {
+            responsibility_plan({
                 "lesson_title": "入口与启动",
                 "position": "理解程序从何处启动。",
                 "objectives": ["能够解释 start 的调用链"],
@@ -91,12 +140,12 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
                     {"title": "错误处理", "items": [{"name": "启动失败", "kind": "concept", "focus": "异常路径"}]},
                     {"title": "验证方式", "items": [{"name": "验证启动", "kind": "concept", "focus": "如何验证"}]},
                 ],
-            },
+            }),
             ensure_ascii=False,
         )
 
     def _responses(self):
-        return [
+        responses = [
             self._plan(),
             "## 启动入口\n\n### start\n\n入口函数，程序从这里开始执行。",
             "## 启动流程\n\n### 运行入口\n\n从 main 进入，调用 start。",
@@ -104,6 +153,11 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
             "## 验证方式\n\n### 验证启动\n\n运行命令验证。",
             "## 综合串联\n\nstart 是唯一入口，失败时记录日志。\n\n## 本课小结\n\n从入口到验证的完整路径。",
         ]
+        plan = json.loads(self._plan())
+        for number, section in enumerate(plan["sections"], 1):
+            responses[number] = response_manifest(responses[number], section["items"])
+        responses[-1] = response_manifest(responses[-1])
+        return responses
 
     def test_repository_lesson_is_generated_in_concurrent_sections_with_progress(self):
         from app.services.storage import upsert_lesson_files
@@ -113,7 +167,7 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
 
         with patch(
             "app.services.generation_service.call_openai_compatible_chat",
-            side_effect=responses,
+            side_effect=response_model(responses),
         ) as mocked:
             created = self.client.post(
                 f"/api/projects/{self.project.id}/lessons/outline",
@@ -123,7 +177,7 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
         self.assertEqual(created.status_code, 200)
         task_id = created.json()["id"]
         task = self.client.get(f"/api/projects/{self.project.id}/tasks/{task_id}").json()
-        self.assertEqual(task["status"], "completed")
+        self.assertEqual(task["status"], "completed", task)
         self.assertEqual(task["progress_current"], 7)
         self.assertEqual(task["progress_total"], 7)
         self.assertEqual(task["stage_label"], "生成完成")
@@ -131,7 +185,8 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
 
         planner_prompt = mocked.call_args_list[0].args[3][1]["content"]
         self.assertIn("章节规划", planner_prompt)
-        self.assertIn("4-10 个章节", planner_prompt)
+        self.assertIn("章节数量由内容决定", planner_prompt)
+        self.assertNotIn("4-10 个章节", planner_prompt)
 
         section_prompt = mocked.call_args_list[1].args[3][1]["content"]
         self.assertIn("核心正文章节", section_prompt)
@@ -143,8 +198,7 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
         self.assertIn("# 第 1 课：入口与启动", lesson)
         for item in ("启动入口", "启动流程", "错误处理", "验证方式"):
             self.assertIn(item, lesson)
-        self.assertIn("## 本课目标", lesson)
-        self.assertIn("本课定位", lesson)
+        self.assertIn("codecourse-teaching:", lesson)
 
     def test_repository_lesson_failure_keeps_previous_file(self):
         lesson_dir = self.generated / str(self.project.id) / "lessons"
@@ -153,7 +207,7 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
         output_path.write_text("# 旧课件\n\n保留我。\n", encoding="utf-8")
 
         invalid_plan = json.dumps(
-            {"lesson_title": "入口与启动", "sections": [{"title": "只有一章", "items": ["start"]}]},
+            {"lesson_title": "入口与启动", "sections": []},
             ensure_ascii=False,
         )
 
@@ -176,21 +230,22 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
         from app.services.storage import list_document_terms, upsert_lesson_files
         upsert_lesson_files(self.project.id, 1, [("src/main.py", "index")])
         responses = self._responses()
-        responses[1] = 'TERMS: ["事件循环"]\n' + responses[1] + '\n本次运行涉及事件循环。'
-        with patch("app.services.generation_service.call_openai_compatible_chat", side_effect=responses) as model:
+        body = responses[1].split("\nTEACHING:")[0] + "\n本次运行涉及事件循环。"
+        responses[1] = response_manifest(body, json.loads(self._plan())["sections"][0]["items"], ["事件循环"])
+        with patch("app.services.generation_service.call_openai_compatible_chat", side_effect=response_model(responses)) as model:
             created = self.client.post(
                 f"/api/projects/{self.project.id}/lessons/outline",
                 json={"lesson_number": 1, "title": "入口与启动"},
             )
         task = self.client.get(f"/api/projects/{self.project.id}/tasks/{created.json()['id']}").json()
-        self.assertEqual(task['status'], 'completed')
+        self.assertEqual(task['status'], 'completed', task)
         self.assertEqual(model.call_count, len(responses))
         content = (self.generated / str(self.project.id) / 'lessons/lesson_01.md').read_text(encoding='utf-8')
         self.assertNotIn('TERMS:', content)
         self.assertEqual(content.count('## 启动入口'), 1)
         terms = list_document_terms(self.project.id, 'course', 'lessons/lesson_01.md')
         self.assertEqual([item.term_text for item in terms], ['事件循环'])
-        self.assertEqual(terms[0].detection_source, 'model')
+        self.assertEqual(terms[0].detection_source, 'teaching_manifest_v2')
         span = terms[0].source_span
         self.assertEqual(content[span['start']:span['end']], '事件循环')
 
@@ -243,6 +298,7 @@ class OutlineProgressTests(unittest.TestCase):
 
     def test_outline_task_reports_four_step_progress(self):
         generated = "# 项目学习总纲\n\n## FILE: project_map.md\n\n# 项目结构说明\n\n## FILE: outline.md\n\n# 学习路线\n\n### 第 1 课：启动\n\n讲解启动流程。"
+        generated = response_manifest(generated)
         with patch(
             "app.services.generation_service.call_openai_compatible_chat",
             return_value=generated,
@@ -254,7 +310,7 @@ class OutlineProgressTests(unittest.TestCase):
 
         task_id = task.json()["id"]
         task_detail = self.client.get(f"/api/projects/{self.project.id}/tasks/{task_id}").json()
-        self.assertEqual(task_detail["status"], "completed")
+        self.assertEqual(task_detail["status"], "completed", task_detail)
         self.assertEqual(task_detail["progress_current"], 4)
         self.assertEqual(task_detail["progress_total"], 4)
         self.assertEqual(task_detail["stage_label"], "生成完成")
@@ -270,6 +326,8 @@ class OutlineProgressTests(unittest.TestCase):
         from app.services.storage import get_lesson_file_records
 
         generated = "# 项目学习总纲\n\n## FILE: project_map.md\n\n# 项目结构说明\n\n## FILE: outline.md\n\n# 学习路线\n\n### 第 1 课：启动\n\n讲解启动流程。"
+
+        generated = response_manifest(generated)
 
         async def fake_stream(*_args, **_kwargs):
             yield {"event": "accumulated", "data": {"text": generated}}
@@ -320,7 +378,7 @@ class FileLessonProgressTests(unittest.TestCase):
     def test_file_lesson_task_reports_three_step_progress(self):
         with patch(
             "app.services.generation_service.call_openai_compatible_chat",
-            return_value="# 详细分析：main.py\n\n## 职责\n\n启动应用。",
+            return_value=response_manifest("# 详细分析：main.py\n\n## 职责\n\n启动应用。"),
         ):
             task = self.client.post(
                 f"/api/projects/{self.project.id}/lessons/file",
@@ -329,7 +387,7 @@ class FileLessonProgressTests(unittest.TestCase):
 
         task_id = task.json()["id"]
         task_detail = self.client.get(f"/api/projects/{self.project.id}/tasks/{task_id}").json()
-        self.assertEqual(task_detail["status"], "completed")
+        self.assertEqual(task_detail["status"], "completed", task_detail)
         self.assertEqual(task_detail["progress_current"], 3)
         self.assertEqual(task_detail["progress_total"], 3)
         self.assertEqual(task_detail["stage_label"], "生成完成")

@@ -4,10 +4,15 @@ import type { TeachingDocument } from "../../personalization/teachingApi";
 type Row = Record<string, unknown>;
 type Host = {
   document: (project: number, path: string) => Promise<TeachingDocument>;
-  scan: (project: number, path: string) => Promise<TeachingDocument>;
   evidence: (project: number, data: Row) => Promise<{ evidence: { id: string } }>;
+  stateChanged: () => Promise<void>;
 };
 
+/**
+ * Course completion publishes factual "studied" evidence straight from the
+ * saved manifest-driven index. It never calls a model: an incomplete index keeps
+ * the progress fact and leaves the knowledge ranges pending for a later retry.
+ */
 export class CourseCompletion {
   private running = new Set<string>();
   constructor(private db: MobileDatabase, private host: Host) {}
@@ -32,6 +37,7 @@ export class CourseCompletion {
       [row.status === "completed" ? "pending" : "none", crypto.randomUUID(), row.id]);
   }
 
+  /** Explicit user retry; still fully local. */
   async retry(project: number, id: number) {
     await this.db.transaction(async () => {
       const row = (await this.db.queryInTx<Row>("SELECT * FROM learning_states WHERE id=? AND project_id=? AND source_type='course' AND status='completed'", [id, project]))[0];
@@ -60,9 +66,14 @@ export class CourseCompletion {
     try {
       await this.db.run("UPDATE learning_states SET profile_status='running' WHERE id=? AND profile_request=? AND status='completed'", [id, request]);
       const project = Number(row.project_id), path = String(row.source_path);
-      let document = await this.host.document(project, path);
-      if (document.indexStatus !== "complete") document = await this.host.scan(project, path);
-      if (document.indexStatus !== "complete") throw new Error("课件知识索引未完整通过校验，请重试");
+      const document = await this.host.document(project, path);
+      if (document.indexStatus !== "complete") {
+        // Knowledge ranges wait for a validated manifest; the progress fact stays.
+        // Recovery retries once per start, and an explicit retry is still local.
+        await this.db.run("UPDATE learning_states SET profile_status='pending',profile_error=? WHERE id=? AND profile_request=? AND status='completed'",
+          ["知识清单未就绪，已保存完成进度；索引就绪后可重试", id, request]);
+        return;
+      }
       const groups = new Map<string, typeof document.passages>();
       for (const passage of document.passages) if (["brief", "explained"].includes(passage.kind)) {
         groups.set(passage.concept_id, [...(groups.get(passage.concept_id) ?? []), passage]);
@@ -84,26 +95,9 @@ export class CourseCompletion {
       });
     } catch (error) {
       await this.db.run("UPDATE learning_states SET profile_status='failed',profile_error=? WHERE id=? AND profile_request=? AND status='completed'", [String(error instanceof Error ? error.message : error).slice(0, 500), id, request]);
-    } finally { this.running.delete(key); }
-  }
-
-  async context(project: number) {
-    const rows = await this.db.query<Row>(`SELECT e.result_json,e.object_json,c.display_name FROM learning_evidence_v2 e
-      JOIN concepts c ON c.id=e.concept_id JOIN learning_states l ON l.id=json_extract(e.object_json,'$.learningStateId')
-      JOIN teaching_documents d ON d.project_id=l.project_id AND d.source_type='course' AND d.source_path=l.source_path
-      WHERE e.source='course_completion' AND e.voided=0 AND l.status='completed' AND d.content_hash=json_extract(e.object_json,'$.contentHash')
-      AND ((e.scope_type='global' AND e.scope_id='local-user') OR (e.scope_type='project' AND e.scope_id=?))
-      AND NOT EXISTS (SELECT 1 FROM learning_evidence_v2 v WHERE v.target_evidence_id=e.id AND v.action='void_evidence' AND v.voided=0)
-      ORDER BY e.event_time DESC LIMIT 60`, [String(project)]);
-    const records: Row[] = [];
-    for (const row of rows) {
-      const result = JSON.parse(String(row.result_json)), object = JSON.parse(String(row.object_json));
-      const ranges = result.ranges ?? [];
-      const item = { concept: row.display_name, ranges: ranges.slice(0, 12), rangeCount: ranges.length, sourcePath: object.sourcePath, status: "studied_not_verified" };
-      if (JSON.stringify([...records, item]).length > 7000) break;
-      records.push(item);
-      if (records.length === 30) break;
+    } finally {
+      this.running.delete(key);
+      await this.host.stateChanged().catch(() => undefined);
     }
-    return `\n<completed_course_learning>\n${JSON.stringify(records).replace(/</g, "\\u003c")}\n</completed_course_learning>\n以上仅表示用户已学过的具体范围，不确认理解或掌握。相同基础简短衔接并优先引用原讲解；保留新范围、进阶应用和必要示例。明确困惑、不会或要求重讲时正常展开；未列出不等于不会。\n`;
   }
 }

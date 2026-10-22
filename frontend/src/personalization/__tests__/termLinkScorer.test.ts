@@ -128,7 +128,9 @@ describe("selectTopTerms", () => {
     expect(result.length).toBe(1); // Only first occurrence
   });
 
-  it("respects per-1000-char density limit", () => {
+  it("no longer caps terms by text length", () => {
+    // The old per-1000-character budget is retired: every distinct concept
+    // keeps its entry regardless of document length.
     const terms = Array.from({ length: 20 }, (_, i) => ({
       ...makeCandidate({ conceptId: `c${i}`, text: `Term${i}` }),
       mastery: 0.3,
@@ -137,8 +139,10 @@ describe("selectTopTerms", () => {
       linkScore: 0.8,
       displayTier: "prominent" as const,
     }));
-    const result = selectTopTerms(terms as any, 2000); // 2000 chars → max 12 terms
-    expect(result.length).toBeLessThanOrEqual(12);
+    const shortDoc = selectTopTerms(terms as any, 500);
+    const longDoc = selectTopTerms(terms as any, 20_000);
+    expect(shortDoc).toHaveLength(20);
+    expect(longDoc).toHaveLength(20);
   });
 
   it("excludes terms with displayTier='none'", () => {

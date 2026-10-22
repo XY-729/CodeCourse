@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from teaching_manifest_fixture import with_manifest
+
 
 def _setup_temp_workspace():
     import app.core.config as cfg
@@ -97,9 +99,10 @@ class GhostCourseCleanupTests(unittest.TestCase):
         self.assertEqual(leftovers, [], f"ghost file survived failed file_lesson: {leftovers}")
 
     def test_file_lesson_success_publishes_final_path_and_no_streaming_file(self):
+        body = with_manifest("# 标题\n\n正文内容。\n", [("标题", "正文内容。")])
         with patch(
             "app.services.generation_service.call_openai_compatible_chat",
-            return_value="# 标题\n\n正文内容。\n",
+            return_value=body,
         ):
             response = self.client.post(
                 f"/api/projects/{self.project.id}/lessons/file",
@@ -112,16 +115,23 @@ class GhostCourseCleanupTests(unittest.TestCase):
 
         final = self._course_dir() / "files" / "src_main.py_detailed.md"
         self.assertTrue(final.exists(), "final file was not published")
-        self.assertEqual(final.read_text(encoding="utf-8").strip(), "# 标题\n\n正文内容。".strip())
+        published = final.read_text(encoding="utf-8")
+        visible = published.split("<!-- codecourse-teaching:", 1)[0].strip()
+        self.assertEqual(visible, "# 标题\n\n正文内容。".strip())
+        self.assertIn("<!-- codecourse-teaching:", published)
         streaming = list(self._course_dir().rglob("*.streaming"))
         self.assertEqual(streaming, [], f"streaming file survived success: {streaming}")
 
     def test_file_lesson_success_strips_terms_metadata_line(self):
+        body = with_manifest(
+            "# 标题\n\n正文内容里出现 start。\n",
+            [("start", "正文内容里出现 start。")],
+            terms=[(1, "start", "正文内容里出现 start。")],
+        )
         model_output = (
             'TERMS: [{"display_name": "start", "canonical_name": "start", '
             '"category": "function", "confidence": 0.9, '
-            '"source_span": {"text": "start"}}]\n'
-            "# 标题\n\n正文内容。\n"
+            '"source_span": {"text": "start"}}]\n' + body
         )
         with patch(
             "app.services.generation_service.call_openai_compatible_chat",
@@ -140,6 +150,7 @@ class GhostCourseCleanupTests(unittest.TestCase):
         published = final.read_text(encoding="utf-8")
         self.assertNotIn("TERMS:", published, "TERMS metadata leaked into published course")
         self.assertTrue(published.lstrip().startswith("# 标题"))
+        self.assertIn('"text":"start"', published.replace(" ", ""))
         streaming = list(self._course_dir().rglob("*.streaming"))
         self.assertEqual(streaming, [], f"streaming file survived success: {streaming}")
 

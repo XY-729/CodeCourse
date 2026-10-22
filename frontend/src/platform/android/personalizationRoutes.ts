@@ -8,8 +8,6 @@ export type AndroidPersonalizationHandlers = {
   getMastery: (projectId: number, conceptIds: string[]) => Promise<unknown>;
   resolveTerms: (projectId: number, terms: unknown[]) => Promise<unknown>;
   getPreferences: (projectId: number) => Promise<unknown>;
-  updatePreferences: (projectId: number, body: Body) => Promise<unknown>;
-  applyAnswerFeedback: (projectId: number, body: Body) => Promise<unknown>;
   saveTermImpressions: (projectId: number, impressions: unknown[]) => Promise<unknown>;
   getTermDisplayProfiles: (projectId: number, conceptKeys: string[]) => Promise<unknown>;
   getKnowledgeStates: (projectId: number, conceptIds: string[]) => Promise<unknown>;
@@ -21,10 +19,6 @@ export type AndroidPersonalizationHandlers = {
     reason: string,
   ) => Promise<unknown>;
   rebuildProfile: (projectId: number) => Promise<unknown>;
-  getPendingDiagnostic: (projectId: number) => Promise<unknown>;
-  answerDiagnostic: (projectId: number, itemId: string, answer: unknown) => Promise<unknown>;
-  dismissDiagnostic: (projectId: number, itemId: string) => Promise<unknown>;
-  flagDiagnostic: (projectId: number, itemId: string) => Promise<unknown>;
   getTeachingTrial: (projectId: number, qaRecordId: number) => Promise<unknown>;
   submitTeachingFeedback: (
     projectId: number,
@@ -36,8 +30,6 @@ export type AndroidPersonalizationHandlers = {
   getProfile: (projectId: number) => Promise<unknown>;
   resetProfile: (projectId: number, scope: "project" | "global" | "all") => Promise<unknown>;
   voidInference: (projectId: number, inferenceId: string) => Promise<unknown>;
-  answerSurvey: (projectId: number, surveyId: string, choice: string) => Promise<unknown>;
-  dismissSurvey: (surveyId: string) => Promise<unknown>;
   getExplanation: (conceptId: string) => Promise<unknown>;
   markKnown: (
     projectId: number,
@@ -84,6 +76,10 @@ function feedbackResult(body: Body): "successful" | "partially_successful" | "un
   return result as "successful" | "partially_successful" | "unsuccessful";
 }
 
+/** Retired profile write paths answer explicitly instead of silently mutating a profile. */
+const RETIRED = Object.freeze({ status: "retired", message: "该画像功能已停用；个性化与证据分析固定开启。" });
+const retired = async () => RETIRED;
+
 export function createAndroidPersonalizationRoutes(
   handlers: AndroidPersonalizationHandlers,
 ): AndroidRoute[] {
@@ -125,12 +121,14 @@ export function createAndroidPersonalizationRoutes(
     {
       method: "PUT",
       pattern: /^\/projects\/(\d+)\/personalization\/preferences$/,
-      handle: (match, request) => handlers.updatePreferences(id(match), request.body),
+      // Fixed style sliders, depth and term density are retired; only the user's
+      // own free-text requirements are used.
+      handle: retired,
     },
     {
       method: "POST",
       pattern: /^\/projects\/(\d+)\/personalization\/answer-feedback$/,
-      handle: (match, request) => handlers.applyAnswerFeedback(id(match), request.body),
+      handle: retired,
     },
     {
       method: "POST",
@@ -181,22 +179,23 @@ export function createAndroidPersonalizationRoutes(
     {
       method: "GET",
       pattern: /^\/projects\/(\d+)\/personalization\/diagnostics\/pending$/,
-      handle: (match) => handlers.getPendingDiagnostic(id(match)),
+      // Diagnostic questions are retired: they are not part of the new flow.
+      handle: retired,
     },
     {
       method: "POST",
       pattern: /^\/projects\/(\d+)\/personalization\/diagnostics\/([^/]+)\/answer$/,
-      handle: (match, request) => handlers.answerDiagnostic(id(match), decoded(match), request.body.answer),
+      handle: retired,
     },
     {
       method: "POST",
       pattern: /^\/projects\/(\d+)\/personalization\/diagnostics\/([^/]+)\/dismiss$/,
-      handle: (match) => handlers.dismissDiagnostic(id(match), decoded(match)),
+      handle: retired,
     },
     {
       method: "POST",
       pattern: /^\/projects\/(\d+)\/personalization\/diagnostics\/([^/]+)\/flag$/,
-      handle: (match) => handlers.flagDiagnostic(id(match), decoded(match)),
+      handle: retired,
     },
     {
       method: "GET",
@@ -241,16 +240,13 @@ export function createAndroidPersonalizationRoutes(
     {
       method: "POST",
       pattern: /^\/projects\/(\d+)\/personalization\/surveys\/([^/]+)\/answer$/,
-      handle: (match, request) => handlers.answerSurvey(
-        id(match),
-        decoded(match),
-        String(request.body.choice || ""),
-      ),
+      // Dynamic style questionnaires are retired.
+      handle: retired,
     },
     {
       method: "POST",
       pattern: /^\/projects\/(\d+)\/personalization\/surveys\/([^/]+)\/dismiss$/,
-      handle: (match) => handlers.dismissSurvey(decoded(match)),
+      handle: retired,
     },
     {
       method: "GET",

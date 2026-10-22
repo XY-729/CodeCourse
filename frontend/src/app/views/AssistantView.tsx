@@ -33,9 +33,6 @@ export function renderAssistantPanel(model: AppViewModel) {
     canStopQAAnswer,
     stopQAAnswer,
     returnToQASource,
-    dynamicSurvey,
-    diagnosticItem,
-    diagnosticResult,
     llmSettings,
     qaPanelError,
     qaHistoryError,
@@ -60,12 +57,6 @@ export function renderAssistantPanel(model: AppViewModel) {
     handleDismissContinuity,
     handleTeachingNextAction,
     openSettings,
-    handleDynamicSurveyAnswer,
-    handleDynamicSurveyDismiss,
-    handleDisableDynamicSurveys,
-    handleDiagnosticAnswer,
-    handleDiagnosticDismiss,
-    handleDiagnosticFlag,
     setAssistantOpen,
   } = model;
 
@@ -98,9 +89,6 @@ export function renderAssistantPanel(model: AppViewModel) {
       onStopAnswer={() => stopQAAnswer()}
       onReturnToSource={record => { void returnToQASource(record); }}
       selectedRecordReadOnly={Boolean(selectedQA && project && selectedQA.project_id !== project.id)}
-      surveyCandidate={dynamicSurvey}
-      diagnosticItem={diagnosticItem}
-      diagnosticResult={diagnosticResult}
       settings={llmSettings}
       panelError={qaHistoryError || qaPanelError}
       upperTab={qaUpperTab}
@@ -125,12 +113,6 @@ export function renderAssistantPanel(model: AppViewModel) {
       onDismissContinuity={(handoff) => { void handleDismissContinuity(handoff); }}
       onTeachingNextAction={handleTeachingNextAction}
       onOpenSettings={openSettings}
-      onAnswerSurvey={(choice) => { void handleDynamicSurveyAnswer(choice); }}
-      onDismissSurvey={() => { void handleDynamicSurveyDismiss(); }}
-      onDisableSurveys={() => { void handleDisableDynamicSurveys(); }}
-      onAnswerDiagnostic={(answer) => { void handleDiagnosticAnswer(answer); }}
-      onDismissDiagnostic={() => { void handleDiagnosticDismiss(); }}
-      onFlagDiagnostic={() => { void handleDiagnosticFlag(); }}
       onClose={() => setAssistantOpen(false)}
     />
   );

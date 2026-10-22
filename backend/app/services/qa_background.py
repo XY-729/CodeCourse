@@ -17,31 +17,20 @@ _queued: set[int] = set()
 
 
 def saved_learner_summary(project_id: int) -> str:
-    """Read existing data only: no concept inference/creation or model calls."""
-    from app.services.personalization_service import effective_preferences, render_preference_directives
-    with _connect() as conn, conn:
-        rows = conn.execute(
-            """SELECT summary FROM learner_inferences WHERE status='active'
-               AND ((scope_type='project' AND scope_id=?) OR
-                    (scope_type='global' AND scope_id='local-user'))
-               ORDER BY updated_at DESC LIMIT 4""", (str(project_id),)
-        ).fetchall()
-    summary = "\n".join(row["summary"][:600] for row in rows)
-    from app.services.course_completion import learned_course_context
-    return ("<learner_context>\n" + render_preference_directives(effective_preferences(project_id))
-            + "\n" + summary + "\n历史推断仅供调整讲解，不证明已经掌握；本次明确要求优先。\n</learner_context>"
-            + learned_course_context(project_id))
+    """Compatibility name for the complete factual tree, without inference."""
+    from app.services.personalization.teaching.generation_context import build_generation_context
+    return build_generation_context(project_id).render()
 
 
-def enqueue_answer(record, payload: QAAskRequest, context: str, terms: list) -> None:
+def enqueue_answer(record, payload: QAAskRequest, context: str, terms: list, metadata: dict | None = None) -> None:
     # Store the actual authorized material, never reopen source files in workers.
     with _connect() as conn, conn:
         conn.execute(
             """INSERT OR IGNORE INTO qa_postprocess_jobs
-               (qa_record_id,project_id,payload_json,context_snapshot,terms_json,metadata_done)
-               VALUES(?,?,?,?,?,?)""",
+               (qa_record_id,project_id,payload_json,context_snapshot,terms_json,metadata_done,metadata_json)
+               VALUES(?,?,?,?,?,1,?)""",
             (record.id, record.project_id, payload.model_dump_json(), context, json.dumps(terms, ensure_ascii=False),
-             0 if payload.defer_metadata else 1),
+             json.dumps(metadata or {}, ensure_ascii=False)),
         )
 
 
@@ -78,8 +67,7 @@ def _run(project_id: int, record_id: int) -> None:
             from app.services.continuity_service import persist_teaching_handoff
             metadata = (json.loads(job["metadata_json"]) if job["metadata_json"] else
                         extract_answer_metadata(record, QAAskRequest.model_validate_json(job["payload_json"]), job["context_snapshot"]))
-            # Save the model result before applying it, so crash recovery does not
-            # request or infer the same metadata twice.
+            # Recovery can parse only the original answer; never commission AI.
             with _connect() as conn, conn:
                 conn.execute("UPDATE qa_postprocess_jobs SET metadata_json=? WHERE qa_record_id=?",
                              (json.dumps(metadata, ensure_ascii=False), record_id))
@@ -94,21 +82,10 @@ def _run(project_id: int, record_id: int) -> None:
             from app.services.qa_service import postprocess_answer
             postprocess_answer(record, QAAskRequest.model_validate_json(job["payload_json"]), terms)
             _mark(record_id, "evidence_done")
-        if not job["observer_done"]:
-            from app.services.personalization.interaction_observer import schedule_interaction_observation
-            schedule_interaction_observation(project_id, record_id, record.parent_qa_id, record.relation_type, record.question)
-            _mark(record_id, "observer_done")
-        if not job["planner_done"]:
-            from app.services.personalization.teaching.teacher_planner import execute_teacher_planner
-            from app.services.personalization.teaching.planner_scheduler import _should_plan
-            if _should_plan(project_id, record_id, record.parent_qa_id, record.relation_type):
-                execute_teacher_planner(project_id, record.session_id, record.id, record.parent_qa_id,
-                                        record.question, record.selected_text, record.source_type, record.source_path)
-                with _connect() as conn, conn:
-                    result = conn.execute("SELECT status FROM teacher_plan_runs WHERE project_id=? AND qa_record_id=? ORDER BY created_at DESC LIMIT 1", (project_id, record_id)).fetchone()
-                if result and result["status"] == "failed":
-                    raise RuntimeError("Background teaching planner failed; retry on restart")
-            _mark(record_id, "planner_done")
+        # Same-response manifests replace retired observer/planner inference.
+        # Complete the legacy queue flags deterministically, including old jobs.
+        _mark(record_id, "observer_done")
+        _mark(record_id, "planner_done")
         with _connect() as conn, conn:
             conn.execute("UPDATE qa_postprocess_jobs SET status='completed',last_error=NULL WHERE qa_record_id=?", (record_id,))
     except Exception as exc:

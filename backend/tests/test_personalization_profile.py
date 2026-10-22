@@ -250,34 +250,25 @@ class PersonalizationProfileTests(unittest.TestCase):
                 ).fetchone()
             )
 
-    def test_implicit_and_survey_preference_changes_are_bounded(self):
+    def test_fixed_style_feedback_is_retired_without_mutating_preferences(self):
         initial = self.client.get(
             f"/api/projects/{self.project_a['id']}/personalization/preferences"
         ).json()
-        implicit = self.client.post(
-            f"/api/projects/{self.project_a['id']}/personalization/answer-feedback",
-            json={
-                "dimension": "answer_depth",
-                "choice": "more",
-                "source": "implicit_question",
-                "idempotency_key": "implicit-depth",
-            },
+        for source in ("implicit_question", "survey"):
+            response = self.client.post(
+                f"/api/projects/{self.project_a['id']}/personalization/answer-feedback",
+                json={
+                    "dimension": "answer_depth",
+                    "choice": "more",
+                    "source": source,
+                    "idempotency_key": f"{source}-depth",
+                },
+            )
+            self.assertEqual(response.status_code, 410)
+        unchanged = self.client.get(
+            f"/api/projects/{self.project_a['id']}/personalization/preferences"
         ).json()
-        self.assertLessEqual(
-            implicit["answerDepth"] - initial["answerDepth"], 0.0200001
-        )
-        survey = self.client.post(
-            f"/api/projects/{self.project_a['id']}/personalization/answer-feedback",
-            json={
-                "dimension": "answer_depth",
-                "choice": "more",
-                "source": "survey",
-                "idempotency_key": "survey-depth",
-            },
-        ).json()
-        self.assertLessEqual(
-            survey["answerDepth"] - implicit["answerDepth"], 0.0500001
-        )
+        self.assertEqual(unchanged, initial)
 
     def test_style_survey_cooldown_is_timezone_independent(self):
         from app.api.personalization import _survey_is_due
@@ -286,16 +277,12 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertFalse(_survey_is_due("2026-07-26T01:00:00+08:00", now))
         self.assertTrue(_survey_is_due("2026-07-25T03:59:59Z", now))
 
-    def test_dynamic_survey_uses_completed_answers_not_preference_feedback_count(self):
-        from app.services.personalization.learner_inference_service import _survey_due
+    def test_dynamic_style_survey_is_retired(self):
         from app.services.storage import _connect
 
-        self.client.get(
-            f"/api/projects/{self.project_a['id']}/personalization/preferences"
-        )
         stamp = datetime.now(timezone.utc).isoformat()
         with _connect() as conn:
-            for index in range(4):
+            for index in range(6):
                 conn.execute(
                     """INSERT INTO qa_records
                        (project_id,source_type,source_path,selected_text,question,
@@ -310,47 +297,40 @@ class PersonalizationProfileTests(unittest.TestCase):
                     ),
                 )
             conn.commit()
-            self.assertFalse(_survey_due(conn))
-            conn.execute(
-                """INSERT INTO qa_records
-                   (project_id,source_type,source_path,selected_text,question,
-                    answer_md,provider,model,created_at,updated_at)
-                   VALUES (?, 'course', 'outline.md', '', '问题 5', '回答 5',
-                           'test', 'test', ?, ?)""",
-                (self.project_a["id"], stamp, stamp),
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM survey_candidates").fetchone()[0], 0)
+        profile = self.client.get(
+            f"/api/projects/{self.project_a['id']}/personalization/profile"
+        ).json()
+        self.assertIsNone(profile.get("survey"))
+        for action in ("answer", "dismiss"):
+            response = self.client.post(
+                f"/api/projects/{self.project_a['id']}/personalization/surveys/survey-1/{action}",
+                json={"choice": "deeper"},
             )
-            conn.commit()
-            self.assertTrue(_survey_due(conn))
+            self.assertEqual(response.status_code, 410)
 
-    def test_personalization_runtime_settings_are_explicit_and_default_off(self):
+    def test_unified_teaching_and_evidence_analysis_are_always_on(self):
         initial = self.client.get("/api/settings/personalization")
         self.assertEqual(initial.status_code, 200)
         self.assertEqual(
             initial.json(),
             {
                 "supported": True,
-                "teacher_planner_enabled": False,
-                "observer_enabled": False,
+                "teacher_planner_enabled": True,
+                "observer_enabled": True,
                 "teacher_planner_mode": "assist",
                 "observer_mode": "shadow",
             },
         )
-
+        # A legacy opt-out cannot switch the unified flow back off.
         saved = self.client.put(
             "/api/settings/personalization",
-            json={
-                "teacher_planner_enabled": True,
-                "observer_enabled": True,
-            },
+            json={"teacher_planner_enabled": False, "observer_enabled": False},
         )
         self.assertEqual(saved.status_code, 200)
         self.assertTrue(saved.json()["teacher_planner_enabled"])
         self.assertTrue(saved.json()["observer_enabled"])
-
-        from app.services.storage import get_setting
-
-        self.assertEqual(get_setting("personalization.teacher_planner.mode"), "assist")
-        self.assertEqual(get_setting("personalization.observer.mode"), "shadow")
+        self.assertTrue(self.client.get("/api/settings/personalization").json()["observer_enabled"])
 
     def test_reset_all_clears_global_and_project_personalization(self):
         global_term = self._resolve(self.project_a["id"], "RAG")
@@ -443,22 +423,28 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertNotIn("SQLite", terms)
         self.assertNotIn("FastAPI", terms)
 
-    def test_empty_model_selection_stays_empty_without_extra_model_call(self):
+    def test_manifest_terms_are_registered_without_any_model_scan(self):
         from unittest.mock import patch
         from app.services.term_service import register_document_terms, get_document_term_status
         import app.services.storage as storage
+        from teaching_manifest_fixture import with_manifest
+
         project_id = self.project_a["id"]
-        content = "# 课件\n\n**禁止编译器偷偷做类型转换**。`printAge` 和 **FastAPI**。"
+        body = "# 课件\n\n`printAge` 会把参数转换为字符串。"
+        content = with_manifest(
+            body,
+            [("printAge", "`printAge` 会把参数转换为字符串。")],
+            terms=[(1, "printAge", "`printAge` 会把参数转换为字符串。")],
+        )
         target = storage.GENERATED_ROOT / str(project_id) / "outline.md"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
+        target.write_text(content, encoding="utf-8", newline="\n")
         with patch("app.services.term_service.schedule_term_model_scan") as scan:
-            self.assertEqual(register_document_terms(project_id, "course", "outline.md", content, []), [])
+            terms = register_document_terms(project_id, "course", "outline.md", content)
             status = get_document_term_status(project_id, "course", "outline.md")
         scan.assert_not_called()
-        self.assertEqual(status["scan_status"], "completed")
-        self.assertEqual(status["candidate_count"], 0)
-
+        self.assertEqual([term.term_text for term in terms], ["printAge"])
+        self.assertEqual(status["candidate_count"], 1)
     def test_term_prompt_is_project_scoped_and_resolves_manual_conflicts(self):
         from app.services.term_service import term_learning_context
         from app.services.storage import upsert_concept_mastery
@@ -567,201 +553,64 @@ class PersonalizationProfileTests(unittest.TestCase):
         self.assertEqual(deleted.status_code, 200)
         self.assertIsNone(find_concept_explanation(concept_id))
 
-    def test_observer_builds_conservative_network_boundary_without_cross_domain_mastery(self):
-        socket = self._resolve(self.project_a["id"], "socket")
-        bind = self._resolve(self.project_a["id"], "bind")
-        from app.services.personalization.learner_inference_service import (
-            apply_inference_updates,
-        )
-        from app.services.personalization.observation_schema import (
-            ConceptRelationObservation,
-            CurrentLearningState,
-            DomainAssessmentObservation,
-            InteractionObservation,
-            KnowledgeEvidence,
-        )
-        from app.services.storage import _connect
+    def test_evidence_never_propagates_through_relations(self):
+        from app.services import storage
+        from app.services.personalization.knowledge_state_service import append_evidence, get_states
 
-        observation = InteractionObservation(
-            schema_version=2,
-            current_state=CurrentLearningState(
-                intent_category="understand_term",
-                intent_summary="用户在学习网络 API",
-                confusion_category="terminology",
-                confusion_summary="socket 与 bind 尚不清楚",
-                current_goal="理解网络 API",
-                urgency="low",
-                cognitive_load="medium",
-                confidence=0.9,
-            ),
-            previous_teaching_outcome=None,
-            knowledge_evidence=[
-                KnowledgeEvidence(
-                    concept_text=name,
-                    concept_key=resolved["concept"]["conceptKey"],
-                    dimension="familiarity",
-                    direction="negative",
-                    strength=0.8,
-                    confidence=0.9,
-                    evidence_quote=f"{name} 是什么",
-                    explanation="用户主动询问定义",
-                )
-                for name, resolved in (("socket", socket), ("bind", bind))
-            ],
-            behavior_evidence=[],
-            possible_misconceptions=[],
-            explicit_user_facts=[],
-            concept_relations=[
-                ConceptRelationObservation(
-                    source_concept_text="bind",
-                    source_concept_key=bind["concept"]["conceptKey"],
-                    target_concept_text="socket",
-                    target_concept_key=socket["concept"]["conceptKey"],
-                    relation_type="prerequisite",
-                    domain="networking",
-                    confidence=0.85,
-                    rationale="bind 作用于 socket",
-                )
-            ],
-            domain_assessments=[
-                DomainAssessmentObservation(
-                    domain_key="networking",
-                    state="learning",
-                    summary="正在学习网络基础 API，其他领域证据不足",
-                    confidence=0.9,
-                    concept_keys=[
-                        socket["concept"]["conceptKey"],
-                        bind["concept"]["conceptKey"],
-                    ],
-                    evidence_quotes=["socket 是什么", "bind 是什么"],
-                ),
-                DomainAssessmentObservation(
-                    domain_key="concurrency",
-                    state="confirmed",
-                    summary="没有直接证据",
-                    confidence=0.75,
-                    concept_keys=[],
-                    evidence_quotes=[],
-                ),
-            ],
-            survey_candidate=None,
-            notes=[],
-        )
-        with _connect() as conn:
-            apply_inference_updates(
-                project_id=self.project_a["id"],
-                qa_record_id=1,
-                observer_run_id="observer-test-network",
-                observation=observation,
-                conn=conn,
+        socket = self._resolve(self.project_a["id"], "socket")["concept"]["id"]
+        bind = self._resolve(self.project_a["id"], "bind")["concept"]["id"]
+        with storage._connect() as conn:
+            conn.execute(
+                """INSERT OR IGNORE INTO concept_relations(id,source_concept_id,target_concept_id,
+                   relation_type,domain,confidence,evidence_json,origin,status,created_at,updated_at)
+                   VALUES('rel-1',?,'socket','prerequisite','networking',0.85,'[]','legacy','active',
+                   '2026-10-01','2026-10-01')""",
+                (bind,),
             )
             conn.commit()
+        append_evidence({
+            "id": "socket-positive", "conceptId": socket, "scopeType": "global", "scopeId": "local-user",
+            "dimension": "familiarity", "direction": "positive", "strength": .8, "reliability": .72,
+            "source": "summary", "action": "self_understood",
+            "result": {"ranges": [{"aspect": "生命周期", "dimension": "conceptual", "kind": "explained"}]},
+            "eventTime": "2026-10-21T00:00:00+00:00",
+        })
+        states = {state["conceptId"]: state for state in get_states([("global", "local-user")], [socket, bind])}
+        self.assertEqual(states[socket]["familiarity"], "self_reported_understood")
+        # A prerequisite edge is not mastery and never propagates down or up.
+        # A concept with no evidence has no state row at all: that is "unknown".
+        bind_state = states.get(bind)
+        self.assertTrue(bind_state is None or bind_state["familiarity"] == "unrecorded")
+        self.assertTrue(bind_state is None or bind_state["ranges"] == [])
+    def test_soft_positive_evidence_does_not_confirm_but_manual_declaration_does(self):
+        from app.services.personalization.knowledge_state_service import append_evidence, get_states
 
-        profile = self.client.get(
-            f"/api/projects/{self.project_a['id']}/personalization/profile"
-        )
-        self.assertEqual(profile.status_code, 200)
-        payload = profile.json()
-        networking = next(
-            item for item in payload["domainProfiles"]
-            if item["domainKey"] == "networking"
-        )
-        self.assertEqual(set(networking["learning"]), {"socket", "bind"})
-        concurrency = next(
-            item for item in payload["inferences"]
-            if item["subjectType"] == "domain" and item["subjectKey"] == "concurrency"
-        )
-        self.assertEqual(concurrency["state"], "likely_prerequisite")
-        self.assertNotIn("线程池", networking["confirmed"])
-
-    def test_positive_evidence_only_confirms_its_matching_domain(self):
-        socket = self._resolve(self.project_a["id"], "socket")
-        from app.services.personalization.learner_inference_service import (
-            apply_inference_updates,
-        )
-        from app.services.personalization.observation_schema import (
-            CurrentLearningState,
-            DomainAssessmentObservation,
-            InteractionObservation,
-            KnowledgeEvidence,
-        )
-        from app.services.storage import _connect
-
-        observation = InteractionObservation(
-            schema_version=2,
-            current_state=CurrentLearningState(
-                intent_category="review",
-                intent_summary="用户正确总结 socket 生命周期",
-                confusion_category="none",
-                confusion_summary="没有表现出当前困惑",
-                current_goal="复习网络 API",
-                urgency="low",
-                cognitive_load="low",
-                confidence=0.9,
-            ),
-            previous_teaching_outcome=None,
-            knowledge_evidence=[
-                KnowledgeEvidence(
-                    concept_text="socket",
-                    concept_key=socket["concept"]["conceptKey"],
-                    dimension="conceptual_understanding",
-                    direction="positive",
-                    strength=0.8,
-                    confidence=0.9,
-                    evidence_quote="socket 从创建到关闭",
-                    explanation="用户正确描述了生命周期",
-                )
-            ],
-            behavior_evidence=[],
-            possible_misconceptions=[],
-            explicit_user_facts=[],
-            concept_relations=[],
-            domain_assessments=[
-                DomainAssessmentObservation(
-                    domain_key="networking",
-                    state="confirmed",
-                    summary="对 socket 生命周期有直接理解证据",
-                    confidence=0.9,
-                    concept_keys=[socket["concept"]["conceptKey"]],
-                    evidence_quotes=["socket 从创建到关闭"],
-                ),
-                DomainAssessmentObservation(
-                    domain_key="concurrency",
-                    state="confirmed",
-                    summary="本轮没有并发领域证据",
-                    confidence=0.8,
-                    concept_keys=[],
-                    evidence_quotes=[],
-                ),
-            ],
-            survey_candidate=None,
-            notes=[],
-        )
-        with _connect() as conn:
-            apply_inference_updates(
-                project_id=self.project_a["id"],
-                qa_record_id=2,
-                observer_run_id="observer-test-domain-isolation",
-                observation=observation,
-                conn=conn,
-            )
-            conn.commit()
-
-        payload = self.client.get(
-            f"/api/projects/{self.project_a['id']}/personalization/profile"
-        ).json()
-        networking = next(
-            item for item in payload["inferences"]
-            if item["subjectType"] == "domain" and item["subjectKey"] == "networking"
-        )
-        concurrency = next(
-            item for item in payload["inferences"]
-            if item["subjectType"] == "domain" and item["subjectKey"] == "concurrency"
-        )
-        self.assertEqual(networking["state"], "likely_prerequisite")
-        self.assertEqual(concurrency["state"], "likely_prerequisite")
-
-    def test_objective_diagnostic_is_linked_to_the_teaching_trial(self):
+        socket = self._resolve(self.project_a["id"], "socket")["concept"]["id"]
+        bind = self._resolve(self.project_a["id"], "bind")["concept"]["id"]
+        append_evidence({
+            "id": "socket-soft", "conceptId": socket, "scopeType": "global", "scopeId": "local-user",
+            "dimension": "familiarity", "direction": "positive", "strength": .8, "reliability": .9,
+            "source": "summary", "action": "self_understood",
+            "result": {"ranges": [{"aspect": "生命周期", "dimension": "conceptual", "kind": "explained"}]},
+            "eventTime": "2026-10-21T00:00:00+00:00",
+        })
+        state = {item["conceptId"]: item for item in get_states([("global", "local-user")], [socket])}[socket]
+        self.assertEqual(state["familiarity"], "self_reported_understood")
+        self.assertNotEqual(state["dimensions"]["familiarity"]["status"], "confirmed")
+        # A manual declaration is the only path that confirms a dimension, and it
+        # confirms only the concept the user explicitly named.
+        append_evidence({
+            "id": "socket-manual", "conceptId": socket, "scopeType": "global", "scopeId": "local-user",
+            "dimension": "familiarity", "direction": "positive", "strength": 1, "reliability": 1,
+            "source": "manual", "action": "manual_known",
+            "result": {"ranges": [{"aspect": "生命周期", "dimension": "conceptual", "kind": "explained"}]},
+            "eventTime": "2026-10-21T00:00:01+00:00",
+        })
+        states = {item["conceptId"]: item for item in get_states([("global", "local-user")], [socket, bind])}
+        self.assertEqual(states[socket]["dimensions"]["familiarity"]["status"], "confirmed")
+        bind_state = states.get(bind)
+        self.assertTrue(bind_state is None or bind_state["familiarity"] == "unrecorded")
+    def test_retired_diagnostic_never_creates_items_or_outcomes(self):
         import app.services.storage as storage
         from app.services.personalization.knowledge_state_service import (
             create_diagnostic_item,
@@ -770,18 +619,6 @@ class PersonalizationProfileTests(unittest.TestCase):
 
         resolved = self._resolve(self.project_a["id"], "event loop")
         record, trial_id = self._create_teaching_trial(self.project_a["id"])
-        for index in range(4):
-            storage.create_qa_record(
-                project_id=self.project_a["id"],
-                source_type="course",
-                source_path="outline.md",
-                selected_text="",
-                question=f"Follow-up {index}",
-                answer_md="Saved answer",
-                provider="test",
-                model="test-model",
-            )
-
         item = create_diagnostic_item(
             project_id=self.project_a["id"],
             candidate={
@@ -789,10 +626,7 @@ class PersonalizationProfileTests(unittest.TestCase):
                 "dimension": "conceptual",
                 "item_type": "true_false",
                 "prompt": "The event loop schedules ready callbacks.",
-                "options": [
-                    {"label": "True", "value": True},
-                    {"label": "False", "value": False},
-                ],
+                "options": [{"label": "True", "value": True}, {"label": "False", "value": False}],
                 "answer_key": True,
                 "source_refs": [{
                     "source_type": "course",
@@ -807,29 +641,24 @@ class PersonalizationProfileTests(unittest.TestCase):
             strategy_version="test",
             teaching_trial_id=trial_id,
         )
-        self.assertIsNotNone(item)
-        self.assertEqual(item["teachingTrialId"], trial_id)
-
-        result = submit_diagnostic_answer(
-            self.project_a["id"],
-            item["id"],
-            True,
+        self.assertIsNone(item)
+        pending = self.client.get(
+            f"/api/projects/{self.project_a['id']}/personalization/diagnostics/pending"
         )
-        self.assertTrue(result["correct"])
-        self.assertEqual(
-            result["teachingOutcome"]["evidenceType"],
-            "objective_diagnostic",
+        self.assertEqual(pending.status_code, 200)
+        self.assertEqual(pending.json(), {"item": None, "retired": True})
+        answer = self.client.post(
+            f"/api/projects/{self.project_a['id']}/personalization/diagnostics/missing/answer",
+            json={"answer": True},
         )
-        self.assertTrue(result["teachingOutcome"]["policyEligible"])
-
+        self.assertEqual(answer.status_code, 410)
+        with self.assertRaises(ValueError):
+            submit_diagnostic_answer(self.project_a["id"], "missing", True)
         with storage._connect() as conn:
-            outcome = conn.execute(
-                "SELECT * FROM teaching_outcomes WHERE teaching_trial_id = ?",
-                (trial_id,),
-            ).fetchone()
-        self.assertEqual(outcome["diagnostic_attempt_id"], result["attemptId"])
-        self.assertEqual(outcome["authority"], 100)
-
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM diagnostic_items").fetchone()[0], 0)
+            self.assertEqual(conn.execute(
+                "SELECT COUNT(*) FROM teaching_outcomes WHERE evidence_type='objective_diagnostic'"
+            ).fetchone()[0], 0)
     def test_manual_teaching_feedback_is_visible_in_profile_summary(self):
         record, trial_id = self._create_teaching_trial(self.project_a["id"])
         response = self.client.post(

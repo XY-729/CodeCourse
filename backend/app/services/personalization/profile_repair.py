@@ -66,17 +66,11 @@ def repair_legacy_profile(conn) -> None:
             span["originalConceptId"] = old["id"]
             conn.execute("UPDATE document_terms SET concept_id=?,source_span_json=? WHERE id=?",
                          (canonical["id"], json.dumps(span, ensure_ascii=False), term["id"]))
-    # This exact old signature failed before any model request/observation.
-    # Do not requeue network failures or completed runs, nor retry on every boot.
+    # Historical observer work is retired, including failures from old builds.
     conn.execute(
-        """UPDATE observer_jobs SET status='pending',locked_at=NULL,available_at=?,
-           reason='profile_repair',updated_at=?
-           WHERE status='failed' AND last_error='observer_failed'
-             AND NOT EXISTS (SELECT 1 FROM observer_runs r WHERE r.project_id=observer_jobs.project_id
-                             AND r.qa_record_id=observer_jobs.qa_record_id)
-             AND EXISTS (SELECT 1 FROM qa_records q WHERE q.project_id=observer_jobs.project_id
-                         AND q.id=observer_jobs.qa_record_id AND q.answer_md<>'')""",
-        (stamp, stamp),
+        """UPDATE observer_jobs SET status='cancelled', locked_at=NULL,
+           last_error='retired_by_teaching_facts_v1', updated_at=?
+           WHERE status IN ('queued','pending','running','retry','failed')""", (stamp,),
     )
     from app.services.personalization.knowledge_state_service import rebuild_state
     for row in conn.execute("SELECT DISTINCT concept_id,scope_type,scope_id FROM learning_evidence_v2").fetchall():

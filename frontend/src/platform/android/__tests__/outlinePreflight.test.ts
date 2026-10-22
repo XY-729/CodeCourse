@@ -6,7 +6,7 @@ type ProviderInternals = {
   getLLMSettings: ReturnType<typeof vi.fn>;
   getPrompts: ReturnType<typeof vi.fn>;
   getProject: ReturnType<typeof vi.fn>;
-  getLearnerPreferences: ReturnType<typeof vi.fn>;
+  teachingContext: ReturnType<typeof vi.fn>;
   projectContext: ReturnType<typeof vi.fn>;
   queueTask: ReturnType<typeof vi.fn>;
 };
@@ -24,11 +24,7 @@ function createProvider() {
     "prompt.outline.questionnaire": "为学习者生成问卷：{scope_text} {user_instructions} {preferences_summary}",
   }));
   provider.getProject = vi.fn(async () => ({ id: 7, name: "Atlas", project_type: "learning_plan" }));
-  provider.getLearnerPreferences = vi.fn(async () => ({
-    prerequisiteDetail: "无",
-    answerDepth: "中等",
-    codeRatio: "均衡",
-  }));
+  provider.teachingContext = vi.fn(async () => "<teaching_context>完整知识树</teaching_context>");
   provider.projectContext = vi.fn(async () => "");
   provider.queueTask = vi.fn(async (_projectId: number, _type: string, payload: Record<string, unknown>) => ({
     id: 1,

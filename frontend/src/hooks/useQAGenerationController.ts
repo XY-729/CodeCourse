@@ -75,7 +75,7 @@ export function useQAGenerationController(projectId: number | null, events: Even
       eventsRef.current.onStart?.(generationKey, payload, timing);
       publish();
       markDesktopPerformance("qa-request-sent", { request_id: timing.requestId, elapsed_ms: performance.now() - timing.startedAt });
-      const requestPayload = { ...payload, defer_metadata: true, request_id: timing.requestId };
+      const requestPayload = { ...payload, defer_metadata: false, request_id: timing.requestId };
       const record = await askQuestionStream(projectId, requestPayload, {
         onStage: (stage, label, elapsedMs) => {
           if (abortController.signal.aborted) return;

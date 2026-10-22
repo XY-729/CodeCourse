@@ -31,6 +31,15 @@ PORTABLE_TABLES = (
     "qa_sessions",
     "prompt_revisions",
     "concepts",
+    # Canonical concept forest. Desktop and Android store the same facts under
+    # different physical names, so the archive uses platform-neutral tables and
+    # each side maps them on export/import.
+    "concept_placements",
+    "concept_alias_bindings",
+    "plan_concept_roots",
+    "plan_root_status",
+    "knowledge_tree_versions",
+    "user_teaching_requirements",
     "qa_records",
     "teaching_handoffs",
     "generation_tasks",
@@ -62,7 +71,48 @@ PORTABLE_TABLES = (
     "teaching_outcomes",
     "teaching_documents",
     "teaching_passages",
+    "teaching_terms",
+    "teaching_feedback_actions",
+    "teaching_publications",
     "understanding_feedback",
+)
+
+# Canonical table -> SQL that produces it from a desktop database. Android writes
+# the same columns from its own physical tables, so both directions stay lossless.
+CANONICAL_EXPORT_QUERIES = {
+    "concept_placements": (
+        "SELECT concept_id,parent_id AS parent_concept_id,placement_status,"
+        "topology_source_json AS provenance_json FROM concept_tree_nodes"
+    ),
+    "plan_concept_roots": (
+        "SELECT project_id,root_concept_id AS concept_id FROM project_knowledge_roots"
+    ),
+    "plan_root_status": (
+        "SELECT project_id,status,error AS error_message FROM project_root_status"
+    ),
+}
+
+# Canonical tables whose physical desktop counterpart has different columns.
+CANONICAL_IMPORT_MAPPING = {
+    "concept_placements": "concept_tree_nodes",
+    "plan_concept_roots": "project_knowledge_roots",
+    "plan_root_status": "project_root_status",
+}
+
+RETIRED_SETTING_PREFIXES = (
+    "personalization.preferences",
+    "personalization.answer_depth",
+    "personalization.code_ratio",
+    "personalization.explanation_order",
+    "personalization.prerequisite_detail",
+    "personalization.terminology_density",
+    "personalization.survey_enabled",
+    "learner.preferences",
+)
+
+ALWAYS_ON_SETTINGS = (
+    "personalization.teacher_planner.enabled",
+    "personalization.observer.enabled",
 )
 
 PROJECT_COLUMNS = (
@@ -106,6 +156,17 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> list[str]:
 
 
 def _export_table(conn: sqlite3.Connection, table: str) -> dict[str, Any] | None:
+    query = CANONICAL_EXPORT_QUERIES.get(table)
+    if query is not None:
+        if not _table_exists(conn, _canonical_physical_table(conn, table)):
+            return None
+        cursor = conn.execute(query)
+        columns = [str(description[0]) for description in cursor.description]
+        rows = cursor.fetchall()
+        return {
+            "columns": columns,
+            "rows": [[row[column] for column in columns] for row in rows],
+        }
     if not _table_exists(conn, table):
         return None
     available = _table_columns(conn, table)
@@ -118,6 +179,11 @@ def _export_table(conn: sqlite3.Connection, table: str) -> dict[str, Any] | None
         "columns": columns,
         "rows": [[row[column] for column in columns] for row in rows],
     }
+
+
+def _canonical_physical_table(conn: sqlite3.Connection, canonical: str) -> str:
+    """Return the desktop table that feeds a canonical export query."""
+    return CANONICAL_IMPORT_MAPPING.get(canonical, canonical)
 
 
 def _has_active_generation(conn: sqlite3.Connection) -> bool:
@@ -156,6 +222,12 @@ def _portable_settings(conn: sqlite3.Connection) -> dict[str, str]:
             continue
         else:
             settings[key] = value
+    # A source archive must not carry retired opt-outs or fixed style numbers.
+    for key in list(settings):
+        if key.startswith(RETIRED_SETTING_PREFIXES):
+            settings.pop(key, None)
+    for key in ALWAYS_ON_SETTINGS:
+        settings[key] = "true"
     settings["llm.config"] = json.dumps(llm, ensure_ascii=False, separators=(",", ":"))
     return settings
 
@@ -496,6 +568,12 @@ def _restore_settings(conn: sqlite3.Connection, settings: dict[str, Any]) -> Non
         normalized["llm.model"] = str(parsed.get("model") or "deepseek-flash")
     normalized["llm.enabled"] = "false"
     normalized.pop("llm.api_key", None)
+    # Retired opt-outs and fixed style numbers never travel into a restored profile.
+    for key in list(normalized):
+        if key.startswith(RETIRED_SETTING_PREFIXES):
+            normalized.pop(key, None)
+    for key in ALWAYS_ON_SETTINGS:
+        normalized[key] = "true"
     stamp = _utc_now()
     conn.executemany(
         "INSERT INTO app_settings(key,value,updated_at) VALUES(?,?,?)",
@@ -513,6 +591,10 @@ def _insert_snapshot_table(
     snapshot: dict[str, Any],
     portable_projects_root: Path,
 ) -> None:
+    mapped = CANONICAL_IMPORT_MAPPING.get(table)
+    if mapped is not None:
+        _import_canonical_table(conn, table, mapped, snapshot)
+        return
     if not _table_exists(conn, table):
         return
     source_columns = [str(item) for item in snapshot["columns"]]
@@ -541,6 +623,124 @@ def _insert_snapshot_table(
         f"INSERT INTO {_quote_identifier(table)} ({columns_sql}) VALUES ({placeholders})",
         records,
     )
+
+
+def _import_canonical_table(
+    conn: sqlite3.Connection,
+    canonical: str,
+    physical: str,
+    snapshot: dict[str, Any],
+) -> None:
+    """Apply a platform-neutral forest table to the desktop physical schema."""
+    if not _table_exists(conn, physical):
+        return
+    columns = [str(item) for item in snapshot["columns"]]
+    index = {column: position for position, column in enumerate(columns)}
+    rows = snapshot["rows"]
+    stamp = _utc_now()
+    if canonical == "concept_placements":
+        # Imported identities must exist as tree nodes before edges are applied.
+        _ensure_tree_nodes(conn, stamp)
+        for row in rows:
+            concept_id = row[index["concept_id"]] if "concept_id" in index else None
+            if not isinstance(concept_id, str) or not concept_id:
+                continue
+            parent = row[index["parent_concept_id"]] if "parent_concept_id" in index else None
+            status = row[index["placement_status"]] if "placement_status" in index else None
+            provenance = row[index["provenance_json"]] if "provenance_json" in index else "{}"
+            if status not in {"root", "placed", "pending"}:
+                status = "placed" if parent else "pending"
+            conn.execute(
+                """UPDATE concept_tree_nodes SET parent_id=?,placement_status=?,topology_source_json=?,
+                   updated_at=? WHERE concept_id=?""",
+                (parent if status == "placed" else None, status,
+                 str(provenance or "{}"), stamp, concept_id),
+            )
+        return
+    if canonical == "plan_concept_roots":
+        for row in rows:
+            project_id = row[index["project_id"]] if "project_id" in index else None
+            concept_id = row[index["concept_id"]] if "concept_id" in index else None
+            if not isinstance(project_id, int) or not isinstance(concept_id, str):
+                continue
+            node = conn.execute("SELECT parent_id FROM concept_tree_nodes WHERE concept_id=?",
+                                (concept_id,)).fetchone()
+            if node is None or node[0] is not None:
+                continue
+            conn.execute(
+                """INSERT OR IGNORE INTO project_knowledge_roots
+                   (project_id,root_concept_id,source_json,created_at) VALUES(?,?,?,?)""",
+                (project_id, concept_id,
+                 json.dumps({"source": "archive_import"}, ensure_ascii=False), stamp),
+            )
+        return
+    if canonical == "plan_root_status":
+        for row in rows:
+            project_id = row[index["project_id"]] if "project_id" in index else None
+            if not isinstance(project_id, int):
+                continue
+            status = row[index["status"]] if "status" in index else None
+            error = row[index["error_message"]] if "error_message" in index else None
+            conn.execute(
+                """INSERT INTO project_root_status(project_id,status,error,updated_at)
+                   VALUES(?,?,?,?)
+                   ON CONFLICT(project_id) DO UPDATE SET status=excluded.status,
+                     error=excluded.error,updated_at=excluded.updated_at""",
+                (project_id, str(status or "pending"), error, stamp),
+            )
+        return
+
+
+def _ensure_tree_nodes(conn: sqlite3.Connection, stamp: str) -> None:
+    """Adopt imported identities into the forest without inventing taxonomy."""
+    if not _table_exists(conn, "concept_tree_nodes"):
+        return
+    rows = conn.execute(
+        """SELECT c.id,c.concept_key,c.canonical_name,c.domain,c.concept_type FROM concepts c
+           LEFT JOIN concept_tree_nodes t ON t.concept_id=c.id WHERE t.concept_id IS NULL"""
+    ).fetchall()
+    for row in rows:
+        concept_id, key, name, domain = str(row[0]), str(row[1] or ""), str(row[2] or ""), str(row[3] or "general")
+        private = key.startswith("project:")
+        scope_type = "project" if private else "global"
+        scope_id = key.split(":")[1] if private and ":" in key else (key[8:].split(":")[0] if private else "local-user")
+        if not scope_id:
+            scope_id = "unresolved"
+        try:
+            conn.execute(
+                """INSERT INTO concept_tree_nodes(concept_id,parent_id,scope_type,scope_id,domain,
+                   normalized_name,identity_status,placement_status,topology_source_json,created_at,updated_at)
+                   VALUES(?,NULL,?,?,?,?,'resolved','pending','{"source":"archive_import"}',?,?)""",
+                (concept_id, scope_type, scope_id, domain.casefold(), name.strip().casefold(), stamp, stamp),
+            )
+        except sqlite3.IntegrityError:
+            # Ambiguous canonical identity stays undecided instead of inventing a parent.
+            conn.execute(
+                """INSERT OR IGNORE INTO knowledge_tree_issues(id,kind,payload_json,status,created_at)
+                   VALUES(?,?,?,'pending',?)""",
+                (f"import-identity:{concept_id}", "ambiguous_identity",
+                 json.dumps({"concept_id": concept_id}, ensure_ascii=False), stamp),
+            )
+
+
+def _normalize_forest_after_import(conn: sqlite3.Connection) -> None:
+    """Retire imported legacy queues and make the restored topology authoritative."""
+    stamp = _utc_now()
+    conn.execute(
+        """UPDATE observer_jobs SET status='cancelled',last_error='retired_by_archive_import',
+           updated_at=? WHERE status IN ('queued','pending','running','retry')""",
+        (stamp,),
+    )
+    if _table_exists(conn, "observer_runs"):
+        conn.execute(
+            """UPDATE observer_runs SET status='skipped',error_message='retired_by_archive_import'
+               WHERE status IN ('pending','running')"""
+        )
+    for table, column in (("diagnostic_items", "status"), ("survey_candidates", "status")):
+        if _table_exists(conn, table):
+            conn.execute(f"UPDATE {table} SET {column}='retired' WHERE {column} IN ('pending','shown')")
+    if _table_exists(conn, "knowledge_tree_versions"):
+        conn.execute("UPDATE knowledge_tree_versions SET topology_version=topology_version+1 WHERE id=1")
 
 
 def _replace_directory(staged: Path, target: Path, backup: Path) -> bool:
@@ -644,6 +844,7 @@ def import_data_archive(
                     snapshot = snapshots.get(table)
                     if snapshot:
                         _insert_snapshot_table(conn, table, snapshot, portable_projects_root)
+                _normalize_forest_after_import(conn)
                 conn.commit()
             except Exception:
                 conn.rollback()

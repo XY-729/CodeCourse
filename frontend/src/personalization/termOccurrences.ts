@@ -130,7 +130,9 @@ export function prepareTermsForMatching(
     .filter(
       (term) =>
         (term.status === "candidate" || term.status === "linked") &&
-        (term.detection_source === "model" || term.link_origin === "manual") &&
+        (term.detection_source === "model" ||
+          term.detection_source === "manifest" ||
+          term.link_origin === "manual") &&
         Boolean(term.term_text?.trim()),
     )
     .sort(
@@ -268,10 +270,9 @@ function sourceForOccurrence(
   term: DocumentTerm,
   context: VisitContext,
 ): TermCandidateInput["source"] {
-  if (context.isInHeading) return "heading";
   if (context.isInsideLink) return "existing_link";
+  if (term.detection_source === "manifest") return "manifest";
   if (term.detection_source === "model") return "model";
-  if (context.isInlineCode) return "inline_code";
   if (term.detection_source === "index") return "code_symbol";
   return "unknown";
 }

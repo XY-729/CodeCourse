@@ -13,11 +13,83 @@ from app.models.schemas import (
     KnowledgeNodeCreateRequest,
     KnowledgeNodeResponse,
     KnowledgeNodeUpdateRequest,
+    KnowledgeRootProposalRequest,
+    KnowledgeReparentRequest,
+    UserTeachingRequirementRequest,
+    UserTeachingRequirementEdit,
 )
 from app.services import knowledge_service
 from app.services.storage import KnowledgeEdge, KnowledgeLink, KnowledgeNode, get_project
 
 router = APIRouter(prefix="/api/projects", tags=["knowledge"])
+
+
+def _tree_action(operation):
+    from app.services.knowledge_tree_service import TreeVersionConflict
+    try:
+        return operation()
+    except TreeVersionConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/{project_id}/knowledge/tree")
+@router.get("/{project_id}/knowledge-tree")
+@router.get("/{project_id}/personalization/tree")
+def concept_tree(project_id: int):
+    _require_project(project_id)
+    return knowledge_service.get_full_tree_snapshot(project_id)
+
+
+@router.get("/{project_id}/knowledge/roots/context")
+def root_context(project_id: int):
+    _require_project(project_id)
+    from app.services.knowledge_tree_service import get_root_recognition_context
+    return get_root_recognition_context(project_id)
+
+
+@router.post("/{project_id}/knowledge/roots")
+def apply_roots(project_id: int, payload: KnowledgeRootProposalRequest):
+    _require_project(project_id)
+    from app.services.knowledge_tree_service import apply_root_proposal
+    return _tree_action(lambda: apply_root_proposal(project_id, {
+        "concepts": payload.concepts, "root_refs": payload.root_refs}, payload.tree_snapshot.model_dump()))
+
+
+@router.put("/{project_id}/knowledge/tree/{concept_id}/parent")
+def move_concept(project_id: int, concept_id: str, payload: KnowledgeReparentRequest):
+    _require_project(project_id)
+    from app.services.knowledge_tree_service import reparent_concept
+    return _tree_action(lambda: reparent_concept(project_id, concept_id, payload.parent_id, payload.topology_version, payload.reason))
+
+
+@router.get("/{project_id}/knowledge/requirements")
+def requirements(project_id: int):
+    _require_project(project_id)
+    from app.services.knowledge_tree_service import list_requirements
+    return list_requirements(project_id)
+
+
+@router.post("/{project_id}/knowledge/requirements")
+def add_requirement(project_id: int, payload: UserTeachingRequirementRequest):
+    _require_project(project_id)
+    from app.services.knowledge_tree_service import save_requirement
+    return _tree_action(lambda: save_requirement(project_id, payload.text, payload.scope, "manual", payload.action_id))
+
+
+@router.put("/{project_id}/knowledge/requirements/{requirement_id}")
+def update_requirement(project_id: int, requirement_id: str, payload: UserTeachingRequirementEdit):
+    _require_project(project_id)
+    from app.services.knowledge_tree_service import edit_requirement
+    return _tree_action(lambda: edit_requirement(project_id, requirement_id, payload.text))
+
+
+@router.delete("/{project_id}/knowledge/requirements/{requirement_id}")
+def remove_requirement(project_id: int, requirement_id: str):
+    _require_project(project_id)
+    from app.services.knowledge_tree_service import edit_requirement
+    return _tree_action(lambda: edit_requirement(project_id, requirement_id, delete=True))
 
 
 def _require_project(project_id: int) -> None:

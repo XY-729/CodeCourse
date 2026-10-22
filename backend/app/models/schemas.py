@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ImportProjectRequest(BaseModel):
@@ -15,6 +15,35 @@ class ImportLocalProjectRequest(BaseModel):
 
 class CreateLearningPlanRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
+    root_concept_ids: list[str] = Field(default_factory=list)
+    topology_version: Optional[int] = None
+
+
+class TreeSnapshotVersion(BaseModel):
+    topology_version: int = Field(ge=0)
+    state_version: int = Field(ge=0)
+
+
+class KnowledgeRootProposalRequest(BaseModel):
+    concepts: list[dict]
+    root_refs: list[str] = Field(min_length=1)
+    tree_snapshot: TreeSnapshotVersion
+
+
+class KnowledgeReparentRequest(BaseModel):
+    parent_id: Optional[str] = None
+    topology_version: int = Field(ge=0)
+    reason: str = Field(min_length=1)
+
+
+class UserTeachingRequirementRequest(BaseModel):
+    text: str = Field(min_length=1)
+    scope: Literal["global", "project"] = "project"
+    action_id: str = Field(min_length=1)
+
+
+class UserTeachingRequirementEdit(BaseModel):
+    text: str = Field(min_length=1)
 
 
 class ProjectResponse(BaseModel):
@@ -25,6 +54,9 @@ class ProjectResponse(BaseModel):
     status: str
     project_type: Literal["repository", "learning_plan"] = "repository"
     course_files: list[str] = Field(default_factory=list)
+    root_status: str = "unassigned"
+    root_concept_ids: list[str] = Field(default_factory=list)
+    root_error: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -666,6 +698,19 @@ class LLMTestResponse(BaseModel):
     ok: bool
     provider: str
     message: str
+
+
+class LearningSettingsRequest(BaseModel):
+    primary_programming_language: str = Field(default="", max_length=80)
+
+    @field_validator("primary_programming_language", mode="before")
+    @classmethod
+    def trim_primary_programming_language(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
+
+class LearningSettingsResponse(BaseModel):
+    primary_programming_language: str = ""
 
 
 class PersonalizationRuntimeSettingsRequest(BaseModel):

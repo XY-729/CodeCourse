@@ -102,65 +102,7 @@ def _upsert_concept_capability(
     observation_confidence: float,
     conn: sqlite3.Connection,
 ) -> None:
-    row = conn.execute(
-        """SELECT familiarity, conceptual_understanding, code_reading,
-           implementation, debugging, transfer, confidence, evidence_count
-           FROM concept_capabilities
-           WHERE concept_id = ? AND scope_type = ? AND scope_id = ?""",
-        (concept_id, scope_type, scope_id),
-    ).fetchone()
-
-    now = _now_iso()
-    if row is None:
-        values = {
-            "familiarity": DEFAULT_CAPABILITY,
-            "conceptual_understanding": DEFAULT_CAPABILITY,
-            "code_reading": DEFAULT_CAPABILITY,
-            "implementation": DEFAULT_CAPABILITY,
-            "debugging": DEFAULT_CAPABILITY,
-            "transfer": DEFAULT_CAPABILITY,
-        }
-        values[dimension] = clamp01(DEFAULT_CAPABILITY + delta)
-        conn.execute(
-            """INSERT INTO concept_capabilities
-               (concept_id, scope_type, scope_id, familiarity,
-                conceptual_understanding, code_reading, implementation,
-                debugging, transfer, confidence, evidence_count,
-                last_observed_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                concept_id, scope_type, scope_id,
-                values["familiarity"], values["conceptual_understanding"],
-                values["code_reading"], values["implementation"],
-                values["debugging"], values["transfer"],
-                clamp01(observation_confidence * 0.5),
-                1, now, now,
-            ),
-        )
-    else:
-        col = _dimension_column(dimension)
-        cols = ["familiarity", "conceptual_understanding", "code_reading",
-                 "implementation", "debugging", "transfer"]
-        old_idx = cols.index(col)
-        old_value = float(row[old_idx])
-        old_confidence = float(row[5 + len(cols)])
-        old_count = int(row[5 + len(cols) + 1])
-
-        new_value = clamp01(old_value + delta)
-        confidence_gain = min(MAX_CONFIDENCE_GAIN, MAX_CONFIDENCE_GAIN * observation_confidence)
-        new_confidence = clamp01(old_confidence + confidence_gain)
-
-        conn.execute(
-            f"""UPDATE concept_capabilities
-                SET {col} = ?, confidence = ?, evidence_count = ?,
-                    last_observed_at = ?, updated_at = ?
-                WHERE concept_id = ? AND scope_type = ? AND scope_id = ?""",
-            (
-                new_value, new_confidence, old_count + 1,
-                now, now,
-                concept_id, scope_type, scope_id,
-            ),
-        )
+    return None
 
 
 def _upsert_hypothesis(
@@ -175,78 +117,7 @@ def _upsert_hypothesis(
     recommended_scope: str,
     conn: sqlite3.Connection,
 ) -> None:
-    now = _now_iso()
-    row = conn.execute(
-        """SELECT id, confidence, support_count, contrary_count, status,
-           evidence_observation_ids_json, scope_type, scope_id
-           FROM learner_hypotheses
-           WHERE hypothesis_key = ? AND scope_type = ? AND scope_id = ?""",
-        (hypothesis_key, scope_type, scope_id),
-    ).fetchone()
-
-    if row is None:
-        actual_scope_type = "session" if recommended_scope == "global" else recommended_scope
-        conn.execute(
-            """INSERT INTO learner_hypotheses
-               (id, hypothesis_key, category, statement,
-                scope_type, scope_id, confidence, support_count,
-                contrary_count, status, evidence_observation_ids_json,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                str(uuid4()), hypothesis_key, category, statement,
-                actual_scope_type, scope_id, clamp01(confidence * 0.5),
-                1 if direction == "support" else 0,
-                1 if direction == "contradict" else 0,
-                "candidate",
-                f'["{observation_id}"]',
-                now, now,
-            ),
-        )
-    else:
-        hyp_id = row[0]
-        old_confidence = float(row[1])
-        old_support = int(row[2])
-        old_contrary = int(row[3])
-        old_status = row[4]
-        old_ids_json = row[5]
-
-        new_support = old_support + (1 if direction == "support" else 0)
-        new_contrary = old_contrary + (1 if direction == "contradict" else 0)
-
-        if direction == "support":
-            delta = min(MAX_HYPOTHESIS_DELTA, MAX_HYPOTHESIS_DELTA * confidence)
-            new_confidence = clamp01(old_confidence + delta)
-        elif direction == "contradict":
-            delta = min(MAX_HYPOTHESIS_DELTA, MAX_HYPOTHESIS_DELTA * confidence)
-            new_confidence = clamp01(old_confidence - delta)
-        else:
-            new_confidence = old_confidence
-
-        new_status = old_status
-        if old_status == "candidate" and direction == "support" and new_support >= MIN_SUPPORT_FOR_SUPPORTED:
-            new_status = "supported"
-
-        try:
-            import json
-            old_ids = json.loads(old_ids_json)
-        except (json.JSONDecodeError, TypeError):
-            old_ids = []
-        if observation_id not in old_ids:
-            old_ids.append(observation_id)
-
-        conn.execute(
-            """UPDATE learner_hypotheses
-               SET confidence = ?, support_count = ?, contrary_count = ?,
-                   status = ?, evidence_observation_ids_json = ?,
-                   last_validated_at = ?, updated_at = ?
-               WHERE id = ?""",
-            (
-                new_confidence, new_support, new_contrary,
-                new_status, json.dumps(old_ids),
-                now, now, hyp_id,
-            ),
-        )
+    return None
 
 
 def _upsert_misconception(
@@ -259,34 +130,7 @@ def _upsert_misconception(
     observation_id: str,
     conn: sqlite3.Connection,
 ) -> None:
-    now = _now_iso()
-    concat = f"{concept_text}|||{statement}"
-    digest = hashlib.sha256(concat.encode("utf-8")).hexdigest()[:16]
-
-    row = conn.execute(
-        """SELECT id, confidence, support_count, contrary_count, status,
-           evidence_observation_ids_json
-           FROM misconception_hypotheses
-           WHERE id = ?""",
-        (f"miscon:{digest}",),
-    ).fetchone()
-
-    if row is None:
-        conn.execute(
-            """INSERT INTO misconception_hypotheses
-               (id, concept_id, concept_text, statement,
-                scope_type, scope_id, confidence, support_count,
-                contrary_count, status, evidence_observation_ids_json,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                f"miscon:{digest}", concept_id, concept_text, statement,
-                scope_type, scope_id, clamp01(confidence * 0.5),
-                1, 0, "candidate",
-                f'["{observation_id}"]',
-                now, now,
-            ),
-        )
+    return None
 
 
 def apply_shadow_updates(
@@ -295,105 +139,5 @@ def apply_shadow_updates(
     observation: InteractionObservation,
     conn: sqlite3.Connection,
 ) -> None:
-    scope_type = "project"
-    scope_id = str(project_id)
-
-    for i, ev in enumerate(observation.knowledge_evidence):
-        if ev.confidence < CONFIDENCE_THRESHOLD_KNOWLEDGE:
-            continue
-        if ev.direction == "uncertain":
-            continue
-        concept_id = _resolve_concept_id(ev.concept_text, ev.concept_key, conn, project_id)
-        if concept_id is None:
-            continue
-        concept_row = conn.execute(
-            "SELECT concept_key, concept_type FROM concepts WHERE id = ?",
-            (concept_id,),
-        ).fetchone()
-        is_project_symbol = bool(
-            concept_row
-            and (
-                str(concept_row[0] or "").startswith("project:")
-                or str(concept_row[1] or "") == "project_symbol"
-            )
-        )
-        capability_scope_type = "project" if is_project_symbol else "global"
-        capability_scope_id = str(project_id) if is_project_symbol else "local-user"
-        delta = capability_delta(
-            direction=ev.direction,
-            strength=ev.strength,
-            confidence=ev.confidence,
-        )
-        _upsert_concept_capability(
-            concept_id=concept_id,
-            scope_type=capability_scope_type,
-            scope_id=capability_scope_id,
-            dimension=ev.dimension,
-            delta=delta,
-            observation_confidence=ev.confidence,
-            conn=conn,
-        )
-
-    for i, ev in enumerate(observation.behavior_evidence):
-        if ev.confidence < CONFIDENCE_THRESHOLD_BEHAVIOR:
-            continue
-        hkey = ev.hypothesis_key or _hypothesis_key(ev.category, ev.statement)
-        obs_id = f"observer:v1:qa:{project_id}:behavior:{i}"
-        _upsert_hypothesis(
-            hypothesis_key=hkey,
-            category=ev.category,
-            statement=ev.statement,
-            scope_type=ev.recommended_scope,
-            scope_id=(
-                str(project_id)
-                if ev.recommended_scope == "project"
-                else str(session_id)
-                if session_id and ev.recommended_scope == "session"
-                else "local-user"
-            ),
-            direction=ev.direction,
-            confidence=ev.confidence,
-            observation_id=obs_id,
-            recommended_scope=ev.recommended_scope,
-            conn=conn,
-        )
-
-    for i, ev in enumerate(observation.possible_misconceptions):
-        if ev.confidence < CONFIDENCE_THRESHOLD_MISCONCEPTION:
-            continue
-        concept_id = _resolve_concept_id(ev.concept_text, ev.concept_key, conn, project_id)
-        obs_id = f"observer:v1:qa:{project_id}:miscon:{i}"
-        _upsert_misconception(
-            concept_text=ev.concept_text,
-            concept_id=concept_id,
-            statement=ev.statement,
-            scope_type=scope_type,
-            scope_id=scope_id,
-            confidence=ev.confidence,
-            observation_id=obs_id,
-            conn=conn,
-        )
-
-    for i, ev in enumerate(observation.explicit_user_facts):
-        if ev.confidence < CONFIDENCE_THRESHOLD_EXPLICIT_FACT:
-            continue
-        hkey = f"explicit_fact:{ev.fact_type}:{_hypothesis_key(ev.fact_type, ev.statement)}"
-        obs_id = f"observer:v1:qa:{project_id}:fact:{i}"
-        _upsert_hypothesis(
-            hypothesis_key=hkey,
-            category=f"explicit_user_{ev.fact_type}",
-            statement=ev.statement,
-            scope_type=ev.recommended_scope,
-            scope_id=(
-                str(project_id)
-                if ev.recommended_scope == "project"
-                else str(session_id)
-                if session_id and ev.recommended_scope == "session"
-                else "local-user"
-            ),
-            direction="support",
-            confidence=ev.confidence,
-            observation_id=obs_id,
-            recommended_scope=ev.recommended_scope,
-            conn=conn,
-        )
+    """Retired: observed prose cannot write abilities, styles or hypotheses."""
+    return None

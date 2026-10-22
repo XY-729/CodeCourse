@@ -95,6 +95,17 @@ type ProviderInternals = {
   getTask(projectId: number, taskId: number): Promise<Record<string, unknown>>;
 };
 
+/** Minimal valid section manifest for resumed checkpoint fixtures. */
+function sectionManifest(index: number, name: string, quote: string): string {
+  const payload = {
+    schema_version: 2,
+    concepts: [{ ref: `s${index}`, existing_id: null, name, domain: "general", scope: "global", parent_ref: null, aliases: [] }],
+    coverage: [{ concept_ref: `s${index}`, aspect: "说明", kind: "explained", dimension: "conceptual", core: true, quote }],
+    terms: [],
+  };
+  return `\n\n<!-- codecourse-teaching: ${JSON.stringify(payload)} -->`;
+}
+
 function taskRow(
   id: number,
   taskType: "outline" | "file_lesson" | "outline_lesson",
@@ -242,15 +253,15 @@ describe("Android generation checkpoint production runTask", () => {
         textbooks: [],
       },
       generatedByIndex: {
-        0: "## Section 1\n### item1",
-        1: "## Section 2\n### item2",
-        3: "## Section 4\n### item4",
+        0: "## Section 1\n\n### item1\n\nSection 1 body." + sectionManifest(1, "item1", "Section 1 body."),
+        1: "## Section 2\n\n### item2\n\nSection 2 body." + sectionManifest(2, "item2", "Section 2 body."),
+        3: "## Section 4\n\n### item4\n\nSection 4 body." + sectionManifest(4, "item4", "Section 4 body."),
       },
-      repairGenerated: "## Existing repair",
+      repairGenerated: "## Existing repair" + sectionManifest(9, "repair", "Existing repair"),
     };
     harness.tasks.set(3, taskRow(3, "outline_lesson", checkpoint));
     const provider = createProvider();
-    provider.callLLM.mockResolvedValue("## Section 3\n### item3\ncomplete");
+    provider.callLLM.mockResolvedValue("## Section 3\n\n### item3\n\nSection 3 body." + sectionManifest(3, "item3", "Section 3 body."));
     await provider.runTask(3);
 
     expect(provider.callLLM).toHaveBeenCalledTimes(1);
@@ -283,12 +294,12 @@ describe("Android generation checkpoint production runTask", () => {
         textbooks: [],
       },
       generatedByIndex: {
-        0: "## Section 1",
-        1: "## Section 2",
-        2: "## Section 3",
-        3: "## Section 4",
+        0: "## Section 1\n\n### item1\n\nSection 1 body." + sectionManifest(1, "item1", "Section 1 body."),
+        1: "## Section 2\n\n### item2\n\nSection 2 body." + sectionManifest(2, "item2", "Section 2 body."),
+        2: "## Section 3\n\n### item3\n\nSection 3 body." + sectionManifest(3, "item3", "Section 3 body."),
+        3: "## Section 4\n\n### item4\n\nSection 4 body." + sectionManifest(4, "item4", "Section 4 body."),
       },
-      repairGenerated: "## Repair\n### item1\n### item2\n### item3\n### item4",
+      repairGenerated: "## Repair\n\n### item1\n### item2\n### item3\n### item4" + sectionManifest(9, "repair", "### item1"),
     };
     harness.tasks.set(4, taskRow(4, "outline_lesson", checkpoint));
     const provider = createProvider();

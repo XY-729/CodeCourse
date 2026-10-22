@@ -47,7 +47,7 @@ class PreviewIntegrationTests(unittest.TestCase):
         sub_path = "sub-outline-1234abcd.md"
         (root / sub_path).write_text((root / "outline.md").read_text(encoding="utf-8"), encoding="utf-8")
         for project_id, outline_path in [(learning.id, None), (self.project.id, sub_path)]:
-            with self.subTest(project_id=project_id), patch("app.services.generation_service.call_openai_compatible_chat", side_effect=self._responses()):
+            with self.subTest(project_id=project_id), patch("app.services.generation_service.call_openai_compatible_chat", side_effect=fixtures.response_model(self._responses())):
                 result = self.client.post(f"/api/projects/{project_id}/lessons/outline", json={"lesson_number": 1, "title": "入口与启动", "outline_path": outline_path})
                 self.assertEqual(result.status_code, 200, result.text)
                 task_id = result.json()["id"]
@@ -134,7 +134,7 @@ class PreviewIntegrationTests(unittest.TestCase):
             self.assertEqual(self.client.get(f"/api/projects/{self.project.id}/tasks/{task_id}/preview").status_code, 404)
 
     def test_completed_cache_retains_preview_without_model_calls(self):
-        with patch("app.services.generation_service.call_openai_compatible_chat", side_effect=self._responses()):
+        with patch("app.services.generation_service.call_openai_compatible_chat", side_effect=fixtures.response_model(self._responses())):
             request = {"lesson_number": 1, "title": "入口与启动", "instructions": "缓存"}
             first = self.client.post(f"/api/projects/{self.project.id}/lessons/outline", json=request)
         task_id = first.json()["id"]

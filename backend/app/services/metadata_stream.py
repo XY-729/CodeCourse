@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from app.services.personalization.teaching.manifest import MAX_METADATA_BYTES
+
 
 class StreamingMetadataFilter:
     """Suppress reserved metadata lines while streaming ordinary text immediately.
@@ -45,7 +47,9 @@ class StreamingMetadataFilter:
             value = self.metadata_re.sub("", line, count=1).strip()
             metadata_fence = re.match(r"^(`{3,}|~{3,})(?:json)?\s*$", value, re.I)
             self.metadata_fence = metadata_fence.group(1) if metadata_fence else ""
-            self.continuation = bool(metadata_fence or not value or (value.startswith("[") and not value.endswith("]")))
+            self.continuation = bool(metadata_fence or not value or
+                                     (value.startswith("[") and not value.endswith("]")) or
+                                     (value.startswith("{") and not value.endswith("}")))
             return ""
         return line
 
@@ -54,7 +58,9 @@ class StreamingMetadataFilter:
         for part in chunk.splitlines(keepends=True):
             ends_line = part.endswith("\n")
             if self.hidden:
-                self.pending = (self.pending + part)[:250000]
+                self.pending += part
+                if len(self.pending.encode("utf-8")) > MAX_METADATA_BYTES:
+                    raise ValueError("知识清单超过解析资源限制")
                 if ends_line:
                     self._complete_line(self.pending)
                     self.pending = ""
@@ -66,6 +72,8 @@ class StreamingMetadataFilter:
                     self.passthrough = False
                 continue
             self.pending += part
+            if len(self.pending.encode("utf-8")) > MAX_METADATA_BYTES:
+                raise ValueError("元数据行超过解析资源限制")
             if ends_line:
                 visible = self._complete_line(self.pending)
                 if visible:

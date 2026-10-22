@@ -6,8 +6,14 @@ export class StreamingMetadataFilter {
   private fence = "";
   private continuation = false;
   private metadataFence = "";
+  private raw = "";
   private readonly names = ["TITLE", "TERMS", "HANDOFF", "术语", "TEACHING", "REUSE"];
   private readonly metadata = /^\s*(?:TITLE|TERMS|HANDOFF|术语|TEACHING|REUSE)\s*[:：]/i;
+
+  /** Full model text, including hidden protocol lines, for same-response parsing. */
+  get rawText(): string {
+    return this.raw;
+  }
 
   private complete(line: string): string {
     if (this.continuation) {
@@ -36,6 +42,7 @@ export class StreamingMetadataFilter {
   }
 
   push(chunk: string): string {
+    this.raw = (this.raw + chunk).slice(0, 2_000_000);
     let output = "";
     for (const part of chunk.match(/[^\n]*\n|[^\n]+$/g) || []) {
       const endsLine = part.endsWith("\n");

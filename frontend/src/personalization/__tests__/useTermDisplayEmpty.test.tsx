@@ -13,7 +13,6 @@ describe("useTermDisplay empty state", () => {
         sourceKey: "course:outline.md",
         content: "# Outline",
         rawTerms: [],
-        terminologyDensity: 0.5,
         loadProfiles,
       });
     });

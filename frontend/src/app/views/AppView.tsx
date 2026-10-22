@@ -140,7 +140,6 @@ export default function AppView({ model }: { model: AppViewModel }) {
     settingsOpen,
     confirmAction,
     openExternal,
-    setTerminologyDensity,
     bumpPersonalizationRevision,
     setSettingsDialogBusy,
     closeSettingsDialog,
@@ -398,16 +397,16 @@ export default function AppView({ model }: { model: AppViewModel }) {
           projectId: project?.id ?? null,
           onConfirm: confirmAction,
           onOpenExternal: openExternal,
-          onPreferencesChanged: (density) => {
-            setTerminologyDensity(density);
-            bumpPersonalizationRevision();
-          },
           onBusyChange: setSettingsDialogBusy,
           onClose: closeSettingsDialog,
         }}
         learnerProfile={{
           open: learnerProfileOpen,
           projectId: project?.id ?? null,
+          projectName: project?.name ?? null,
+          planRootStatus: project?.root_status ?? null,
+          planRootConceptIds: project?.root_concept_ids ?? [],
+          planRootError: project?.root_error ?? null,
           onClose: () => setLearnerProfileOpen(false),
           onChanged: bumpPersonalizationRevision,
           onConfirm: confirmAction,

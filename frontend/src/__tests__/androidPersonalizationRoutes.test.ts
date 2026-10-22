@@ -75,6 +75,25 @@ describe("Android personalization route contract", () => {
     expect(result).toEqual({ handled: false });
   });
 
+  it("retires diagnosis, style surveys and implicit preference writes without touching a profile", async () => {
+    const { proxy, calls } = handlers();
+    const retired = [
+      ["/projects/1/personalization/diagnostics/pending", "GET", {}],
+      ["/projects/1/personalization/diagnostics/item-1/answer", "POST", { answer: "A" }],
+      ["/projects/1/personalization/diagnostics/item-1/dismiss", "POST", {}],
+      ["/projects/1/personalization/diagnostics/item-1/flag", "POST", {}],
+      ["/projects/1/personalization/surveys/survey-1/answer", "POST", { choice: "A" }],
+      ["/projects/1/personalization/surveys/survey-1/dismiss", "POST", {}],
+      ["/projects/1/personalization/answer-feedback", "POST", { dimension: "depth", choice: "deep" }],
+      ["/projects/1/personalization/preferences", "PUT", { answer_depth: 0.9 }],
+    ] as const;
+    for (const [path, method, body] of retired) {
+      const result = await dispatch(proxy, path, method, body);
+      expect(result).toEqual({ handled: true, value: { status: "retired", message: expect.any(String) } });
+    }
+    expect([...calls.keys()]).toEqual([]);
+  });
+
   it("rejects unsupported teaching feedback instead of silently storing it", async () => {
     const { proxy } = handlers();
     await expect(dispatch(

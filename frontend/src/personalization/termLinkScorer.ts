@@ -17,10 +17,6 @@ const W_EXPLORATION = 0.10;
 const PROMINENT_THRESHOLD = 0.72;
 const SUBTLE_THRESHOLD = 0.55;
 
-// ---- Density caps ----
-const MAX_PER_PARAGRAPH = 2;
-const MAX_PER_1000_CHARS = 6;
-
 // ---- Exploration ----
 const EXPLORATION_UNCERTAINTY_MIN = 0.3;
 const EXPLORATION_MASTERY_LOW = 0.4;
@@ -115,16 +111,15 @@ export function scoreTermLinks(
 }
 
 /**
- * Apply density caps and deduplication.
+ * Deduplicate entries by concept identity.
  * - First occurrence only per concept
- * - density limit per text length
  * - Explicitly asked concepts always get "prominent"
  */
 export function selectTopTerms(
   scoredTerms: ScoredTerm[],
-  textLength: number,
+  _textLength: number,
   explicitlyAskedConceptIds: Set<string> = new Set(),
-  terminologyDensity = 0.5,
+  _terminologyDensity = 0.5,
 ): ScoredTerm[] {
   // Boost explicitly asked concepts to prominent
   const withOverrides = scoredTerms.map((t) => {
@@ -148,14 +143,7 @@ export function selectTopTerms(
 
   deduped.sort((a, b) => b.linkScore - a.linkScore);
 
-  // Keep the historical default at six terms per 1000 characters while
-  // allowing the learner preference to move the cap between four and eight.
-  const densityRate = MAX_PER_1000_CHARS + Math.round((clamp(terminologyDensity, 0, 1) - 0.5) * 4);
-  const maxTerms = Math.min(
-    24,
-    Math.max(2, Math.ceil((textLength / 1000) * densityRate)),
-  );
-  return deduped.slice(0, maxTerms);
+  return deduped;
 }
 
 function clamp(value: number, min: number, max: number): number {

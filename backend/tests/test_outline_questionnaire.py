@@ -125,35 +125,9 @@ class OutlineQuestionnaireTests(unittest.TestCase):
         intent = serialize_learning_intent(answers)
         self.assertIn("basic、deep", intent)
 
-    @patch("app.services.outline_questionnaire.apply_preference_feedback")
-    def test_persist_only_prerequisite_answers(self, mock_apply):
-        answers = [
-            {"question": "前置知识？", "dimension": "prerequisite_level", "selected": "none", "_key": "k1"},
-            {"question": "风格？", "dimension": "course_style", "selected": "practice", "_key": "k2"},
-        ]
-        persist_prerequisite_answers(123, answers)
-        self.assertEqual(mock_apply.call_count, 1)
-        args, kwargs = mock_apply.call_args
-        self.assertEqual(args[0], 123)
-        self.assertEqual(kwargs["dimension"], "prerequisite_detail")
-        self.assertEqual(kwargs["choice"], "less")  # "none" maps to "less"
-        self.assertEqual(kwargs["source"], "survey")
-
-    @patch("app.services.outline_questionnaire.apply_preference_feedback")
-    def test_persist_familiar_maps_to_less(self, mock_apply):
-        answers = [
-            {"question": "前置知识？", "dimension": "prerequisite_level", "selected": "familiar", "_key": "k3"},
-        ]
-        persist_prerequisite_answers(123, answers)
-        args, kwargs = mock_apply.call_args
-        self.assertEqual(kwargs["choice"], "less")
-
-    def test_persist_skips_non_prerequisite(self):
-        answers = [
-            {"question": "风格？", "dimension": "course_style", "selected": "practice"},
-        ]
-        # No prerequisite answers → apply_preference_feedback never called (patched to raise if called)
-        with patch("app.services.outline_questionnaire.apply_preference_feedback", side_effect=AssertionError("should not call")):
+    def test_preflight_answers_do_not_write_fixed_preferences(self):
+        answers = [{"question": "前置知识？", "dimension": "prerequisite_level", "selected": "familiar"}]
+        with patch("app.services.personalization_service.apply_preference_feedback", side_effect=AssertionError("retired preference write")):
             persist_prerequisite_answers(123, answers)
 
     def test_questionnaire_prompt_registered(self):
@@ -166,9 +140,9 @@ class OutlineQuestionnaireTests(unittest.TestCase):
         self.assertIn("prompt.outline.questionnaire", PROMPT_METADATA)
         prompt = PROMPT_DEFAULTS["prompt.outline.questionnaire"]
         self.assertIn("question_type", prompt)
-        self.assertIn("自主决定", prompt)
+        self.assertIn("实际信息缺口决定", prompt)
         self.assertIn("信息缺口", prompt)
-        self.assertIn("返回空数组 []", prompt)
+        self.assertIn("返回 []", prompt)
         self.assertNotIn("prerequisite_level", prompt)
         self.assertNotIn("course_style", prompt)
         self.assertNotIn("learning_depth", prompt)

@@ -65,9 +65,7 @@ def _run(state_id: int, request: str) -> None:
         from app.services import teaching_index as index
         state = index.document_state(row["project_id"], "course", row["source_path"])
         if state["indexStatus"] != "complete":
-            state = index.reindex_document(row["project_id"], "course", row["source_path"])
-        if state["indexStatus"] != "complete":
-            raise ValueError("课件知识索引未完整通过校验，请重试")
+            raise ValueError("知识清单未就绪；课程进度已保留，请单独补录知识清单后重试本地应用")
         # Each concept receives ONE familiarity event, irrespective of paragraph count.
         groups = {}
         for passage in state["passages"]:
@@ -147,7 +145,7 @@ def shutdown_completions() -> None:
 
 
 def learned_course_context(project_id: int, query: str = "") -> str:
-    """Bounded learned ranges for teaching, even when mastery remains uncertain."""
+    """Complete learned ranges, independently of understanding declarations."""
     with _connect() as conn:
         rows = conn.execute(
             """SELECT e.result_json,e.object_json,c.display_name,e.event_time
@@ -158,20 +156,14 @@ def learned_course_context(project_id: int, query: str = "") -> str:
                  AND d.content_hash=json_extract(e.object_json,'$.contentHash')
                  AND ((e.scope_type='global' AND e.scope_id='local-user') OR (e.scope_type='project' AND e.scope_id=?))
                  AND NOT EXISTS (SELECT 1 FROM learning_evidence_v2 v WHERE v.target_evidence_id=e.id AND v.action='void_evidence' AND v.voided=0)
-               ORDER BY CASE WHEN instr(lower(?),lower(c.display_name))>0 THEN 0 ELSE 1 END,e.event_time DESC LIMIT 60""",
-            (str(project_id), query),
+               ORDER BY e.concept_id,e.event_time,e.id""",
+            (str(project_id),),
         ).fetchall()
     records = []
     for row in rows:
         result, obj = json.loads(row["result_json"]), json.loads(row["object_json"])
         ranges = result.get("ranges", [])
-        item = {"concept": row["display_name"], "ranges": ranges[:12], "rangeCount": len(ranges), "sourcePath": obj["sourcePath"], "status": "studied_not_verified"}
-        candidate = records + [item]
-        if len(json.dumps(candidate, ensure_ascii=False)) > 7000:
-            break
-        records = candidate
-        if len(records) >= 30:
-            break
+        records.append({"concept": row["display_name"], "ranges": ranges, "rangeCount": len(ranges), "sourcePath": obj["sourcePath"], "status": "studied_not_verified"})
     encoded = json.dumps(records, ensure_ascii=False).replace("<", "\\u003c")
     return ("\n<completed_course_learning>\n" + encoded + "\n</completed_course_learning>\n"
             "以上仅表示用户已学过的具体范围，不确认理解或掌握。相同基础简短衔接并优先引用原讲解；"

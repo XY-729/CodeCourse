@@ -30,9 +30,6 @@ export function renderMobileAssistantPanel(model: AppViewModel) {
     qaFavoriteOnly,
     selectedQA,
     project,
-    dynamicSurvey,
-    diagnosticItem,
-    diagnosticResult,
     llmSettings,
     qaPanelError,
     mobileWorkspaceMotionRef,
@@ -55,12 +52,6 @@ export function renderMobileAssistantPanel(model: AppViewModel) {
     handleDismissContinuity,
     handleTeachingNextAction,
     openSettings,
-    handleDynamicSurveyAnswer,
-    handleDynamicSurveyDismiss,
-    handleDisableDynamicSurveys,
-    handleDiagnosticAnswer,
-    handleDiagnosticDismiss,
-    handleDiagnosticFlag,
   } = model;
 
   return (
@@ -95,9 +86,6 @@ export function renderMobileAssistantPanel(model: AppViewModel) {
       selectedRecord={selectedQA}
       followUpRecord={qaFollowUpTarget}
       selectedRecordReadOnly={Boolean(selectedQA && project && selectedQA.project_id !== project.id)}
-      surveyCandidate={dynamicSurvey}
-      diagnosticItem={diagnosticItem}
-      diagnosticResult={diagnosticResult}
       settings={llmSettings}
       panelError={qaPanelError}
       knowledgeDisabled={!project}
@@ -120,12 +108,6 @@ export function renderMobileAssistantPanel(model: AppViewModel) {
       onDismissContinuity={(handoff) => { void handleDismissContinuity(handoff); }}
       onTeachingNextAction={handleTeachingNextAction}
       onOpenSettings={openSettings}
-      onAnswerSurvey={(choice) => { void handleDynamicSurveyAnswer(choice); }}
-      onDismissSurvey={() => { void handleDynamicSurveyDismiss(); }}
-      onDisableSurveys={() => { void handleDisableDynamicSurveys(); }}
-      onAnswerDiagnostic={(answer) => { void handleDiagnosticAnswer(answer); }}
-      onDismissDiagnostic={() => { void handleDiagnosticDismiss(); }}
-      onFlagDiagnostic={() => { void handleDiagnosticFlag(); }}
     />
   );
 

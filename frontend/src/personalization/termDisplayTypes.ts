@@ -1,11 +1,17 @@
 export type ManualKnowledgeStatus = "known" | "unknown" | null;
 
+export type TermFamiliarity = "unrecorded" | "encountered" | "studied"
+  | "self_reported_understood" | "partially_understood" | "declared_known" | "needs_help" | "mixed";
+
 export type TermDisplayTier = "none" | "subtle" | "prominent";
 
 export type TermDisplayReason =
   | "model_selected"
   | "untrusted_candidate"
   | "confirmed_knowledge"
+  | "declared_known"
+  | "self_reported_understood"
+  | "needs_help"
   | "manual_known"
   | "manual_unknown"
   | "likely_unfamiliar"
@@ -14,8 +20,6 @@ export type TermDisplayReason =
   | "low_candidate_quality"
   | "below_threshold"
   | "duplicate_concept"
-  | "paragraph_density_limit"
-  | "document_density_limit"
   | "unsupported_location"
   | "profile_unavailable"
   | "explicit_manual_link";
@@ -28,7 +32,7 @@ export interface TermCandidateInput {
   conceptName: string;
   paragraphId: string;
   occurrenceIndex: number;
-  source: "model" | "code_symbol" | "inline_code" | "heading" | "existing_link" | "unknown";
+  source: "manifest" | "model" | "code_symbol" | "inline_code" | "heading" | "existing_link" | "unknown";
   sourceConfidence: number;
   contextRelevance: number;
   difficulty: number;
@@ -42,6 +46,8 @@ export interface TermCandidateInput {
 export interface TermPersonalizationProfile {
   conceptKey: string;
   manualStatus: ManualKnowledgeStatus;
+  /** Authoritative fact state; takes precedence over legacy knowledgeStatus. */
+  familiarity?: TermFamiliarity;
   knowledgeStatus?: string | null;
   mastery: number | null;
   uncertainty: number | null;
@@ -52,7 +58,8 @@ export interface TermPersonalizationProfile {
 }
 
 export interface TermDisplayPreferences {
-  terminologyDensity: number;
+  /** Compatibility only. Ignored by the display decision. */
+  terminologyDensity?: number;
 }
 
 export interface PreliminaryTermDecision {

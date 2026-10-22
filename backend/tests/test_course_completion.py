@@ -106,17 +106,21 @@ class CourseCompletionTests(unittest.TestCase):
             self.run_job(saved['id'])
         self.assertEqual(self.evidence(), [])
 
-    def test_failed_scan_keeps_progress_and_can_retry(self):
+    def test_missing_index_keeps_progress_without_any_model_call(self):
         from app.services import storage, teaching_index as index
         path = storage.GENERATED_ROOT / str(self.project) / self.path
         path.write_text('# 没有知识索引的旧课件', encoding='utf-8')
         saved = self.complete()
-        with patch.object(index, 'reindex_document', side_effect=RuntimeError('model unavailable')):
+        with patch.object(index, 'reindex_document') as scan:
             self.run_job(saved['id'])
+            scan.assert_not_called()
         state = self.client.get(f'/api/projects/{self.project}/learning-state').json()[0]
         self.assertEqual(state['status'], 'completed')
         self.assertEqual(state['profile_status'], 'failed')
-        self.assertIn('model unavailable', state['profile_error'])
+        self.assertIn('知识清单未就绪', state['profile_error'])
+        self.assertEqual(self.evidence(), [])
+        # The explicit backfill is a separate visible task; after it the retry
+        # applies local evidence without any model call in completion itself.
         self.document()
         retry = self.client.post(f'/api/projects/{self.project}/learning-state/{saved["id"]}/profile-retry')
         self.assertEqual(retry.json()['profile_status'], 'pending')
@@ -138,14 +142,19 @@ class CourseCompletionTests(unittest.TestCase):
         self.assertEqual(self.evidence(), [])
 
     def test_generation_and_qa_contexts_receive_learned_ranges(self):
-        from app.services.term_service import term_metadata_instruction
+        from app.services.personalization.teaching.generation_context import build_generation_context
         from app.services.qa_background import saved_learner_summary
         saved = self.complete()
         self.run_job(saved['id'])
-        for context in (term_metadata_instruction(self.project), saved_learner_summary(self.project)):
-            self.assertIn('completed_course_learning', context)
-            self.assertIn('共享与可变借用', context)
-            self.assertIn('不确认理解或掌握', context)
+        context = build_generation_context(self.project).render()
+        self.assertEqual(context, saved_learner_summary(self.project))
+        self.assertIn('<knowledge_state>', context)
+        self.assertIn('<explicit_user_requirements>', context)
+        # Completed ranges reach every entry point through the factual tree, not
+        # through a separate truncated summary block.
+        self.assertIn('共享与可变借用', context)
+        self.assertIn('借用检查', context)
+        self.assertNotIn('生命周期将在后续课程', context)
 
     def test_manual_judgement_survives_course_completion(self):
         from app.services.personalization.knowledge_state_service import get_states

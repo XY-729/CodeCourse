@@ -169,14 +169,13 @@ def _excluded_ranges(content: str) -> list[tuple[int, int]]:
             elif value[0] == fence[0] and len(value) >= len(fence) and not line[marker.end():].strip():
                 ranges.append((fence_start, offset + len(line)))
                 fence = ""
-        elif not fence and re.match(r"^ {0,3}#{1,6}\s", line):
-            ranges.append((offset, offset + len(line)))
         offset += len(line)
     if fence:
         ranges.append((fence_start, len(content)))
     ranges.extend(
         (match.start(), match.end()) for match in MARKDOWN_LINK_RE.finditer(content)
     )
+    ranges.extend((match.start(), match.end()) for match in re.finditer(r"<!--[\s\S]*?-->", content))
     return sorted(ranges)
 
 
@@ -277,7 +276,12 @@ def normalize_term_candidate(
 def parse_term_metadata(raw_content: str, project_id: int | None = None, intent: str = "") -> tuple[str, list[dict[str, object]]]:
     """Remove TERMS metadata and validate candidates against the remaining body."""
     from app.services.teaching_index import prepare_metadata
-    raw_content = prepare_metadata(raw_content, project_id, intent)
+    from app.services.personalization.teaching.manifest import parse_manifest, canonical_comment, manifest_terms, MAX_METADATA_BYTES
+    parsed = parse_manifest(raw_content)
+    if parsed.status == "invalid":
+        parsed.require_valid()
+    manifest = parsed.manifest
+    raw_content = parsed.body if manifest is not None else prepare_metadata(raw_content, project_id, intent)
     raw_terms: list[object] = []
     kept: list[str] = []
     fence = ""
@@ -322,14 +326,21 @@ def parse_term_metadata(raw_content: str, project_id: int | None = None, intent:
                 if lines[index - 1].strip() == "]":
                     break
         try:
-            if len(payload) > 16000:
-                continue
+            if len(payload.encode("utf-8")) > MAX_METADATA_BYTES:
+                raise ValueError("术语元数据超过解析资源限制")
             values = json.loads(payload)
         except json.JSONDecodeError:
             values = []
         if isinstance(values, list):
-            raw_terms.extend(values[:120])
+            raw_terms.extend(values)
     content = "\n".join(kept).strip()
+    if manifest is not None:
+        terms = manifest_terms(manifest, content)
+        # V2 is authoritative even when legacy TERMS precedes/follows it.
+        for term in terms:
+            if _visible_source_span(content, str(term["display_name"]), term["source_span"]) is None:
+                raise ValueError("v2 术语不在允许标注的可见区域")
+        return content + "\n\n" + canonical_comment(manifest), terms
     terms: list[dict[str, object]] = []
     seen: set[str] = set()
     for value in raw_terms:
@@ -346,7 +357,7 @@ def parse_term_metadata(raw_content: str, project_id: int | None = None, intent:
             continue
         seen.add(key)
         terms.append(candidate)
-    return content, terms[:12]
+    return content, terms
 
 
 def term_learning_context(project_id: int) -> str:
@@ -427,25 +438,10 @@ def term_learning_context(project_id: int) -> str:
 
 
 def term_metadata_instruction(project_id: int | None = None) -> str:
-    from app.services.teaching_index import teaching_context, metadata_instruction
-    from app.services.course_completion import learned_course_context
-    coverage = teaching_context(project_id) if project_id is not None else metadata_instruction()
-    if project_id is not None:
-        coverage += learned_course_context(project_id)
-    return coverage + """
-
-术语元数据要求：
-- 在正文第一行之前输出一行：
-  TERMS: [{"display_name":"正文中的原词","canonical_name":"规范名称","category":"concept","confidence":0.9,"source_span":{"text":"正文中的原词"}}]
-- 根据本次提供的学习画像和当前问题，自主选择这位学习者可能需要进一步解释的术语，不要把所有人都当初学者。
-- 不标已确认掌握的概念；未有记录不等于不会。优先标影响理解的陌生前置概念；本段已经充分解释的词不必再标。
-- 只标最小完整的技术名词，不标整句说明、加粗的强调语句、临时变量名、示例输出或章节标题。行内代码中的技术名词可以标。
-- 最多 12 个，不要列普通词、文件名、标题中的泛词或完整句子。
-- display_name 与 source_span.text 必须完全相同，并且逐字实际出现在正文可见文本中。
-- 不要列命令、路径、函数调用、函数签名、编译错误、Markdown 片段或只在代码块中出现的文本。
-- category 只能使用 concept/api/library/framework/protocol/type/symbol/tool/configuration/algorithm/data_structure/other。
-- 允许零个术语，输出 TERMS: []；不要为了凑数量添加词。术语与正文在同一次生成中决定。
-- TERMS 行是机器元数据，不要在正文中解释这行。""" + (term_learning_context(project_id) if project_id is not None else "")
+    # Input facts are supplied once by generation_context, independently of
+    # whether this particular task displays terms. No truncated legacy context.
+    from app.services.prompt_contracts import TEACHING_MANIFEST_CONTRACT
+    return "\n" + TEACHING_MANIFEST_CONTRACT
 
 
 
@@ -467,10 +463,27 @@ def register_document_terms(
     model_terms: Optional[Iterable[object]] = None,
     *,
     allow_model_scan: bool = False,
+    tree_snapshot: dict | None = None,
+    generation_id: str | None = None,
 ) -> list[DocumentTerm]:
     source_path = _normalize_source_path(source_path)
     from app.services.teaching_index import index_document
-    index_document(project_id, source_type, source_path, content)
+    document_id = index_document(project_id, source_type, source_path, content,
+                                 tree_snapshot=tree_snapshot, generation_id=generation_id)
+    from app.services.personalization.teaching.manifest import parse_manifest, manifest_terms
+    parsed = parse_manifest(content)
+    if parsed.status == "invalid":
+        return []
+    resolved_ids = {}
+    if parsed.manifest is not None:
+        model_terms = manifest_terms(parsed.manifest, parsed.body)
+        from app.services.storage import _connect
+        with _connect() as conn:
+            rows = conn.execute("SELECT * FROM teaching_terms WHERE document_id=? AND active=1", (document_id,)).fetchall()
+        resolved_ids = {(row["text"], row["quote"]): row["concept_id"] for row in rows}
+        # A rejected identity/quote must not be reintroduced through legacy name matching.
+        model_terms = [term for term in model_terms if (term["display_name"], term["quote"]) in resolved_ids]
+        allow_model_scan = False
     content_hash = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()
     delete_stale_document_term_candidates(
         project_id,
@@ -491,6 +504,8 @@ def register_document_terms(
             default_confidence=0.94,
         )
         if candidate:
+            if isinstance(value, Mapping) and value.get("source") == "teaching_manifest_v2":
+                candidate.update({key: value.get(key) for key in ("source", "concept_ref", "existing_id", "domain", "scope", "quote")})
             weighted.append(candidate)
     if model_terms is not None:
         from app.services.storage import _connect
@@ -500,7 +515,7 @@ def register_document_terms(
             conn.execute(
                 """UPDATE document_terms SET status='superseded'
                    WHERE project_id=? AND source_type=? AND source_path=?
-                     AND detection_source='model' AND status IN ('candidate','linked')
+                     AND detection_source IN ('model','teaching_manifest_v2') AND status IN ('candidate','linked')
                      AND COALESCE(link_origin,'legacy_unknown')<>'manual'""",
                 (project_id, source_type, source_path),
             )
@@ -514,12 +529,12 @@ def register_document_terms(
         canonical_name = str(candidate["canonical_name"])
         source = str(candidate["source"])
         confidence = float(candidate["confidence"])
-        normalized = canonical_name.casefold()
+        normalized = resolved_ids.get((term, candidate.get("quote")), canonical_name.casefold())
         if normalized in seen:
             continue
         seen.add(normalized)
         try:
-            concept_id = _resolve_concept(project_id, canonical_name, source, confidence)
+            concept_id = resolved_ids.get((term, candidate.get("quote"))) or _resolve_concept(project_id, canonical_name, source, confidence)
         except ValueError:
             continue
         upsert_document_term(
@@ -535,13 +550,17 @@ def register_document_terms(
             category=str(candidate["category"]),
             source_span=dict(candidate["source_span"]),
         )
-        if len(seen) >= 20:
-            break
     terms = _clean_historical_candidates(
         project_id,
         list_document_terms(project_id, source_type, source_path),
         content,
     )
+    if parsed.manifest is not None:
+        # Re-read latest state after publication; generation-start familiarity
+        # never decides final links, nor does newly generated coverage.
+        annotations = get_document_term_annotations(project_id, source_type, source_path)
+        familiar_ids = {item["concept_id"] for item in annotations["candidates"] if not item["offer_explanation"]}
+        terms = [term for term in terms if term.concept_id not in familiar_ids or getattr(term, "link_origin", None) == "manual"]
     if allow_model_scan:
         # Compatibility for explicit callers only. Reading/generating a document
         # must never infer permission to make a second model request.
@@ -574,6 +593,53 @@ def _term_scan_enabled() -> bool:
         return bool(settings.get("enabled") == "true" and settings.get("api_key") and settings.get("base_url"))
     except Exception:
         return False
+
+
+def get_document_term_annotations(project_id: int, source_type: str, source_path: str) -> dict:
+    """Derived sidecar: all identities and spans, including homonymous terms.
+
+    Reads current facts on each request, so feedback invalidates the versioned
+    result naturally. The historical text-keyed DocumentTerm API remains usable.
+    """
+    from app.services.storage import _connect
+    from app.services.personalization.teaching.generation_context import get_full_tree_snapshot
+    source_path = _normalize_source_path(source_path)
+    for _ in range(3):
+        snapshot = get_full_tree_snapshot(project_id)
+        version = snapshot.get("tree_snapshot", snapshot)
+        nodes = {node["id"]: node for node in snapshot["nodes"]}
+        content = _load_document_content(project_id, source_type, source_path)
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        with _connect() as conn:
+            rows = conn.execute("""SELECT t.* FROM teaching_terms t JOIN teaching_documents d ON d.id=t.document_id
+                WHERE d.project_id=? AND d.source_type=? AND d.source_path=? AND d.content_hash=?
+                AND d.metadata_status='valid' AND d.content_status='published' AND t.active=1
+                ORDER BY t.start_offset,t.concept_id""", (project_id, source_type, source_path, digest)).fetchall()
+            current = conn.execute("SELECT topology_version,state_version FROM knowledge_tree_versions WHERE id=1").fetchone()
+        if current and any(current[key] != version[key] for key in ("topology_version", "state_version")):
+            continue
+        if digest != hashlib.sha256(_load_document_content(project_id, source_type, source_path).encode("utf-8")).hexdigest():
+            continue
+        candidates, seen = [], set()
+        for row in rows:
+            identity = row["concept_id"]
+            node = nodes.get(identity)
+            if node is None:
+                continue  # A topology change must not expose inaccessible identities.
+            state = node.get("familiarity", "unrecorded")
+            key = identity, row["start_offset"], row["end_offset"]
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append({"concept_id": identity, "text": row["text"], "quote": row["quote"],
+                "source_span": {"text": row["text"], "start": row["start_offset"], "end": row["end_offset"]},
+                "familiarity": state, "offer_explanation": state not in {"declared_known", "self_reported_understood"},
+                "source": "teaching_manifest_v2"})
+        tree_version = {key: version[key] for key in ("topology_version", "state_version")}
+        return {"content_hash": digest, "tree_snapshot": tree_version, "rules_version": "terms-v2.1",
+                "cache_key": f"{digest}:{tree_version['topology_version']}:{tree_version['state_version']}:terms-v2.1",
+                "candidates": candidates}
+    raise ValueError("正文或知识树持续变化，术语标注需要重试；未调用模型")
 
 
 def _term_scan_messages(content: str, project_id: int | None = None) -> list[dict[str, str]]:
@@ -612,8 +678,8 @@ def _term_scan_messages(content: str, project_id: int | None = None) -> list[dic
                 "返回格式：{\"terms\":[{\"display_name\":\"正文原词\",\"canonical_name\":\"规范名称\","
                 "\"category\":\"concept\",\"confidence\":0.0,"
                 "\"source_span\":{\"text\":\"正文原词\"}}]}。"
-                "最多 12 个，允许零个。结合学习画像选出尚需帮助的最小技术名词，不标已经讲清的词、强调语句或示例输出。\n"
-                + (term_learning_context(project_id) if project_id is not None else "")
+                "完整提取所有可标注技术概念，不设数量配额，不因刚解释过而丢弃候选。\n"
+                + (__import__("app.services.personalization.teaching.generation_context", fromlist=["build_generation_context"]).build_generation_context(project_id).render() if project_id is not None else "")
                 + "\n正文：\n" + compact
             ),
         },
@@ -646,7 +712,7 @@ def _parse_term_scan(raw: str, content: str) -> list[dict[str, object]]:
             terms.append(candidate)
     if rows and not terms:
         raise ValueError("术语识别未返回正文中的有效术语，已有标注已保留。")
-    return terms[:12]
+    return terms
 
 
 def _clean_historical_candidates(
@@ -658,7 +724,7 @@ def _clean_historical_candidates(
     for term in terms:
         if term.status == 'superseded':
             continue
-        if term.detection_source != 'model' and getattr(term, 'link_origin', None) != 'manual':
+        if term.detection_source not in {'model', 'teaching_manifest_v2'} and getattr(term, 'link_origin', None) != 'manual':
             # Keep history and user judgements intact, but don't display guesses.
             continue
         if getattr(term, 'link_origin', None) == 'manual':
@@ -820,10 +886,12 @@ def _load_document_content(project_id: int, source_type: str, source_path: str) 
     source_path = _normalize_source_path(source_path)
     content = ""
     if source_type == "course":
-        target = (GENERATED_ROOT / str(project_id) / source_path).resolve()
-        root = (GENERATED_ROOT / str(project_id)).resolve()
+        from app.services.storage import GENERATED_ROOT as source_root
+        target = (source_root / str(project_id) / source_path).resolve()
+        root = (source_root / str(project_id)).resolve()
         if target.is_file() and (target == root or root in target.parents):
-            content = target.read_text(encoding="utf-8", errors="ignore")
+            with target.open("r", encoding="utf-8", newline="") as stream:
+                content = stream.read()
     elif source_type == "qa":
         try:
             qa_id = int(source_path)
