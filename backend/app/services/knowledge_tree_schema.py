@@ -81,27 +81,33 @@ def initialize(conn):
 def sync_concepts(conn, stamp=None):
     """Adopt legacy identities without guessing taxonomy or leaking private symbols."""
     stamp = stamp or datetime.now(timezone.utc).isoformat()
-    changed = False
+    changed = bool(conn.execute("""UPDATE concept_tree_nodes SET identity_status='archived',
+        parent_id=NULL,placement_status='archived',updated_at=?
+        WHERE concept_id IN (SELECT id FROM concepts WHERE concept_type='archived')
+          AND identity_status<>'archived'""", (stamp,)).rowcount)
     for row in conn.execute("""SELECT c.* FROM concepts c LEFT JOIN concept_tree_nodes t
         ON t.concept_id=c.id WHERE t.concept_id IS NULL ORDER BY c.created_at,c.id""").fetchall():
         scope, scope_id = concept_scope(row)
         domain = (row["domain"] or "general").strip().casefold()
         name = row["canonical_name"].strip().casefold()
         duplicate = conn.execute("""SELECT concept_id FROM concept_tree_nodes
-            WHERE scope_type=? AND scope_id=? AND domain=? AND normalized_name=?""",
+            WHERE scope_type=? AND scope_id=? AND domain=? AND normalized_name=? AND identity_status<>'archived'""",
                                  (scope, scope_id, domain, name)).fetchone()
-        status = "ambiguous" if duplicate else "resolved"
+        status = "archived" if row["concept_type"] == "archived" else "ambiguous" if duplicate else "resolved"
+        if status == "archived":
+            duplicate = None
         if duplicate:
             conn.execute("""UPDATE concept_tree_nodes SET identity_status='ambiguous'
-                WHERE scope_type=? AND scope_id=? AND domain=? AND normalized_name=?""",
+                WHERE scope_type=? AND scope_id=? AND domain=? AND normalized_name=? AND identity_status<>'archived'""",
                          (scope, scope_id, domain, name))
             conn.execute("""INSERT OR IGNORE INTO knowledge_tree_issues(id,kind,payload_json,created_at)
                 VALUES(?,?,?,?)""", ("identity:" + row["id"], "ambiguous_identity",
                     json.dumps({"concept_ids": [duplicate["concept_id"], row["id"]]}, ensure_ascii=False), stamp))
         conn.execute("""INSERT INTO concept_tree_nodes(concept_id,parent_id,scope_type,scope_id,
-            domain,normalized_name,identity_status,topology_source_json,created_at,updated_at)
-            VALUES(?,NULL,?,?,?,?,?,'{"source":"legacy_identity"}',?,?)""",
-                     (row["id"], scope, scope_id, domain, name, status, stamp, stamp))
+            domain,normalized_name,identity_status,placement_status,topology_source_json,created_at,updated_at)
+            VALUES(?,NULL,?,?,?,?,?,?,'{"source":"legacy_identity"}',?,?)""",
+                     (row["id"], scope, scope_id, domain, name, status,
+                      "archived" if status == "archived" else "pending", stamp, stamp))
         changed = True
     return changed
 
@@ -143,9 +149,15 @@ def _migrate_parent_edges(conn, stamp):
                 VALUES(?,?,?,?)""", ("legacy-parent:" + child, invalid[child],
                     json.dumps({"child_id": child, "parent_ids": sorted(values)}, ensure_ascii=False), stamp))
         else:
-            # No existing authoritative edge is overwritten on migration/re-import.
+            # Only legacy/pending identities may be adopted by the old is_a
+            # migration. An explicit root or a restored placement is
+            # authoritative even though its parent_id is NULL.
+            node = nodes.get(child) or {}
+            if str(node.get("placement_status") or "pending") not in ("pending", "legacy"):
+                continue
             source = json.dumps({"source": "legacy_is_a", "direction": "child_to_parent"})
             cursor = conn.execute("""UPDATE concept_tree_nodes SET parent_id=?,placement_status='placed',topology_source_json=?,updated_at=?
-                WHERE concept_id=? AND parent_id IS NULL""", (parents[child], source, stamp, child))
+                WHERE concept_id=? AND parent_id IS NULL AND placement_status IN ('pending','legacy')""",
+                                  (parents[child], source, stamp, child))
             changed = bool(cursor.rowcount) or changed
     return changed

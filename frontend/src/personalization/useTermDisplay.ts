@@ -13,7 +13,7 @@ import { allocateTermDisplays } from "./termDisplayAllocator";
 import type { MarkdownTermAnalysis } from "./termOccurrences";
 
 /** Bumped when annotation rules change so cached decisions can be invalidated. */
-export const TERM_ANNOTATION_RULES_VERSION = "manifest-v2";
+export const TERM_ANNOTATION_RULES_VERSION = "manifest-v2-spans";
 
 function normalizeText(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
@@ -216,7 +216,12 @@ export function useTermDisplay(params: UseTermDisplayParams): UseTermDisplayResu
           map.set(ck, createNeutralTermProfile(ck));
         }
         for (const p of loaded) {
+          // Index by the identifier the caller asked for (often a UUID) as well
+          // as the resolved business key the server echoed.
+          const requested = p.requestKey ?? p.conceptKey;
+          map.set(requested, p);
           map.set(p.conceptKey, p);
+          if (p.conceptId) map.set(p.conceptId, p);
         }
         setProfiles(map);
         setProfileAvailable(true);

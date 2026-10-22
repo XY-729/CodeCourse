@@ -16,19 +16,21 @@ vi.mock("../../api/client", () => ({
   })),
   getLearnerPreferences: vi.fn(async () => ({})),
 }));
+vi.mock("./ConceptForestPanel", () => ({default: () => <div>知识树内容</div>}));
 import LearnerProfileDialog from "./LearnerProfileDialog";
 
 afterEach(cleanup);
 describe("learning profile semantic presentation", () => {
-  it("shows a project topic and named hierarchy without claiming mastery", async () => {
+  it("opens the knowledge tree and removes the duplicate boundary tab", async () => {
     render(<LearnerProfileDialog open projectId={1} onClose={vi.fn()} />);
-    expect(await screen.findByText("正在比较容器用途，尚缺少独立选型的证据。")).toBeTruthy();
-    expect(screen.getByText("知识联系（不代表已掌握）")).toBeTruthy();
-    expect(screen.getByText("std::vector 属于 STL 容器")).toBeTruthy();
+    expect(await screen.findByText("知识树内容")).toBeTruthy();
+    expect(screen.getByRole("button", {name: "知识树"})).toBeTruthy();
+    expect(screen.queryByRole("button", {name: "知识边界"})).toBeNull();
+    expect(screen.queryByRole("button", {name: "概念状态"})).toBeNull();
   });
   it("separates interpreted progress from the original supporting quote", async () => {
     render(<LearnerProfileDialog open projectId={1} onClose={vi.fn()} />);
-    await screen.findByText("正在比较容器用途，尚缺少独立选型的证据。");
+    await screen.findByText("知识树内容");
     fireEvent.click(screen.getByRole("button", {name: "判断依据"}));
     expect(screen.getByText("迭代器失效的条件仍需澄清")).toBeTruthy();
     expect(screen.getByText("依据：我不确定扩容后是否有效")).toBeTruthy();

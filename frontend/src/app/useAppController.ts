@@ -3609,7 +3609,9 @@ export default function useAppController() {
         if (status === "known") await markConceptKnown(project.id, term.concept_id, key, term.term_text);
         else await markConceptUnknown(project.id, term.concept_id, key, term.term_text);
       }
-      if (status === "known") {
+      if (status === "known" && term.id > 0) {
+        // Authoritative sidecar candidates may not own a legacy text-keyed row;
+        // the concept-level fact above is what must succeed.
         await markDocumentTermKnown(project.id, term.id);
       }
       void recordTermImpressions(project.id, [{
@@ -3631,7 +3633,7 @@ export default function useAppController() {
   async function handleDismissTerm(term: DocumentTerm) {
     if (!project) return;
     try {
-      await dismissDocumentTerm(project.id, term.id);
+      if (term.id > 0) await dismissDocumentTerm(project.id, term.id);
       void recordTermImpressions(project.id, [{
         concept_id: term.concept_id ?? null,
         source_type: term.source_type,

@@ -298,6 +298,9 @@ export type DocumentTerm = {
     start?: number;
     end?: number;
   } | null;
+  /** Authoritative sidecar fact for this concept in this exact span. */
+  familiarity?: TermPersonalizationProfile["familiarity"] | null;
+  offer_explanation?: boolean | null;
   created_at: string;
   updated_at: string;
 };
@@ -1391,6 +1394,7 @@ export type PersonalizationConcept = {
   difficulty: number;
   createdAt: string;
   parent_id?: string | null;
+  placement_status?: "pending" | "legacy" | "placed" | "root" | string;
   scope?: "global" | "project";
   project_id?: number | null;
 };
@@ -1588,6 +1592,19 @@ export type KnowledgeStateV2 = {
   scopeType: "global" | "project";
   scopeId: string;
   dimensions: Record<KnowledgeDimension, KnowledgeDimensionState>;
+  /** Authoritative factual familiarity (cross-platform resolver output). */
+  familiarity?: string;
+  /** Per-aspect facts; the old confirmed dimension is not a substitute. */
+  ranges?: Array<{
+    aspect?: string;
+    dimension?: KnowledgeDimension | string;
+    familiarity: string;
+    evidence_ids?: string[];
+    last_evidence_at?: string | null;
+    sources?: unknown[];
+  }>;
+  evidence_ids?: string[];
+  source_count?: number;
   policyVersion: string;
   evidenceVersion: number;
   updatedAt: string;
@@ -1731,10 +1748,18 @@ export async function getTermDisplayProfiles(
     const response = await request<{ profiles: Array<{
       conceptKey?: string;
       concept_key?: string;
+      conceptId?: string;
+      concept_id?: string;
+      requestKey?: string;
+      request_key?: string;
       manualStatus?: TermPersonalizationProfile["manualStatus"];
       manual_status?: TermPersonalizationProfile["manualStatus"];
       knowledgeStatus?: string | null;
       knowledge_status?: string | null;
+      familiarity?: TermPersonalizationProfile["familiarity"];
+      ranges?: TermPersonalizationProfile["ranges"];
+      treeSnapshot?: TermPersonalizationProfile["treeSnapshot"];
+      tree_snapshot?: TermPersonalizationProfile["treeSnapshot"];
       mastery?: number | null;
       uncertainty?: number | null;
       shadowFamiliarity?: number | null;
@@ -1764,10 +1789,18 @@ export async function getTermDisplayProfiles(
 export function normalizeTermDisplayProfile(profile: {
   conceptKey?: string;
   concept_key?: string;
+  conceptId?: string;
+  concept_id?: string;
+  requestKey?: string;
+  request_key?: string;
   manualStatus?: TermPersonalizationProfile["manualStatus"];
   manual_status?: TermPersonalizationProfile["manualStatus"];
   knowledgeStatus?: string | null;
   knowledge_status?: string | null;
+  familiarity?: TermPersonalizationProfile["familiarity"];
+  ranges?: TermPersonalizationProfile["ranges"];
+  treeSnapshot?: TermPersonalizationProfile["treeSnapshot"];
+  tree_snapshot?: TermPersonalizationProfile["treeSnapshot"];
   mastery?: number | null;
   uncertainty?: number | null;
   shadowFamiliarity?: number | null;
@@ -1779,9 +1812,15 @@ export function normalizeTermDisplayProfile(profile: {
   domainPrior?: number | null;
   domain_prior?: number | null;
 }): TermPersonalizationProfile {
+  const conceptKey = profile.conceptKey ?? profile.concept_key ?? "";
   return {
-    conceptKey: profile.conceptKey ?? profile.concept_key ?? "",
+    conceptKey,
+    conceptId: profile.conceptId ?? profile.concept_id ?? conceptKey,
+    requestKey: profile.requestKey ?? profile.request_key ?? conceptKey,
     manualStatus: profile.manualStatus ?? profile.manual_status ?? null,
+    familiarity: profile.familiarity,
+    ranges: profile.ranges,
+    treeSnapshot: profile.treeSnapshot ?? profile.tree_snapshot,
     knowledgeStatus: profile.knowledgeStatus ?? profile.knowledge_status ?? null,
     mastery: profile.mastery ?? null,
     uncertainty: profile.uncertainty ?? null,

@@ -422,6 +422,12 @@ class DocumentTermResponse(BaseModel):
     link_origin: str = "legacy_unknown"
     created_at: str
     updated_at: str
+    # Authoritative sidecar fields: concept identity and exact span make homonyms
+    # distinct, and familiarity comes from the factual tree state.
+    quote: Optional[str] = None
+    familiarity: Optional[str] = None
+    offer_explanation: Optional[bool] = None
+    tree_snapshot: Optional[dict[str, int]] = None
 
 
 class TermScanStatusResponse(BaseModel):

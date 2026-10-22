@@ -3668,6 +3668,16 @@ def delete_qa_record(project_id: int, record_id: int) -> bool:
             "SELECT output_path FROM qa_records WHERE project_id = ? AND id = ?",
             (project_id, record_id),
         ).fetchone()
+        # Deleting the answer revokes the contact facts it created. Bind by
+        # answer ID (old rows) and by source path (answer-derived evidence),
+        # without touching other answers that mention the same concept.
+        from app.services.personalization.knowledge_state_service import (
+            invalidate_qa_evidence,
+            invalidate_source_evidence,
+        )
+        invalidate_qa_evidence(conn, project_id, record_id)
+        if qa_record and qa_record["output_path"]:
+            invalidate_source_evidence(conn, project_id, "qa", qa_record["output_path"])
         if qa_record and qa_record["output_path"]:
             from app.services.teaching_index import remove_documents
             remove_documents(conn, project_id, qa_record["output_path"])

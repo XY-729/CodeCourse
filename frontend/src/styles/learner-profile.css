@@ -89,7 +89,7 @@
 
 .learner-profile-tabs {
   display: grid;
-  grid-template-columns: repeat(5, max-content);
+  grid-template-columns: repeat(4, max-content);
   width: max-content;
   margin: 12px 18px 4px;
   padding: 3px;
@@ -770,6 +770,55 @@
     animation: none;
   }
 }
+
+/* The profile uses the same persisted hierarchy as teaching, with folder-style
+   disclosure. These rules only affect the profile; workbench sizing is unchanged. */
+.concept-forest-header,
+.concept-forest-header > div {
+  display: flex;
+  gap: 8px;
+}
+.concept-forest-header { justify-content: space-between; align-items: flex-start; }
+.concept-forest-header > div { flex-direction: column; }
+.concept-forest-header strong,
+.concept-root-status,
+.concept-familiarity { display: inline-flex; align-items: center; gap: 5px; }
+.concept-forest-header small,
+.concept-root-status,
+.concept-root-names,
+.concept-tree-count,
+.concept-forest-ranges { color: var(--lp-text-secondary); font-size: 11px; }
+.concept-tree-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 14px 0 10px; }
+.concept-tree-search { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 160px; }
+.concept-tree-search input { width: 100%; min-width: 0; }
+.concept-tree-toolbar > button,
+.concept-forest-actions button {
+  font-size: 11px;
+  color: inherit;
+  border: 1px solid var(--lp-line);
+  border-radius: 5px;
+  background: transparent;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+.concept-tree-list,
+.concept-tree-children { list-style: none; padding: 0; margin: 0; }
+.concept-tree-children { margin-left: 18px; padding-left: 10px; border-left: 1px solid var(--lp-line); }
+.concept-tree-row { display: flex; gap: 8px; align-items: flex-start; padding: 7px 3px; border-bottom: 1px solid var(--lp-line); }
+.concept-tree-content { display: flex; flex: 1; min-width: 0; align-items: center; flex-wrap: wrap; gap: 5px 9px; }
+.concept-tree-toggle,
+.concept-tree-leaf { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: inherit; }
+.concept-tree-toggle { padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.concept-tree-toggle > svg,
+.concept-tree-leaf > svg { flex-shrink: 0; }
+.concept-tree-toggle strong,
+.concept-tree-leaf strong { font-size: 12px; font-weight: 500; overflow-wrap: anywhere; }
+.concept-tree-toggle > svg:first-child { transition: transform 100ms; }
+.concept-tree-toggle > svg.is-open { transform: rotate(90deg); }
+.concept-tree-count { font-variant-numeric: tabular-nums; }
+.concept-familiarity { font-size: 10px; color: var(--lp-text-secondary); }
+.concept-forest-ranges { width: 100%; line-height: 1.6; overflow-wrap: anywhere; }
+.concept-forest-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 
 html.platform-android .assistant-diagnostic-card {
   margin: 6px 12px 10px;

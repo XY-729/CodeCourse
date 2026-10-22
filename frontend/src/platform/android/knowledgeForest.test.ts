@@ -55,6 +55,17 @@ function fixture() {
 }
 
 describe("Android concept forest", () => {
+  it("keeps archived history hidden and permits a future valid identity with that name", async () => {
+    const f = fixture();
+    f.sql.exec("INSERT INTO concepts(id,concept_key,canonical_name,display_name,domain,concept_type,created_at) VALUES('old','global:cpp:vector','vector','vector','cpp','archived','old')");
+    const ids = await f.forest.applyManifest(1, manifest([concept("vector", "vector")]));
+    expect(ids.get("vector")).not.toBe("old");
+    expect(f.get("SELECT concept_type FROM concepts WHERE id='old'").concept_type).toBe("archived");
+    const snapshot = await f.forest.snapshot(1);
+    expect(snapshot.concepts.some(node => node.id === "old")).toBe(false);
+    expect(snapshot.concepts.filter(node => node.name === "vector")).toHaveLength(1);
+  });
+
   it("allocates identity, parent edges and ancestors, and reuses them on retry", async () => {
     const f = fixture();
     const ids = await f.forest.applyManifest(1, manifest([

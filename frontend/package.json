@@ -19,6 +19,7 @@
     "cytoscape-fcose": "2.2.0",
     "highlight.js": "^11.11.1",
     "lucide-react": "^0.468.0",
+    "micromark-util-decode-string": "2.0.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^9.0.1",

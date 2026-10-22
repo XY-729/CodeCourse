@@ -2,7 +2,7 @@ import { Children, createContext, memo, useCallback, useContext, useEffect, useL
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import type { PluggableList } from "unified";
-import { remarkTermOccurrences } from "../../personalization/termOccurrences";
+import { documentTermKey, remarkTermOccurrences } from "../../personalization/termOccurrences";
 import remarkGfm from "remark-gfm";
 import type { DocumentTerm, HighlightRecord, KnowledgeLink } from "../../api/client";
 import { isAndroidRuntime } from "../../platform/runtime";
@@ -784,6 +784,16 @@ export default function MarkdownViewer({
     () => new Map(documentTerms.map((term) => [String(term.id), term])),
     [documentTerms],
   );
+  const termByKey = useMemo(
+    () => new Map(documentTerms.map((term) => [documentTermKey(term), term])),
+    [documentTerms],
+  );
+  // Authoritative lookup: sidecar candidates are keyed by concept, so homonyms
+  // and row-less (id 0) terms resolve to their own entry.
+  const termByConceptId = useMemo(
+    () => new Map(documentTerms.filter((term) => term.concept_id).map((term) => [String(term.concept_id), term])),
+    [documentTerms],
+  );
 
   const markdownRemarkPlugins = useMemo<PluggableList>(
     () => [
@@ -855,7 +865,9 @@ export default function MarkdownViewer({
         return <span {...plainProps}>{children}</span>;
       }
 
-      const term = termById.get(termId);
+      const conceptId = String(rawProps["data-term-concept-id"] ?? rawProps["dataTermConceptId"] ?? "");
+      const key = String(rawProps["data-term-key"] ?? rawProps["dataTermKey"] ?? "");
+      const term = termByKey.get(key) ?? termByConceptId.get(conceptId) ?? termById.get(termId);
       if (!term || !onGenerateTerm) {
         return <>{spanProps.children}</>;
       }
@@ -979,6 +991,8 @@ export default function MarkdownViewer({
     onGenerateLesson,
     onOpenQAReference,
     termById,
+    termByKey,
+    termByConceptId,
     androidRuntime,
   ]);
 

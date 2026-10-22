@@ -43,11 +43,25 @@ export interface TermCandidateInput {
   manualLink: boolean;
 }
 
+export interface TermFamiliarityRange {
+  aspect: string;
+  dimension: string;
+  familiarity: TermFamiliarity;
+  evidence_ids?: string[];
+  last_evidence_at?: string | null;
+}
+
 export interface TermPersonalizationProfile {
   conceptKey: string;
+  /** Authoritative UUID when the request was made by concept key. */
+  conceptId?: string;
+  /** The identifier the caller actually asked for (may be a UUID or key). */
+  requestKey?: string;
   manualStatus: ManualKnowledgeStatus;
   /** Authoritative fact state; takes precedence over legacy knowledgeStatus. */
   familiarity?: TermFamiliarity;
+  ranges?: TermFamiliarityRange[];
+  treeSnapshot?: { topology_version: number; state_version: number };
   knowledgeStatus?: string | null;
   mastery: number | null;
   uncertainty: number | null;

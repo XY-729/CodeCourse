@@ -363,6 +363,92 @@ class ConceptForestTests(unittest.TestCase):
                           {"cancelled", "retired"})
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM learning_evidence_v2").fetchone()[0], 0)
 
+    # ---- topology authority: restart migration and explicit changes ----
+
+    def test_restart_migration_only_adopts_pending_nodes(self):
+        """R03: an explicitly restored root must not be re-attached by legacy is_a."""
+        from app.services.knowledge_tree_schema import FLOW_VERSION, initialize
+        from app.services.storage import _connect
+        ids = self.apply(manifest([concept("old_root", "旧根"), concept("child", "子概念", "old_root")]))["ref_to_id"]
+        with _connect() as conn:
+            # The child becomes an authoritative root (as a restored archive would be).
+            conn.execute("UPDATE concept_tree_nodes SET parent_id=NULL,placement_status='root' WHERE concept_id=?",
+                         (ids["child"],))
+            # A pending legacy identity that the old relation may still adopt.
+            conn.execute("""INSERT INTO concepts(id,concept_key,canonical_name,display_name,domain,
+                concept_type,aliases_json,difficulty,created_at)
+                VALUES('legacy-child','global:general:legacy-child','legacy-child','legacy-child','general','theory','[]',0.5,'2026-01-01')""")
+            conn.execute("""INSERT INTO concept_tree_nodes(concept_id,parent_id,scope_type,scope_id,domain,
+                normalized_name,identity_status,placement_status,topology_source_json,created_at,updated_at)
+                VALUES('legacy-child',NULL,'global','local-user','general','legacy-child','resolved','pending','{}','2026-01-01','2026-01-01')""")
+            for child in (ids["child"], "legacy-child"):
+                conn.execute("""INSERT OR REPLACE INTO concept_relations(id,source_concept_id,target_concept_id,
+                    relation_type,domain,confidence,evidence_json,origin,status,created_at,updated_at)
+                    VALUES(?,?,?,'is_a','general',0.5,'[]','observer','active','2026-01-01','2026-01-01')""",
+                             (f"rel-{child}", child, ids["old_root"]))
+            conn.execute("DELETE FROM knowledge_migrations WHERE version=?", (FLOW_VERSION,))
+            conn.commit()
+            initialize(conn)
+            conn.commit()
+        self.assertEqual(self.placement(ids["child"])["placement_status"], "root")
+        self.assertIsNone(self.placement(ids["child"])["parent_id"])
+        # Only the undecided legacy identity may be attached by the old relation.
+        self.assertEqual(self.placement("legacy-child")["parent_id"], ids["old_root"])
+
+    def test_reparent_bumps_topology_and_explicit_target_wins(self):
+        """R07: placed→placed moves bump topology; explicit targets are honoured."""
+        from app.services.knowledge_tree_service import apply_manifest
+        ids = self.apply(manifest([concept("a", "A"), concept("b", "B"), concept("c", "C")]))["ref_to_id"]
+        topology = self.tree()["tree_snapshot"]["topology_version"]
+        self.apply(manifest([
+            concept("a", "A", existing_id=ids["a"]),
+            concept("b", "B", existing_id=ids["b"]),
+            concept("c", "C", existing_id=ids["c"]),
+        ], placement_changes=[{"concept_ref": "b", "to_parent_ref": "a",
+                               "from_parent_id": None, "reason": "已有孤根补父"}]))
+        self.assertEqual(self.placement(ids["b"])["parent_id"], ids["a"])
+        moved = self.tree()["tree_snapshot"]["topology_version"]
+        self.assertGreater(moved, topology)
+        # Move b under c while still declaring parent_ref=null: the explicit target wins.
+        self.apply(manifest([
+            concept("a", "A", existing_id=ids["a"]),
+            concept("b", "B", existing_id=ids["b"]),
+            concept("c", "C", existing_id=ids["c"]),
+        ], placement_changes=[{"concept_ref": "b", "to_parent_ref": "c",
+                               "from_parent_id": ids["a"], "reason": "换父"}]))
+        self.assertEqual(self.placement(ids["b"])["parent_id"], ids["c"])
+        self.assertGreater(self.tree()["tree_snapshot"]["topology_version"], moved)
+        # A stale from_parent keeps the authoritative edge and is recorded.
+        self.apply(manifest([
+            concept("a", "A", existing_id=ids["a"]),
+            concept("b", "B", existing_id=ids["b"]),
+            concept("c", "C", existing_id=ids["c"]),
+        ], placement_changes=[{"concept_ref": "b", "to_parent_ref": "a",
+                               "from_parent_id": ids["a"], "reason": "过期提案"}]))
+        self.assertEqual(self.placement(ids["b"])["parent_id"], ids["c"])
+
+    def test_snapshot_must_be_valid_and_current_for_existing_edges(self):
+        from app.services.knowledge_tree_service import apply_manifest
+        ids = self.apply(manifest([concept("a", "A"), concept("b", "B", "a")]))["ref_to_id"]
+        with self.assertRaises(ValueError):
+            apply_manifest(self.project["id"], manifest([
+                concept("a", "A", existing_id=ids["a"]),
+                concept("b", "B", existing_id=ids["b"]),
+            ], placement_changes=[{"concept_ref": "b", "to_parent_ref": "a",
+                                   "from_parent_id": ids["a"], "reason": "x"}]),
+                source_type="course", source_path="lessons/lesson_1.md", artifact_kind="lesson",
+                content_hash="hash", generation_id="gen", tree_snapshot={"topology_version": -999, "state_version": 0})
+        # A new sibling may still join with an older snapshot, existing edges may not move.
+        stale = {"topology_version": 0, "state_version": 0}
+        with self.assertRaises(ValueError):
+            apply_manifest(self.project["id"], manifest([
+                concept("a", "A", existing_id=ids["a"]),
+                concept("b", "B", existing_id=ids["b"]),
+            ], placement_changes=[{"concept_ref": "b", "to_parent_ref": "a",
+                                   "from_parent_id": ids["a"], "reason": "x"}]),
+                source_type="course", source_path="lessons/lesson_1.md", artifact_kind="lesson",
+                content_hash="hash", generation_id="gen", tree_snapshot=stale)
+
 
 if __name__ == "__main__":
     unittest.main()

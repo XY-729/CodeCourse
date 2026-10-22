@@ -213,21 +213,19 @@ def _parent_concepts(project_id: int, qa_record: QARecord) -> list[Concept]:
 def record_question_learning(project_id: int, qa_record: QARecord) -> None:
     """Record only structurally explicit learning signals.
 
-    A selection-based term explanation and a follow-up are observable actions;
-    wording heuristics are intentionally excluded. Follow-ups remain weak
-    evidence and can never confirm or independently disconfirm mastery.
+    A plain first question that names concepts is still an observable contact
+    (neutral asked_question) — but only for concepts explicitly present in the
+    question/selection, never for everything the answer happened to mention.
+    Follow-ups remain weak evidence and can never confirm mastery.
     """
     if qa_record is None:
         return
-    event_type = (
-        "asked_clarification"
-        if qa_record.parent_qa_id
-        else "asked_definition"
-        if qa_record.relation_type == "term_explanation"
-        else ""
-    )
-    if not event_type:
-        return
+    if qa_record.parent_qa_id:
+        event_type = "asked_clarification"
+    elif qa_record.relation_type == "term_explanation":
+        event_type = "asked_definition"
+    else:
+        event_type = "asked_question"
     concepts = concepts_for_question(
         project_id,
         qa_record.question,
@@ -251,12 +249,23 @@ def record_question_learning(project_id: int, qa_record: QARecord) -> None:
                 "reliability": 0.8,
                 "source": "question",
                 "action": event_type,
-                "object": {"type": "qa", "qaRecordId": qa_record.id},
+                "object": {
+                    "type": "qa",
+                    "projectId": project_id,
+                    "qaRecordId": qa_record.id,
+                    "sourceType": qa_record.source_type,
+                    "sourcePath": qa_record.source_path,
+                },
                 "result": {
                     "evidenceText": qa_record.question[:200],
                     "explanation": "本轮提及或询问了该概念；仅凭提问不能判断是否掌握。",
                 },
-                "context": {"sourceType": qa_record.source_type, "sourcePath": qa_record.source_path},
+                "context": {
+                    "projectId": project_id,
+                    "sourceType": qa_record.source_type,
+                    "sourcePath": qa_record.source_path,
+                    "qaRecordId": qa_record.id,
+                },
                 "sessionId": (
                     str(qa_record.session_id)
                     if qa_record.session_id is not None

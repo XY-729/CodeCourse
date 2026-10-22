@@ -107,6 +107,17 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
         raise ValueError("TeachingManifest concepts, coverage and terms must be arrays")
     _sync(conn)
     nodes = {row["concept_id"]: dict(row) for row in conn.execute("SELECT * FROM concept_tree_nodes")}
+    versions_before = _versions(conn)
+    stale_snapshot = False
+    if tree_snapshot is not None:
+        if not isinstance(tree_snapshot, dict):
+            raise ValueError("tree_snapshot must be an object")
+        topology = tree_snapshot.get("topology_version", tree_snapshot.get("topologyVersion"))
+        state = tree_snapshot.get("state_version", tree_snapshot.get("stateVersion"))
+        if not isinstance(topology, int) or isinstance(topology, bool) or topology < 0 \
+                or not isinstance(state, int) or isinstance(state, bool) or state < 0:
+            raise ValueError("tree_snapshot versions must be non-negative integers")
+        stale_snapshot = topology != versions_before["topology_version"]
     proposed, refs, new_ids = {}, {}, set()
     aliases_changed = False
     stamp = _now()
@@ -127,24 +138,27 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
             raise ValueError("aliases must contain nonempty strings")
         identity = item.get("existing_id")
         if identity is not None:
-            if not isinstance(identity, str) or identity not in nodes or not _visible(nodes[identity], project_id):
+            if not isinstance(identity, str) or identity not in nodes or nodes[identity]["identity_status"] == "archived" or not _visible(nodes[identity], project_id):
                 raise ValueError("Inaccessible existing_id")
             node = nodes[identity]
             if (scope_type, scope_id, domain) != (node["scope_type"], node["scope_id"], node["domain"]):
                 raise ValueError("Existing concept scope/domain cannot be changed by a manifest")
         else:
-            matching = [n for n in nodes.values() if
+            matching = [n for n in nodes.values() if n["identity_status"] != "archived" and
                 (n["scope_type"], n["scope_id"], n["domain"], n["normalized_name"]) ==
                 (scope_type, scope_id, domain, name.casefold())]
             if len(matching) > 1 or any(n["identity_status"] != "resolved" for n in matching):
                 raise ValueError("Ambiguous canonical identity requires explicit existing_id")
-            alias = conn.execute("""SELECT concept_id FROM concept_alias_bindings
-                WHERE scope_type=? AND scope_id=? AND domain=? AND alias=?""",
+            alias = conn.execute("""SELECT a.concept_id FROM concept_alias_bindings a
+                JOIN concept_tree_nodes t ON t.concept_id=a.concept_id
+                WHERE a.scope_type=? AND a.scope_id=? AND a.domain=? AND a.alias=? AND t.identity_status<>'archived'""",
                                  (scope_type, scope_id, domain, name.casefold())).fetchone()
             identity = matching[0]["concept_id"] if matching else alias["concept_id"] if alias else None
             if identity is None:
                 identity = str(uuid4())
                 key = f"{scope_type}:{scope_id}:{domain}:{name.casefold()}"
+                if conn.execute("SELECT 1 FROM concepts WHERE concept_key=? AND concept_type='archived'", (key,)).fetchone():
+                    key += ":replacement:" + identity
                 conn.execute("""INSERT INTO concepts(id,concept_key,canonical_name,display_name,domain,
                     concept_type,aliases_json,difficulty,created_at) VALUES(?,?,?,?,?,?,?,0.5,?)""",
                     (identity, key, name, name, domain, "project_symbol" if scope_type == "project" else "theory", _json(aliases), stamp))
@@ -159,7 +173,7 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
         # Alias identity is domain- and owner-bound. Collisions fail the whole proposal.
         for alias in [name, *aliases]:
             normalized = alias.strip().casefold()
-            canonical = [n for n in nodes.values() if
+            canonical = [n for n in nodes.values() if n["identity_status"] != "archived" and
                 (n["scope_type"], n["scope_id"], n["domain"], n["normalized_name"]) ==
                 (scope_type, scope_id, domain, normalized) and n["concept_id"] != identity]
             found = conn.execute("""SELECT concept_id FROM concept_alias_bindings
@@ -193,6 +207,7 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
             "reason": _text(change.get("reason"), "placement reason"),
         }
     issues = []
+    before = {}
     for ref, item in proposed.items():
         if "parent_ref" not in item:
             raise ValueError("Each v2 concept must explicitly include parent_ref")
@@ -200,19 +215,30 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
         if parent_ref is not None and (not isinstance(parent_ref, str) or parent_ref not in refs):
             raise ValueError("Unresolved parent_ref")
         identity, parent = refs[ref], refs.get(parent_ref)
+        if identity not in before:
+            before[identity] = (nodes[identity]["parent_id"], nodes[identity]["placement_status"])
         change = explicit_changes.get(ref)
         if change is not None:
             # An explicit proposal is the only way to move an already placed
             # node; a stale `from_parent_id` keeps the authoritative edge and is
             # recorded for later reconciliation instead of silently winning.
             current = nodes[identity]["parent_id"]
+            target = change["to_parent_id"]
+            if parent is not None and parent not in (current, target):
+                raise ValueError("placement_changes contradicts parent_ref")
             if change["from_parent_id"] != current:
                 issues.append({"kind": "placement_conflict", "concept_id": identity,
                                "from_parent_id": change["from_parent_id"], "current_parent_id": current,
-                               "to_parent_id": change["to_parent_id"], "reason": change["reason"]})
+                               "to_parent_id": target, "reason": change["reason"]})
                 parent = current
+            else:
+                parent = target
         elif identity not in new_ids and nodes[identity]["placement_status"] != "pending" and nodes[identity]["parent_id"] != parent:
             raise ValueError("Existing parent requires explicit topology change")
+        if stale_snapshot and identity not in new_ids and (change is not None or nodes[identity]["parent_id"] != parent):
+            # New siblings may still be added, but a snapshot from another
+            # topology must not reorder existing edges.
+            raise ValueError("Stale tree_snapshot cannot change existing placements")
         if identity in requested_parents and requested_parents[identity] != parent:
             raise ValueError("Same concept has multiple proposed parents")
         requested_parents[identity] = parent
@@ -221,7 +247,7 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
     placement_changed = False
     for identity, parent in requested_parents.items():
         status = "placed" if parent is not None else "root"
-        if nodes[identity]["placement_status"] != status or nodes[identity]["parent_id"] != parent:
+        if before[identity] != (parent, status):
             placement_changed = True
         conn.execute("UPDATE concept_tree_nodes SET parent_id=?,placement_status=?,topology_source_json=?,updated_at=? WHERE concept_id=?",
                      (parent, status, _json(binding), stamp, identity))
@@ -267,7 +293,9 @@ def get_tree_snapshot(project_id, conn=None):
         coverage.setdefault(row["concept_id"], []).append({key: row[key] for key in ("aspect", "dimension", "kind", "source_count")})
     nodes = []
     for row in conn.execute("""SELECT t.*,c.canonical_name,c.display_name,c.aliases_json FROM concept_tree_nodes t
-        JOIN concepts c ON c.id=t.concept_id ORDER BY t.concept_id"""):
+        JOIN concepts c ON c.id=t.concept_id
+        WHERE c.concept_type<>'archived' AND t.identity_status<>'archived'
+        ORDER BY t.concept_id"""):
         if not _visible(row, project_id):
             continue
         state = states.get((row["concept_id"], row["scope_type"], row["scope_id"]), {})

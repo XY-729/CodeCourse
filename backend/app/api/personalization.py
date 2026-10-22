@@ -239,8 +239,15 @@ def list_concepts(
     query: str = Query(default="", max_length=200),
 ) -> list[dict]:
     _require_project(project_id)
+    from app.services.knowledge_tree_service import get_tree_snapshot
+    # The profile tree must read the authoritative visible forest, not a flat
+    # global concept list that drops parents and leaks other private projects.
+    nodes = {node["id"]: node for node in get_tree_snapshot(project_id)["nodes"]}
     results = search_concepts(query.strip()) if query.strip() else list_all_concepts()
-    return [_concept_response(c) for c in results]
+    return [{**_concept_response(c), "parent_id": nodes[c.id]["parent_id"],
+             "placement_status": nodes[c.id]["placement_status"],
+             "scope": nodes[c.id]["scope"], "project_id": nodes[c.id]["project_id"]}
+            for c in results if c.id in nodes]
 
 
 @router.post("/{project_id}/personalization/concepts")
@@ -1092,10 +1099,11 @@ def term_display_profiles(
                   AND (concept_key NOT LIKE 'project:%' OR concept_key LIKE ?)""",
             (*concept_keys, *concept_keys, f"project:{project_id}:%"),
         ).fetchall()
-        key_by_request = {value: row[1] for row in concepts for value in (row[0], row[1])}
-        resolved_keys = list(dict.fromkeys(key_by_request.values()))
+        identity_by_request = {value: (row[0], row[1]) for row in concepts for value in (row[0], row[1])}
+        resolved_keys = list(dict.fromkeys(value[1] for value in identity_by_request.values()))
         if not resolved_keys:
             return {"profiles": []}
+        resolved_ids = list(dict.fromkeys(value[0] for value in identity_by_request.values()))
         placeholders = ",".join("?" * len(resolved_keys))
 
         mastery_rows = conn.execute(
@@ -1112,35 +1120,34 @@ def term_display_profiles(
             r[0]: {"mastery": float(r[1]), "uncertainty": float(r[2]), "manual_status": r[3]}
             for r in mastery_rows
         }
-
-        state_rows = conn.execute(
-            f"""SELECT c.concept_key, s.state_json
-               FROM knowledge_states_v2 s
-               JOIN concepts c ON c.id = s.concept_id
-               WHERE ((s.scope_type = 'global' AND s.scope_id = 'local-user')
-                  OR (s.scope_type = 'project' AND s.scope_id = ?))
-               AND c.concept_key IN ({placeholders})
-               ORDER BY (s.scope_type='project'), s.updated_at""",
-            (str(project_id), *resolved_keys),
-        ).fetchall()
-        states_by_key = {}
-        for row in state_rows:
-            try:
-                value = json.loads(row[1])
-                if isinstance(value, dict):
-                    states_by_key[row[0]] = value
-            except (TypeError, ValueError):
-                continue
+        version_row = conn.execute(
+            "SELECT topology_version, state_version FROM knowledge_tree_versions WHERE id=1"
+        ).fetchone()
+    tree_snapshot = {
+        "topology_version": int(version_row[0]) if version_row else 0,
+        "state_version": int(version_row[1]) if version_row else 0,
+    }
+    # Factual state (per-range familiarity, manual clear/undo, latest wins) is the
+    # single authority here too; the legacy dimension is kept for old callers.
+    from app.services.personalization.knowledge_state_service import get_states
+    states = {
+        str(item["conceptId"]): item
+        for item in get_states([("global", "local-user"), ("project", str(project_id))], resolved_ids)
+    }
 
     for key in concept_keys:
-        resolved_key = key_by_request.get(key)
-        if resolved_key is None:
+        identity = identity_by_request.get(key)
+        if identity is None:
             continue
+        concept_id, resolved_key = identity
         m = mastery_by_id.get(resolved_key)
-        state = states_by_key.get(resolved_key)
-        familiarity = (state or {}).get("dimensions", {}).get("familiarity", {})
+        state = states.get(str(concept_id), {})
+        familiarity = state.get("dimensions", {}).get("familiarity", {})
         profiles.append({
             "concept_key": key,
+            "resolved_concept_key": resolved_key,
+            "request_key": key,
+            "concept_id": concept_id,
             "manual_status": familiarity.get("manualStatus") or (m["manual_status"] if m else None),
             "knowledge_status": familiarity.get("status"),
             "mastery": m["mastery"] if m else None,
@@ -1152,6 +1159,12 @@ def term_display_profiles(
             ),
             "shadow_evidence_count": familiarity.get("evidenceCount", 0),
             "domain_prior": None,
+            # Authoritative factual projection for the reader and tree UI.
+            "familiarity": state.get("familiarity", "unrecorded"),
+            "ranges": state.get("ranges", []),
+            "evidence_ids": state.get("evidence_ids", []),
+            "source_count": state.get("source_count", 0),
+            "tree_snapshot": tree_snapshot,
         })
 
     return {"profiles": profiles}

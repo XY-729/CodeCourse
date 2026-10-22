@@ -297,7 +297,7 @@ export default function MobileMePanel({
               title="我的学习档案"
               description={
                 hasProject
-                  ? "查看知识边界、概念状态和判断依据"
+                  ? "按知识树分类查看概念、学习记录和依据"
                   : "选择项目后查看学习档案"
               }
               onClick={onOpenProfile}

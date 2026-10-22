@@ -145,7 +145,7 @@ export class KnowledgeForest {
 
   private async loadIdentities(tx: Tx): Promise<Map<string, ForestIdentity>> {
     const concepts = await tx.query<Row>(
-      "SELECT id,concept_key,canonical_name,display_name,domain,aliases_json,scope_type,scope_id FROM concepts ORDER BY id",
+      "SELECT id,concept_key,canonical_name,display_name,domain,aliases_json,scope_type,scope_id FROM concepts WHERE concept_type<>'archived' ORDER BY id",
     );
     const placements = await tx.query<Row>("SELECT concept_id,parent_concept_id,placement_status FROM concept_placements");
     const placementById = new Map(placements.map(row => [String(row.concept_id), row]));
@@ -323,10 +323,14 @@ export class KnowledgeForest {
           const id = crypto.randomUUID();
           // Private identity includes its domain: the same symbol name in another
           // domain/language is a different concept, never a reused identity.
-          const key = scopeType === "project"
+          let key = scopeType === "project"
             ? `project:${projectId}:${domain}:symbol:${normalizeIdentity(name)}`
             : `global:${domain}:${normalizeIdentity(name)}`;
-          const duplicateKey = (await tx.query<Row>("SELECT id FROM concepts WHERE concept_key=?", [key]))[0];
+          let duplicateKey: Row | undefined = (await tx.query<Row>("SELECT id,concept_type FROM concepts WHERE concept_key=?", [key]))[0];
+          if (duplicateKey?.concept_type === "archived") {
+            key += ":replacement:" + id;
+            duplicateKey = undefined;
+          }
           if (duplicateKey) {
             identityId = String(duplicateKey.id);
             identities.set(identityId, {
@@ -691,6 +695,17 @@ export class KnowledgeForest {
       concepts,
       plan_roots: [await this.roots(projectId)],
     };
+  }
+
+  /** Saved free-text requirements that still apply to this plan/global scope. */
+  async requirements(projectId: number): Promise<string[]> {
+    const rows = await this.db.query<Row>(
+      `SELECT text FROM user_teaching_requirements
+       WHERE active=1 AND (scope_type='global' OR (scope_type='project' AND scope_id=?))
+       ORDER BY CASE scope_type WHEN 'project' THEN 0 ELSE 1 END, updated_at DESC, id`,
+      [String(projectId)],
+    );
+    return rows.map(row => String(row.text).trim()).filter(Boolean);
   }
 
   /** Full, stable tree snapshot for planning and generation prompts. No silent truncation. */

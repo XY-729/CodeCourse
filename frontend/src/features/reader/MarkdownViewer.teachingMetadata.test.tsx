@@ -1,5 +1,7 @@
-import { cleanup, render } from "@testing-library/react";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import type { DocumentTerm } from "../../api/client";
+import { analyzeMarkdownTermOccurrences } from "../../personalization/termOccurrences";
 import MarkdownViewer from "./MarkdownViewer";
 
 afterEach(cleanup);
@@ -38,6 +40,32 @@ const lesson = `# 第 2 课：历史阅读与三层撤销
 `;
 
 describe("MarkdownViewer teaching coverage metadata", () => {
+  it("opens the precise row-less homonym or alias selected by the rendered span", () => {
+    const content = "<!-- codecourse-teaching: [] -->\n\n😀 C++ 的 stack。\n\nPython 的 `stack`。\n\nC++ 的栈适配器。";
+    const terms = [
+      { text: "stack", quote: "😀 C++ 的 stack。", id: "cpp" },
+      { text: "stack", quote: "Python 的 `stack`。", id: "python" },
+      { text: "栈适配器", quote: "C++ 的栈适配器。", id: "cpp" },
+    ].map(({ text, quote, id }) => ({
+      id: 0, project_id: 1, source_type: "course", source_path: "homonyms.md", term_text: text,
+      detection_source: "teaching_manifest_v2", status: "candidate", concept_id: id, quote,
+      confidence: 0.95, link_origin: "automatic", created_at: "", updated_at: "",
+      source_span: { text, start: [...content.slice(0, content.indexOf(text, content.indexOf(quote)))].length },
+    })) as DocumentTerm[];
+    const sourceKey = "course:homonyms.md";
+    const analysis = analyzeMarkdownTermOccurrences(content, terms, sourceKey);
+    const onGenerateTerm = vi.fn();
+    const { container } = render(<MarkdownViewer title="同名概念" content={content} sourcePath="homonyms.md"
+      termSourceKey={sourceKey} documentTerms={terms} onGenerateTerm={onGenerateTerm}
+      visibleTermCandidateIds={new Set(analysis.occurrences.map(item => item.candidateId))} />);
+    const buttons = container.querySelectorAll("button.personalized-term");
+    expect(buttons).toHaveLength(3);
+    buttons.forEach((button, index) => {
+      fireEvent.click(button);
+      expect(onGenerateTerm.mock.calls[index][0]).toEqual(terms[index]);
+    });
+  });
+
   it("never renders the stored coverage comment as prose", () => {
     const { container } = render(<MarkdownViewer title="第 2 课" content={lesson} />);
     const text = container.textContent ?? "";

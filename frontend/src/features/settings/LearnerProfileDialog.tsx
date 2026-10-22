@@ -1,25 +1,17 @@
 import {
   BrainCircuit,
-  CheckCircle2,
-  CircleHelp,
   Clock3,
-  Link2,
   RotateCcw,
-  Sparkles,
   Undo2,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
-  clearConceptOverride,
   getPersonalizationProfile,
-  markConceptKnown,
-  markConceptUnknown,
   resetPersonalizationProfile,
   voidLearningEvidence,
   voidLearnerInference,
   type KnowledgeDimension,
-  type KnowledgeStateV2,
   type LearnerInference,
   type LearningEvidenceV2,
   type PersonalizationProfile,
@@ -27,7 +19,6 @@ import {
   type TermScanStatus,
 } from "../../api/client";
 import type { TermDisplayDiagnostics } from "../../personalization/useDocumentTermsController";
-import { canonicalConceptName } from "../../personalization/conceptIdentity";
 import DocumentTermScanControl from "../teaching/DocumentTermScanControl";
 import ConceptForestPanel from "./ConceptForestPanel";
 import { TEACHING_CHANGED } from "../../personalization/teachingApi";
@@ -48,7 +39,7 @@ type Props = {
   onRescanTerms?: () => Promise<void>;
 };
 
-type View = "overview" | "concepts" | "evidence" | "calls" | "terms";
+type View = "concepts" | "evidence" | "calls" | "terms";
 
 const STATE_LABELS: Record<LearnerInference["state"], string> = {
   confirmed: "有直接掌握证据",
@@ -74,20 +65,6 @@ const EVIDENCE_SOURCE_LABELS: Record<string, string> = {
   observer: "Observer 观察",
   course_completion: "课程完成",
   migration: "旧档案迁移",
-};
-
-const STRATEGY_LABELS: Record<string, string> = {
-  direct_answer: "直接回答",
-  worked_example: "结合例子",
-  execution_sequence: "按执行顺序",
-  role_comparison: "角色对比",
-  contrast_table: "对照表",
-  project_code: "结合项目代码",
-  counterexample: "反例说明",
-  error_diagnosis: "错误诊断",
-  prerequisite_bridge: "补充前置知识",
-  brief_definition: "简短定义",
-  detailed_derivation: "详细推导",
 };
 
 function evidenceSummary(evidence: LearningEvidenceV2): string {
@@ -129,7 +106,7 @@ export default function LearnerProfileDialog({
   onRescanTerms,
 }: Props) {
   const [profile, setProfile] = useState<PersonalizationProfile | null>(null);
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>("concepts");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [expandedInference, setExpandedInference] = useState<string | null>(null);
@@ -151,7 +128,7 @@ export default function LearnerProfileDialog({
 
   useEffect(() => {
     if (!open) return;
-    setView("overview");
+    setView("concepts");
     void load();
   }, [open, projectId]);
 
@@ -166,10 +143,6 @@ export default function LearnerProfileDialog({
     () => new Map(profile?.concepts.map((item) => [item.concept.id, item.concept.displayName]) ?? []),
     [profile],
   );
-  const statesByConceptId = useMemo(
-    () => new Map((profile?.knowledgeStates ?? []).map((state) => [state.conceptId, state])),
-    [profile],
-  );
   const voidedEvidenceIds = useMemo(
     () => new Set(
       (profile?.learningEvidence ?? [])
@@ -178,71 +151,6 @@ export default function LearnerProfileDialog({
     ),
     [profile],
   );
-  const domainSummaries = useMemo(() => {
-    if (!profile) return [];
-    const legacyByKey = new Map(profile.domainProfiles.map((domain) => [domain.domainKey, domain]));
-    const groups = new Map<string, {
-      domainKey: string;
-      confirmed: string[];
-      learning: string[];
-      insufficient: string[];
-      likelyPrerequisites: string[];
-      updatedAt: string;
-      summary: string;
-    }>();
-    for (const item of profile.concepts) {
-      if (!canonicalConceptName(item.concept.displayName) && !item.mastery.manualStatus) continue;
-      const domainKey = item.concept.domain || "未分类";
-      const group = groups.get(domainKey) ?? {
-        domainKey,
-        confirmed: [],
-        learning: [],
-        insufficient: [],
-        likelyPrerequisites: legacyByKey.get(domainKey)?.likelyPrerequisites ?? [],
-        updatedAt: statesByConceptId.get(item.concept.id)?.updatedAt ?? new Date(0).toISOString(),
-        summary: legacyByKey.get(domainKey)?.summary ?? "",
-      };
-      const state = statesByConceptId.get(item.concept.id);
-      const dimensions = state?.dimensions;
-      const status = dimensions?.conceptual.status === "confirmed"
-        || dimensions?.familiarity.status === "confirmed"
-        ? "confirmed"
-        : dimensions?.conceptual.status === "learning"
-          || dimensions?.familiarity.status === "learning"
-          ? "learning"
-          : "insufficient";
-      group[status].push(item.concept.displayName);
-      if (state && state.updatedAt > group.updatedAt) group.updatedAt = state.updatedAt;
-      groups.set(domainKey, group);
-    }
-    for (const domain of profile.domainProfiles) {
-      if (!groups.has(domain.domainKey)) groups.set(domain.domainKey, {
-        domainKey: domain.domainKey, summary: domain.summary, confirmed: domain.confirmed,
-        learning: domain.learning, insufficient: [], likelyPrerequisites: domain.likelyPrerequisites,
-        updatedAt: domain.updatedAt,
-      });
-    }
-    for (const inference of profile.inferences) {
-      if (inference.subjectType !== "domain" || inference.scopeType !== "project") continue;
-      const group = groups.get(inference.subjectKey) ?? {
-        domainKey: inference.subjectKey, summary: "", confirmed: [], learning: [],
-        insufficient: [], likelyPrerequisites: [], updatedAt: inference.updatedAt,
-      };
-      group.summary = inference.summary;
-      group.updatedAt = inference.updatedAt;
-      groups.set(inference.subjectKey, group);
-    }
-    for (const relation of profile.relations) {
-      if (!groups.has(relation.domain)) groups.set(relation.domain, {
-        domainKey: relation.domain, summary: "仅建立知识联系，尚无掌握证据。",
-        confirmed: [], learning: [], insufficient: [], likelyPrerequisites: [],
-        updatedAt: relation.updatedAt ?? "",
-      });
-    }
-    return [...groups.values()].sort((left, right) => (
-      right.learning.length - left.learning.length || left.domainKey.localeCompare(right.domainKey)
-    ));
-  }, [profile, statesByConceptId]);
 
   if (!open) return null;
 
@@ -296,14 +204,13 @@ export default function LearnerProfileDialog({
         <header className="learner-profile-header">
           <div>
             <span className="learner-profile-icon"><BrainCircuit size={18} /></span>
-            <div><strong>我的学习档案</strong><small>老师如何理解你的知识边界</small></div>
+            <div><strong>我的学习档案</strong><small>按知识分类查看学习记录与依据</small></div>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="关闭"><X size={17} /></button>
         </header>
 
         <nav className="segmented-control learner-profile-tabs" aria-label="学习档案视图">
-          <button className={view === "overview" ? "active" : ""} onClick={() => setView("overview")}>知识边界</button>
-          <button className={view === "concepts" ? "active" : ""} onClick={() => setView("concepts")}>概念状态</button>
+          <button className={view === "concepts" ? "active" : ""} onClick={() => setView("concepts")}>知识树</button>
           <button className={view === "evidence" ? "active" : ""} onClick={() => setView("evidence")}>判断依据</button>
           <button className={view === "calls" ? "active" : ""} onClick={() => setView("calls")}>模型调用</button>
           <button className={view === "terms" ? "active" : ""} onClick={() => setView("terms")}>术语提示</button>
@@ -313,92 +220,6 @@ export default function LearnerProfileDialog({
           {message ? <div className="settings-message">{message}</div> : null}
           {loading && !profile ? <div className="learner-profile-loading">正在整理学习档案...</div> : null}
 
-          {profile && view === "overview" ? (
-            <>
-              {profile.evidenceSummary ? (
-                <section className="learner-evidence-overview" aria-label="学习证据摘要">
-                  <article>
-                    <CheckCircle2 size={16} />
-                    <span>已验证会什么</span>
-                    <strong>
-                      {profile.evidenceSummary.verified
-                        .map((item) => item.displayName)
-                        .join("、") || "还没有经过验证的概念"}
-                    </strong>
-                  </article>
-                  <article>
-                    <CircleHelp size={16} />
-                    <span>正在学习什么</span>
-                    <strong>
-                      {profile.evidenceSummary.learning
-                        .map((item) => item.displayName)
-                        .join("、") || "暂未发现明确的学习中概念"}
-                    </strong>
-                  </article>
-                  <article>
-                    <RotateCcw size={16} />
-                    <span>还缺什么证据</span>
-                    <strong>
-                      {profile.evidenceSummary.insufficient
-                        .map((item) => item.displayName)
-                        .join("、") || "当前概念都有可用证据"}
-                    </strong>
-                  </article>
-                  <article>
-                    <Sparkles size={16} />
-                    <span>最近哪些讲法有效</span>
-                    <strong>
-                      {profile.evidenceSummary.teaching.effectiveStrategies
-                        .filter((item) => item.successful + item.partiallySuccessful > 0)
-                        .slice(0, 4)
-                        .map((item) => STRATEGY_LABELS[item.strategy] || item.strategy)
-                        .join("、") || "等待理解检查或你的反馈"}
-                    </strong>
-                    <small>
-                      已验证 {profile.evidenceSummary.teaching.verifiedTrialCount} 次，
-                      另有 {profile.evidenceSummary.teaching.awaitingEvidenceCount} 次讲解等待证据
-                    </small>
-                  </article>
-                </section>
-              ) : null}
-
-              <div className="domain-profile-list">
-                {domainSummaries.length ? domainSummaries.map((domain) => (
-                  <article className="domain-profile-row" key={domain.domainKey}>
-                    <header>
-                      <div><strong>{domain.domainKey}</strong><span>学习分析与证据边界</span></div>
-                      <small>{domain.updatedAt ? new Date(domain.updatedAt).toLocaleDateString() : "暂无时间"}</small>
-                    </header>
-                    {domain.summary ? <p>{domain.summary}</p> : null}
-                    <div className="domain-boundaries">
-                      <div><CheckCircle2 size={14} /><span>已有证据</span><strong>{domain.confirmed.join("、") || "暂无"}</strong></div>
-                      <div><CircleHelp size={14} /><span>正在学习</span><strong>{domain.learning.join("、") || "暂无"}</strong></div>
-                      <div><RotateCcw size={14} /><span>证据不足</span><strong>{domain.insufficient.join("、") || "暂无"}</strong></div>
-                      <div><Link2 size={14} /><span>可能前置</span><strong>{domain.likelyPrerequisites.join("、") || "暂无"}</strong></div>
-                    </div>
-                    {profile.relations.filter((relation) => relation.domain === domain.domainKey).length ? (
-                      <details>
-                        <summary>知识联系（不代表已掌握）</summary>
-                        <ul>{profile.relations.filter((relation) => relation.domain === domain.domainKey).map((relation) => (
-                          <li key={relation.id}>
-                            {relation.sourceName || conceptsById.get(relation.sourceConceptId) || "相关概念"}
-                            {({ is_a: " 属于 ", prerequisite: " 需要先理解 ", component: " 包含 ", application: " 应用于 ", sibling: " 关联 ", alias: " 别名为 " })[relation.relationType]}
-                            {relation.targetName || conceptsById.get(relation.targetConceptId) || "相关概念"}
-                          </li>
-                        ))}</ul>
-                      </details>
-                    ) : null}
-                  </article>
-                )) : (
-                  <div className="learner-profile-empty">
-                    <BrainCircuit size={24} />
-                    <strong>还没有足够的领域证据</strong>
-                    <span>继续提问、追问或标记陌生术语后，老师会逐渐形成可解释的知识边界。</span>
-                  </div>
-                )}
-              </div>
-            </>
-          ) : null}
 
           {profile && view === "evidence" ? (
             <div className="learner-evidence-list">

@@ -51,10 +51,14 @@ Markdown 正文在上述元数据之前输出。不要在正文重复 TITLE、TE
 
 TEACHING_MANIFEST_CONTRACT = """<teaching_manifest_v2_contract>
 先直接流式输出完整 Markdown 正文。正文后固定输出单行 TEACHING: {...}，JSON 字符串中的换行必须转义。
-对象格式：{"schema_version":2,"concepts":[{"ref":"local_ref","existing_id":null,"name":"规范概念名","domain":"领域","scope":"global","parent_ref":null,"aliases":[]}],"coverage":[{"concept_ref":"local_ref","aspect":"实际讲解的具体范围","kind":"explained","dimension":"conceptual","core":true,"quote":"正文中逐字出现且唯一定位的讲解片段"}],"terms":[{"concept_ref":"local_ref","text":"正文技术原词","quote":"包含该原词、逐字出现且唯一定位的上下文"}]}。
+对象格式：{"schema_version":2,"concepts":[{"ref":"local_ref","existing_id":null,"name":"规范概念名","domain":"领域","scope":"global","parent_ref":null,"aliases":[]}],"coverage":[{"concept_ref":"local_ref","aspect":"实际讲解的具体范围","kind":"explained","dimension":"conceptual","core":true,"quote":"正文中逐字出现且唯一定位的讲解片段"}],"terms":[{"concept_ref":"local_ref","text":"正文技术原词","quote":"包含该原词、逐字出现且唯一定位的上下文"}],"placement_changes":[{"concept_ref":"已存在概念的 ref","to_parent_ref":"本响应中作为新父的 ref","from_parent_id":null,"reason":"为什么现在补父或换父"}]}。
 concepts 包含归属所需全部祖先；ref 本响应唯一，parent_ref/concept_ref 引用同一对象的 ref。
-existing_id 只能使用完整树提供的真实且可访问 ID，新概念为 null；不要自行生成数据库 ID。
-无可靠归属可显式提议根；已有节点的正常生成不得更改原父边。通用概念用 global，私有符号用 project。
+先匹配、后创建：existing_id 优先；没有 existing_id 时按完整树中同 scope、同 domain 的规范名或别名匹配，匹配到已有概念就复用该 ref，不要重复创建同一身份。
+新概念必须用 parent_ref 指向最近祖先（根用 null），并在 concepts 中列出归属所需的全部祖先（祖先可以是本响应新建的 ref）。
+已有概念：parent_ref 必须等于完整树里的当前父（根为 null），不得用 parent_ref 悄悄改父边。
+已有概念当前没有父（root/无父小概念）而本次能确定合理祖先时，必须在 placement_changes 中用 from_parent_id=null、to_parent_ref=该祖先 ref 明确补父。
+需要明确换父时也用 placement_changes，from_parent_id 必须等于完整树中的当前父 ID（根为 null）；不一致视为过期提案，系统保留原边并记录冲突。
+保持同领域单向层级：通用概念用 global，私有符号用 project；global 概念不能挂到项目私有父下。
 coverage kind 只能为 planned/mentioned/brief/explained，dimension 为 conceptual/code_reading/implementation/debugging/transfer。
 总纲未来目标用 planned；总纲真实解释可为 brief/explained；结构祖先可无 coverage，不以名称出现冒充实际解释。
 terms 为最终可见区域中全部技术概念的完整候选池，包含标题、表格、行内代码；代码块、已有链接和隐藏元数据不标。
@@ -77,4 +81,9 @@ def compose_system_prompt(editable_rules: str, output_kind: TaskOutputKind) -> s
         "</editable_general_rules>",
         TASK_OUTPUT_CONTRACTS[output_kind].strip(),
     ]
+    if output_kind == "markdown":
+        # Every Markdown generation produces a teaching document, so the same
+        # same-response manifest protocol (including placement_changes) must be
+        # part of the actual messages, not only of the parser.
+        parts.append(TEACHING_MANIFEST_CONTRACT.strip())
     return "\n\n".join(part for part in parts if part)

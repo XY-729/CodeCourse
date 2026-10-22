@@ -710,8 +710,10 @@ def _ensure_tree_nodes(conn: sqlite3.Connection, stamp: str) -> None:
             conn.execute(
                 """INSERT INTO concept_tree_nodes(concept_id,parent_id,scope_type,scope_id,domain,
                    normalized_name,identity_status,placement_status,topology_source_json,created_at,updated_at)
-                   VALUES(?,NULL,?,?,?,?,'resolved','pending','{"source":"archive_import"}',?,?)""",
-                (concept_id, scope_type, scope_id, domain.casefold(), name.strip().casefold(), stamp, stamp),
+                   VALUES(?,NULL,?,?,?,?,?,?,'{"source":"archive_import"}',?,?)""",
+                (concept_id, scope_type, scope_id, domain.casefold(), name.strip().casefold(),
+                 "archived" if row[4] == "archived" else "resolved",
+                 "archived" if row[4] == "archived" else "pending", stamp, stamp),
             )
         except sqlite3.IntegrityError:
             # Ambiguous canonical identity stays undecided instead of inventing a parent.
@@ -725,7 +727,16 @@ def _ensure_tree_nodes(conn: sqlite3.Connection, stamp: str) -> None:
 
 def _normalize_forest_after_import(conn: sqlite3.Connection) -> None:
     """Retire imported legacy queues and make the restored topology authoritative."""
+    from app.services.knowledge_tree_schema import FLOW_VERSION
     stamp = _utc_now()
+    # The archive already carries the outcome of the legacy migration. Recording
+    # it here is not copying the source device's flag: the restored tree is now
+    # authoritative, so a later restart must not re-run the legacy is_a pass.
+    if _table_exists(conn, "knowledge_migrations"):
+        conn.execute(
+            "INSERT OR REPLACE INTO knowledge_migrations(version,completed_at) VALUES(?,?)",
+            (FLOW_VERSION, stamp),
+        )
     conn.execute(
         """UPDATE observer_jobs SET status='cancelled',last_error='retired_by_archive_import',
            updated_at=? WHERE status IN ('queued','pending','running','retry')""",

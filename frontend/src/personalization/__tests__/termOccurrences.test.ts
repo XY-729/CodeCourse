@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
+import remarkGfm from "remark-gfm";
 import type { DocumentTerm } from "../../api/client";
 import {
   analyzeMarkdownTermOccurrences,
@@ -35,6 +36,65 @@ function term(
 }
 
 describe("markdown term occurrences", () => {
+  it.each(["teaching_manifest_v2", "manifest"])("keeps exact homonym identities for %s in both analysis and rendering", (source) => {
+    const markdown = "# stack\n\n😀 C++ 的 **stack** 是适配器。\n\nPython 的 `stack` 用列表实现。\n\n| stack |\n| --- |\n| 栈 |";
+    const cppQuote = "😀 C++ 的 **stack** 是适配器。";
+    const pyQuote = "Python 的 `stack` 用列表实现。";
+    const terms = [cppQuote, pyQuote].map((quote, index) => {
+      const start = markdown.indexOf("stack", markdown.indexOf(quote));
+      // Desktop offsets count Unicode code points; Android offsets count UTF-16.
+      const offset = source === "teaching_manifest_v2" ? [...markdown.slice(0, start)].length : start;
+      return term(0, "stack", { detection_source: source, concept_id: ["cpp-stack", "python-stack"][index],
+        quote, source_span: { text: "stack", start: offset, end: offset + 5 } });
+    });
+    const analysis = analyzeMarkdownTermOccurrences(markdown, terms, "course:homonyms.md");
+    expect(analysis.occurrences.map(item => [item.conceptKey, item.source, item.absoluteOffset])).toEqual([
+      ["cpp-stack", "manifest", markdown.indexOf("stack", markdown.indexOf(cppQuote))],
+      ["python-stack", "manifest", markdown.indexOf("stack", markdown.indexOf(pyQuote))],
+    ]);
+    const processor = unified().use(remarkParse).use(remarkGfm)
+      .use(remarkTermOccurrences, { sourceKey: "course:homonyms.md", terms });
+    const tree = processor.runSync(processor.parse(markdown), { value: markdown });
+    const rendered: Array<{ id: unknown; candidate: unknown }> = [];
+    const visit = (node: any) => {
+      if (node.type === "termOccurrence") rendered.push({
+        id: node.data.hProperties["data-term-concept-id"], candidate: node.data.hProperties["data-term-candidate-id"],
+      });
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+    expect(rendered).toEqual(analysis.occurrences.map(item => ({ id: item.conceptKey, candidate: item.candidateId })));
+  });
+
+  it("accounts for escaped text, entities, inline delimiters and hidden metadata before a pinned term", () => {
+    const body = "<!-- codecourse-teaching: [] -->\n\n&amp; \\* 范围：栈。\n\n`` 栈 `` 和 ``\n队列\n``。";
+    const terms = ["&amp; \\* 范围：栈。", "`` 栈 ``", "``\n队列\n``"].map((quote, index) => {
+      const text = index === 2 ? "队列" : "栈";
+      return term(0, text, { detection_source: "teaching_manifest_v2", concept_id: String(index), quote,
+        source_span: { text, start: 999, end: 1000 } });
+    });
+    const analysis = analyzeMarkdownTermOccurrences(body, terms, "course:unicode.md");
+    expect(analysis.occurrences.map(item => [item.conceptKey, item.localStart])).toEqual([
+      ["0", 7], ["1", 0], ["2", 0],
+    ]);
+  });
+
+  it("does not redirect stale authoritative spans or ambiguous quotes to another occurrence", () => {
+    const markdown = "C++ stack。\n\nPython stack。";
+    const terms = [
+      term(0, "stack", { detection_source: "manifest", quote: "Deleted stack。", source_span: { text: "stack", start: 4, end: 9 } }),
+      term(0, "stack", { detection_source: "teaching_manifest_v2", source_span: { text: "stack", start: 99, end: 104 } }),
+      term(0, "stack", { detection_source: "manifest", quote: "stack" }),
+    ];
+    expect(analyzeMarkdownTermOccurrences(markdown, terms, "course:stale.md").occurrences).toEqual([]);
+  });
+
+  it("pins a manifest without a quote to its numeric span while preserving old text-only candidates", () => {
+    const markdown = "stack 和 stack。socket。";
+    const terms = [term(0, "stack", { detection_source: "manifest", source_span: { text: "stack", start: 8, end: 13 } }), term(2, "socket")];
+    expect(analyzeMarkdownTermOccurrences(markdown, terms, "course:legacy.md").occurrences.map(item => item.absoluteOffset)).toEqual([8, 14]);
+  });
+
   it("uses stable document + AST node + local offset ids", () => {
     const first = buildTermCandidateId({
       termId: "42",

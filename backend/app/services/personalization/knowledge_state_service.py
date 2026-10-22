@@ -402,6 +402,35 @@ def invalidate_source_evidence(conn, project_id: int, source_type: str,
     return affected
 
 
+def invalidate_qa_evidence(conn, project_id: int, qa_record_id: int,
+                           reason: str = "answer_deleted") -> int:
+    """Void every fact that was created by one answer, never other sources.
+
+    Matches both the stored qa_record_id column (old rows) and the object/context
+    binding (new rows); the project binding keeps same-id answers of another
+    project untouched.
+    """
+    affected = 0
+    for row in conn.execute(
+        "SELECT * FROM learning_evidence_v2 WHERE action<>'void_evidence' AND voided=0 ORDER BY event_time,id"
+    ).fetchall():
+        event = _row_to_evidence(row)
+        obj, context = event["object"], event["context"]
+        bound_question = obj.get("qaRecordId", context.get("qaRecordId"))
+        if bound_question is None:
+            bound_question = event.get("qaRecordId")
+        if str(bound_question) != str(qa_record_id):
+            continue
+        bound_project = obj.get("projectId", context.get("projectId"))
+        if bound_project is not None and str(bound_project) != str(project_id):
+            continue
+        if conn.execute("SELECT 1 FROM learning_evidence_v2 WHERE target_evidence_id=? AND action='void_evidence' AND voided=0", (event["id"],)).fetchone():
+            continue
+        void_evidence(event["id"], f"qa-deleted:{event['id']}", reason, conn=conn)
+        affected += 1
+    return affected
+
+
 def record_manual_feedback_v2(
     concept_id: str,
     scope_type: str,
