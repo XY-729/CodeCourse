@@ -6,7 +6,7 @@
 
 Android 已同步最近的实时问答、停止与重试、连续会话、返回原文、后台分析和章节分工功能，详见 [Android 同步核对](docs/android-parity-20261015.md)。
 
-标记课件完成后会自动记录已学概念和范围，并供后续总纲、课件和问答使用；支持撤销、失败重试及旧课件补录，详见 [课程完成画像更新](docs/course-completion-profile-20261015.md)。
+总纲、课件和问答统一使用知识树、具体学习范围与用户明确要求。完整树采用紧凑格式发送，确认理解时本地更新对应记录，详见 [知识树上下文压缩](docs/personalized-teaching-alignment-20261021/10-compact-knowledge-context-20261022.md)。
 
 前端开发与重绘请先阅读 [前端结构与重绘指南](frontend/UI_GUIDE.md)，并按 [界面清单](frontend/ui-surfaces.json) 核对主界面、移动抽屉、弹窗及独立窗口。
 
@@ -41,14 +41,14 @@ CodeCourse 是一个面向学习者的代码阅读与课程生成工具。它不
 
 ## 下载与安装
 
-打开 [v0.4.10 下载页面](https://github.com/XY-729/CodeCourse/releases/tag/v0.4.10)，在 **Assets** 中选择 Windows 安装版、便携版或 Android 正式签名 APK。
+打开 [v0.4.11 下载页面](https://github.com/XY-729/CodeCourse/releases/tag/v0.4.11)，在 **Assets** 中选择 Windows 安装版、便携版或 Android 正式签名 APK。
 
 | 文件 | 用途 |
 | --- | --- |
-| `CodeCourse-0.4.10-setup.exe` | Windows 安装版，按向导选择安装位置，适合日常使用 |
-| `CodeCourse-0.4.10-portable.exe` | Windows 便携版，直接启动，适合先体验 |
-| `CodeCourse-0.4.10-android.apk` | Android 正式签名安装包 |
-| `CodeCourse-0.4.10-guide.md` | 可下载保存的本说明书 |
+| `CodeCourse-0.4.11-setup.exe` | Windows 安装版，按向导选择安装位置，适合日常使用 |
+| `CodeCourse-0.4.11-portable.exe` | Windows 便携版，直接启动，适合先体验 |
+| `CodeCourse-0.4.11-android.apk` | Android 正式签名安装包 |
+| `CodeCourse-0.4.11-guide.md` | 可下载保存的本说明书 |
 | `SHA256SUMS.txt` | 安装版和便携版的 SHA-256 校验值 |
 | `SHA256SUMS-android.txt` | Android APK 的 SHA-256 校验值 |
 
@@ -94,7 +94,7 @@ Base URL 填接口基础地址，不要填写服务商网页，也不要在末�
 
    > 掌握 C++ 智能指针与移动语义。我了解类和指针，希望从生命周期开始，逐步学习 unique_ptr、shared_ptr 和 move，每课包含例子与练习。
 
-5. 点击 **生成总纲**，按界面提示确认；如果出现“生成总纲前问卷”，根据自己的基础和目标回答后提交。
+5. 点击 **生成总纲**，按界面提示确认；基础、目标和讲解要求直接写在补充要求中。
 6. 等待生成任务完成。课程目录会更新，先阅读总纲并确认学习顺序。
 
 总纲是课程路线与章节安排，不代表每节课的完整正文都已生成。若方向不合适，可以修改要求后重新生成；继续前请留意界面中的重生成提示。

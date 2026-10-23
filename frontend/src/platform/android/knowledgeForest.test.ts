@@ -2,6 +2,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { KnowledgeForest } from "./knowledgeForest";
+import { promptId } from "../../personalization/promptForest";
 import { KNOWLEDGE_FOREST_SCHEMA } from "./knowledgeForestSchema";
 import { TEACHING_SCHEMA } from "./teachingSchema";
 import type { TeachingManifestV2 } from "../../personalization/teachingManifest";
@@ -55,6 +56,27 @@ function fixture() {
 }
 
 describe("Android concept forest", () => {
+  it("expands compact references before reuse, reparent and privacy validation", async () => {
+    const f = fixture();
+    const ids = await f.forest.applyManifest(1, manifest([
+      concept("cpp", "C++"), concept("stl", "STL", "cpp"), concept("v", "vector", "cpp"),
+    ]));
+    const cpp = ids.get("cpp")!, stl = ids.get("stl")!, vector = ids.get("v")!;
+    const reused = await f.forest.applyManifest(1, manifest([
+      concept("cpp", "C++", null, { existing_id: await promptId(cpp) }),
+      concept("stl", "STL", "cpp", { existing_id: await promptId(stl) }),
+      concept("v", "vector", "stl", { existing_id: await promptId(vector) }),
+    ], { placement_changes: [{ concept_ref: "v", from_parent_id: await promptId(cpp), to_parent_ref: "stl", reason: "容器归类" }] }));
+    expect(reused).toEqual(ids);
+    expect(f.get("SELECT parent_concept_id FROM concept_placements WHERE concept_id=?", [vector]).parent_concept_id).toBe(stl);
+    const hidden = await f.forest.applyManifest(2, manifest([concept("p", "Private", null, { scope: "project" })]));
+    await expect(f.forest.applyManifest(1, manifest([concept("p", "Private", null, {
+      scope: "project", existing_id: await promptId(hidden.get("p")!),
+    })]))).rejects.toThrow();
+    await expect(f.forest.applyManifest(1, manifest([concept("x", "X", null, { existing_id: "c_unknown" })]))).rejects.toThrow();
+    expect(f.count("SELECT COUNT(*) count FROM concepts")).toBe(4);
+  });
+
   it("keeps archived history hidden and permits a future valid identity with that name", async () => {
     const f = fixture();
     f.sql.exec("INSERT INTO concepts(id,concept_key,canonical_name,display_name,domain,concept_type,created_at) VALUES('old','global:cpp:vector','vector','vector','cpp','archived','old')");

@@ -98,6 +98,8 @@ def _require_generated_manifest(content: str, context: GenerationContext | None 
         raise ValueError(f"知识清单未就绪：{detail}。旧文档已保留。")
     if context is not None:
         allowed_ids = {node["id"] for node in context.snapshot["nodes"]}
+        from app.services.personalization.teaching.prompt_forest import expand_prompt_references
+        result.manifest = expand_prompt_references(result.manifest, allowed_ids)
         for concept in result.manifest["concepts"]:
             if concept.get("existing_id") is not None and concept["existing_id"] not in allowed_ids:
                 raise ValueError("知识清单引用了冻结知识树之外的概念 ID；旧文档已保留。")
@@ -136,6 +138,8 @@ def _prepare_lesson_plan(project_id: int, task_id: int, settings: dict, planner_
     content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"],
                                           messages, timeout=180)
     plan = _parse_lesson_plan(content)
+    from app.services.personalization.teaching.prompt_forest import expand_prompt_references
+    plan = expand_prompt_references(plan, {node["id"] for node in context.snapshot["nodes"]})
     responsibilities = freeze_responsibility_map(plan, context.tree_snapshot,
         available_ids={node["id"] for node in context.snapshot["nodes"]})
     _atomic_write(path, json.dumps({"request_hash": request_hash, "plan": plan,

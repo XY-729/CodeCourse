@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from app.services.storage import run_in_transaction
 from app.services.knowledge_tree_schema import sync_concepts
+from app.services.personalization.teaching.prompt_forest import expand_prompt_references
 
 KINDS = {"planned", "mentioned", "brief", "explained"}
 DIMENSIONS = {"conceptual", "code_reading", "implementation", "debugging", "transfer"}
@@ -107,6 +108,7 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
         raise ValueError("TeachingManifest concepts, coverage and terms must be arrays")
     _sync(conn)
     nodes = {row["concept_id"]: dict(row) for row in conn.execute("SELECT * FROM concept_tree_nodes")}
+    manifest = expand_prompt_references(manifest, nodes)
     versions_before = _versions(conn)
     stale_snapshot = False
     if tree_snapshot is not None:

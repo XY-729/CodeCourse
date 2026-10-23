@@ -19,9 +19,9 @@ PLANNER_CONTRACT = """
 <lesson_responsibility_contract>
 章节计划必须使用不可变职责：每章 section_id（本计划稳定且唯一）、depends_on（章节 ID 数组）、
 reference_only（只引用范围数组）、avoid_repeat（不负责重复展开的范围数组）。
-每个 items 项除 name/kind/focus 外必须返回 concept_ref、existing_id（树中真实 ID 或 null）、
+每个 items 项除 name/kind/focus 外必须返回 concept_ref、existing_id（知识树提供的编号或 null）、
 aspect（本章负责的具体范围）、dimension、owner_section_id、teaching_mode、reference_section_ids。
-concept_ref 为计划内稳定概念引用；同概念始终复用同一引用。优先匹配完整树中的真实 ID。
+concept_ref 为计划内稳定概念引用；同概念始终复用同一引用。优先匹配完整树提供的编号。
 dimension 为 conceptual/code_reading/implementation/debugging/transfer。
 teaching_mode 为 first_explanation/new_application/necessary_review。
 每个 concept + aspect + dimension 只能有一个 owner，引用的章节必须存在且不能引用自身。

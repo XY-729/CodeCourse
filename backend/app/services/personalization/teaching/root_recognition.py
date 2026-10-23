@@ -31,6 +31,8 @@ root_refs 仅引用实际根节点。材料不足时不要猜测，返回 {"conc
     raw = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], messages, timeout=90)
     proposal = json.loads(raw)
     allowed = {node["id"] for node in context.snapshot["nodes"]}
+    from .prompt_forest import expand_prompt_references
+    proposal = expand_prompt_references(proposal, allowed)
     if any(concept.get("existing_id") is not None and concept["existing_id"] not in allowed for concept in proposal.get("concepts", [])):
         raise ValueError("根识别引用了上下文之外的概念")
     return apply_root_proposal(project_id, proposal, context.tree_snapshot)

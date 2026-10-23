@@ -4,6 +4,8 @@ import asyncio
 import json
 import logging
 import os
+import math
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import perf_counter, sleep
@@ -97,7 +99,7 @@ def parse_usage(raw: dict[str, Any] | None) -> dict[str, int | None]:
 
 
 def check_request_budget(messages: list[dict[str, str]], max_tokens: int) -> dict[str, Any]:
-    """Conservative UTF-8 byte bound, explicitly not a tokenizer measurement.
+    """Preflight estimate, not provider token usage or a tokenizer measurement.
 
     The default is an application request budget, not a claim about the model's
     context window. Operators can configure the provider's actual smaller limit.
@@ -105,12 +107,31 @@ def check_request_budget(messages: list[dict[str, str]], max_tokens: int) -> dic
     """
     context_limit = int(os.getenv("GPL_LLM_CONTEXT_TOKENS", "131072"))
     input_bound = sum(len(json.dumps(message, ensure_ascii=False).encode("utf-8")) + 16 for message in messages) + 16
+    # Charging every UTF-8 byte as a token rejects ordinary full-tree requests.
+    # Use a mixed-script estimate with headroom; keep the byte upper bound only
+    # as a diagnostic. The provider remains the authority on exact token limits.
+    pieces = re.compile(r"[A-Za-z_]+|[0-9]+|[ \t\r\n]+|[^\x00-\x7f]|.", re.S)
+    estimate = 16
+    for message in messages:
+        estimate += 16
+        for value in message.values():
+            text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+            for match in pieces.finditer(text):
+                part = match[0]
+                if part.isascii() and (part[0].isalpha() or part[0] == "_" or part[0].isdigit()):
+                    estimate += math.ceil(len(part) / 3)
+                elif part.isspace():
+                    estimate += math.ceil(len(part) / 4)
+                else:
+                    estimate += math.ceil(len(part.encode("utf-8")) / 2)
+    estimated_input = math.ceil(estimate * 1.2)
     if max_tokens <= 0 or context_limit <= 0:
         raise ValueError("模型输入/输出预算必须为正整数")
-    report = {"input_token_upper_bound": input_bound, "reserved_output_tokens": max_tokens,
-              "context_budget": context_limit, "method": "utf8_bytes_upper_bound"}
-    if input_bound + max_tokens > context_limit:
-        raise ValueError(f"完整请求超过输入预算（UTF-8 字节上界估算 {input_bound}，输出预留 {max_tokens}，总预算 {context_limit}）；已停止生成，知识树未被截断。可调整模型预算后重试。")
+    report = {"input_token_upper_bound": input_bound, "estimated_input_tokens": estimated_input,
+              "reserved_output_tokens": max_tokens, "context_budget": context_limit,
+              "method": "unicode_weighted_estimate", "tokenizer_exact": False, "safety_factor": 1.2}
+    if estimated_input + max_tokens > context_limit:
+        raise ValueError(f"完整请求超过输入预算（输入估算 {estimated_input}，非精确 tokenizer 计数；输出预留 {max_tokens}，总预算 {context_limit}）；已停止生成，知识树未被截断。可按模型实际容量调整预算后重试。")
     logger.debug("llm_request_budget", extra={"budget": report})
     return report
 

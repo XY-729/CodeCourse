@@ -11,9 +11,11 @@ import hashlib
 import json
 import sqlite3
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any
 
 from app.services.learning_preferences import read_learning_preferences, render_learning_preferences
+from .prompt_forest import compact_forest, PROMPT_FOREST_INSTRUCTION
 
 
 GENERATION_RULES = """<unified_teaching_rules>
@@ -100,9 +102,17 @@ class GenerationContext:
         structural = "\u0000".join((self.requirements_json, self.learning_preferences_json))
         return hashlib.sha256(structural.encode("utf-8")).hexdigest()
 
+    @cached_property
+    def _prompt_json(self) -> tuple[str, str]:
+        topology, state = compact_forest(json.loads(self.topology_json), json.loads(self.state_json))
+        # Deliberate order keeps node rows before changing version suffixes.
+        encode = lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        return encode(topology), encode(state)
+
     def render(self) -> str:
-        context = (f"<knowledge_topology>\n{self.topology_json}\n</knowledge_topology>\n"
-                f"<knowledge_state>\n{self.state_json}\n</knowledge_state>\n"
+        topology, state = self._prompt_json
+        context = (PROMPT_FOREST_INSTRUCTION + f"\n<knowledge_topology>\n{topology}\n</knowledge_topology>\n"
+                f"<knowledge_state>\n{state}\n</knowledge_state>\n"
                 f"<explicit_user_requirements>\n{self.requirements_json}\n</explicit_user_requirements>")
         preferences = render_learning_preferences(json.loads(self.learning_preferences_json))
         return context + ("\n" + preferences if preferences else "")
