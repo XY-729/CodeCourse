@@ -26,9 +26,9 @@ describe("compact model forest", () => {
     const encoded = JSON.parse(await serializePromptForest(raw));
     const ids = await promptIdLookup(raw.concepts.map(node => node.id));
     const overrides = new Map<string, Record<string, unknown>>(encoded.knowledge_state.nodes);
-    const restored = encoded.nodes.map(([id, name, parent, options]: [string, string, string | null, object?]) => ({
+    const restored = encoded.nodes.map(([id, name, parent, options]: [string, string, number | null, object?]) => ({
       ...encoded.defaults, ...options, ...encoded.knowledge_state.defaults, ...overrides.get(id),
-      id: ids.get(id), name, parent_id: parent ? ids.get(parent) : null,
+      id: ids.get(id), name, parent_id: parent !== null ? ids.get(encoded.nodes[parent][0]) : null,
     }));
     expect(restored).toEqual(raw.concepts.map(node => ({ ...node, range_catalog: node.range_catalog ?? [] })));
     expect(encoded.knowledge_state.nodes).toHaveLength(1);

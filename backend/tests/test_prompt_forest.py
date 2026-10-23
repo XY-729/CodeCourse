@@ -88,6 +88,22 @@ class CompactPromptTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "未被截断"):
                 check_request_budget([{"role": "user", "content": context.render()}], 30)
 
+    def test_parent_at_row_zero_and_shared_contract_are_preserved_once(self):
+        from app.services.generation_service import _outline_generation_messages
+        from app.services.prompt_contracts import TEACHING_MANIFEST_CONTRACT
+        raw = snapshot(3)
+        context = build_generation_context(12, snapshot=raw)
+        top, state = json.loads(context.topology_json), json.loads(context.state_json)
+        compact = compact_forest(top, state)
+        self.assertEqual(compact[0]['nodes'][1][2], 0)
+        self.assertEqual(expand_compact_forest(*compact, [n['id'] for n in raw['nodes']]), (top, state))
+        messages = [{'role': 'system', 'content': 'rules\n' + TEACHING_MANIFEST_CONTRACT},
+                    {'role': 'user', 'content': 'task\n' + TEACHING_MANIFEST_CONTRACT}]
+        result = _outline_generation_messages(messages, 12, context=context)
+        self.assertEqual(sum(m['content'].count(TEACHING_MANIFEST_CONTRACT) for m in result), 1)
+        self.assertIn('task', result[-1]['content'])
+        self.assertEqual(messages[1]['content'].count(TEACHING_MANIFEST_CONTRACT), 1)
+
     def test_generated_plan_and_sections_expand_before_responsibility_validation(self):
         from app.services import generation_service as generation
         from app.services.personalization.teaching.lesson_responsibility import audit_section_manifest
@@ -109,7 +125,7 @@ class CompactPromptTests(unittest.TestCase):
             self.assertEqual(saved["sections"][0]["items"][0]["existing_id"], identity)
             generation._prepare_lesson_plan(12, 99, {}, "plan", context, "hash")
             self.assertEqual(model.call_count, 1)
-            self.assertIn('"format":"compact-v1"', model.call_args.args[3][0]["content"])
+            self.assertIn('"format":"compact-v2"', model.call_args.args[3][0]["content"])
         body = "概念0 有具体的运行机制。"
         payload = manifest([concept("c", "概念0", existing_id=prompt_id(identity))], [coverage("c", body)])
         parsed = generation._require_generated_manifest(body + "\nTEACHING: " + json.dumps(payload), frozen)

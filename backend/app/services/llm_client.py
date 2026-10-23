@@ -137,7 +137,21 @@ def check_request_budget(messages: list[dict[str, str]], max_tokens: int) -> dic
 
 
 def _record_usage(usage: dict[str, int | None], model: str, latency_ms: int) -> None:
-    logger.info("llm_usage", extra={"usage": usage, "model": model, "latency_ms": latency_ms})
+    logger.info('llm_usage model=%s latency_ms=%s input_tokens=%s output_tokens=%s cached_input_tokens=%s',
+                model, latency_ms, usage['input_tokens'], usage['output_tokens'], usage['cached_input_tokens'],
+                extra={"usage": usage, "model": model, "latency_ms": latency_ms})
+
+
+def _require_complete_response(data: dict[str, Any]) -> None:
+    choices = data.get('choices') or []
+    reason = choices[0].get('finish_reason') if choices else None
+    if reason not in {'length', 'content_filter'}:
+        return
+    usage = parse_usage(data.get('usage'))
+    logger.warning('Incomplete model response: finish_reason=%s input_tokens=%s output_tokens=%s cached_input_tokens=%s',
+                   reason, usage['input_tokens'], usage['output_tokens'], usage['cached_input_tokens'])
+    explanation = '模型输出达到长度上限' if reason == 'length' else '模型服务端过滤了输出'
+    raise RuntimeError(f'模型响应未完整结束：{explanation}（finish_reason={reason}）；知识清单未发布，旧文档已保留')
 
 
 def _async_client() -> httpx.AsyncClient:
@@ -199,9 +213,7 @@ def call_openai_compatible_chat_result(
             )
             response.raise_for_status()
             data = response.json()
-            choices = data.get("choices") or []
-            if choices and choices[0].get("finish_reason") in {"length", "content_filter"}:
-                raise RuntimeError("模型响应未完整结束，知识清单不能发布")
+            _require_complete_response(data)
             usage = parse_usage(data.get("usage"))
             latency_ms = int((perf_counter() - started) * 1000)
             _record_usage(usage, str(data.get("model") or model), latency_ms)
@@ -298,9 +310,7 @@ async def stream_openai_compatible_chat(
                             try:
                                 data = json.loads(body.decode("utf-8"))
                                 content = _message_content(data)
-                                choices = data.get("choices") or []
-                                if choices and choices[0].get("finish_reason") in {"length", "content_filter"}:
-                                    raise RuntimeError("模型响应未完整结束，知识清单不能发布")
+                                _require_complete_response(data)
                                 latest_usage = parse_usage(data.get("usage"))
                                 response_model = str(data.get("model") or model)
                             except (ValueError, TypeError, UnicodeDecodeError) as exc:
@@ -335,7 +345,7 @@ async def stream_openai_compatible_chat(
                                 continue
                             reason = choices[0].get("finish_reason")
                             if reason in {"length", "content_filter"}:
-                                raise RuntimeError("模型输出达到长度限制，回答未完成")
+                                _require_complete_response(event)
                             if reason == "stop":
                                 complete = True
                             delta = choices[0].get("delta") or {}

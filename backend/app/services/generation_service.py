@@ -91,6 +91,90 @@ def _generation_messages(messages: list[dict], project_id: int, instructions: st
     return apply_generation_context(messages, context or build_generation_context(project_id, instructions))
 
 
+def _outline_generation_messages(messages: list[dict], project_id: int, instructions: str = "",
+                                 context: GenerationContext | None = None) -> list[dict]:
+    from app.services.prompt_contracts import TEACHING_MANIFEST_CONTRACT
+    unique, seen = [], False
+    for message in messages:
+        parts = message.get('content', '').split(TEACHING_MANIFEST_CONTRACT)
+        content = parts[0]
+        for part in parts[1:]:
+            content += ('' if seen else TEACHING_MANIFEST_CONTRACT) + part
+            seen = True
+        unique.append({**message, 'content': content})
+    return _generation_messages(unique, project_id, instructions, context)
+
+
+def _repair_manifest_identity(manifest: dict, context: GenerationContext) -> tuple[dict, list[str]]:
+    """Drop identity claims that the frozen tree cannot confirm.
+
+    An unusable `existing_id` is cleared, so the server re-binds the concept by
+    canonical name/alias instead of the document being rejected; a range id that
+    is not in the frozen catalog is cleared for the same reason. Anything that
+    cannot be re-bound this way stays invalid for the caller to reject.
+    """
+    from app.services.learning_ranges import normalize_proposal
+    from app.services.personalization.teaching.prompt_forest import expand_prompt_references
+
+    nodes = {node["id"]: node for node in context.snapshot["nodes"]}
+    value = expand_prompt_references(manifest, nodes)
+    notes: list[str] = []
+    cleared: set[str] = set()
+    for concept in value["concepts"]:
+        existing = concept.get("existing_id")
+        if existing is not None and existing not in nodes:
+            concept["existing_id"] = None
+            cleared.add(concept["ref"])
+            notes.append(f"未知概念 ID {existing}")
+        elif existing is not None:
+            # The stored concept owns scope and domain; a restated identity must
+            # not be rejected only because the model re-described them.
+            node = nodes[existing]
+            for field in ("domain", "scope", "scope_id"):
+                if field in node and concept.get(field) != node[field]:
+                    concept[field] = node[field]
+                    notes.append(f"概念 {existing} 的 {field} 已按知识树对齐")
+    if cleared:
+        value["placement_changes"] = [
+            change for change in value.get("placement_changes", [])
+            if change.get("concept_ref") not in cleared]
+    owners = {concept["ref"]: concept.get("existing_id") for concept in value["concepts"]}
+    for item in value["coverage"]:
+        aspect_id = item.get("aspect_id")
+        if not aspect_id:
+            continue
+        node = nodes.get(owners.get(item.get("concept_ref"))) or {}
+        known = [row for field in ("range_catalog", "ranges", "coverage") for row in node.get(field, [])
+                 if row.get("aspect_id") == aspect_id and row.get("dimension") == item.get("dimension")]
+        if not known:
+            item.pop("aspect_id", None)
+            notes.append(f"未知范围编号 {aspect_id}")
+    return normalize_proposal(value, context.snapshot), notes
+
+
+def _repair_generated_manifest(content: str, context: GenerationContext | None = None) -> str:
+    """Repair metadata pointers instead of discarding a readable body.
+
+    A model quote that is repeated in the body is widened to its unique span, and
+    one that differs only in punctuation is replaced by the exact body characters.
+    Rows that still cannot be located are dropped, and identity claims outside the
+    frozen tree are cleared; the document itself is kept.
+    """
+    if parse_manifest(content).status == "valid":
+        return content
+    repaired = parse_manifest(content, drop_unlocatable=True)
+    if repaired.status != "valid" or repaired.manifest is None:
+        return content
+    manifest = repaired.manifest
+    notes: list[str] = []
+    if context is not None:
+        manifest, notes = _repair_manifest_identity(manifest, context)
+    if repaired.warnings or notes:
+        LOGGER.warning("Repaired generated teaching metadata: %d unlocatable row(s), %d identity note(s)",
+                       len(repaired.warnings), len(notes))
+    return repaired.body + "\n\n" + canonical_comment(manifest)
+
+
 def _require_generated_manifest(content: str, context: GenerationContext | None = None):
     result = parse_manifest(content)
     if result.status != "valid":
@@ -98,10 +182,7 @@ def _require_generated_manifest(content: str, context: GenerationContext | None 
         raise ValueError(f"知识清单未就绪：{detail}。旧文档已保留。")
     if context is not None:
         allowed_ids = {node["id"] for node in context.snapshot["nodes"]}
-        from app.services.personalization.teaching.prompt_forest import expand_prompt_references
-        result.manifest = expand_prompt_references(result.manifest, allowed_ids)
-        from app.services.learning_ranges import normalize_proposal
-        result.manifest = normalize_proposal(result.manifest, context.snapshot)
+        result.manifest, _notes = _repair_manifest_identity(result.manifest, context)
         for concept in result.manifest["concepts"]:
             if concept.get("existing_id") is not None and concept["existing_id"] not in allowed_ids:
                 raise ValueError("知识清单引用了冻结知识树之外的概念 ID；旧文档已保留。")
@@ -112,8 +193,11 @@ def _parse_generation_response(raw: str, project_id: int, instructions: str = ""
                                context: GenerationContext | None = None) -> tuple[str, list[dict]]:
     raw = raw.replace("\r\n", "\n").replace("\r", "\n")
     # New generation cannot enter legacy reuse/array paths before validation.
-    _require_generated_manifest(raw, context)
-    content, terms = parse_term_metadata(raw, project_id, instructions)
+    content = _repair_generated_manifest(raw, context)
+    _require_generated_manifest(content, context)
+    content, terms = parse_term_metadata(content, project_id, instructions)
+    # Removing legacy TERMS lines can move a quote, so the final body is checked again.
+    content = _repair_generated_manifest(content, context)
     _require_generated_manifest(content, context)
     return content, terms
 
@@ -947,7 +1031,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
                 progress_total=4,
                 stage_label="正在生成总纲",
             )
-            content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], _generation_messages(messages, project_id, instructions, context), timeout=180)
+            content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], _outline_generation_messages(messages, project_id, instructions, context), timeout=180)
             update_generation_task(
                 task_id,
                 "running",
@@ -962,6 +1046,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
             )
             output_dir = project_course_dir(project_id)
             outline = add_outline_lesson_links(outline)
+            outline = _repair_generated_manifest(outline, context)
             _publish_generation(project_id, output_dir / "outline.md", outline, context, task_id)
             register_document_terms(project_id, "course", "outline.md", outline, model_terms)
             update_generation_task(
@@ -999,7 +1084,7 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
             progress_total=4,
             stage_label="正在生成总纲",
         )
-        content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], _generation_messages(messages, project_id, instructions, context), timeout=180)
+        content = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"], _outline_generation_messages(messages, project_id, instructions, context), timeout=180)
         update_generation_task(
             task_id,
             "running",
@@ -1013,11 +1098,15 @@ def run_outline_generation_task(project_id: int, task_id: int, scope: LearningSc
         if scope.type == "files":
             sub_path = _sub_outline_filename(scope)
             outline = add_outline_lesson_links(outline, sub_path)
+            # The appended lesson links repeat each lesson title, so quotes are
+            # re-located against the bytes that are actually published.
+            outline = _repair_generated_manifest(outline, context)
             _publish_generation(project_id, output_dir / sub_path, outline, context, task_id)
             register_document_terms(project_id, "course", sub_path, outline, model_terms)
         else:
             _publish_generation(project_id, output_dir / "project_map.md", project_map, context, task_id)
             outline = add_outline_lesson_links(outline)
+            outline = _repair_generated_manifest(outline, context)
             _publish_generation(project_id, output_dir / "outline.md", outline, context, task_id)
             register_document_terms(project_id, "course", "project_map.md", project_map, model_terms)
             register_document_terms(project_id, "course", "outline.md", outline, model_terms)

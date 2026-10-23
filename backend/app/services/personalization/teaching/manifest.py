@@ -17,6 +17,15 @@ COMMENT_RE = re.compile(r"<!--\s*codecourse-teaching:\s*(.*?)\s*-->", re.S)
 KINDS = {"mentioned", "brief", "explained", "planned"}
 DIMENSIONS = {"conceptual", "code_reading", "implementation", "debugging", "transfer"}
 MANIFEST_SOURCE = "teaching_manifest_v2"
+# Characters a model may re-punctuate or omit when quoting its own prose. Only
+# invisible formatting and punctuation are ignored: word and path characters
+# (letters, digits, `_ - / . |` and CJK ideographs) stay significant.
+QUOTE_NOISE = frozenset(
+    " \t\r\n\u3000\u00a0"
+    "，。、；：！？…·〃"
+    "「」『』【】《》〈〉（）〔〕［］｛｝“”‘’"
+    ",.;:!?\"'()[]{}<>~`*#"
+)
 
 
 class ManifestValidationError(ValueError):
@@ -30,6 +39,7 @@ class ManifestResult:
     status: str = "absent"
     errors: list[str] = field(default_factory=list)
     legacy: list[dict] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def require_valid(self) -> dict:
         if self.status != "valid" or self.manifest is None:
@@ -41,7 +51,61 @@ def visible_body(content: str) -> str:
     return COMMENT_RE.sub(lambda match: "\n" * match[0].count("\n"), content)
 
 
-def validate_manifest(manifest: object, body: str | None = None) -> dict:
+def _quote_key(text: str) -> str:
+    return "".join(char for char in text if char not in QUOTE_NOISE)
+
+
+def _quote_positions(text: str) -> tuple[str, list[int]]:
+    chars: list[str] = []
+    positions: list[int] = []
+    for position, char in enumerate(text):
+        if char in QUOTE_NOISE:
+            continue
+        chars.append(char)
+        positions.append(position)
+    return "".join(chars), positions
+
+
+def locate_quote(visible: str, quote: str, unique: str | None = None) -> str | None:
+    """Return the literal body span a quote stands for, or None when ambiguous.
+
+    A quote the model copied verbatim is used as-is. A quote repeated in the body
+    is widened with its own surrounding text; a quote that differs only in
+    punctuation or spacing is replaced by the exact body characters it covers.
+    The returned value is therefore always a real, single region of `visible`.
+    ``unique`` additionally requires that term text to occur once inside the span.
+    """
+    def fit(candidate: str, occurrences: int) -> bool:
+        return occurrences == 1 and (unique is None or candidate.count(unique) == 1)
+
+    if not isinstance(quote, str) or not quote:
+        return None
+    count = visible.count(quote)
+    if fit(quote, count):
+        return quote
+    if count:
+        start = visible.index(quote)
+        end = start + len(quote)
+        for width in (4, 8, 16, 32, 64, 96):
+            for left, right in ((width, width), (0, width), (width, 0)):
+                candidate = visible[max(0, start - left):min(len(visible), end + right)]
+                if fit(candidate, visible.count(candidate)):
+                    return candidate
+        return None
+    key = _quote_key(quote)
+    if not key:
+        return None
+    normalized, positions = _quote_positions(visible)
+    if normalized.count(key) != 1:
+        return None
+    start = normalized.index(key)
+    located = visible[positions[start]:positions[start + len(key) - 1] + 1]
+    return located if unique is None or located.count(unique) == 1 else None
+
+
+def validate_manifest(manifest: object, body: str | None = None, *,
+                      drop_unlocatable: bool = False,
+                      warnings: list[str] | None = None) -> dict:
     """Validate shape, references and literal quotes; return an independent value."""
     if not isinstance(manifest, dict) or type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 2:
         raise ManifestValidationError("TeachingManifest schema_version 必须为 2")
@@ -92,14 +156,13 @@ def validate_manifest(manifest: object, body: str | None = None) -> dict:
             parent = concepts[parent]["parent_ref"]
     visible = visible_body(body) if body is not None else None
     for key in ("coverage", "terms"):
+        kept: list[dict] = []
         for item in value[key]:
             if not isinstance(item, dict) or item.get("concept_ref") not in concepts:
                 raise ManifestValidationError(f"{key} concept_ref 不存在")
             quote = item.get("quote")
             if not isinstance(quote, str) or not quote:
                 raise ManifestValidationError(f"{key} quote 缺失")
-            if visible is not None and visible.count(quote) != 1:
-                raise ManifestValidationError(f"{key} quote 必须在最终正文唯一定位")
             if key == "coverage":
                 if not isinstance(item.get("aspect"), str) or not item["aspect"].strip():
                     raise ManifestValidationError("coverage aspect 缺失")
@@ -107,8 +170,32 @@ def validate_manifest(manifest: object, body: str | None = None) -> dict:
                     raise ManifestValidationError("coverage kind/dimension 无效")
                 if not isinstance(item.get("core"), bool):
                     raise ManifestValidationError("coverage core 必须为布尔值")
-            elif not isinstance(item.get("text"), str) or not item["text"] or item["text"] not in quote:
+            elif not isinstance(item.get("text"), str) or not item["text"].strip():
                 raise ManifestValidationError("terms text 必须逐字出现在 quote 中")
+            if visible is not None:
+                if not drop_unlocatable:
+                    if visible.count(quote) != 1:
+                        raise ManifestValidationError(f"{key} quote 必须在最终正文唯一定位")
+                else:
+                    located = locate_quote(visible, quote,
+                                           item.get("text") if key == "terms" else None)
+                    if located is None:
+                        if warnings is not None:
+                            warnings.append(f"{key} quote 无法在正文唯一定位，已从知识清单移除")
+                        continue
+                    item["quote"] = located
+            if key == "terms":
+                quote = item["quote"]
+                if quote.count(item["text"]) != 1:
+                    if not drop_unlocatable:
+                        raise ManifestValidationError(
+                            "terms text 必须逐字出现在 quote 中" if not quote.count(item["text"])
+                            else "术语原词必须能在 quote 中唯一定位")
+                    if warnings is not None:
+                        warnings.append("terms quote 无法唯一定位术语原词，已从知识清单移除")
+                    continue
+            kept.append(item)
+        value[key] = kept
     changed: set[str] = set()
     for item in changes:
         if not isinstance(item, dict) or item.get("concept_ref") not in concepts or item.get("to_parent_ref") not in concepts:
@@ -134,8 +221,13 @@ def canonical_comment(manifest: Mapping | list) -> str:
     return f"<!-- codecourse-teaching: {payload} -->"
 
 
-def parse_manifest(raw: str) -> ManifestResult:
-    """Consume TEACHING outside fenced examples, retaining invalid-v2 status."""
+def parse_manifest(raw: str, *, drop_unlocatable: bool = False) -> ManifestResult:
+    """Consume TEACHING outside fenced examples, retaining invalid-v2 status.
+
+    ``drop_unlocatable`` is for freshly generated documents: quotes that cannot be
+    located in the body are repaired or dropped instead of discarding the whole
+    document, so a readable body is never lost to one bad metadata row.
+    """
     payloads: list[tuple[str, bool]] = []
     kept: list[str] = []
     fence = ""
@@ -187,7 +279,9 @@ def parse_manifest(raw: str) -> ManifestResult:
                 continue
             if not single_line:
                 raise ManifestValidationError("TeachingManifest v2 必须为单行 JSON 对象")
-            manifests.append(validate_manifest(value, result.body))
+            manifests.append(validate_manifest(value, result.body,
+                                               drop_unlocatable=drop_unlocatable,
+                                               warnings=result.warnings))
         except (ValueError, RecursionError) as exc:
             result.errors.append(str(exc))
     if result.errors:

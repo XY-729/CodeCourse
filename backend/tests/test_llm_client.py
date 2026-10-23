@@ -29,6 +29,20 @@ def _ok_response(message: dict) -> MagicMock:
 
 class MessageContentTests(unittest.TestCase):
     @patch("app.services.llm_client._SYNC_CLIENT")
+    def test_incomplete_response_reports_reason_and_usage_without_retrying(self, client: MagicMock) -> None:
+        for reason, label in [('length', '长度上限'), ('content_filter', '服务端过滤')]:
+            with self.subTest(reason=reason):
+                client.reset_mock()
+                response = _ok_response({'content': 'unfinished'})
+                response.json.return_value['choices'][0]['finish_reason'] = reason
+                client.post.return_value = response
+                with self.assertLogs('app.services.llm_client', level='WARNING') as logs:
+                    with self.assertRaisesRegex(RuntimeError, label):
+                        call_openai_compatible_chat_result('http://x', 'k', 'm', [{'role': 'user', 'content': 'hi'}])
+                self.assertIn(f'finish_reason={reason}', logs.output[0])
+                self.assertIn('output_tokens=5', logs.output[0])
+                self.assertEqual(client.post.call_count, 1)
+    @patch("app.services.llm_client._SYNC_CLIENT")
     def test_uses_content_when_present(self, client: MagicMock) -> None:
         client.post.return_value = _ok_response(
             {"role": "assistant", "content": "正式回答", "reasoning_content": "思考痕迹"}

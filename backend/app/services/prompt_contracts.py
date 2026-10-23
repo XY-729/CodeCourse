@@ -53,6 +53,7 @@ TEACHING_MANIFEST_CONTRACT = """<teaching_manifest_v2_contract>
 先直接流式输出完整 Markdown 正文。正文后固定输出单行 TEACHING: {...}，JSON 字符串中的换行必须转义。
 对象格式：{"schema_version":2,"concepts":[{"ref":"local_ref","existing_id":null,"name":"规范概念名","domain":"领域","scope":"global","parent_ref":null,"aliases":[]}],"coverage":[{"concept_ref":"local_ref","aspect":"实际讲解的具体范围","kind":"explained","dimension":"conceptual","core":true,"quote":"正文中逐字出现且唯一定位的讲解片段"}],"terms":[{"concept_ref":"local_ref","text":"正文技术原词","quote":"包含该原词、逐字出现且唯一定位的上下文"}],"placement_changes":[{"concept_ref":"已存在概念的 ref","to_parent_ref":"本响应中作为新父的 ref","from_parent_id":null,"reason":"为什么现在补父或换父"}]}。
 concepts 包含归属所需全部祖先；ref 本响应唯一，parent_ref/concept_ref 引用同一对象的 ref。
+知识树是输入参考，不要把整棵树回传。concepts 仅列本次正文涉及的概念与它们必要的祖先，同一身份共用一个 ref；不要复制已有的历史 coverage、学习记录或同义范围目录。
 先匹配、后创建：existing_id 优先；没有 existing_id 时按完整树中同 scope、同 domain 的规范名或别名匹配，匹配到已有概念就复用该 ref，不要重复创建同一身份。
 新概念必须用 parent_ref 指向最近祖先（根用 null），并在 concepts 中列出归属所需的全部祖先（祖先可以是本响应新建的 ref）。
 已有概念：parent_ref 必须等于完整树里的当前父（根为 null），不得用 parent_ref 悄悄改父边。
@@ -65,6 +66,7 @@ range_catalog 提供已有范围的 aspect_id、规范名与同义名。语义�
 terms 为最终可见区域中全部技术概念的完整候选池，包含标题、表格、行内代码；代码块、已有链接和隐藏元数据不标。
 不按开始时熟悉度、刚讲过或数量配额丢弃术语；每个有效技术概念至少提供一项，同拼写不同身份分别记录。
 quote 必须真实且唯一定位；coverage 与 terms 独立；无适合条目可用空数组，不能杜撰。
+quote 使用足以唯一定位的最短原文片段，逐字复制 Markdown；需要时保留标题符号或上下文，不要改写标点或把整节正文重复塞进清单。
 不要返回 familiarity/mastery/understood/权重，也不要返回来源、hash、tree_snapshot 或 generation_id，这些由程序绑定。
 旧模板中的 TEACHING 数组、TERMS 配额、固定偏好、诊断题和延后清单提取指令失效；保留用户明确的自由教学要求。
 TITLE/HANDOFF 按各任务协议保留，均在正文之后。机器元数据不得出现在可见正文或代码围栏中。

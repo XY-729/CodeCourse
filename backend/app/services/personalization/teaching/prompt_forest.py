@@ -9,8 +9,9 @@ from typing import Iterable
 
 
 PROMPT_FOREST_INSTRUCTION = (
-    "知识树采用 compact-v1：columns 定义每行各列，末列可省略；省略属性使用 defaults。"
-    "id/parent_id 为稳定短编号，完整包含所有可见概念；返回的 existing_id、from_parent_id "
+    "知识树采用 compact-v2：columns 定义每行各列，末列可省略；省略属性使用 defaults。"
+    "parent_index 是 nodes 中父节点的从 0 开始行号，null 表示无父；行号只在本次快照有效。"
+    "id 为稳定短编号，完整包含所有可见概念；返回的 existing_id、from_parent_id "
     "直接使用这些短编号，软件在校验时还原真实身份。不要凭编号推断含义。"
     "knowledge_state 未列出的节点使用默认状态；空范围不表示已掌握。"
 )
@@ -51,13 +52,14 @@ def expand_prompt_references(value, identities: Iterable[str]):
 def compact_forest(topology: dict, state: dict) -> tuple[dict, dict]:
     nodes = sorted(topology["nodes"], key=lambda node: node["id"])
     prompt_id_lookup(node["id"] for node in nodes)  # collision guard
+    indices = {node['id']: index for index, node in enumerate(nodes)}
     defaults = {"domain": Counter(node["domain"] for node in nodes).most_common(1)[0][0] if nodes else "general",
                 "scope": "global", "scope_id": "local-user", "identity_status": "resolved", "aliases": []}
     rows = []
     for node in nodes:
         options = {key: value for key, value in node.items()
                    if key not in {"id", "name", "parent_id"} and value != defaults.get(key)}
-        row = [prompt_id(node["id"]), node["name"], prompt_id(node["parent_id"]) if node["parent_id"] else None]
+        row = [prompt_id(node["id"]), node["name"], indices[node['parent_id']] if node["parent_id"] else None]
         rows.append([*row, options] if options else row)
     state_defaults = {"familiarity": "unrecorded", "ranges": [], "coverage": [], "range_catalog": []}
     states = []
@@ -67,7 +69,7 @@ def compact_forest(topology: dict, state: dict) -> tuple[dict, dict]:
         if options:
             states.append([prompt_id(node["id"]), options])
     # Versions are suffixes: a state update cannot invalidate the topology prefix.
-    return ({"format": "compact-v1", "columns": ["id", "name", "parent_id", "optional_fields"],
+    return ({"format": "compact-v2", "columns": ["id", "name", "parent_index", "optional_fields"],
              "defaults": defaults, "nodes": rows, "topology_status": topology["topology_status"],
              "topology_version": topology["topology_version"]},
             {"defaults": state_defaults, "nodes": states, "state_version": state["state_version"]})
@@ -78,8 +80,9 @@ def expand_compact_forest(topology: dict, state: dict, identities: Iterable[str]
     lookup = prompt_id_lookup(identities)
     rows, states = [], []
     for short, name, parent, *options in topology["nodes"]:
+        parent_short = topology['nodes'][parent][0] if topology.get('format') == 'compact-v2' and parent is not None else parent
         rows.append({**copy.deepcopy(topology["defaults"]), **(options[0] if options else {}),
-                     "id": lookup[short], "name": name, "parent_id": lookup[parent] if parent else None})
+                     "id": lookup[short], "name": name, "parent_id": lookup[parent_short] if parent_short is not None else None})
     overrides = dict(state["nodes"])
     for short, identity in lookup.items():
         states.append({**copy.deepcopy(state["defaults"]), **overrides.get(short, {}), "id": identity})
