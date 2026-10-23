@@ -284,8 +284,12 @@ def list_project_course_files(repo_root: Path, project_id: int) -> list[CourseFi
 def read_project_course_file(repo_root: Path, project_id: int, filename: str) -> str:
     content = read_course_file(repo_root, filename, project_course_dir(project_id))
     # 兼容此前已生成的总纲：不需要再次调用模型，也能补回按课生成入口。
-    if filename == "outline.md":
-        decorated = add_outline_lesson_links(content)
+    if filename == "outline.md" or filename.startswith('sub-outline-') or OUTLINE_MARKER in content:
+        parsed = parse_manifest(content)
+        decorated = add_outline_lesson_links(parsed.body if parsed.status == 'valid' else content,
+                                             filename if filename != 'outline.md' else None)
+        if parsed.status == 'valid':
+            decorated = _repair_generated_manifest(decorated.rstrip() + '\n\n' + canonical_comment(parsed.manifest)) + '\n'
         if decorated != content:
             _atomic_write(project_course_dir(project_id) / filename, decorated)
         return decorated
@@ -622,7 +626,7 @@ def extract_outline_lessons(outline: str) -> list[tuple[int, str]]:
             if title and title not in {"课程名称", "课程"}:
                 lessons.append((int(match.group(1)), title))
     seen: set[int] = set()
-    return [(number, title) for number, title in lessons if not (number in seen or seen.add(number))][:12]
+    return [(number, title) for number, title in lessons if not (number in seen or seen.add(number))]
 
 
 def add_outline_lesson_links(outline: str, outline_path: Optional[str] = None) -> str:
