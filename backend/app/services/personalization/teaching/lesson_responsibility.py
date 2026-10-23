@@ -23,6 +23,7 @@ reference_only（只引用范围数组）、avoid_repeat（不负责重复展开
 aspect（本章负责的具体范围）、dimension、owner_section_id、teaching_mode、reference_section_ids。
 concept_ref 为计划内稳定概念引用；同概念始终复用同一引用。优先匹配完整树提供的编号。
 dimension 为 conceptual/code_reading/implementation/debugging/transfer。
+若 items 或 reference_only/avoid_repeat 对应树中已有具体范围，带上该范围的 aspect_id 并复用规范 aspect；新的应用范围不填 aspect_id。不要为同一范围换词重新规划。
 teaching_mode 为 first_explanation/new_application/necessary_review。
 每个 concept + aspect + dimension 只能有一个 owner，引用的章节必须存在且不能引用自身。
 同概念的新应用、边界条件和用户明确要求重讲可以独立负责，不能按名称去重。

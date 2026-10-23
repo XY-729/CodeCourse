@@ -223,6 +223,8 @@ def rebuild_state(
     try:
         current_time = _now()
         evidence = list_evidence(concept_id, scope_type, scope_id, conn=database)
+        from app.services.learning_ranges import normalize_evidence, resolve
+        evidence = normalize_evidence(database, evidence)
         state = resolve_knowledge_state(
             concept_id,
             scope_type,
@@ -230,6 +232,8 @@ def rebuild_state(
             evidence,
             current_time,
         )
+        for item in state.get('ranges', []):
+            item['aspect'], item['aspect_id'] = resolve(database, concept_id, item['dimension'], item['aspect'])
         old = database.execute(
             "SELECT state_json FROM knowledge_states_v2 WHERE concept_id=? AND scope_type=? AND scope_id=?",
             (concept_id, scope_type, scope_id),

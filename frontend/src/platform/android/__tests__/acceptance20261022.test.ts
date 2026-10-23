@@ -9,6 +9,7 @@
  * R11: stored user requirements participate in generation context.
  */
 import { DatabaseSync } from "node:sqlite";
+import { KNOWLEDGE_MAINTENANCE_SCHEMA } from '../knowledgeForestSchema';
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => ({
@@ -90,6 +91,7 @@ beforeEach(() => {
     CREATE TABLE learning_evidence_v2(id TEXT PRIMARY KEY, idempotency_key TEXT, concept_id TEXT NOT NULL, scope_type TEXT NOT NULL, scope_id TEXT NOT NULL, dimension TEXT NOT NULL, direction TEXT NOT NULL, strength REAL NOT NULL DEFAULT 0, reliability REAL NOT NULL DEFAULT 0, source TEXT NOT NULL, action TEXT NOT NULL, object_json TEXT NOT NULL DEFAULT '{}', result_json TEXT NOT NULL DEFAULT '{}', context_json TEXT NOT NULL DEFAULT '{}', event_time TEXT NOT NULL, session_id TEXT, qa_record_id INTEGER, target_evidence_id TEXT, voided INTEGER NOT NULL DEFAULT 0, policy_version TEXT);
     CREATE TABLE user_teaching_requirements(id TEXT PRIMARY KEY, project_id, scope_type, scope_id, text, source, action_id, active, created_at, updated_at);
   `);
+  harness.sql.exec(KNOWLEDGE_MAINTENANCE_SCHEMA);
   provider = new AndroidLocalProvider();
   provider.getProject = vi.fn(async () => ({ id: 1, name: "Project", project_type: "learning_plan" }));
   provider.getLLMSettings = vi.fn(async () => ({ enabled: true, base_url: "https://example.test", model: "test" }));

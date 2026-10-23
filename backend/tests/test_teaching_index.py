@@ -217,11 +217,12 @@ class TeachingIndexTests(unittest.TestCase):
         path = storage.GENERATED_ROOT / str(self.project) / 'legacy.md'
         original = '# 原课件\n\n知识点0表示一种独立的抽象机制。'
         path.write_text(original, encoding='utf-8')
-        metadata = 'TEACHING: ' + json.dumps([{'concept': '知识点0', 'aspect': '基本原理', 'kind': 'explained', 'core': True, 'quote': original.split('\n\n')[1]}])
+        from test_knowledge_tree_forest import concept, manifest, coverage
+        metadata = 'TEACHING: ' + json.dumps(manifest([concept('k', '知识点0')], [coverage('k', original.split('\n\n')[1], aspect='基本原理')]))
         with patch('app.services.generation_service._llm_settings_or_error', return_value={'api_key': 'fake', 'base_url': 'http://test', 'model': 'test'}), patch('app.services.llm_client.call_openai_compatible_chat', return_value=metadata):
             state = index.reindex_document(self.project, 'course', 'legacy.md')
         self.assertEqual(state['indexStatus'], 'complete')
-        self.assertEqual(index.COMMENT.sub('', path.read_text(encoding='utf-8')).strip(), original)
+        self.assertEqual(path.read_text(encoding='utf-8'), original)
         def concurrent_edit(*args, **kwargs):
             path.write_text('用户正在编辑的新内容', encoding='utf-8')
             return metadata

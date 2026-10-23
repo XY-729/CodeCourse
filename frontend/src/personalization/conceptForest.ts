@@ -17,6 +17,7 @@ export interface TeachingSourceVersion {
   tree_version: TreeSnapshotVersion;
 }
 export interface ConceptRangeState {
+  aspect_id?: string;
   aspect: string;
   dimension: TeachingDimension;
   familiarity: FamiliarityState;
@@ -25,6 +26,7 @@ export interface ConceptRangeState {
   sources?: TeachingSourceVersion[];
 }
 export interface ConceptCoverageSummary {
+  aspect_id?: string;
   aspect: string;
   dimension: TeachingDimension;
   kind: TeachingCoverageKind;
@@ -33,6 +35,7 @@ export interface ConceptCoverageSummary {
   quote?: string;
 }
 export interface ConceptForestNode {
+  range_catalog?: Array<{ aspect_id: string; aspect: string; dimension: string; aliases: string[] }>;
   id: string;
   name: string;
   domain: string;

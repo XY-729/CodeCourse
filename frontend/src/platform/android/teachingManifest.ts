@@ -21,6 +21,7 @@ export type TeachingManifestResult = {
 };
 
 export const TEACHING_MANIFEST_CONTRACT = `<teaching_manifest_contract>
+range_catalog 给出已有范围的 aspect_id、规范 aspect 与同义名称。同概念、同维度且语义相同的 coverage 必须复用 aspect_id 与规范名；新应用范围不要强行合并。
 正文先正常输出，结尾固定另起一行输出 TEACHING: {"schema_version":2,"concepts":[],"coverage":[],"terms":[],"placement_changes":[]}。这是同一次响应的完整知识清单，不另调模型提取；JSON 必须是单行，字符串中的换行转义。
 concepts 每项为 {"ref":"本响应唯一引用","existing_id":null,"name":"规范名","domain":"领域","scope":"global","parent_ref":null,"aliases":[]}；scope 只用 global/project。已有概念必须复用完整树上下文提供的真实 existing_id，不能自造数据库 ID。
 先语义匹配已有概念和最近的合理父概念；细粒度概念缺父或中间层时，同次补齐必要父/祖先链并连接已有合理祖先或真正领域根。parent_ref 只能引用同清单 concepts.ref，结构祖先可没有 coverage/terms，不能由此宣称用户已懂。已有有效父边不因普通生成改变；为已有无父节点补父/重挂时明确 placement_changes: [{"concept_ref":"子引用","from_parent_id":null,"to_parent_ref":"父引用","reason":"原因"}]，from_parent_id 使用上下文原父 ID。

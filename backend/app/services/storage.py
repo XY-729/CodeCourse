@@ -2252,6 +2252,9 @@ def update_project_status(project_id: int, status: str) -> Optional[ProjectRecor
 
 def delete_project(project_id: int) -> bool:
     with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        from app.services.knowledge_maintenance import delete_project_knowledge
+        delete_project_knowledge(conn, project_id)
         from app.services.teaching_index import remove_documents
         remove_documents(conn, project_id)
         # Reusable global identities survive plan deletion. Only this plan's

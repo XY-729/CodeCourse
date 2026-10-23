@@ -13,6 +13,7 @@ export const PORTABLE_TABLES = [
   "qa_sessions",
   "prompt_revisions",
   "concepts",
+  "project_concept_links", "concept_redirects", "learning_range_aliases", "teaching_manifest_overrides", "teaching_concept_overrides",
   // Authoritative concept forest. Identity and topology travel with the facts
   // so a restored device keeps the same tree instead of rebuilding it. Desktop
   // and Android use different physical names for the same concepts; both are

@@ -59,9 +59,9 @@ export async function serializePromptForest(snapshot: ConceptForestSnapshot): Pr
     if (Object.keys(options).length) row.push(options);
     return row;
   });
-  const stateDefaults = { familiarity: "unrecorded", ranges: [], coverage: [] };
+  const stateDefaults = { familiarity: "unrecorded", ranges: [], coverage: [], range_catalog: [] };
   const states = nodes.flatMap(node => {
-    const options = Object.fromEntries(Object.entries({ familiarity: node.familiarity,
+    const options = Object.fromEntries(Object.entries({ familiarity: node.familiarity, range_catalog: node.range_catalog ?? [],
       ranges: [...node.ranges].sort((a, b) => stableSerialize(a).localeCompare(stableSerialize(b))),
       coverage: [...node.coverage].sort((a, b) => stableSerialize(a).localeCompare(stableSerialize(b))),
     }).filter(([key, value]) => stableSerialize(value) !== stableSerialize(stateDefaults[key as keyof typeof stateDefaults])));

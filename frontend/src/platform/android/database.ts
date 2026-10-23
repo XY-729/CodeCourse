@@ -6,7 +6,7 @@ import { repairLegacyProfile } from "../../personalization/profileRepair";
 
 const DATABASE = "codecourse_mobile";
 const DATABASE_VERSION = 1;
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 // The native connection outlives a WebView/module instance. All wrappers for
 // this database must also share the initialization and transaction queue.

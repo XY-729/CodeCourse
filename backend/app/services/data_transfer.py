@@ -31,6 +31,7 @@ PORTABLE_TABLES = (
     "qa_sessions",
     "prompt_revisions",
     "concepts",
+    "project_concept_links", "concept_redirects", "learning_range_aliases", "teaching_manifest_overrides", "teaching_concept_overrides",
     # Canonical concept forest. Desktop and Android store the same facts under
     # different physical names, so the archive uses platform-neutral tables and
     # each side maps them on export/import.

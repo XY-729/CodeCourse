@@ -147,7 +147,8 @@ def build_generation_context(project_id: int, current_requirements: str = "", *,
                                "aliases": sorted(set(node.get("aliases", [])))})
         state_nodes.append({"id": identity, "familiarity": node.get("familiarity", "unrecorded"),
                             "ranges": sorted(node.get("ranges", []), key=stable_json),
-                            "coverage": sorted(node.get("coverage", []), key=stable_json)})
+                            "coverage": sorted(node.get("coverage", []), key=stable_json),
+                            "range_catalog": sorted(node.get('range_catalog', []), key=stable_json)})
     parents = {node["id"]: node["parent_id"] for node in topology_nodes}
     for node in topology_nodes:
         parent = node["parent_id"]

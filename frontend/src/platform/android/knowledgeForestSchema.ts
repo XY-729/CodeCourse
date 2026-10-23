@@ -3,9 +3,10 @@ export const KNOWLEDGE_FOREST_TABLES = [
   "concept_placements", "concept_aliases", "plan_concept_roots", "plan_root_status",
   "knowledge_tree_versions", "teaching_manifests", "knowledge_topology_conflicts",
   "user_teaching_requirements",
+  "project_concept_links", "concept_redirects", "learning_range_aliases", "knowledge_changes", "teaching_backfills", "teaching_manifest_overrides", "teaching_concept_overrides",
 ] as const;
 
-export const KNOWLEDGE_FOREST_SCHEMA = `
+const KNOWLEDGE_FOREST_BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS knowledge_tree_versions (
   id INTEGER PRIMARY KEY CHECK(id=1),
   topology_version INTEGER NOT NULL DEFAULT 0,
@@ -82,6 +83,17 @@ CREATE TABLE IF NOT EXISTS user_teaching_requirements (
   updated_at TEXT NOT NULL
 );
 `;
+
+export const KNOWLEDGE_MAINTENANCE_SCHEMA = `
+CREATE TABLE IF NOT EXISTS project_concept_links(project_id INTEGER NOT NULL,concept_id TEXT NOT NULL,source_type TEXT NOT NULL,source_path TEXT NOT NULL,PRIMARY KEY(project_id,concept_id,source_type,source_path));
+CREATE TABLE IF NOT EXISTS concept_redirects(source_id TEXT PRIMARY KEY,target_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS learning_range_aliases(concept_id TEXT NOT NULL,dimension TEXT NOT NULL,alias TEXT NOT NULL,canonical TEXT NOT NULL,aspect_id TEXT NOT NULL,PRIMARY KEY(concept_id,dimension,alias));
+CREATE TABLE IF NOT EXISTS knowledge_changes(id TEXT PRIMARY KEY,project_id INTEGER NOT NULL,kind TEXT NOT NULL,affected_json TEXT NOT NULL,before_json TEXT NOT NULL,after_json TEXT NOT NULL,undone INTEGER NOT NULL DEFAULT 0,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS teaching_backfills(id TEXT PRIMARY KEY,project_id INTEGER NOT NULL,source_type TEXT NOT NULL,source_path TEXT NOT NULL,content_hash TEXT NOT NULL,manifest_json TEXT NOT NULL,tree_json TEXT NOT NULL,status TEXT NOT NULL,change_id TEXT,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS teaching_manifest_overrides(project_id INTEGER NOT NULL,source_type TEXT NOT NULL,source_path TEXT NOT NULL,content_hash TEXT NOT NULL,manifest_json TEXT NOT NULL,PRIMARY KEY(project_id,source_type,source_path));
+CREATE TABLE IF NOT EXISTS teaching_concept_overrides(project_id INTEGER NOT NULL,source_type TEXT NOT NULL,source_path TEXT NOT NULL,content_hash TEXT NOT NULL,quote TEXT NOT NULL,source_concept_id TEXT NOT NULL,target_concept_id TEXT NOT NULL,PRIMARY KEY(project_id,source_type,source_path,content_hash,quote,source_concept_id));
+`;
+export const KNOWLEDGE_FOREST_SCHEMA = KNOWLEDGE_FOREST_BASE_SCHEMA + KNOWLEDGE_MAINTENANCE_SCHEMA;
 
 /** Repeated after legacy import too. No taxonomy, familiarity, or AI is invented by migration. */
 export const KNOWLEDGE_FOREST_LEGACY_NORMALIZATION = `

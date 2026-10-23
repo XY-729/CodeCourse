@@ -10,6 +10,8 @@ export type TeachingDocument = {
   documentId: string; sourceType: "course" | "qa"; sourcePath: string;
   contentHash: string; indexStatus: "complete" | "partial" | "pending";
   documentConfirmed?: boolean;
+  schemaVersion?: number;
+  courseCompleted?: boolean;
   artifactKind?: "outline" | "lesson" | "answer";
   artifact_kind?: "outline" | "lesson" | "answer";
   metadataStatus?: string;

@@ -10,6 +10,7 @@ export interface ManifestConcept {
   aliases: string[];
 }
 export interface ManifestCoverage {
+  aspect_id?: string;
   concept_ref: string;
   aspect: string;
   kind: TeachingCoverageKind;

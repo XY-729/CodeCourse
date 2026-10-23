@@ -8,7 +8,7 @@ const dbMock = vi.hoisted(() => {
       runCalls.push({ sql, values });
       return 0;
     }),
-    query: vi.fn(async () => []),
+    query: vi.fn(async (_sql: string, _values: unknown[] = []): Promise<Array<Record<string, unknown>>> => []),
   };
 });
 
@@ -41,6 +41,7 @@ const deleteIndex = (table: string) =>
 beforeEach(() => {
   runCalls.length = 0;
   dbMock.query.mockClear();
+  dbMock.query.mockImplementation(async sql => sql.includes('SELECT id FROM projects') ? [{ id: 11 }] : []);
 });
 
 describe("Android project deletion cleanup", () => {

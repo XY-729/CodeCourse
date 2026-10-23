@@ -30,7 +30,7 @@ describe("compact model forest", () => {
       ...encoded.defaults, ...options, ...encoded.knowledge_state.defaults, ...overrides.get(id),
       id: ids.get(id), name, parent_id: parent ? ids.get(parent) : null,
     }));
-    expect(restored).toEqual(raw.concepts);
+    expect(restored).toEqual(raw.concepts.map(node => ({ ...node, range_catalog: node.range_catalog ?? [] })));
     expect(encoded.knowledge_state.nodes).toHaveLength(1);
     expect(encoded.plan_roots[0].root_concept_ids).toEqual([await promptId(raw.concepts[0].id)]);
     expect(raw).toEqual(before);

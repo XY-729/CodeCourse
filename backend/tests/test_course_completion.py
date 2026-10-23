@@ -196,15 +196,16 @@ class CourseCompletionTests(unittest.TestCase):
         target = storage.GENERATED_ROOT / str(self.project) / self.path
         target.write_text(body, encoding='utf-8')
         def model(_base, _key, _model, messages, **kwargs):
-            chunk = messages[1]['content']
-            return 'TEACHING: ' + json.dumps([{'concept': '借用', 'aspect': '共享借用限制', 'kind': 'explained', 'core': True, 'quote': quote}] if quote in chunk else [])
+            from test_knowledge_tree_forest import concept, manifest, coverage
+            chunk = next(m['content'] for m in messages if m['role']=='user')
+            return 'TEACHING: ' + json.dumps(manifest([concept('borrow','借用')], [coverage('borrow',quote,aspect='共享借用限制')] if quote in chunk else []))
         settings = {'base_url': 'http://test', 'api_key': 'fake', 'model': 'test'}
         with patch('app.services.generation_service._llm_settings_or_error', return_value=settings), patch('app.services.llm_client.call_openai_compatible_chat', side_effect=model) as calls:
             state = index.reindex_document(self.project, 'course', self.path)
         self.assertGreater(calls.call_count, 4)
         self.assertEqual(state['indexStatus'], 'complete')
         self.assertEqual(state['passages'][0]['aspect'], '共享借用限制')
-        self.assertEqual(index.COMMENT.sub('', target.read_text(encoding='utf-8')).strip(), body)
+        self.assertEqual(target.read_text(encoding='utf-8'), body)
 
 
 if __name__ == '__main__':

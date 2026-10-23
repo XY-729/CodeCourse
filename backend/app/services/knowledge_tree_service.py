@@ -109,6 +109,8 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
     _sync(conn)
     nodes = {row["concept_id"]: dict(row) for row in conn.execute("SELECT * FROM concept_tree_nodes")}
     manifest = expand_prompt_references(manifest, nodes)
+    from app.services.knowledge_maintenance import resolve_redirects
+    manifest = resolve_redirects(conn, manifest)
     versions_before = _versions(conn)
     stale_snapshot = False
     if tree_snapshot is not None:
@@ -266,7 +268,9 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
             raise ValueError("Invalid coverage kind or dimension")
         _text(item.get("aspect"), "aspect")
         _text(item.get("quote"), "quote")
-        coverage.append({**item, "concept_id": refs[item["concept_ref"]]})
+        from app.services.learning_ranges import resolve
+        aspect, range_id = resolve(conn, refs[item["concept_ref"]], item["dimension"], item["aspect"], item.get("aspect_id"))
+        coverage.append({**item, "aspect": aspect, "aspect_id": range_id, "concept_id": refs[item["concept_ref"]]})
     for item in manifest["terms"]:
         if not isinstance(item, dict) or item.get("concept_ref") not in refs:
             raise ValueError("Unresolved term concept_ref")
@@ -275,6 +279,8 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
         terms.append({**item, "concept_id": refs[item["concept_ref"]]})
     if new_ids or aliases_changed or placement_changed:
         conn.execute("UPDATE knowledge_tree_versions SET topology_version=topology_version+1 WHERE id=1")
+    for identity in set(refs.values()):
+        conn.execute("INSERT OR IGNORE INTO project_concept_links VALUES(?,?,?,?)", (project_id, identity, source_type, source_path))
     return {"ref_to_id": refs, "coverage": coverage, "terms": terms,
             "tree_snapshot": _versions(conn), "issues": issues}
 
@@ -286,13 +292,20 @@ def get_tree_snapshot(project_id, conn=None):
     _sync(conn)
     from app.services.personalization.knowledge_state_service import get_states
     states = {(s["conceptId"], s["scopeType"], str(s["scopeId"])): s for s in get_states([("global", "local-user"), ("project", str(project_id))], conn=conn)}
-    coverage = {}
-    for row in conn.execute("""SELECT p.concept_id,p.aspect,p.dimension,p.kind,COUNT(DISTINCT p.document_id) source_count
+    from app.services.learning_ranges import resolve, catalog
+    grouped = {}
+    for row in conn.execute("""SELECT p.concept_id,p.aspect,p.dimension,p.kind,p.document_id
         FROM teaching_passages p JOIN teaching_documents d ON d.id=p.document_id
         WHERE p.active=1 AND d.index_status='complete'
-        GROUP BY p.concept_id,p.aspect,p.dimension,p.kind
         ORDER BY p.concept_id,p.aspect,p.dimension,p.kind"""):
-        coverage.setdefault(row["concept_id"], []).append({key: row[key] for key in ("aspect", "dimension", "kind", "source_count")})
+        aspect, range_id = resolve(conn, row['concept_id'], row['dimension'], row['aspect'])
+        group = grouped.setdefault((row['concept_id'], range_id, row['dimension'], row['kind']),
+            {'aspect': aspect, 'aspect_id': range_id, 'dimension': row['dimension'], 'kind': row['kind'], 'documents': set()})
+        group['documents'].add(row['document_id'])
+    coverage = {}
+    for (identity, *_), item in grouped.items():
+        documents = item.pop('documents')
+        coverage.setdefault(identity, []).append({**item, 'source_count': len(documents)})
     nodes = []
     for row in conn.execute("""SELECT t.*,c.canonical_name,c.display_name,c.aliases_json FROM concept_tree_nodes t
         JOIN concepts c ON c.id=t.concept_id
@@ -307,7 +320,7 @@ def get_tree_snapshot(project_id, conn=None):
             "identity_status": row["identity_status"], "aliases": sorted(json.loads(row["aliases_json"] or "[]")),
             "placement_status": row["placement_status"],
             "familiarity": state.get("familiarity", "unrecorded"), "ranges": state.get("ranges", []),
-            "coverage": coverage.get(row["concept_id"], [])})
+            "coverage": coverage.get(row["concept_id"], []), "range_catalog": catalog(conn, row["concept_id"])})
     root_status = get_root_status(project_id, conn)
     return {"schema_version": 2, "tree_snapshot": _versions(conn), **_versions(conn), "nodes": nodes,
             "concepts": nodes, "topology_status": "ready",
@@ -404,6 +417,19 @@ def reparent_concept(project_id, concept_id, parent_id, topology_version, reason
         conn.execute("UPDATE knowledge_tree_versions SET topology_version=topology_version+1 WHERE id=1")
         return _versions(conn)
     return run_in_transaction(operation)
+
+
+def reparent_concept_in_tx(conn, project_id, concept_id, parent_id, reason):
+    nodes = {r['concept_id']: dict(r) for r in conn.execute('SELECT * FROM concept_tree_nodes')}
+    if concept_id not in nodes or not _visible(nodes[concept_id], project_id): raise ValueError('无法访问概念')
+    if parent_id is not None and (parent_id not in nodes or not _visible(nodes[parent_id], project_id) or nodes[parent_id]['identity_status'] == 'archived'):
+        raise ValueError('无法访问父概念')
+    if parent_id is not None and conn.execute('SELECT 1 FROM project_knowledge_roots WHERE root_concept_id=?', (concept_id,)).fetchone():
+        raise ValueError('计划根不能移入子分类')
+    nodes[concept_id]['parent_id'] = parent_id
+    _validate_parent_graph(nodes)
+    conn.execute('UPDATE concept_tree_nodes SET parent_id=?,placement_status=?,topology_source_json=?,updated_at=? WHERE concept_id=?',
+        (parent_id, 'placed' if parent_id else 'root', _json({'project_id': project_id, 'source': 'manual_move', 'reason': reason}), _now(), concept_id))
 
 
 def list_requirements(project_id, conn=None):

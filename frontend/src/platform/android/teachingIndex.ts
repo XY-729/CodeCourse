@@ -1,5 +1,6 @@
 import type { TeachingDocument, TeachingPassage, TeachingReference } from "../../personalization/teachingApi";
 import type { MobileDatabase } from "./database";
+import { ensureRange, canonicalRange, type RangeRow } from './learningRanges';
 import { appendTeachingManifest, visibleTeachingBody, parseTeachingManifest, TEACHING_MANIFEST_CONTRACT } from "./teachingManifest";
 import type { SavedManifest } from "./knowledgeForest";
 import { AndroidTeachingOutcomeService } from "./teachingOutcomeService";
@@ -39,8 +40,8 @@ export class TeachingIndex {
       ORDER BY f.created_at,f.id`);
   }
 
-  async remove(project: number, path?: string) {
-    await this.transaction(async () => {
+  async remove(project: number, path?: string, options: { inTx?: boolean } = {}) {
+    const work = async () => {
       const documents = await this.db.queryInTx<Row>("SELECT id FROM teaching_documents WHERE project_id=?" + (path == null ? "" : " AND source_path=?"), path == null ? [project] : [project, path.replace(/\\/g, "/")]);
       for (const document of documents) {
         const feedback = await this.db.queryInTx<Row>("SELECT * FROM understanding_feedback WHERE document_id=? AND active=1", [document.id]);
@@ -56,8 +57,13 @@ export class TeachingIndex {
       }
       if (path == null) await this.db.runInTx("DELETE FROM teaching_manifests WHERE project_id=?", [project]);
       else await this.db.runInTx("DELETE FROM teaching_manifests WHERE project_id=? AND source_path=?", [project, path.replace(/\\/g, "/")]);
-    });
-    await this.host.stateChanged();
+      for (const table of ['teaching_manifest_overrides','teaching_concept_overrides','teaching_backfills']) {
+        if (path == null) await this.db.runInTx(`DELETE FROM ${table} WHERE project_id=?`, [project]);
+        else await this.db.runInTx(`DELETE FROM ${table} WHERE project_id=? AND source_path=?`, [project,path.replace(/\\/g, '/')]);
+      }
+    };
+    if (options.inTx) await work(); else await this.transaction(work);
+    if (!options.inTx) await this.host.stateChanged();
   }
 
   /**
@@ -65,13 +71,15 @@ export class TeachingIndex {
    * no legacy TERMS array is promoted: without a validated manifest a document
    * stays pending instead of claiming verified teaching coverage.
    */
-  async index(project: number, type: string, path: string, content: string): Promise<string> {
+  async index(project: number, type: string, path: string, content: string, options: { force?: boolean; inTx?: boolean } = {}): Promise<string> {
     path = path.replace(/\\/g, "/");
     const hash = await fingerprint(content);
     const old = (await this.db.query<Row>("SELECT * FROM teaching_documents WHERE project_id=? AND source_type=? AND source_path=?", [project, type, path]))[0];
-    if (old?.content_hash === hash) return String(old.id);
+    if (!options.force && old?.content_hash === hash) return String(old.id);
     const id = String(old?.id ?? crypto.randomUUID());
-    const parsed = parseTeachingManifest(content);
+    let persistedId = id;
+    const override = (await this.db.query<Row>('SELECT manifest_json FROM teaching_manifest_overrides WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?', [project, type, path, hash]))[0];
+    const parsed = override ? { status: 'complete', manifest: JSON.parse(String(override.manifest_json)) as import('./teachingManifest').TeachingManifest } : parseTeachingManifest(content);
     const saved = type === "course" || type === "qa"
       ? await this.host.manifest(project, type as "course" | "qa", path)
       : null;
@@ -88,8 +96,10 @@ export class TeachingIndex {
         const quote = item.quote.trim();
         // Planned or mentioned targets may intentionally carry no locatable quote.
         if (!quote) continue;
-        const conceptId = saved.conceptMap[item.concept_ref];
-        const aspect = item.aspect.trim().slice(0, 200);
+        let conceptId = saved.conceptMap[item.concept_ref];
+        const correction = (await this.db.query<Row>('SELECT target_concept_id FROM teaching_concept_overrides WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=? AND quote=? AND source_concept_id=?', [project, type, path, hash, item.quote, conceptId]))[0];
+        if (correction) conceptId = String(correction.target_concept_id);
+        const aspect = (await ensureRange(this.db, conceptId, item.dimension, item.aspect, correction ? undefined : item.aspect_id, options.inTx)).aspect;
         if (!conceptId || !concepts.has(item.concept_ref) || !aspect || quote.length < 8 || quoteCount(quote) !== 1) { rejected++; continue; }
         approved.push([crypto.randomUUID(), id, conceptId, aspect, item.kind, item.core ? 1 : 0, item.dimension, quote,
           body.slice(0, body.indexOf(quote)).split("\n").length, hash, stamp()]);
@@ -98,11 +108,12 @@ export class TeachingIndex {
       if (locatable && rejected) indexStatus = approved.length ? "partial" : "invalid";
       else indexStatus = "complete";
     }
-    await this.transaction(async () => {
+    const work = async () => {
       await this.db.runInTx(`INSERT INTO teaching_documents VALUES (?,?,?,?,?,?,?) ON CONFLICT(project_id,source_type,source_path)
         DO UPDATE SET content_hash=excluded.content_hash,index_status=excluded.index_status,updated_at=excluded.updated_at`,
       [id, project, type, path, hash, indexStatus, stamp()]);
       const stored = String((await this.db.queryInTx<Row>("SELECT id FROM teaching_documents WHERE project_id=? AND source_type=? AND source_path=?", [project, type, path]))[0].id);
+      persistedId = stored;
       if (old && old.content_hash !== hash) {
         // Confirmation belongs to the source version it was made on. A new body
         // must not inherit the old "understood" declaration just because the
@@ -127,9 +138,10 @@ export class TeachingIndex {
           ON CONFLICT(document_id,concept_id,aspect,quote) DO UPDATE SET kind=excluded.kind,core=excluded.core,dimension=excluded.dimension,
           start_line=excluded.start_line,content_hash=excluded.content_hash,active=1,updated_at=excluded.updated_at`, values);
       }
-    });
-    if (old && old.content_hash !== hash) await this.host.stateChanged().catch(() => undefined);
-    return id;
+    };
+    if (options.inTx) await work(); else await this.transaction(work);
+    if (!options.inTx && old && old.content_hash !== hash) await this.host.stateChanged().catch(() => undefined);
+    return persistedId;
   }
 
   async reference(project: number, id: string): Promise<TeachingReference> {
@@ -227,6 +239,7 @@ export class TeachingIndex {
       else if (understood || core.some((p) => ["partial", "needs_help"].includes(String(p.understanding)))) status = "partial";
     }
     return { documentId: id, sourceType: type, sourcePath: path, contentHash: String(document.content_hash), indexStatus: document.index_status as TeachingDocument["indexStatus"],
+      schemaVersion: (await this.host.manifest(project, type, path))?.status === 'complete' ? 2 : 1,
       status, documentConfirmed: feedback.some((f) => f.result === "understood"), coreCount: core.length, understoodCount: understood, passages: passages as TeachingPassage[], feedback: feedback as TeachingDocument["feedback"] };
   }
 

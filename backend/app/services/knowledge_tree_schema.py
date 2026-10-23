@@ -58,6 +58,8 @@ def initialize(conn):
         created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS knowledge_migrations (
         version TEXT PRIMARY KEY, completed_at TEXT NOT NULL)""")
+    from app.services.knowledge_maintenance_schema import initialize as initialize_maintenance
+    initialize_maintenance(conn)
     stamp = datetime.now(timezone.utc).isoformat()
     changed = sync_concepts(conn, stamp)
     if not conn.execute("SELECT 1 FROM knowledge_migrations WHERE version=?", (FLOW_VERSION,)).fetchone():

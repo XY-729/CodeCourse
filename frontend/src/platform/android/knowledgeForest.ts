@@ -4,6 +4,7 @@
  * validates topology, stores facts and versions. It never calls a model.
  */
 import type { MobileDatabase } from "./database";
+import { ensureRange, canonicalEvidence, rangeCatalog, type RangeRow } from './learningRanges';
 import { expandPromptReferences, serializePromptForest, PROMPT_FOREST_INSTRUCTION } from "../../personalization/promptForest";
 import {
   type ConceptCoverageSummary,
@@ -115,9 +116,9 @@ export class KnowledgeForest {
     return { topologyVersion: Number(row?.topology_version ?? 0), stateVersion: Number(row?.state_version ?? 0) };
   }
 
-  async versionsFor(projectId: number): Promise<{ topologyVersion: number; stateVersion: number }> {
+  async versionsFor(projectId: number, inTx = false): Promise<{ topologyVersion: number; stateVersion: number }> {
     await this.project(projectId);
-    return this.versions(txOf(this.db, false));
+    return this.versions(txOf(this.db, inTx));
   }
 
   private async project(projectId: number): Promise<void> {
@@ -287,6 +288,9 @@ export class KnowledgeForest {
     if (!manifest || manifest.schema_version !== 2) throw new Error("TeachingManifest schema_version must be 2");
     const identities = await this.loadIdentities(tx);
     manifest = await expandPromptReferences(manifest, identities.keys());
+    const redirects = new Map((await tx.query<{ source_id: string; target_id: string }>('SELECT * FROM concept_redirects')).map(r => [r.source_id, r.target_id]));
+    manifest = { ...manifest, concepts: manifest.concepts.map(c => ({ ...c, existing_id: c.existing_id ? redirects.get(c.existing_id) ?? c.existing_id : null })),
+      placement_changes: manifest.placement_changes?.map(c => ({ ...c, from_parent_id: c.from_parent_id ? redirects.get(c.from_parent_id) ?? c.from_parent_id : null })) };
     const { byName, byAlias } = this.identityIndex(identities);
     const refs = new Map<string, string>();
     const planned: Array<{ id: string; concept: ManifestConcept; created: boolean }> = [];
@@ -475,6 +479,7 @@ export class KnowledgeForest {
     if (parentUpdates.some(update => update.parent !== null || created.has(update.id))) {
       await tx.run("UPDATE knowledge_tree_versions SET topology_version=topology_version+1 WHERE id=1");
     }
+    for (const id of new Set(refs.values())) await tx.run("INSERT OR IGNORE INTO project_concept_links VALUES(?,?,'manifest','')", [projectId, id]);
     return refs;
   }
 
@@ -506,13 +511,15 @@ export class KnowledgeForest {
   async publish(
     projectId: number,
     input: PublishInput,
+    options: { inTx?: boolean } = {},
   ): Promise<{ conceptMap: Map<string, string>; topologyVersion: number; stateVersion: number }> {
     await this.project(projectId);
     const validated = validateTeachingManifest(input.manifest, input.body, { validate_quotes: true });
     if (!validated.manifest) throw new Error(validated.errors[0]?.message ?? "知识清单未通过校验");
-    return this.db.transaction(async () => {
+    const work = async () => {
       const tx = txOf(this.db, true);
       const conceptMap = await this.applyInTx(projectId, validated.manifest!, tx, input.preserveTopology);
+      for (const item of validated.manifest!.coverage) await ensureRange(this.db, conceptMap.get(item.concept_ref)!, item.dimension, item.aspect, item.aspect_id, true);
       const versions = await this.versions(tx);
       await tx.run(
         `INSERT INTO teaching_manifests(project_id,source_type,source_path,artifact_kind,content_hash,generation_id,
@@ -530,7 +537,8 @@ export class KnowledgeForest {
       );
       await tx.run("UPDATE knowledge_tree_versions SET state_version=state_version+1 WHERE id=1");
       return { conceptMap, topologyVersion: versions.topologyVersion, stateVersion: versions.stateVersion + 1 };
-    });
+    };
+    return options.inTx ? work() : this.db.transaction(work);
   }
 
   async manifest(projectId: number, sourceType: string, sourcePath: string): Promise<SavedManifest | null> {
@@ -656,7 +664,7 @@ export class KnowledgeForest {
         },
       };
       const entry: ConceptCoverageSummary = {
-        aspect: String(row.aspect),
+        ...await ensureRange(this.db, id, String(row.dimension), String(row.aspect)),
         dimension: String(row.dimension) as TeachingDimension,
         kind: String(row.kind) as TeachingCoverageKind,
         source,
@@ -666,6 +674,7 @@ export class KnowledgeForest {
       coverageByConcept.set(id, [...(coverageByConcept.get(id) ?? []), entry]);
     }
     const concepts: ConceptForestNode[] = [];
+    const rangeRows = await this.db.query<RangeRow>('SELECT * FROM learning_range_aliases');
     for (const identity of identities.values()) {
       if (!this.visible(identity, projectId)) continue;
       // Facts come from the shared cross-platform reducer: it keeps every range,
@@ -674,7 +683,7 @@ export class KnowledgeForest {
         identity.id,
         identity.scopeType,
         identity.scopeId,
-        (evidenceByConcept.get(identity.id) ?? []).map(row => this.evidence(row)),
+        canonicalEvidence((evidenceByConcept.get(identity.id) ?? []).map(row => this.evidence(row)), rangeRows),
         new Date().toISOString(),
       );
       concepts.push({
@@ -688,6 +697,7 @@ export class KnowledgeForest {
         familiarity: state.familiarity,
         ranges: state.ranges as unknown as ConceptRangeState[],
         coverage: coverageByConcept.get(identity.id) ?? [],
+        range_catalog: rangeCatalog(rangeRows, identity.id),
       });
     }
     return {

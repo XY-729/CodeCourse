@@ -2913,7 +2913,7 @@ export default function useAppController() {
         return;
       }
     }
-    const ok = await confirmAction("删除项目", `删除本地导入项目 ${nextProject.name}？`, {
+    const ok = await confirmAction("删除项目", `删除本地项目 ${nextProject.name} 及其学习记录和独有知识点？其他项目仍在使用的共享知识点会保留。`, {
       confirmText: "删除",
       danger: true,
     });

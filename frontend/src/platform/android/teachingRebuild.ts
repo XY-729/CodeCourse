@@ -69,20 +69,24 @@ export async function rebuildTeachingState(db: MobileDatabase): Promise<void> {
       const sourcePath = String(file.filename);
       try {
         const content = await readGeneratedFile(projectId, sourcePath);
-        const parsed = parseTeachingManifest(content);
+        const isQA = (await db.query<Row>('SELECT id FROM qa_records WHERE project_id=? AND output_path=?', [projectId, sourcePath])).length > 0;
+        const sourceType = isQA ? 'qa' : 'course';
+        const digest = await sha256(content);
+        const override = (await db.query<Row>('SELECT manifest_json FROM teaching_manifest_overrides WHERE project_id=? AND source_type=? AND source_path=? AND content_hash=?', [projectId, sourceType, sourcePath, digest]))[0];
+        const parsed = override ? parseTeachingManifest(visibleTeachingBody(content) + '\nTEACHING: ' + String(override.manifest_json)) : parseTeachingManifest(content);
         if (parsed.status === "complete" && parsed.manifest) {
           await forest.publish(projectId, {
-            sourceType: "course",
+            sourceType,
             sourcePath,
-            artifactKind: artifactKindOf("course", sourcePath),
-            contentHash: await sha256(content),
+            artifactKind: artifactKindOf(sourceType, sourcePath),
+            contentHash: digest,
             generationId: "archive-import",
             manifest: parsed.manifest,
             body: visibleTeachingBody(content),
             preserveTopology: true,
           });
         }
-        await index.index(projectId, "course", sourcePath, content);
+        await index.index(projectId, sourceType, sourcePath, content);
       } catch (error) {
         // A missing or damaged manuscript stays pending for the explicit backfill.
         console.warn("归档课件未能重建知识状态", sourcePath, error);

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Optional
+import sqlite3
+from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -32,6 +34,44 @@ def _tree_action(operation):
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, '名称或归类冲突，已有知识记录已保留') from exc
+
+
+class ConceptCorrection(BaseModel):
+    action: str
+    topology_version: int = Field(ge=0)
+    parent_id: str | None = None
+    target_id: str | None = None
+    name: str | None = Field(default=None, max_length=200)
+    dimension: str | None = None
+    canonical: str | None = Field(default=None, max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=200)
+    passage_ids: list[str] = Field(default_factory=list, max_length=2000)
+
+
+@router.get('/{project_id}/knowledge/changes')
+def knowledge_changes(project_id: int):
+    from app.services.knowledge_maintenance import list_changes
+    return _tree_action(lambda: list_changes(project_id))
+
+
+@router.post('/{project_id}/knowledge/changes/{change_id}/undo')
+def undo_knowledge_change(project_id: int, change_id: str):
+    from app.services.knowledge_maintenance import undo_change
+    return _tree_action(lambda: undo_change(project_id, change_id))
+
+
+@router.get('/{project_id}/knowledge/concepts/{concept_id}/maintenance')
+def concept_maintenance(project_id: int, concept_id: str):
+    from app.services.knowledge_maintenance import details
+    return _tree_action(lambda: details(project_id, concept_id))
+
+
+@router.post('/{project_id}/knowledge/concepts/{concept_id}/maintenance')
+def correct_concept(project_id: int, concept_id: str, payload: ConceptCorrection):
+    from app.services.knowledge_maintenance import correct
+    return _tree_action(lambda: correct(project_id, concept_id, payload.model_dump()))
 
 
 @router.get("/{project_id}/knowledge/tree")

@@ -59,7 +59,7 @@ def compact_forest(topology: dict, state: dict) -> tuple[dict, dict]:
                    if key not in {"id", "name", "parent_id"} and value != defaults.get(key)}
         row = [prompt_id(node["id"]), node["name"], prompt_id(node["parent_id"]) if node["parent_id"] else None]
         rows.append([*row, options] if options else row)
-    state_defaults = {"familiarity": "unrecorded", "ranges": [], "coverage": []}
+    state_defaults = {"familiarity": "unrecorded", "ranges": [], "coverage": [], "range_catalog": []}
     states = []
     for node in sorted(state["nodes"], key=lambda node: node["id"]):
         options = {key: value for key, value in node.items()

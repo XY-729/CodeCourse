@@ -161,8 +161,7 @@ describe("ConceptForestPanel", () => {
     await openFolders();
     const rows = screen.getAllByRole("treeitem");
     const cppRow = rows.find((row) => row.textContent?.includes("C++"))!;
-    const buttons = cppRow.querySelector(".concept-forest-actions")!.querySelectorAll("button");
-    fireEvent.click(buttons[1]);
+    fireEvent.click(within(cppRow.querySelector('.concept-forest-actions') as HTMLElement).getByRole('button', { name: '不认识' }));
     await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("保存失败"));
   });
 

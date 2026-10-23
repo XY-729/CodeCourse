@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { TeachingIndex } from "./teachingIndex";
 import { TEACHING_SCHEMA } from "./teachingSchema";
+import { KNOWLEDGE_MAINTENANCE_SCHEMA } from './knowledgeForestSchema';
 import { appendTeachingManifest, type TeachingManifest } from "./teachingManifest";
 import type { SavedManifest } from "./knowledgeForest";
 import type { MobileDatabase } from "./database";
@@ -27,6 +28,7 @@ function fixture() {
     CREATE TABLE teaching_manifests(project_id INTEGER,source_type TEXT,source_path TEXT);
   `);
   const query = async (statement: string, values: unknown[] = []) => sql.prepare(statement).all(...values as (string | number | null)[]);
+  sql.exec(KNOWLEDGE_MAINTENANCE_SCHEMA);
   const run = async (statement: string, values: unknown[] = []) => Number(sql.prepare(statement).run(...values as (string | number | null)[]).lastInsertRowid);
   const db = { query, queryInTx: query, run, runInTx: run, transaction: async <T,>(work: () => Promise<T>) => {
     sql.exec("BEGIN IMMEDIATE");
