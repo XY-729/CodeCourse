@@ -110,6 +110,27 @@ question_type 可为 single_choice、multi_choice 或 text；text 的 options �
 {prompt_input}"""
 
 
+COURSE_READING_GUIDANCE = """教学与表达要求（用户明确的教学要求优先）：
+- 直接讲知识，使用自然、准确的书面语。课件应解释问题怎样产生、机制为何如此、条件改变会有什么结果；在有帮助时用具体输入输出或短例子说明，不把源码翻译、术语罗列或背诵口诀当作讲解。
+- 标题描述实际内容。段落连贯，每段推进理解；表格用于真正需要对照的内容，列表用于并列或步骤。不要把每个小节套成相同的导语、三点清单、总结和自测，也不要靠扩写重复凑篇幅。
+- 不宣告写作安排、扮演作者或评价自己的讲法。避免“这一章只做三件事”“先背这一句”“把它压成一句话”“最值钱的能力”等口号、机械排比和刻意比喻；优先说清具体事实及其原因。
+- 章节分工、冻结职责、RAG、清单校验和材料处理过程留在内部。正文不写交接点、职责说明、证据卡或生成复核报告。确有知识限制时，在相关结论旁简短说明，不反复用“本次材料”“本章不讲”打断阅读；这些词本身就是教学主题或用户明确要求时除外。
+- 事实与推断有区别：没有提供某文件不能证明项目没有该能力；单个配置或调用点不能证明整个架构。引用真实来源支持具体论断，推断写明条件，不能确认的部分不编造；不把总纲的规划措辞当成源码事实。
+- 不主动把一般课程写成面试话术；用户要求面试准备时，先讲清原理，再给可复述的表达。跨课引用写“第 N 课”，本课内部写“本课第 N 节”，只引用已提供计划中确实存在的位置；没有必要就自然承接，不列跳转路线。
+
+"""
+
+OUTLINE_PLANNING_GUIDANCE = """总纲应说明每课要解决的具体问题、学完能做出的判断或操作，以及必要的前置关系。避免只用“了解、熟悉、掌握”加术语堆出课程；相邻课程应有实际递进，不能换个标题重复同一范围。总纲保持规划尺度，不提前写成长篇课文或质量审查报告。
+
+"""
+
+DEFAULT_OUTLINE_PROMPT = COURSE_READING_GUIDANCE + OUTLINE_PLANNING_GUIDANCE + DEFAULT_OUTLINE_PROMPT
+DEFAULT_LEARNING_PLAN_OUTLINE_PROMPT = COURSE_READING_GUIDANCE + OUTLINE_PLANNING_GUIDANCE + DEFAULT_LEARNING_PLAN_OUTLINE_PROMPT
+DEFAULT_OUTLINE_LESSON_PROMPT = COURSE_READING_GUIDANCE + DEFAULT_OUTLINE_LESSON_PROMPT
+DEFAULT_LEARNING_PLAN_LESSON_PROMPT = COURSE_READING_GUIDANCE + DEFAULT_LEARNING_PLAN_LESSON_PROMPT
+DEFAULT_FILE_LESSON_TEMPLATE = COURSE_READING_GUIDANCE + DEFAULT_FILE_LESSON_TEMPLATE
+
+
 PROMPT_DEFAULTS = {
     "prompt.system": PROMPT_INJECTION_SYSTEM_PROMPT,
     "prompt.outline": DEFAULT_OUTLINE_PROMPT,
@@ -232,9 +253,9 @@ PROMPT_PREVIEW_VALUES = {
     "preferences_summary": "用户原文要求：示例使用 C++。",
 }
 
-LEGACY_DEFAULT_HASHES = {'prompt.system': ['05cc6b2504081b5812992d5b0d441c8812dddbdcb1ea3e4c8f14cf78959088da', '3ca79ff74f80a2989bae2d44944bf1735eb1167cf9e16c2e5fcbfc2826e81474', 'f1745cb7c0181b7694b8ec74a508fcb5f7523a6880ab257271a0334c74bff8bb'], 'prompt.outline': ['398f05d4510e9163699f67454493e2b7cc1f894501c79ae1cf30a4e1455d5861', 'f2cd2c63e42e313d3c677f0703f16929a5956c2ec16cee1cbc1bb28e74ba848b', 'f9e5ebced1dd55cc3d02d0ce35c1e8d5b1f562d08fe9c84cf44f0d89c7079625'], 'prompt.file_lesson.detailed_expected': ['4a2e7ea9fa7be9a88075942ffa1ccdd7040c42de3993f2bf59613e90e1532a98', 'dc93c44fe40570146d563ed5ef80d5c8595aefeb7d97a51b0c115e674c42925e'], 'prompt.file_lesson.brief_expected': ['c8553c2de9b98222a40516cd692da1dc9d16a4ef2ef26cdb062f7666a4bc1496', 'ded44d4fe80cb3a15af9601033a77e1f11ab45c3fe084efa13d5b36d5ab7697a'], 'prompt.file_lesson.template': ['306d085ee173fe5d9e61e77bc477988c1cb0d9b7e7fbdb6ad4e7a52b3c25a62c', 'ed2a38c8331d7bb16ffb4fdedcc528e7c202a627fe37b7aa52e692ce71947a52'], 'prompt.outline_lesson': ['7aa9df8057f6c1685a31034c4984af5998cf8a03826b5f8b5eaca26b41531663', 'bc62ce2b35956663ad45066acddbcb9fa301c136861fe93b4d53f3bb7278d0eb'], 'prompt.learning_plan.outline': ['ac9806a1a9a97ebb4052b3ee692cf5e6b5915e47a05a792a50ed8f38b06b01d2', 'b60c6af254991fefbbd5cfaecf0330d40794d59b5bbe9c18d37bece82cc7e648'], 'prompt.learning_plan.lesson': ['3b62805045736128e2d263e59c753fd30120a1da159515772d6175abbaee1231', 'e6e6d29391684a23f32a771ca6172de56dbc04dba762c0cb9ae4424928a73de5'], 'prompt.qa.answer': ['342c27cde2162e06beb5da98a9e80095b4400ef1f81bf69b5ca60cfa2c7df03b', '7382a335953fc7413d914fb84f1fb85e83f7d56a06ee2e95e164af4db8140780', 'bb8f31684bf6b9674a05ebc76a35b22ab1d440c5f27fa3cb6a21bc53dc5ffd6f'], 'prompt.outline.questionnaire': ['117fa63cfc097c7155757a70ff4e277906bc5b32d4001fb476220544bea80eca', '5597f6cedd75457464fdbbffc7bcfd11ef8abb2aaaf298947fa33197649865cd', 'd0a7413f449e9d3fa1b1129c42a2438165afa4c143e5178b79aa9265e4679b0d']}
+LEGACY_DEFAULT_HASHES = {'prompt.system': ['05cc6b2504081b5812992d5b0d441c8812dddbdcb1ea3e4c8f14cf78959088da', '3ca79ff74f80a2989bae2d44944bf1735eb1167cf9e16c2e5fcbfc2826e81474', 'f1745cb7c0181b7694b8ec74a508fcb5f7523a6880ab257271a0334c74bff8bb'], 'prompt.outline': ['398f05d4510e9163699f67454493e2b7cc1f894501c79ae1cf30a4e1455d5861', 'f2cd2c63e42e313d3c677f0703f16929a5956c2ec16cee1cbc1bb28e74ba848b', 'f9e5ebced1dd55cc3d02d0ce35c1e8d5b1f562d08fe9c84cf44f0d89c7079625', '72e66031f7f8d7866fb0717919c0539c6fab66a76e3c79fad3eebb05ba17420b'], 'prompt.file_lesson.detailed_expected': ['4a2e7ea9fa7be9a88075942ffa1ccdd7040c42de3993f2bf59613e90e1532a98', 'dc93c44fe40570146d563ed5ef80d5c8595aefeb7d97a51b0c115e674c42925e'], 'prompt.file_lesson.brief_expected': ['c8553c2de9b98222a40516cd692da1dc9d16a4ef2ef26cdb062f7666a4bc1496', 'ded44d4fe80cb3a15af9601033a77e1f11ab45c3fe084efa13d5b36d5ab7697a'], 'prompt.file_lesson.template': ['306d085ee173fe5d9e61e77bc477988c1cb0d9b7e7fbdb6ad4e7a52b3c25a62c', 'ed2a38c8331d7bb16ffb4fdedcc528e7c202a627fe37b7aa52e692ce71947a52', 'cd74e2f638c25b850e756505cd44314679c4fddd565e51daa971b908d331adf7'], 'prompt.outline_lesson': ['7aa9df8057f6c1685a31034c4984af5998cf8a03826b5f8b5eaca26b41531663', 'bc62ce2b35956663ad45066acddbcb9fa301c136861fe93b4d53f3bb7278d0eb', 'ab3ff025fdbc38f8276eeb638b49dd888bf90225fbad80a85ac1f2bda4d2e695'], 'prompt.learning_plan.outline': ['ac9806a1a9a97ebb4052b3ee692cf5e6b5915e47a05a792a50ed8f38b06b01d2', 'b60c6af254991fefbbd5cfaecf0330d40794d59b5bbe9c18d37bece82cc7e648', 'a39e3f1b41ce3022ef3a8f6f111dfb5c098e682fa0c6383b88eaf9d3db634dbb'], 'prompt.learning_plan.lesson': ['3b62805045736128e2d263e59c753fd30120a1da159515772d6175abbaee1231', 'e6e6d29391684a23f32a771ca6172de56dbc04dba762c0cb9ae4424928a73de5', 'f794e95e7c33620e559992dd010647db9da50f1bbba47b0847d771d229cf3453'], 'prompt.qa.answer': ['342c27cde2162e06beb5da98a9e80095b4400ef1f81bf69b5ca60cfa2c7df03b', '7382a335953fc7413d914fb84f1fb85e83f7d56a06ee2e95e164af4db8140780', 'bb8f31684bf6b9674a05ebc76a35b22ab1d440c5f27fa3cb6a21bc53dc5ffd6f'], 'prompt.outline.questionnaire': ['117fa63cfc097c7155757a70ff4e277906bc5b32d4001fb476220544bea80eca', '5597f6cedd75457464fdbbffc7bcfd11ef8abb2aaaf298947fa33197649865cd', 'd0a7413f449e9d3fa1b1129c42a2438165afa4c143e5178b79aa9265e4679b0d']}
 
-PROMPT_SCHEMA_VERSION = 5
+PROMPT_SCHEMA_VERSION = 6
 PROMPT_SCHEMA_SETTING_PREFIX = "prompt.schema_version."
 
 

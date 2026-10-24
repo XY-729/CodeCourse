@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from pathlib import Path
 
@@ -19,6 +20,10 @@ def main() -> None:
         workspace.mkdir(parents=True, exist_ok=True)
         os.environ["GPL_WORKSPACE_ROOT"] = str(workspace)
 
+    # Uvicorn configures its own loggers, but otherwise application INFO usage
+    # measurements disappear from the desktop backend log.
+    logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    logging.getLogger("app.services.llm_client").setLevel(logging.INFO)
     uvicorn.run("app.main:app", host=args.host, port=args.port, log_level="info")
 
 

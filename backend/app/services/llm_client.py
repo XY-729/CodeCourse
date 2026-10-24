@@ -87,6 +87,7 @@ def parse_usage(raw: dict[str, Any] | None) -> dict[str, int | None]:
         return None
 
     details = raw.get("prompt_tokens_details") or raw.get("input_tokens_details") or {}
+    output_details = raw.get("completion_tokens_details") or raw.get("output_tokens_details") or {}
     input_tokens = number(raw.get("prompt_tokens"), raw.get("input_tokens"))
     output_tokens = number(raw.get("completion_tokens"), raw.get("output_tokens"))
     total = number(raw.get("total_tokens"))
@@ -96,6 +97,7 @@ def parse_usage(raw: dict[str, Any] | None) -> dict[str, int | None]:
             "total_tokens": total,
             "cached_input_tokens": number(details.get("cached_tokens"), raw.get("prompt_cache_hit_tokens"), raw.get("cache_read_input_tokens")),
             "cache_creation_input_tokens": number(raw.get("cache_creation_input_tokens")),
+            "reasoning_output_tokens": number(output_details.get("reasoning_tokens"), raw.get("reasoning_tokens")),
             "uncached_input_tokens": number(raw.get("prompt_cache_miss_tokens"))}
 
 
@@ -155,8 +157,9 @@ def check_request_budget(messages: list[dict[str, str]], max_tokens: int, *, adj
 
 
 def _record_usage(usage: dict[str, int | None], model: str, latency_ms: int) -> None:
-    logger.info('llm_usage model=%s latency_ms=%s input_tokens=%s output_tokens=%s cached_input_tokens=%s',
+    logger.info('llm_usage model=%s latency_ms=%s input_tokens=%s output_tokens=%s cached_input_tokens=%s reasoning_output_tokens=%s',
                 model, latency_ms, usage['input_tokens'], usage['output_tokens'], usage['cached_input_tokens'],
+                usage.get('reasoning_output_tokens'),
                 extra={"usage": usage, "model": model, "latency_ms": latency_ms})
 
 
@@ -166,8 +169,9 @@ def _require_complete_response(data: dict[str, Any]) -> None:
     if reason not in {'length', 'content_filter'}:
         return
     usage = parse_usage(data.get('usage'))
-    logger.warning('Incomplete model response: finish_reason=%s input_tokens=%s output_tokens=%s cached_input_tokens=%s',
-                   reason, usage['input_tokens'], usage['output_tokens'], usage['cached_input_tokens'])
+    logger.warning('Incomplete model response: finish_reason=%s input_tokens=%s output_tokens=%s cached_input_tokens=%s reasoning_output_tokens=%s',
+                   reason, usage['input_tokens'], usage['output_tokens'], usage['cached_input_tokens'],
+                   usage.get('reasoning_output_tokens'))
     explanation = '模型输出达到长度上限' if reason == 'length' else '模型服务端过滤了输出'
     raise RuntimeError(f'模型响应未完整结束：{explanation}（finish_reason={reason}）；知识清单未发布，旧文档已保留')
 

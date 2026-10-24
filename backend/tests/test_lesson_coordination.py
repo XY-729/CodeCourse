@@ -69,6 +69,10 @@ class LessonCoordinationTests(unittest.TestCase):
                         self.assertIn(item["focus"], overview)
                         self.assertIn(f"### {item['name']}", markdown)
                 self.assertIn(materials, prompt)
+                self.assertEqual(prompt.count(materials), 1)
+                for placeholder in ("{lesson_number}", "{lesson_title}", "{lesson_input}", "{user_instructions}"):
+                    self.assertNotIn(placeholder, prompt)
+                self.assertIn("以上分工只用于内部协调", prompt)
                 self.assertIn(instructions, prompt)
                 self.assertIn("保留本章新增的推导、应用、边界条件和必要示例", prompt)
                 self.assertIn("不得虚构其代码、例子、结论", prompt)

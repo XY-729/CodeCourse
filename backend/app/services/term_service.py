@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import hashlib
 import math
 import re
@@ -273,7 +274,8 @@ def normalize_term_candidate(
     }
 
 
-def parse_term_metadata(raw_content: str, project_id: int | None = None, intent: str = "") -> tuple[str, list[dict[str, object]]]:
+def parse_term_metadata(raw_content: str, project_id: int | None = None, intent: str = "", *,
+                        drop_unannotatable: bool = False) -> tuple[str, list[dict[str, object]]]:
     """Remove TERMS metadata and validate candidates against the remaining body."""
     from app.services.teaching_index import prepare_metadata
     from app.services.personalization.teaching.manifest import parse_manifest, canonical_comment, manifest_terms, MAX_METADATA_BYTES
@@ -337,10 +339,20 @@ def parse_term_metadata(raw_content: str, project_id: int | None = None, intent:
     if manifest is not None:
         terms = manifest_terms(manifest, content)
         # V2 is authoritative even when legacy TERMS precedes/follows it.
-        for term in terms:
+        kept_terms = []
+        kept_rows = []
+        for row, term in zip(manifest["terms"], terms):
             if _visible_source_span(content, str(term["display_name"]), term["source_span"]) is None:
-                raise ValueError("v2 术语不在允许标注的可见区域")
-        return content + "\n\n" + canonical_comment(manifest), terms
+                if not drop_unannotatable:
+                    raise ValueError("v2 术语不在允许标注的可见区域")
+                continue
+            kept_terms.append(term)
+            kept_rows.append(row)
+        if len(kept_terms) != len(terms):
+            logging.getLogger(__name__).warning("Dropped %s unannotatable generated term(s); body and coverage retained",
+                                               len(terms) - len(kept_terms))
+        manifest["terms"] = kept_rows
+        return content + "\n\n" + canonical_comment(manifest), kept_terms
     terms: list[dict[str, object]] = []
     seen: set[str] = set()
     for value in raw_terms:

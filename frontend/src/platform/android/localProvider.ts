@@ -95,13 +95,13 @@ type Row = Record<string, unknown>;
 
 const LEGACY_PROMPT_HASHES: Record<string, string | readonly string[]> = {
   "prompt.system": ["9492dc15", "3d1af623", "bcfcf81b"],
-  "prompt.outline": ["611b81fc", "4a775732", "ba1660e4"],
+  "prompt.outline": ["611b81fc", "4a775732", "ba1660e4", "8aa3afce"],
   "prompt.file_lesson.detailed_expected": ["2e09c662", "ad66c321"],
   "prompt.file_lesson.brief_expected": ["43825251", "ceace0a9"],
-  "prompt.file_lesson.template": ["38c51719", "c0720ca4"],
-  "prompt.outline_lesson": ["e5332c68", "200d0c75"],
-  "prompt.learning_plan.outline": ["9398be36", "778995a0"],
-  "prompt.learning_plan.lesson": ["8b080e0b", "addf92fd"],
+  "prompt.file_lesson.template": ["38c51719", "c0720ca4", "2cd38703"],
+  "prompt.outline_lesson": ["e5332c68", "200d0c75", "f61dcc1a"],
+  "prompt.learning_plan.outline": ["9398be36", "778995a0", "be1b2595"],
+  "prompt.learning_plan.lesson": ["8b080e0b", "addf92fd", "8d944e4a"],
   "prompt.qa.answer": ["cfa78f24", "13afce01", "a2b61f08"],
   "prompt.outline.questionnaire": ["5b8f38a0", "b9250304", "c901e0b7"],
 };
@@ -2224,7 +2224,7 @@ export class AndroidLocalProvider implements CodeCourseProvider {
         { role: "system", content: `${composeSystemPrompt(editableSystemPrompt, "markdown")}\n\n${TEACHING_MANIFEST_CONTRACT}\n\n${termContext}` },
         {
           role: "user",
-          content: `你是本课的责任编辑。核心章节已经分别生成，请只补充一次全课公共部分，不要重写章节正文。\n\n本课：第 ${payload.lesson_number} 课"${payload.title}"\n章节与知识项：\n${planLines}\n\n章节正文摘要：\n${excerpts}\n\n尚未被正文明确覆盖的知识项：\n${missingLines}\n\n补足尚未覆盖的规划知识项。其余公共内容是否需要、如何组织，由你根据本课目标、知识树和用户要求决定；可以不生成综合案例、误区、练习或总结。不要重复章节内容或固定添加标题。\n\n只输出需要补充的 Markdown；没有需要补充的内容时可以不输出正文。不要重复已有的本课定位、目标、知识地图或教材参照。\n用户补充要求：${payload.instructions || "无"}`,
+          content: `你是本课的责任编辑。核心章节已经分别生成，请只补充一次全课公共部分，不要重写章节正文。\n\n本课：第 ${payload.lesson_number} 课"${payload.title}"\n章节与知识项：\n${planLines}\n\n章节正文摘要：\n${excerpts}\n\n尚未被正文明确覆盖的知识项：\n${missingLines}\n\n补足尚未覆盖的规划知识项。其余公共内容是否需要、如何组织，由你根据本课目标、知识树和用户要求决定；可以不生成综合案例、误区、练习或总结。不要重复章节内容或固定添加标题。\n\n只输出对理解本课确有必要的新讲解；不要生成编辑复核、证据卡、覆盖报告、交接点或再写一遍总括。核对过程留在内部，必要的不确定性放在相关论断旁。没有需要补充的内容时可以不输出正文。不要重复已有的本课定位、目标、知识地图或教材参照。\n用户补充要求：${payload.instructions || "无"}`,
         },
       ])).trim();
       await saveCheckpoint();

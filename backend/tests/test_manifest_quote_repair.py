@@ -63,6 +63,23 @@ class LocateQuoteTest(unittest.TestCase):
 
 
 class LenientParseTest(unittest.TestCase):
+    def test_generated_terms_in_code_and_links_do_not_discard_a_valid_lesson(self):
+        from app.services.term_service import parse_term_metadata
+        body = "# 课件\n\nTCP 按字节流传输。\n\n```text\nHiddenToken\n```\n\n[LinkedToken](https://example.com)\n"
+        text = document(body, [concept("c", "TCP")], [coverage("c", "TCP 按字节流传输。")], [
+            {"concept_ref": "c", "text": "TCP", "quote": "TCP 按字节流传输。"},
+            {"concept_ref": "c", "text": "HiddenToken", "quote": "HiddenToken"},
+            {"concept_ref": "c", "text": "LinkedToken", "quote": "[LinkedToken](https://example.com)"},
+        ])
+        with self.assertRaisesRegex(ValueError, "允许标注的可见区域"):
+            parse_term_metadata(text)
+        repaired, terms = generation._parse_generation_response(text, 1)
+        parsed = parse_manifest(repaired)
+        self.assertEqual(parsed.body.strip(), body.strip())
+        self.assertEqual(len(parsed.manifest["coverage"]), 1)
+        self.assertEqual([row["display_name"] for row in terms], ["TCP"])
+        self.assertEqual([row["text"] for row in parsed.manifest["terms"]], ["TCP"])
+
     def test_strict_parse_still_rejects_a_repeated_quote(self):
         body = "# 总纲\n\n同一段讲解出现两次：会话串行与响应顺序。\n\n会话串行与响应顺序"
         text = document(body, [concept("c", "会话")], [coverage("c", "会话串行与响应顺序")])

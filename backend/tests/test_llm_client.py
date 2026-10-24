@@ -28,6 +28,12 @@ def _ok_response(message: dict) -> MagicMock:
 
 
 class MessageContentTests(unittest.TestCase):
+    def test_usage_preserves_reasoning_counts_and_missing_is_unknown(self):
+        from app.services.llm_client import parse_usage
+        self.assertIsNone(parse_usage({"completion_tokens": 100})["reasoning_output_tokens"])
+        self.assertEqual(parse_usage({"completion_tokens": 100, "completion_tokens_details": {"reasoning_tokens": 60}})["reasoning_output_tokens"], 60)
+        self.assertEqual(parse_usage({"output_tokens_details": {"reasoning_tokens": 0}})["reasoning_output_tokens"], 0)
+
     @patch("app.services.llm_client._SYNC_CLIENT")
     def test_incomplete_response_reports_reason_and_usage_without_retrying(self, client: MagicMock) -> None:
         for reason, label in [('length', '长度上限'), ('content_filter', '服务端过滤')]:

@@ -71,7 +71,7 @@ describe("prompt output contracts", () => {
   });
 
   it("can validate and preview every shipped default with the new placeholder contracts", () => {
-    expect(PROMPT_SCHEMA_VERSION).toBe(5);
+    expect(PROMPT_SCHEMA_VERSION).toBe(6);
     for (const [key, value] of Object.entries(promptDefaults)) {
       expect(validatePromptTemplate(key, value), key).toEqual([]);
       const preview = previewPromptBundle(key, value, promptDefaults, promptDefaults);

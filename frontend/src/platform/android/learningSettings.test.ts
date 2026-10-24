@@ -192,7 +192,7 @@ describe("Android learning settings", () => {
     const result = await provider().request<Record<string, string>>("/settings/prompts");
     expect(result["prompt.qa.answer"]).toBe(custom);
     expect(result["prompt.system"]).toBe(`${promptDefaults["prompt.system"].trimEnd()}\n\n${suffix}`);
-    expect(harness.sql.prepare("SELECT value FROM settings WHERE key=?").get("prompt_schema_version.prompt.system")).toMatchObject({ value: "5" });
+    expect(harness.sql.prepare("SELECT value FROM settings WHERE key=?").get("prompt_schema_version.prompt.system")).toMatchObject({ value: "6" });
     expect(harness.sql.prepare("SELECT source FROM prompt_revisions").all()).toEqual([{ source: "migration" }]);
   });
   it("migrates a default ending in a newline while preserving appended language instructions", async () => {

@@ -226,7 +226,7 @@ def _parse_generation_response(raw: str, project_id: int, instructions: str = ""
     # New generation cannot enter legacy reuse/array paths before validation.
     content = _repair_generated_manifest(raw, context)
     _require_generated_manifest(content, context)
-    content, terms = parse_term_metadata(content, project_id, instructions)
+    content, terms = parse_term_metadata(content, project_id, instructions, drop_unannotatable=True)
     # Removing legacy TERMS lines can move a quote, so the final body is checked again.
     content = _repair_generated_manifest(content, context)
     _require_generated_manifest(content, context)
@@ -284,7 +284,8 @@ def _lesson_section_coordination(sections: list[dict], current_number: int,
         "",
         "章节协调要求（用于界定本章任务）：",
         "- 先结合全部章节的知识项和讲解重点确定本章边界，只输出当前章正文。",
-        "- 其他章节负责详讲的定义、通用机制、基础接口和完整示例，本章只作必要的简短承接，注明对应章节，不重新完整展开。",
+        "- 其他章节负责详讲的定义、通用机制、基础接口和完整示例，本章只作理解所必需的承接，不重新完整展开；只有确有阅读需要才引用具体位置。",
+        "- 以上分工只用于内部协调，正文不逐项通报职责、不列交接点，直接讲本节知识；不要混用整门课程的课号与本课的小节号。",
         "- 同一概念在多个章节出现时，按各章重点递进：保留本章新增的推导、应用、边界条件和必要示例；不能仅因概念同名就省略本章内容。",
         "- 本章各知识项之间也要承接：前面小节已讲清的基础可直接引用，后面小节集中讲新增内容，不从定义重新讲起。",
         "- 完成本章冻结职责约定的范围；避免重复时不得漏掉该范围内的必要内容。",
@@ -1502,7 +1503,7 @@ def _run_learning_plan_lesson_task(
 本课名称：{lesson_title}
 本课是学习计划中的第 {lesson_number} 课。
 
-你的任务：结合当前用户要求、知识树和下方学习材料中的“本课计划”，自主确定本课的内容、深度与顺序，并组织为适合编写的章节。章节数量由内容决定。每章列出明确的知识项，以便冻结分工和校验实际覆盖；不能使用“其他相关知识”等笼统项。
+你的任务：结合当前用户要求、知识树和下方学习材料中的“本课计划”，自主确定本课的内容、深度与顺序，并组织为适合编写的章节。章节数量由内容决定。每章列出明确的知识项，以便冻结分工和校验实际覆盖；不能使用“其他相关知识”等笼统项。章节围绕需要解释的问题及其因果关系组织，合并重复的开场、回顾和话术；分工和证据核查属于内部工作，不安排成独立的教学章节。
 
 只输出一个 JSON 对象，不要输出 Markdown 或额外解释：
 
@@ -1658,7 +1659,7 @@ def _run_learning_plan_lesson_task(
 尚未被正文明确覆盖的知识项：
 {missing_lines}
 
-补充内容的组织、标题和篇幅由你决定，避免重复已经完成的概念范围。无需补充时正文可为空，仍须输出同次知识清单。
+只补充对理解本课确有必要的新讲解或实际遗漏，不用总结换词重述已有章节。核对过程留在内部，不输出编辑复核、证据卡、覆盖报告、交接点或材料清单；必要的不确定性在相关论断旁说明。补充的标题直接描述知识内容，不以完成审核为目的加写结尾。无需补充时正文可为空，仍须输出同次知识清单。
 知识清单只能记录本次实际新增或补足的内容；不得把其他章节的覆盖重复计入本次清单。
 教材参照由软件根据规划中的有效书目生成；不要自行编造书目或声称读取了教材原文。
 用户补充要求：{user_instructions}
@@ -1713,8 +1714,12 @@ def _run_repository_lesson_task(
 ) -> tuple[str, str]:
     preview = preview or LessonPreview(project_course_dir(project_id), task_id, {})
     preview.phase("planning")
-    lesson_policy = load_prompt("prompt.outline_lesson")
     user_instructions = _clean_instructions(instructions) or "无"
+    # The editable policy is a template. Writers receive the actual materials
+    # below once, not unresolved placeholders or a second copy of the input.
+    lesson_policy = load_prompt("prompt.outline_lesson").format(
+        lesson_number=lesson_number, lesson_title=lesson_title,
+        user_instructions=user_instructions, lesson_input="见下方本次任务提供的课程材料。")
     update_generation_task(
         task_id,
         "running",
@@ -1732,7 +1737,7 @@ def _run_repository_lesson_task(
 2. 本课计划：用于确定本课应该解决什么问题；
 3. RAG 索引检索片段：来自真实项目文件，带有路径和行号，是讲解代码的主要证据。
 
-你的任务：结合当前用户要求、知识树和下方课程材料，自主确定本课的内容、深度与顺序，并组织为适合编写的章节。章节数量由内容决定。每章列出明确的知识项，以便冻结分工和校验实际覆盖；不能使用“其他相关知识”等笼统项。
+你的任务：结合当前用户要求、知识树和下方课程材料，自主确定本课的内容、深度与顺序，并组织为适合编写的章节。章节数量由内容决定。每章列出明确的知识项，以便冻结分工和校验实际覆盖；不能使用“其他相关知识”等笼统项。章节围绕需要解释的问题及其因果关系组织，合并重复的开场、回顾和话术；分工和证据核查属于内部工作，不安排成独立的教学章节。
 
 只输出一个 JSON 对象，不要输出 Markdown 或额外解释：
 
@@ -1880,7 +1885,7 @@ def _run_repository_lesson_task(
 尚未被正文明确覆盖的知识项：
 {missing_lines}
 
-补充内容的组织、标题和篇幅由你决定，避免重复已经完成的概念范围。无需补充时正文可为空，仍须输出同次知识清单。
+只补充对理解本课确有必要的新讲解或实际遗漏，不用总结换词重述已有章节。核对过程留在内部，不输出编辑复核、证据卡、覆盖报告、交接点或材料清单；必要的不确定性在相关论断旁说明。补充的标题直接描述知识内容，不以完成审核为目的加写结尾。无需补充时正文可为空，仍须输出同次知识清单。
 知识清单只能记录本次实际新增或补足的内容；不得把其他章节的覆盖重复计入本次清单。
 项目路径、符号、调用关系和运行结果必须有材料依据；无法确认的结论说明证据缺口。
 用户补充要求：{user_instructions}
