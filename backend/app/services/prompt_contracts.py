@@ -61,6 +61,7 @@ concepts 包含归属所需全部祖先；ref 本响应唯一，parent_ref/conce
 需要明确换父时也用 placement_changes，from_parent_id 必须等于完整树中的当前父 ID（根为 null）；不一致视为过期提案，系统保留原边并记录冲突。
 保持同领域单向层级：通用概念用 global，私有符号用 project；global 概念不能挂到项目私有父下。
 coverage kind 只能为 planned/mentioned/brief/explained，dimension 为 conceptual/code_reading/implementation/debugging/transfer。
+有 lesson_responsibility_map 时，章节 brief/explained 的 coverage 必须增加对应 items 的 responsibility_id，沿用其 concept_ref、existing_id、dimension 和 aspect；不要给同一职责另造引用或改写范围名称。正文讲法不受此字段命名约束。
 range_catalog 提供已有范围的 aspect_id、规范名与同义名。语义相同且维度相同的范围必须复用 aspect_id 和规范 aspect，不能换词重讲；新范围不填 aspect_id。不要把仅仅相关的应用与机制强行合并。
 总纲未来目标用 planned；总纲真实解释可为 brief/explained；结构祖先可无 coverage，不以名称出现冒充实际解释。
 terms 为最终可见区域中全部技术概念的完整候选池，包含标题、表格、行内代码；代码块、已有链接和隐藏元数据不标。

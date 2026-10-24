@@ -323,7 +323,36 @@ def namespace_manifest(manifest: dict, namespace: str) -> dict:
     return value
 
 
-def merge_manifests(sections: Iterable[tuple[str, dict]], final_body: str, *, filter_unmatched: bool = False) -> dict:
+def _rebase_quotes(value: dict, source_body: str, final_body: str) -> None:
+    """Widen anchors inside their own chapter when assembly creates duplicates."""
+    for field in ("coverage", "terms"):
+        for row in value[field]:
+            quote = row["quote"]
+            if final_body.count(quote) == 1:
+                continue
+            if source_body.count(quote) != 1 or final_body.count(source_body) != 1:
+                raise ManifestValidationError("章节原文无法唯一定位，不能重绑知识清单")
+            start = source_body.index(quote)
+            end = start + len(quote)
+            found = False
+            for width in (4, 8, 16, 32, 64, 128, 256, 512, 1024, len(source_body)):
+                for left, right in ((width, width), (width, 0), (0, width)):
+                    candidate = source_body[max(0, start - left):min(len(source_body), end + right)]
+                    if final_body.count(candidate) != 1:
+                        continue
+                    if field == "terms" and candidate.count(row["text"]) != 1:
+                        continue
+                    row["quote"] = candidate
+                    found = True
+                    break
+                if found:
+                    break
+            if not found:
+                raise ManifestValidationError("章节清单无法在整课唯一定位")
+
+
+def merge_manifests(sections: Iterable[tuple[str, dict]], final_body: str, *, filter_unmatched: bool = False,
+                    source_bodies: Mapping[str, str] | None = None) -> dict:
     merged = {"schema_version": 2, "concepts": [], "coverage": [], "terms": [], "placement_changes": []}
     seen: set[str] = set()
     visible = visible_body(final_body)
@@ -332,6 +361,8 @@ def merge_manifests(sections: Iterable[tuple[str, dict]], final_body: str, *, fi
             raise ManifestValidationError("章节 namespace 重复")
         seen.add(namespace)
         value = namespace_manifest(manifest, namespace)
+        if source_bodies is not None and namespace in source_bodies:
+            _rebase_quotes(value, source_bodies[namespace], visible)
         for key in ("concepts", "coverage", "terms", "placement_changes"):
             rows = value[key]
             if filter_unmatched and key in {"coverage", "terms"}:

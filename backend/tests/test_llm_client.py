@@ -73,6 +73,20 @@ class MessageContentTests(unittest.TestCase):
 
 class MaxTokensPayloadTests(unittest.TestCase):
     @patch("app.services.llm_client._SYNC_CLIENT")
+    def test_official_deepseek_flash_reserves_full_output_and_respects_explicit_override(self, client: MagicMock) -> None:
+        messages = [{'role': 'user', 'content': '概' * 40000}]
+        client.post.return_value = _ok_response({'content': '完整回答'})
+        with patch.dict(os.environ):
+            os.environ.pop('GPL_LLM_CONTEXT_TOKENS', None)
+            call_openai_compatible_chat_result('https://api.deepseek.com/v1', 'k', 'deepseek-flash', messages)
+            self.assertEqual(client.post.call_args.kwargs['json']['max_tokens'], 65536)
+            call_openai_compatible_chat_result('https://proxy.example/v1', 'k', 'deepseek-flash', messages)
+            self.assertLess(client.post.call_args.kwargs['json']['max_tokens'], 65536)
+        with patch.dict(os.environ, {'GPL_LLM_CONTEXT_TOKENS': '131072'}):
+            call_openai_compatible_chat_result('https://api.deepseek.com', 'k', 'deepseek-flash', messages)
+            self.assertLess(client.post.call_args.kwargs['json']['max_tokens'], 65536)
+
+    @patch("app.services.llm_client._SYNC_CLIENT")
     def test_long_input_uses_remaining_output_budget_and_preserves_every_message(self, client: MagicMock) -> None:
         # Match the reported 76k input failure with a deterministic large request.
         messages = [{'role': 'user', 'content': '概' * 31660 + 'x'}]

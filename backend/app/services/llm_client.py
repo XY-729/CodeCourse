@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from time import perf_counter, sleep
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 import httpx
 
@@ -98,7 +99,8 @@ def parse_usage(raw: dict[str, Any] | None) -> dict[str, int | None]:
             "uncached_input_tokens": number(raw.get("prompt_cache_miss_tokens"))}
 
 
-def check_request_budget(messages: list[dict[str, str]], max_tokens: int, *, adjust_output: bool = False) -> dict[str, Any]:
+def check_request_budget(messages: list[dict[str, str]], max_tokens: int, *, adjust_output: bool = False,
+                         base_url: str = "", model: str = "") -> dict[str, Any]:
     """Preflight estimate, not provider token usage or a tokenizer measurement.
 
     The default is an application request budget, not a claim about the model's
@@ -107,7 +109,12 @@ def check_request_budget(messages: list[dict[str, str]], max_tokens: int, *, adj
     Model callers may fit their maximum output to the remaining window;
     strict preflight consumers keep the requested reservation by default.
     """
-    context_limit = int(os.getenv("GPL_LLM_CONTEXT_TOKENS", "131072"))
+    # Official DeepSeek V4 models have a 1M context window. Do not apply this
+    # allowance to a proxy/another provider just because its model name matches.
+    # https://api-docs.deepseek.com/quick_start/pricing/
+    official_deepseek = (urlparse(base_url).hostname == "api.deepseek.com"
+                         and model in {"deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-v4-pro"})
+    context_limit = int(os.getenv("GPL_LLM_CONTEXT_TOKENS", "1000000" if official_deepseek else "131072"))
     input_bound = sum(len(json.dumps(message, ensure_ascii=False).encode("utf-8")) + 16 for message in messages) + 16
     # Charging every UTF-8 byte as a token rejects ordinary full-tree requests.
     # Use a mixed-script estimate with headroom; keep the byte upper bound only
@@ -201,7 +208,7 @@ def call_openai_compatible_chat_result(
     max_attempts: int = _MAX_ATTEMPTS,
     max_tokens: int = 65536,
 ) -> LLMCallResult:
-    budget = check_request_budget(messages, max_tokens, adjust_output=True)
+    budget = check_request_budget(messages, max_tokens, adjust_output=True, base_url=base_url, model=model)
     max_tokens = budget['reserved_output_tokens']
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
@@ -276,7 +283,7 @@ async def stream_openai_compatible_chat(
     *,
     usage_callback: Callable[[LLMCallResult], None] | None = None,
 ) -> AsyncIterator[str]:
-    budget = check_request_budget(messages, 65536, adjust_output=True)
+    budget = check_request_budget(messages, 65536, adjust_output=True, base_url=base_url, model=model)
     started = perf_counter()
     latest_usage = parse_usage(None)
     response_model = model

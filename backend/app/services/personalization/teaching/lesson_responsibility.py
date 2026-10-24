@@ -48,7 +48,18 @@ class LessonResponsibilityMap:
         return self.data["version"]
 
     def render(self) -> str:
-        return "<lesson_responsibility_map>\n" + self.plan_json + "\n</lesson_responsibility_map>"
+        # Derive bindings without changing the frozen version or invalidating
+        # plans saved by earlier releases.
+        plan = self.data
+        for section in plan["sections"]:
+            for item in section["items"]:
+                item["responsibility_id"] = _responsibility_id(section["section_id"], item)
+        return ("<lesson_responsibility_map>\n" + stable_json(plan)
+                + "\n</lesson_responsibility_map>\n"
+                "知识清单绑定规则：本章 coverage 中 brief/explained 必须带上对应 items 的 responsibility_id，"
+                "concept_ref、existing_id、dimension 沿用计划，不要另造引用。aspect 复用计划原文；"
+                "正文可自由措辞，quote 必须取本章真实原文。仅承接其他章的内容用 mentioned，"
+                "不能把其他章职责标成已解释。统一整合仅为补足的职责使用对应编号。")
 
 
 def _identity(item: dict) -> str:
@@ -57,6 +68,41 @@ def _identity(item: dict) -> str:
 
 def _range(item: dict) -> tuple[str, str, str]:
     return _identity(item), str(item.get("aspect", "")).strip(), str(item.get("dimension", "")).strip()
+
+
+def _responsibility_id(section_id: str, item: dict) -> str:
+    return "lr_" + hashlib.sha256(stable_json([section_id, *_range(item)]).encode()).hexdigest()[:20]
+
+
+def _coverage_range(plan: dict, coverage: dict, concept: dict) -> tuple[str, str, str]:
+    key = (str(concept.get("existing_id") or coverage.get("concept_ref") or ""),
+           str(coverage.get("aspect", "")).strip(), coverage.get("dimension"))
+    binding = coverage.get("responsibility_id")
+    if not binding:
+        return key  # Older responses still require the exact frozen range.
+    matches = [item for section in plan["sections"] for item in section["items"]
+               if _responsibility_id(section["section_id"], item) == binding]
+    if len(matches) != 1:
+        raise ValueError("知识清单引用了不存在的冻结职责编号。")
+    item = matches[0]
+    same_identity = key[0] == _identity(item)
+    if not same_identity and not concept.get("existing_id"):
+        # A response-local ref may be renamed. An explicit range binding plus
+        # the exact planned concept name/ref identifies it without fuzzy search.
+        same_identity = (coverage.get("concept_ref") == item["concept_ref"]
+                         or concept.get("name") == item.get("name"))
+        if same_identity and item.get("existing_id"):
+            concept["existing_id"] = item["existing_id"]
+    if not same_identity or key[2] != item["dimension"]:
+        raise ValueError("知识清单职责编号与概念身份或教学维度不一致。")
+    # An explicit binding defines the range, rather than natural-language
+    # equality. Keep canonical metadata for downstream evidence/range storage.
+    coverage["aspect"] = item["aspect"]
+    if item.get("aspect_id"):
+        coverage["aspect_id"] = item["aspect_id"]
+    else:
+        coverage.pop("aspect_id", None)
+    return _range(item)
 
 
 def freeze_responsibility_map(plan: dict, tree_snapshot: dict, *, available_ids: set[str] | None = None) -> LessonResponsibilityMap:
@@ -142,8 +188,7 @@ def audit_section_manifest(responsibilities: LessonResponsibilityMap, section_id
         if coverage.get("kind") not in {"brief", "explained"}:
             continue
         concept = concepts.get(coverage.get("concept_ref"), {})
-        key = (str(concept.get("existing_id") or coverage.get("concept_ref") or ""),
-               str(coverage.get("aspect", "")).strip(), coverage.get("dimension"))
+        key = _coverage_range(plan, coverage, concept)
         if key not in owned:
             raise ValueError(f"章节 {section_id} 实际清单扩大了冻结职责：{key}。")
         observed.add(key)
@@ -152,15 +197,15 @@ def audit_section_manifest(responsibilities: LessonResponsibilityMap, section_id
 
 def audit_synthesis_manifest(responsibilities: LessonResponsibilityMap, manifest: dict, missing: list[dict]) -> None:
     """Synthesis may fill missing ranges or add new connections, not re-own one."""
-    owners = {_range(item) for section in responsibilities.data["sections"] for item in section["items"]}
+    plan = responsibilities.data
+    owners = {_range(item) for section in plan["sections"] for item in section["items"]}
     missing_keys = {_range(item) for item in missing}
     concepts = {concept["ref"]: concept for concept in manifest.get("concepts", [])}
     for coverage in manifest.get("coverage", []):
         if coverage.get("kind") not in {"brief", "explained"}:
             continue
         concept = concepts.get(coverage.get("concept_ref"), {})
-        key = (str(concept.get("existing_id") or coverage.get("concept_ref") or ""),
-               str(coverage.get("aspect", "")).strip(), coverage.get("dimension"))
+        key = _coverage_range(plan, coverage, concept)
         if key in owners and key not in missing_keys:
             raise ValueError("统一整合重复解释了已由章节完成的同一概念范围。")
         missing_keys.discard(key)

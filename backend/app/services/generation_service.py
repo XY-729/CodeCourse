@@ -8,7 +8,7 @@ import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Callable, Optional
 from urllib.parse import quote
 
 from app.core.config import GENERATED_ROOT, PROMPT_VERSION
@@ -134,6 +134,37 @@ def _repair_manifest_identity(manifest: dict, context: GenerationContext) -> tup
                 if field in node and concept.get(field) != node[field]:
                     concept[field] = node[field]
                     notes.append(f"概念 {existing} 的 {field} 已按知识树对齐")
+    # Align identity and placement together. Restoring a known node's global
+    # scope while leaving the model's project parent makes an invalid forest.
+    # Explicit placement_changes remain the only way to propose a new edge.
+    known_refs = {concept["existing_id"]: concept["ref"] for concept in value["concepts"]
+                  if concept.get("existing_id") in nodes}
+    refs = {concept["ref"] for concept in value["concepts"]}
+
+    def include_ancestor(node_id: str) -> str:
+        if node_id in known_refs:
+            return known_refs[node_id]
+        node = nodes[node_id]
+        ref = "tree_" + node_id
+        while ref in refs:
+            ref += "_"
+        refs.add(ref)
+        known_refs[node_id] = ref
+        parent = node.get("parent_id")
+        value["concepts"].append({"ref": ref, "existing_id": node_id, "name": node["name"],
+            "domain": node.get("domain") or "programming", "scope": node.get("scope", "global"),
+            "parent_ref": include_ancestor(parent) if parent in nodes else None, "aliases": []})
+        return ref
+
+    for concept in list(value["concepts"]):
+        node = nodes.get(concept.get("existing_id"))
+        if node is None:
+            continue
+        parent = node.get("parent_id")
+        parent_ref = include_ancestor(parent) if parent in nodes else None
+        if concept.get("parent_ref") != parent_ref:
+            concept["parent_ref"] = parent_ref
+            notes.append(f"概念 {node['id']} 的父节点已按知识树对齐")
     if cleared:
         value["placement_changes"] = [
             change for change in value.get("placement_changes", [])
@@ -264,6 +295,58 @@ def _lesson_section_coordination(sections: list[dict], current_number: int,
     if responsibilities is not None:
         lines.extend([responsibilities.render(), "所有 writer 使用上面同一份冻结分工；不得自行扩大讲解职责。"])
     return "\n".join(lines)
+
+
+def _lesson_response_path(project_id: int, task_id: int, key: str) -> Path:
+    return project_course_dir(project_id) / ".lesson-results" / f"task-{task_id}" / f"{key}.json"
+
+
+def _lesson_response(project_id: int, task_id: int, key: str, settings: dict,
+                     messages: list[dict], version: str,
+                     validate_cached: Callable[[str], None] | None = None) -> str:
+    path = _lesson_response_path(project_id, task_id, key)
+    request_hash = hashlib.sha256(json.dumps([settings["base_url"], settings["model"], messages],
+                                              ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        record = {}
+    if record.get("version") == version and record.get("request_hash") == request_hash:
+        if record.get("validated"):
+            return record["response"]
+        if validate_cached is not None:
+            try:
+                validate_cached(record["response"])
+            except (ValueError, RuntimeError):
+                pass
+            else:
+                return record["response"]
+    response = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"],
+                                          messages, timeout=240)
+    # Persist even a rejected response for diagnosis; only validated results may
+    # skip a model call on retry. Never cache a network/incomplete response.
+    _atomic_write(path, json.dumps({"version": version, "request_hash": request_hash,
+                                    "response": response, "validated": False}, ensure_ascii=False))
+    return response
+
+
+def _accept_lesson_response(project_id: int, task_id: int, key: str) -> None:
+    path = _lesson_response_path(project_id, task_id, key)
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["validated"] = True
+    _atomic_write(path, json.dumps(record, ensure_ascii=False))
+
+
+def _validate_cached_section(raw: str, project_id: int, instructions: str,
+                             context: GenerationContext, responsibilities: LessonResponsibilityMap,
+                             section_id: str) -> None:
+    body, _terms = _parse_generation_response(raw, project_id, instructions, context)
+    parsed = _require_generated_manifest(body, context)
+    audit_section_manifest(responsibilities, section_id, parsed.manifest,
+        plan_version=responsibilities.version, tree_version=context.tree_snapshot)
+    repaired, _notes = _repair_manifest_identity(parsed.manifest, context)
+    canonical_comment(repaired)
+    _require_markdown(parsed.body)
 
 
 
@@ -1492,16 +1575,19 @@ def _run_learning_plan_lesson_task(
         sp += "学习材料：\n" + lesson_input + "\n"
         sp += term_metadata_instruction(project_id)
         _debug_dump(f"task-{task_id}_L{lesson_number}-section-{idx}-prompt.txt", sp)
-        c = call_openai_compatible_chat(
-            settings["base_url"], settings["api_key"], settings["model"],
+        c = _lesson_response(project_id, task_id, f"section-{idx}", settings,
             _generation_messages([{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
-             {"role": "user", "content": sp}], project_id, instructions, context), timeout=240)
+             {"role": "user", "content": sp}], project_id, instructions, context), responsibilities.version,
+            validate_cached=lambda raw: _validate_cached_section(raw, project_id, instructions, context,
+                                                                  responsibilities, sec["section_id"]))
         body, model_terms = _parse_generation_response(c, project_id, instructions, context)
         parsed = _require_generated_manifest(body, context)
-        section_manifests[idx - 1] = parsed.manifest
         missing_by_section[idx - 1] = audit_section_manifest(responsibilities, sec["section_id"], parsed.manifest,
             plan_version=responsibilities.version, tree_version=context.tree_snapshot)
+        parsed.manifest, _notes = _repair_manifest_identity(parsed.manifest, context)
+        section_manifests[idx - 1] = parsed.manifest
         md = _require_markdown(parsed.body)
+        _accept_lesson_response(project_id, task_id, f"section-{idx}")
         section_terms[idx - 1] = model_terms
         if not md.lstrip().startswith("##"):
             md = "## " + sec.get("title", "") + "\n\n" + md
@@ -1515,8 +1601,13 @@ def _run_learning_plan_lesson_task(
         max_workers = min(len(sections), 4)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_gen_section, i + 1, sec): i for i, sec in enumerate(sections)}
+            failures = []
             for future in as_completed(futures):
-                idx, md = future.result()
+                try:
+                    idx, md = future.result()
+                except Exception as exc:
+                    failures.append(exc)
+                    continue
                 generated_sections[idx - 1] = md
                 completed_count += 1
                 preview.sections(lesson_title, generated_sections)
@@ -1525,6 +1616,8 @@ def _run_learning_plan_lesson_task(
                     progress_current=1 + completed_count, progress_total=total_calls,
                     stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
 
+        if failures:
+            raise failures[0]
         preview.phase("synthesis")
         joined_sections = "\n\n".join(generated_sections)
         missing = [item for group in missing_by_section for item in group]
@@ -1570,10 +1663,7 @@ def _run_learning_plan_lesson_task(
 教材参照由软件根据规划中的有效书目生成；不要自行编造书目或声称读取了教材原文。
 用户补充要求：{user_instructions}
 """
-        synthesis = call_openai_compatible_chat(
-            settings["base_url"],
-            settings["api_key"],
-            settings["model"],
+        synthesis = _lesson_response(project_id, task_id, "synthesis", settings,
             _generation_messages([
                 {
                     "role": "system",
@@ -1582,12 +1672,13 @@ def _run_learning_plan_lesson_task(
                     ),
                 },
                 {"role": "user", "content": synthesis_prompt + responsibilities.render() + term_metadata_instruction(project_id)},
-            ], project_id, instructions, context),
-            timeout=240,
+            ], project_id, instructions, context), responsibilities.version,
         ).strip()
         synthesis, synthesis_terms = _parse_generation_response(synthesis, project_id, instructions, context)
         parsed_synthesis = _require_generated_manifest(synthesis, context)
         audit_synthesis_manifest(responsibilities, parsed_synthesis.manifest, missing)
+        parsed_synthesis.manifest, _notes = _repair_manifest_identity(parsed_synthesis.manifest, context)
+        _accept_lesson_response(project_id, task_id, "synthesis")
         synthesis = parsed_synthesis.body
         _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
         joined_sections = "\n\n".join([*generated_sections, synthesis])
@@ -1601,7 +1692,9 @@ def _run_learning_plan_lesson_task(
             ] if part.strip()
         ).strip() + "\n"
         merged = merge_manifests([(sec["section_id"], manifest) for sec, manifest in zip(sections, section_manifests)]
-                                 + [("synthesis", parsed_synthesis.manifest)], lesson)
+                                 + [("synthesis", parsed_synthesis.manifest)], lesson,
+                                 source_bodies={**{sec["section_id"]: text for sec, text in zip(sections, generated_sections)},
+                                                "synthesis": synthesis})
         return resolved_title, lesson.rstrip() + "\n\n" + canonical_comment(merged) + "\n"
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
@@ -1704,16 +1797,19 @@ def _run_repository_lesson_task(
         sp += "课程材料：\n" + lesson_input + "\n"
         sp += term_metadata_instruction(project_id)
         _debug_dump(f"task-{task_id}_L{lesson_number}-repo-section-{idx}-prompt.txt", sp)
-        c = call_openai_compatible_chat(
-            settings["base_url"], settings["api_key"], settings["model"],
+        c = _lesson_response(project_id, task_id, f"section-{idx}", settings,
             _generation_messages([{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
-             {"role": "user", "content": sp}], project_id, instructions, context), timeout=240)
+             {"role": "user", "content": sp}], project_id, instructions, context), responsibilities.version,
+            validate_cached=lambda raw: _validate_cached_section(raw, project_id, instructions, context,
+                                                                  responsibilities, sec["section_id"]))
         body, model_terms = _parse_generation_response(c, project_id, instructions, context)
         parsed = _require_generated_manifest(body, context)
-        section_manifests[idx - 1] = parsed.manifest
         missing_by_section[idx - 1] = audit_section_manifest(responsibilities, sec["section_id"], parsed.manifest,
             plan_version=responsibilities.version, tree_version=context.tree_snapshot)
+        parsed.manifest, _notes = _repair_manifest_identity(parsed.manifest, context)
+        section_manifests[idx - 1] = parsed.manifest
         md = _require_markdown(parsed.body)
+        _accept_lesson_response(project_id, task_id, f"section-{idx}")
         section_terms[idx - 1] = model_terms
         if not md.lstrip().startswith("##"):
             md = "## " + sec.get("title", "") + "\n\n" + md
@@ -1727,8 +1823,13 @@ def _run_repository_lesson_task(
         max_workers = min(len(sections), 4)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(_gen_section, i + 1, sec): i for i, sec in enumerate(sections)}
+            failures = []
             for future in as_completed(futures):
-                idx, md = future.result()
+                try:
+                    idx, md = future.result()
+                except Exception as exc:
+                    failures.append(exc)
+                    continue
                 generated_sections[idx - 1] = md
                 completed_count += 1
                 preview.sections(lesson_title, generated_sections)
@@ -1737,6 +1838,8 @@ def _run_repository_lesson_task(
                     progress_current=1 + completed_count, progress_total=total_calls,
                     stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
 
+        if failures:
+            raise failures[0]
         preview.phase("synthesis")
         joined_sections = "\n\n".join(generated_sections)
         missing = [item for group in missing_by_section for item in group]
@@ -1782,10 +1885,7 @@ def _run_repository_lesson_task(
 项目路径、符号、调用关系和运行结果必须有材料依据；无法确认的结论说明证据缺口。
 用户补充要求：{user_instructions}
 """
-        synthesis = call_openai_compatible_chat(
-            settings["base_url"],
-            settings["api_key"],
-            settings["model"],
+        synthesis = _lesson_response(project_id, task_id, "synthesis", settings,
             _generation_messages([
                 {
                     "role": "system",
@@ -1794,12 +1894,13 @@ def _run_repository_lesson_task(
                     ),
                 },
                 {"role": "user", "content": synthesis_prompt + responsibilities.render() + term_metadata_instruction(project_id)},
-            ], project_id, instructions, context),
-            timeout=240,
+            ], project_id, instructions, context), responsibilities.version,
         ).strip()
         synthesis, synthesis_terms = _parse_generation_response(synthesis, project_id, instructions, context)
         parsed_synthesis = _require_generated_manifest(synthesis, context)
         audit_synthesis_manifest(responsibilities, parsed_synthesis.manifest, missing)
+        parsed_synthesis.manifest, _notes = _repair_manifest_identity(parsed_synthesis.manifest, context)
+        _accept_lesson_response(project_id, task_id, "synthesis")
         synthesis = parsed_synthesis.body
         _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
         joined_sections = "\n\n".join([*generated_sections, synthesis])
@@ -1812,7 +1913,9 @@ def _run_repository_lesson_task(
             ]
         ).strip() + "\n"
         merged = merge_manifests([(sec["section_id"], manifest) for sec, manifest in zip(sections, section_manifests)]
-                                 + [("synthesis", parsed_synthesis.manifest)], lesson)
+                                 + [("synthesis", parsed_synthesis.manifest)], lesson,
+                                 source_bodies={**{sec["section_id"]: text for sec, text in zip(sections, generated_sections)},
+                                                "synthesis": synthesis})
         return resolved_title, lesson.rstrip() + "\n\n" + canonical_comment(merged) + "\n"
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
