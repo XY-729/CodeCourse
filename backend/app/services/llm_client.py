@@ -98,12 +98,14 @@ def parse_usage(raw: dict[str, Any] | None) -> dict[str, int | None]:
             "uncached_input_tokens": number(raw.get("prompt_cache_miss_tokens"))}
 
 
-def check_request_budget(messages: list[dict[str, str]], max_tokens: int) -> dict[str, Any]:
+def check_request_budget(messages: list[dict[str, str]], max_tokens: int, *, adjust_output: bool = False) -> dict[str, Any]:
     """Preflight estimate, not provider token usage or a tokenizer measurement.
 
     The default is an application request budget, not a claim about the model's
     context window. Operators can configure the provider's actual smaller limit.
     No message or tree node is ever shortened to make the check pass.
+    Model callers may fit their maximum output to the remaining window;
+    strict preflight consumers keep the requested reservation by default.
     """
     context_limit = int(os.getenv("GPL_LLM_CONTEXT_TOKENS", "131072"))
     input_bound = sum(len(json.dumps(message, ensure_ascii=False).encode("utf-8")) + 16 for message in messages) + 16
@@ -127,8 +129,17 @@ def check_request_budget(messages: list[dict[str, str]], max_tokens: int) -> dic
     estimated_input = math.ceil(estimate * 1.2)
     if max_tokens <= 0 or context_limit <= 0:
         raise ValueError("模型输入/输出预算必须为正整数")
+    requested_output = max_tokens
+    available_output = context_limit - estimated_input
+    if adjust_output and available_output < max_tokens:
+        minimum_output = min(requested_output, 4096)
+        if available_output < minimum_output:
+            raise ValueError(f'完整输入占用过多预算（输入估算 {estimated_input}，非精确 tokenizer 计数；总预算 {context_limit}，最低输出预留 {minimum_output}）；已停止生成，完整知识树与已完成内容保留。')
+        max_tokens = available_output
+        logger.info('llm_output_budget_adjusted input_estimate=%s requested_output=%s reserved_output=%s context_budget=%s',
+                    estimated_input, requested_output, max_tokens, context_limit)
     report = {"input_token_upper_bound": input_bound, "estimated_input_tokens": estimated_input,
-              "reserved_output_tokens": max_tokens, "context_budget": context_limit,
+              "reserved_output_tokens": max_tokens, "requested_output_tokens": requested_output, "context_budget": context_limit,
               "method": "unicode_weighted_estimate", "tokenizer_exact": False, "safety_factor": 1.2}
     if estimated_input + max_tokens > context_limit:
         raise ValueError(f"完整请求超过输入预算（输入估算 {estimated_input}，非精确 tokenizer 计数；输出预留 {max_tokens}，总预算 {context_limit}）；已停止生成，知识树未被截断。可按模型实际容量调整预算后重试。")
@@ -190,7 +201,8 @@ def call_openai_compatible_chat_result(
     max_attempts: int = _MAX_ATTEMPTS,
     max_tokens: int = 65536,
 ) -> LLMCallResult:
-    check_request_budget(messages, max_tokens)
+    budget = check_request_budget(messages, max_tokens, adjust_output=True)
+    max_tokens = budget['reserved_output_tokens']
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     payload: dict[str, Any] = {
         "model": model,
@@ -264,7 +276,7 @@ async def stream_openai_compatible_chat(
     *,
     usage_callback: Callable[[LLMCallResult], None] | None = None,
 ) -> AsyncIterator[str]:
-    check_request_budget(messages, 65536)
+    budget = check_request_budget(messages, 65536, adjust_output=True)
     started = perf_counter()
     latest_usage = parse_usage(None)
     response_model = model
@@ -273,7 +285,7 @@ async def stream_openai_compatible_chat(
         "model": model,
         "messages": messages,
         "stream": True,
-        "max_tokens": 65536,
+        "max_tokens": budget['reserved_output_tokens'],
         "stream_options": {"include_usage": True},
     }
     client = _async_client()

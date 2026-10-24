@@ -73,6 +73,37 @@ class MessageContentTests(unittest.TestCase):
 
 class MaxTokensPayloadTests(unittest.TestCase):
     @patch("app.services.llm_client._SYNC_CLIENT")
+    def test_long_input_uses_remaining_output_budget_and_preserves_every_message(self, client: MagicMock) -> None:
+        # Match the reported 76k input failure with a deterministic large request.
+        messages = [{'role': 'user', 'content': '概' * 31660 + 'x'}]
+        client.post.return_value = _ok_response({'content': '完整回答'})
+        with patch.dict(os.environ, {'GPL_LLM_CONTEXT_TOKENS': '131072'}):
+            result = call_openai_compatible_chat_result('http://x', 'k', 'm', messages)
+        payload = client.post.call_args.kwargs['json']
+        self.assertEqual(payload['messages'], messages)
+        self.assertEqual(payload['max_tokens'], 55046)
+        self.assertEqual(result.content, '完整回答')
+        self.assertEqual(client.post.call_count, 1)
+
+    @patch("app.services.llm_client._SYNC_CLIENT")
+    def test_smaller_context_is_respected_and_explicit_smaller_output_is_not_increased(self, client: MagicMock) -> None:
+        messages = [{'role': 'user', 'content': '概' * 31660 + 'x'}]
+        client.post.return_value = _ok_response({'content': '完整回答'})
+        with patch.dict(os.environ, {'GPL_LLM_CONTEXT_TOKENS': '100000'}):
+            call_openai_compatible_chat_result('http://x', 'k', 'm', messages)
+            self.assertEqual(client.post.call_args.kwargs['json']['max_tokens'], 23974)
+            call_openai_compatible_chat_result('http://x', 'k', 'm', messages, max_tokens=8192)
+            self.assertEqual(client.post.call_args.kwargs['json']['max_tokens'], 8192)
+
+    @patch("app.services.llm_client._SYNC_CLIENT")
+    def test_insufficient_output_space_still_stops_before_network(self, client: MagicMock) -> None:
+        for characters in (54000, 60000):
+            with self.subTest(characters=characters), patch.dict(os.environ, {'GPL_LLM_CONTEXT_TOKENS': '131072'}):
+                with self.assertRaisesRegex(ValueError, '最低输出预留 4096'):
+                    call_openai_compatible_chat_result('http://x', 'k', 'm', [{'role': 'user', 'content': '概' * characters}])
+        client.post.assert_not_called()
+
+    @patch("app.services.llm_client._SYNC_CLIENT")
     def test_sync_payload_uses_65536(self, client: MagicMock) -> None:
         client.post.return_value = _ok_response({"role": "assistant", "content": "回答"})
         call_openai_compatible_chat_result("http://x", "k", "m", [{"role": "user", "content": "hi"}])
@@ -81,7 +112,7 @@ class MaxTokensPayloadTests(unittest.TestCase):
         self.assertIs(payload["stream"], False)
 
     @patch("app.services.llm_client._async_client")
-    def test_stream_payload_uses_65536(self, async_client_factory: MagicMock) -> None:
+    def test_stream_payload_respects_available_output_window(self, async_client_factory: MagicMock) -> None:
         lines = [
             'data: {"choices":[{"delta":{"content":"你"}}]}',
             'data: {"choices":[{"delta":{"content":"好"}}]}',
@@ -103,19 +134,20 @@ class MaxTokensPayloadTests(unittest.TestCase):
         client.stream.return_value = cm
         async_client_factory.return_value = client
 
-        collected: list[str] = []
-
-        async def consume():
-            async for chunk in stream_openai_compatible_chat("http://x", "k", "m", [{"role": "user", "content": "hi"}]):
+        async def consume(messages):
+            collected: list[str] = []
+            async for chunk in stream_openai_compatible_chat("http://x", "k", "m", messages):
                 collected.append(chunk)
+            return ''.join(collected)
 
-        import asyncio
-
-        asyncio.run(consume())
-        self.assertEqual("".join(collected), "你好")
-        payload = client.stream.call_args.kwargs["json"]
-        self.assertEqual(payload["max_tokens"], 65536)
-        self.assertIs(payload["stream"], True)
+        for text, expected in [('hi', 65536), ('概' * 31660 + 'x', 55046)]:
+            messages = [{'role': 'user', 'content': text}]
+            with self.subTest(expected=expected), patch.dict(os.environ, {'GPL_LLM_CONTEXT_TOKENS': '131072'}):
+                self.assertEqual(asyncio.run(consume(messages)), '你好')
+                payload = client.stream.call_args.kwargs['json']
+                self.assertEqual(payload['max_tokens'], expected)
+                self.assertEqual(payload['messages'], messages)
+                self.assertIs(payload['stream'], True)
 
 
 class RetryTests(unittest.TestCase):
