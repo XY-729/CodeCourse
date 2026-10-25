@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import urlparse
+from urllib.request import getproxies, proxy_bypass
 
 from fastapi import HTTPException
 
@@ -12,6 +16,35 @@ from app.core.config import REPOS_ROOT
 
 GITHUB_HTTPS_RE = re.compile(r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?/?$")
 GITHUB_SSH_RE = re.compile(r"^git@github\.com:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?$")
+logger = logging.getLogger(__name__)
+
+
+def _clone_environment(git_executable: str, url: str) -> dict[str, str]:
+    env = os.environ.copy()
+    # A desktop import has no terminal in which to answer credential prompts.
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    if sys.platform != "win32" or not url.startswith("https://"):
+        return env
+    if any(key.lower() in {"https_proxy", "all_proxy"} for key in env):
+        return env
+    # Git/curl does not read the Windows Internet Settings proxy. Respect
+    # explicit Git settings (including an empty value that disables a proxy).
+    try:
+        configured = subprocess.run(
+            [git_executable, "config", "--get-urlmatch", "http.proxy", url],
+            capture_output=True, timeout=10, env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return env
+    if configured.returncode != 1:
+        return env
+    proxy = getproxies().get("https")
+    if proxy and not proxy_bypass("github.com"):
+        # Only this import process inherits the proxy; no global Git changes.
+        env["https_proxy"] = proxy
+    return env
 
 
 def normalize_github_repo_key(url: str) -> str:
@@ -78,16 +111,22 @@ def clone_or_reuse(url: str) -> Path:
             text=True,
             capture_output=True,
             timeout=180,
+            env=_clone_environment(git_executable, url),
+            encoding="utf-8",
+            errors="replace",
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except subprocess.TimeoutExpired:
+        logger.warning("GitHub import timed out: %s", url)
         suggestion = https_to_ssh_url(url)
         hint = f" Try SSH instead: {suggestion}" if suggestion else ""
         raise HTTPException(status_code=504, detail=f"git clone timed out.{hint}")
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip()
         lower = detail.lower()
+        logger.warning("GitHub import failed for %s: %s", url, detail)
         suggestion = https_to_ssh_url(url)
-        if "failed to connect" in lower or "connection timed out" in lower or "connection refused" in lower:
+        if any(marker in lower for marker in ("failed to connect", "connection timed out", "connection refused", "connection was reset", "could not resolve", "ssl connect error")):
             hint = f" Try SSH instead: {suggestion}" if suggestion else " Check network access and repository URL."
             message = f"git clone failed: network error. {detail}{hint}"
         elif "permission denied" in lower or "publickey" in lower or "authentication failed" in lower:
