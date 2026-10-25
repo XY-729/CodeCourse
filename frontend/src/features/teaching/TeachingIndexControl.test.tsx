@@ -13,6 +13,27 @@ beforeEach(()=>{
   vi.mocked(applyBackfill).mockResolvedValue({...preview,status:'applied',changeId:'change'}); vi.mocked(undoKnowledgeChange).mockResolvedValue({});
 });
 describe('historical teaching backfill controls',()=>{
+  it('retries only the failed source with explicit retry authorization and preserves successful previews',async()=>{
+    vi.mocked(getCourseUnderstanding).mockResolvedValue([
+      {sourceType:'course',sourcePath:'first.md',indexStatus:'pending',schemaVersion:2},
+      {sourceType:'course',sourcePath:'second.md',indexStatus:'pending',schemaVersion:2},
+    ] as never);
+    vi.mocked(prepareBackfill)
+      .mockResolvedValueOnce({...preview,id:'first',sourcePath:'first.md'})
+      .mockRejectedValueOnce(new Error('第 2 段清单未通过校验，已保存响应'))
+      .mockResolvedValueOnce({...preview,id:'second',sourcePath:'second.md'});
+    render(<TeachingIndexControl projectId={1}/>);
+    fireEvent.click(screen.getByRole('button',{name:'检查历史知识关联'}));
+    fireEvent.click(await screen.findByRole('button',{name:'生成所选文档的清单预览'}));
+    await screen.findByText(/第 2 段清单未通过校验/);
+    expect(screen.getByText(/first.md · 1 个概念/)).toBeTruthy();
+    expect(prepareBackfill).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button',{name:'仅重试失败清单段'}));
+    await waitFor(()=>expect(prepareBackfill).toHaveBeenCalledTimes(3));
+    expect(prepareBackfill).toHaveBeenLastCalledWith(1,{sourceType:'course',sourcePath:'second.md'},{retryInvalid:true});
+    await screen.findByText(/second.md · 1 个概念/);
+    expect(applyBackfill).not.toHaveBeenCalled();
+  });
   it('checks legacy complete indexes, previews without applying, and applies only on confirmation',async()=>{
     render(<TeachingIndexControl projectId={1}/>);
     fireEvent.click(screen.getByRole('button',{name:'检查历史知识关联'}));

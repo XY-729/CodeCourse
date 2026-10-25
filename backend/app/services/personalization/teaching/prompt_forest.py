@@ -11,7 +11,7 @@ from typing import Iterable
 PROMPT_FOREST_INSTRUCTION = (
     "知识树采用 compact-v2：columns 定义每行各列，末列可省略；省略属性使用 defaults。"
     "parent_index 是 nodes 中父节点的从 0 开始行号，null 表示无父；行号只在本次快照有效。"
-    "id 为稳定短编号，完整包含所有可见概念；返回的 existing_id、from_parent_id "
+    "id 为稳定短编号；总纲包含完整可见树，课件包含总纲指定森林及连接祖先；返回的 existing_id、from_parent_id "
     "直接使用这些短编号，软件在校验时还原真实身份。不要凭编号推断含义。"
     "knowledge_state 未列出的节点使用默认状态；空范围不表示已掌握。"
 )

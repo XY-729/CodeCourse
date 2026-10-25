@@ -28,6 +28,22 @@ def _ok_response(message: dict) -> MagicMock:
 
 
 class MessageContentTests(unittest.TestCase):
+    @patch("app.services.llm_client._SYNC_CLIENT")
+    def test_metadata_json_mode_reaches_wire_and_one_attempt_does_not_retry(self, client):
+        from app.services.llm_client import call_openai_compatible_chat
+        client.post.return_value = _ok_response({'content': '{"coverage":[]} '})
+        call_openai_compatible_chat('http://fixture', 'key', 'model',
+            [{'role': 'user', 'content': 'Return JSON'}], response_format={'type': 'json_object'},
+            max_tokens=16384, max_attempts=1)
+        self.assertEqual(client.post.call_args.kwargs['json']['response_format'], {'type': 'json_object'})
+        self.assertEqual(client.post.call_args.kwargs['json']['max_tokens'], 16384)
+        client.reset_mock()
+        client.post.side_effect = httpx.ReadTimeout('ambiguous completion')
+        with self.assertRaisesRegex(RuntimeError, 'network'):
+            call_openai_compatible_chat('http://fixture', 'key', 'model',
+                [{'role': 'user', 'content': 'Return JSON'}], max_attempts=1)
+        self.assertEqual(client.post.call_count, 1)
+
     def test_usage_preserves_reasoning_counts_and_missing_is_unknown(self):
         from app.services.llm_client import parse_usage
         self.assertIsNone(parse_usage({"completion_tokens": 100})["reasoning_output_tokens"])
@@ -75,6 +91,42 @@ class MessageContentTests(unittest.TestCase):
         client.post.return_value = _ok_response({"role": "assistant", "content": ""})
         with self.assertRaisesRegex(RuntimeError, "no message content"):
             call_openai_compatible_chat_result("http://x", "k", "m", [{"role": "user", "content": "hi"}])
+
+
+class ReasoningEffortPayloadTests(unittest.TestCase):
+    @patch("app.services.llm_client._SYNC_CLIENT")
+    def test_official_deepseek_effort_sends_thinking_and_reasoning_effort(self, client: MagicMock) -> None:
+        client.post.return_value = _ok_response({"role": "assistant", "content": "ok"})
+        call_openai_compatible_chat_result(
+            "https://api.deepseek.com", "k", "deepseek-flash",
+            [{"role": "user", "content": "hi"}], reasoning_effort="low")
+        payload = client.post.call_args.kwargs["json"]
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
+        self.assertEqual(payload["reasoning_effort"], "low")
+
+    @patch("app.services.llm_client._SYNC_CLIENT")
+    def test_disabled_effort_switches_thinking_off(self, client: MagicMock) -> None:
+        client.post.return_value = _ok_response({"role": "assistant", "content": "ok"})
+        call_openai_compatible_chat_result(
+            "https://api.deepseek.com", "k", "deepseek-flash",
+            [{"role": "user", "content": "hi"}], reasoning_effort="disabled")
+        payload = client.post.call_args.kwargs["json"]
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", payload)
+
+    @patch("app.services.llm_client._SYNC_CLIENT")
+    def test_proxy_and_default_keep_the_provider_default(self, client: MagicMock) -> None:
+        client.post.return_value = _ok_response({"role": "assistant", "content": "ok"})
+        for base_url, effort in (("https://proxy.example/v1", "low"),
+                                 ("https://api.deepseek.com", "default"),
+                                 ("https://api.deepseek.com", None)):
+            with self.subTest(base_url=base_url, effort=effort):
+                call_openai_compatible_chat_result(
+                    base_url, "k", "deepseek-flash",
+                    [{"role": "user", "content": "hi"}], reasoning_effort=effort)
+                payload = client.post.call_args.kwargs["json"]
+                self.assertNotIn("thinking", payload)
+                self.assertNotIn("reasoning_effort", payload)
 
 
 class MaxTokensPayloadTests(unittest.TestCase):

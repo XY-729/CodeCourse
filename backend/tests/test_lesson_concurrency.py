@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from teaching_manifest_fixture import with_outline_scope
 
 
 def _setup_temp_workspace():
@@ -77,6 +78,11 @@ def response_manifest(body, items=(), terms=()):
         concepts.append({"ref": ref, "existing_id": None, "name": text, "domain": "test", "scope": "global", "parent_ref": None, "aliases": []})
         quote = next(line for line in body.splitlines() if text in line)
         candidates.append({"concept_ref": ref, "text": text, "quote": quote})
+    if concepts:
+        for item in concepts:
+            item['parent_ref'] = 'fixture_root'
+        concepts.append({'ref': 'fixture_root', 'existing_id': None, 'name': '课程基础',
+                         'domain': 'test', 'scope': 'global', 'parent_ref': None, 'aliases': []})
     manifest = {"schema_version": 2, "concepts": concepts, "coverage": coverage, "terms": candidates}
     return body + "\nTEACHING: " + json.dumps(manifest, ensure_ascii=False)
 
@@ -118,8 +124,8 @@ class RepositoryLessonConcurrencyTests(unittest.TestCase):
         course_dir = self.generated / str(self.project.id)
         course_dir.mkdir(parents=True, exist_ok=True)
         (course_dir / "outline.md").write_text(
-            "# 项目学习总纲\n\n### 第 1 课：入口与启动\n\n"
-            "必须完整讲解：start、运行入口、启动流程。\n",
+            with_outline_scope("# 项目学习总纲\n\n### 第 1 课：入口与启动\n\n"
+            "必须完整讲解：start、运行入口、启动流程。\n", domain='test'),
             encoding="utf-8",
         )
 
@@ -298,7 +304,7 @@ class OutlineProgressTests(unittest.TestCase):
 
     def test_outline_task_reports_four_step_progress(self):
         generated = "# 项目学习总纲\n\n## FILE: project_map.md\n\n# 项目结构说明\n\n## FILE: outline.md\n\n# 学习路线\n\n### 第 1 课：启动\n\n讲解启动流程。"
-        generated = response_manifest(generated)
+        generated = with_outline_scope(generated, domain='test')
         with patch(
             "app.services.generation_service.call_openai_compatible_chat",
             return_value=generated,
@@ -327,7 +333,7 @@ class OutlineProgressTests(unittest.TestCase):
 
         generated = "# 项目学习总纲\n\n## FILE: project_map.md\n\n# 项目结构说明\n\n## FILE: outline.md\n\n# 学习路线\n\n### 第 1 课：启动\n\n讲解启动流程。"
 
-        generated = response_manifest(generated)
+        generated = with_outline_scope(generated, domain='test')
 
         async def fake_stream(*_args, **_kwargs):
             yield {"event": "accumulated", "data": {"text": generated}}
@@ -371,6 +377,9 @@ class FileLessonProgressTests(unittest.TestCase):
         set_setting("llm.api_key", "fake-key")
 
         self.client = TestClient(app)
+        course_dir = self.generated / str(self.project.id)
+        course_dir.mkdir(parents=True, exist_ok=True)
+        (course_dir / 'outline.md').write_text(with_outline_scope('# 总纲\n\n### 第 1 课：入口与启动\n', domain='test'), encoding='utf-8')
 
     def tearDown(self):
         self._tmpdir.cleanup()

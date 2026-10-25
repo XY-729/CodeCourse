@@ -24,6 +24,10 @@ class ReindexRequest(BaseModel):
     sourcePath: str = Field(min_length=1, max_length=1000)
 
 
+class BackfillRequest(ReindexRequest):
+    retryInvalid: bool = False
+
+
 @router.get('/{project_id}/teaching/backfills')
 def backfills(project_id: int):
     project_exists(project_id)
@@ -32,11 +36,11 @@ def backfills(project_id: int):
 
 
 @router.post('/{project_id}/teaching/backfills/preview')
-def preview_backfill(project_id: int, payload: ReindexRequest):
+def preview_backfill(project_id: int, payload: BackfillRequest):
     project_exists(project_id)
     from app.services.teaching_backfill import prepare
     try:
-        return prepare(project_id, payload.sourceType, payload.sourcePath)
+        return prepare(project_id, payload.sourceType, payload.sourcePath, retry_invalid=payload.retryInvalid)
     except FileNotFoundError as error:
         raise HTTPException(404, str(error)) from error
     except (ValueError, RuntimeError) as error:

@@ -42,7 +42,7 @@ class PreviewIntegrationTests(unittest.TestCase):
         learning = create_learning_plan_project("学习计划", self.workspace / "learning")
         learning_root = self.generated / str(learning.id)
         learning_root.mkdir()
-        (learning_root / "outline.md").write_text("# 总纲\n\n### 第 1 课：入口与启动\n\n学习 start。", encoding="utf-8")
+        (learning_root / "outline.md").write_text(fixtures.with_outline_scope("# 总纲\n\n### 第 1 课：入口与启动\n\n学习 start。", domain='test'), encoding="utf-8")
         root = self.generated / str(self.project.id)
         sub_path = "sub-outline-1234abcd.md"
         (root / sub_path).write_text((root / "outline.md").read_text(encoding="utf-8"), encoding="utf-8")

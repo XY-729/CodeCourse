@@ -689,6 +689,7 @@ class LLMSettingsRequest(BaseModel):
     api_key: Optional[str] = None
     enabled: bool = False
     clear_api_key: bool = False
+    section_reasoning_effort: Optional[str] = None
 
 
 class LLMSettingsResponse(BaseModel):
@@ -698,6 +699,7 @@ class LLMSettingsResponse(BaseModel):
     enabled: bool
     has_api_key: bool
     masked_api_key: Optional[str] = None
+    section_reasoning_effort: str = "low"
 
 
 class LLMTestResponse(BaseModel):

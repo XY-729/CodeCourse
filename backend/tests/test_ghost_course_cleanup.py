@@ -10,7 +10,11 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from teaching_manifest_fixture import with_manifest
+from teaching_manifest_fixture import with_manifest as base_manifest, with_outline_scope
+
+
+def with_manifest(body, entries, **kwargs):
+    return base_manifest(body, entries, parent=True, **kwargs)
 
 
 def _setup_temp_workspace():
@@ -73,6 +77,9 @@ class GhostCourseCleanupTests(unittest.TestCase):
         set_setting("llm.api_key", "fake-key")
 
         self.client = TestClient(app)
+        course_dir = self.generated / str(self.project.id)
+        course_dir.mkdir(parents=True, exist_ok=True)
+        (course_dir / 'outline.md').write_text(with_outline_scope('# 总纲\n\n### 第 1 课：入口与启动\n'), encoding='utf-8')
 
     def tearDown(self):
         self._tmpdir.cleanup()
@@ -181,7 +188,7 @@ class GhostCourseCleanupTests(unittest.TestCase):
         course_dir = self._course_dir()
         course_dir.mkdir(parents=True, exist_ok=True)
         (course_dir / "outline.md").write_text(
-            "# 项目学习总纲\n\n### 第 1 课：入口与启动\n",
+            with_outline_scope("# 项目学习总纲\n\n### 第 1 课：入口与启动\n"),
             encoding="utf-8",
         )
         from app.services.storage import upsert_lesson_files
@@ -209,6 +216,7 @@ class GhostCourseCleanupTests(unittest.TestCase):
         self.assertEqual(leftovers, [], f"ghost file survived failed outline_lesson: {leftovers}")
 
     def test_outline_failure_leaves_no_ghost_files(self):
+        (self._course_dir() / 'outline.md').unlink()
         with patch(
             "app.services.generation_service.call_openai_compatible_chat",
             return_value="",

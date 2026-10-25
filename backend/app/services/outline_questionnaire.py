@@ -69,7 +69,7 @@ def _build_questionnaire_messages(
             ),
         },
         {"role": "user", "content": prompt},
-    ], build_generation_context(project_id, instructions))
+    ], build_generation_context(project_id, instructions, related_text=prompt_input))
 
 
 def _parse_questions(content: str) -> list[dict]:

@@ -27,6 +27,7 @@ def _response_from_settings(settings: dict[str, str]) -> LLMSettingsResponse:
         enabled=settings.get("enabled", "false") == "true",
         has_api_key=bool(api_key),
         masked_api_key=mask_api_key(api_key) if api_key else None,
+        section_reasoning_effort=settings.get("section_reasoning_effort", "low"),
     )
 
 
@@ -44,6 +45,7 @@ def write_llm_settings(payload: LLMSettingsRequest) -> LLMSettingsResponse:
         payload.enabled,
         payload.api_key,
         payload.clear_api_key,
+        payload.section_reasoning_effort,
     )
     return _response_from_settings(settings)
 

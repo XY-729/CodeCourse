@@ -62,7 +62,8 @@ from app.services.storage import (
     upsert_learning_anchor,
 )
 from app.services.term_service import parse_term_metadata, register_document_terms, term_learning_context
-from app.services.personalization.teaching.generation_context import build_generation_context, apply_generation_context
+from app.services.personalization.teaching.generation_context import apply_generation_context
+from app.services.personalization.teaching.outline_forest import build_question_context
 from app.services.personalization.teaching.manifest import parse_manifest, canonical_comment
 
 
@@ -566,6 +567,7 @@ class PreparedQuestion:
     authorized_context: str = ""
     tree_snapshot: dict | None = None
     generation_id: str | None = None
+    scope_constraint: dict | None = None
 
 
 def _saved_retrieval_sources(record: QARecord) -> list[dict[str, object]]:
@@ -633,7 +635,10 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
             "session_context": session_context,
         },
     )
-    teaching_context = build_generation_context(project_id, current_requirements=question)
+    teaching_context = build_question_context(project_id, current_requirements=question,
+        source_type=term.source_type if term else payload.source_type,
+        source_path=term.source_path if term else payload.source_path, parent_qa_id=payload.parent_qa_id)
+    scope = json.loads(teaching_context.generation_scope_json)
     topics = json.dumps(existing_qa_topics(project_id), ensure_ascii=False)
     topics_context = f"\n<existing_qa_topics>{topics}</existing_qa_topics>"
     prompt = f"{topics_context}\n\n{base_prompt}"
@@ -651,6 +656,7 @@ def prepare_question(project_id: int, payload: QAAskRequest) -> PreparedQuestion
         authorized_context=context_text,
         tree_snapshot=teaching_context.tree_snapshot,
         generation_id=str(uuid4()),
+        scope_constraint=scope if scope.get('major_ids') else None,
         messages=apply_generation_context([
             {
                 "role": "system",
@@ -725,7 +731,7 @@ def finalize_question(
         from app.services.teaching_index import index_document
         index_document(project_id, "qa", str(written.output_path), written.answer_md,
                        artifact_kind="answer", tree_snapshot=prepared.tree_snapshot,
-                       generation_id=prepared.generation_id)
+                       generation_id=prepared.generation_id, scope_constraint=prepared.scope_constraint)
         persist_teaching_handoff(written, handoff_metadata)
         _refresh_session_memory(
             project_id,

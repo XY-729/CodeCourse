@@ -220,12 +220,12 @@ describe(
             "陌生术语提示",
           ),
         ).toBeNull();
-        // Model configuration plus the free-text language suggestions.
+        // Model configuration, chapter thinking effort, and the free-text language suggestions.
         expect(
           screen.getAllByRole(
             "combobox",
           ),
-        ).toHaveLength(2);
+        ).toHaveLength(3);
       },
     );
 
@@ -259,6 +259,7 @@ describe(
         ).toMatchObject({
           provider: "deepseek",
           model: "deepseek-chat",
+          section_reasoning_effort: "low",
         });
         expect(saveLearningSettings).toHaveBeenCalledWith({ primary_programming_language: "" });
       },

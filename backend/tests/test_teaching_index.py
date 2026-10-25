@@ -223,6 +223,12 @@ class TeachingIndexTests(unittest.TestCase):
             state = index.reindex_document(self.project, 'course', 'legacy.md')
         self.assertEqual(state['indexStatus'], 'complete')
         self.assertEqual(path.read_text(encoding='utf-8'), original)
+        with patch('app.services.llm_client.call_openai_compatible_chat', side_effect=AssertionError('a complete sidecar must be reused')) as model:
+            self.assertEqual(index.reindex_document(self.project, 'course', 'legacy.md')['indexStatus'], 'complete')
+            model.assert_not_called()
+        # A changed body needs a new extraction; editing during that extraction
+        # must still reject its stale result and preserve the user's new text.
+        path.write_text(original + '\n\n本次新增段落。', encoding='utf-8')
         def concurrent_edit(*args, **kwargs):
             path.write_text('用户正在编辑的新内容', encoding='utf-8')
             return metadata

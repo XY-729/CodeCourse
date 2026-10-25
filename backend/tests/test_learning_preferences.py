@@ -99,6 +99,8 @@ class LearningPreferencesTests(unittest.TestCase):
         learning_preferences.save_learning_preferences("Python")
         with (
             patch.object(generation_context, "get_full_tree_snapshot", return_value=self.snapshot),
+            patch.object(qa_service, 'build_question_context', side_effect=lambda project, current_requirements='', **kwargs:
+                generation_context.build_generation_context(project, current_requirements, snapshot=self.snapshot)),
             patch.object(qa_service, "_settings_for_request", return_value={"model": "test"}),
             patch.object(qa_service, "get_or_create_qa_session", return_value=SimpleNamespace(id=1)),
             patch.object(qa_service, "_session_context", return_value=""),

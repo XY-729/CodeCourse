@@ -14,6 +14,28 @@ LLM_PROVIDER = os.getenv("GPL_LLM_PROVIDER", "template")
 LLM_API_KEY = os.getenv("GPL_LLM_API_KEY", "")
 PROMPT_VERSION = os.getenv("GPL_PROMPT_VERSION", "coursegen-v1")
 
+# Chapter writers are high-volume, low-ambiguity calls. DeepSeek enables
+# thinking at "high" by default, which measured 25k-45k reasoning tokens per
+# section and dominated both latency and cost. Planning, synthesis and audit
+# keep the provider default; only the section writers are dialed down.
+REASONING_EFFORT_VALUES = ("default", "low", "high", "max", "disabled")
+DEFAULT_SECTION_REASONING_EFFORT = "low"
+
+
+def normalize_reasoning_effort(value: object, *, default: str = DEFAULT_SECTION_REASONING_EFFORT) -> str:
+    text = str(value or "").strip().lower()
+    if text in REASONING_EFFORT_VALUES:
+        return text
+    if text in {"off", "none", "false", "0"}:
+        return "disabled"
+    if text in {"minimal", "medium"}:
+        return "low"
+    return default
+
+
+def section_reasoning_effort_default() -> str:
+    return normalize_reasoning_effort(os.getenv("GPL_SECTION_REASONING_EFFORT"), default=DEFAULT_SECTION_REASONING_EFFORT)
+
 IGNORED_DIRS = {
     ".git",
     "node_modules",

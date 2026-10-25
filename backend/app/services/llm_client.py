@@ -202,6 +202,27 @@ def _message_content(data: dict[str, Any]) -> str:
     return str(content)
 
 
+def reasoning_controls(base_url: str, model: str, reasoning_effort: str | None) -> dict[str, Any]:
+    """Translate an effort preference into provider request fields.
+
+    Thinking switches are DeepSeek-specific. Sending them to a proxy or another
+    OpenAI-compatible provider would turn a cost optimization into a 400, so
+    unsupported targets simply keep their existing default behavior.
+    """
+    effort = str(reasoning_effort or "").strip().lower()
+    if not effort or effort == "default":
+        return {}
+    official_deepseek = (urlparse(base_url).hostname == "api.deepseek.com"
+                         and model.startswith("deepseek"))
+    if not official_deepseek:
+        return {}
+    if effort == "disabled":
+        return {"thinking": {"type": "disabled"}}
+    if effort in {"low", "high", "max"}:
+        return {"thinking": {"type": "enabled"}, "reasoning_effort": effort}
+    return {}
+
+
 def call_openai_compatible_chat_result(
     base_url: str,
     api_key: str,
@@ -211,6 +232,8 @@ def call_openai_compatible_chat_result(
     *,
     max_attempts: int = _MAX_ATTEMPTS,
     max_tokens: int = 65536,
+    reasoning_effort: str | None = None,
+    response_format: dict | None = None,
 ) -> LLMCallResult:
     budget = check_request_budget(messages, max_tokens, adjust_output=True, base_url=base_url, model=model)
     max_tokens = budget['reserved_output_tokens']
@@ -220,7 +243,10 @@ def call_openai_compatible_chat_result(
         "messages": messages,
         "stream": False,
         "max_tokens": max_tokens,
+        **reasoning_controls(base_url, model, reasoning_effort),
     }
+    if response_format is not None:
+        payload["response_format"] = response_format
     last_error: BaseException | None = None
     attempts = max(1, min(_MAX_ATTEMPTS, max_attempts))
     for attempt in range(attempts):
@@ -267,6 +293,11 @@ def call_openai_compatible_chat(
     model: str,
     messages: list[dict[str, str]],
     timeout: int = 30,
+    *,
+    reasoning_effort: str | None = None,
+    response_format: dict | None = None,
+    max_attempts: int = _MAX_ATTEMPTS,
+    max_tokens: int = 65536,
 ) -> str:
     """Compatibility text API for existing generation and QA callers."""
     return call_openai_compatible_chat_result(
@@ -275,6 +306,10 @@ def call_openai_compatible_chat(
         model,
         messages,
         timeout,
+        reasoning_effort=reasoning_effort,
+        response_format=response_format,
+        max_attempts=max_attempts,
+        max_tokens=max_tokens,
     ).content
 
 

@@ -150,7 +150,7 @@ class GenerationIntegration(unittest.TestCase):
         with patch.object(qa, "call_openai_compatible_chat", return_value=raw + "\nTITLE: 技术说明") as model:
             record = qa.ask_question(self.project.id, payload)
         self.assertEqual(model.call_count, 1)
-        self.assertIn("knowledge_topology", str(model.call_args.args[3]))
+        self.assertNotIn("<knowledge_topology>", str(model.call_args.args[3]))
         with (patch("app.services.llm_client.call_openai_compatible_chat_result", side_effect=AssertionError("second model")),
               patch("app.services.qa_metadata.extract_answer_metadata", side_effect=AssertionError("second extract"))):
             qa_background._run(self.project.id, record.id)

@@ -143,17 +143,27 @@ class LessonPromptAutonomyTests(unittest.TestCase):
 
     def test_writers_cannot_expand_or_repeat_frozen_ownership(self):
         for writer_name in WRITERS:
-            with self.subTest(writer=writer_name, violation="expanded"), self.assertRaisesRegex(ValueError, "扩大了冻结职责"):
-                self._run_writer(writer_name, section_mode="unowned")
+            with self.subTest(writer=writer_name, violation="expanded"):
+                _, markdown, _, calls = self._run_writer(writer_name, section_mode="unowned")
+                parsed = parse_manifest(markdown)
+                self.assertEqual(parsed.manifest["coverage"], [])
+                self.assertIn("扩大了冻结职责", parsed.manifest["metadata_gaps"][0]["reason"])
+                self.assertEqual(calls, 2)  # planner + body; no paid metadata retry
             with self.subTest(writer=writer_name, violation="duplicated"), self.assertRaisesRegex(ValueError, "重复解释"):
                 self._run_writer(writer_name, synthesis_mode="duplicate")
 
-    def test_manifest_protocol_and_nonempty_plan_are_still_required(self):
+    def test_missing_manifest_keeps_body_with_explicit_pending_metadata(self):
         with self.assertRaisesRegex(RuntimeError, "至少一个章节"):
             generation._parse_lesson_plan('{"sections": []}')
         for writer_name in WRITERS:
-            with self.subTest(writer=writer_name), self.assertRaisesRegex(ValueError, "知识清单未就绪"):
-                self._run_writer(writer_name, section_mode="no_manifest")
+            with self.subTest(writer=writer_name):
+                _, markdown, _, calls = self._run_writer(writer_name, section_mode="no_manifest")
+                parsed = parse_manifest(markdown)
+                self.assertIn("知识项 1 的具体讲解", parsed.body)
+                self.assertEqual(parsed.manifest["coverage"], [])
+                self.assertEqual(len(parsed.manifest["metadata_gaps"]), 1)
+                self.assertIn("知识关联待补全", generation._lesson_completion_label(markdown))
+                self.assertEqual(calls, 2)
 
 
 if __name__ == "__main__":

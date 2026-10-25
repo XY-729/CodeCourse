@@ -691,7 +691,7 @@ def _term_scan_messages(content: str, project_id: int | None = None) -> list[dic
                 "\"category\":\"concept\",\"confidence\":0.0,"
                 "\"source_span\":{\"text\":\"正文原词\"}}]}。"
                 "完整提取所有可标注技术概念，不设数量配额，不因刚解释过而丢弃候选。\n"
-                + (__import__("app.services.personalization.teaching.generation_context", fromlist=["build_generation_context"]).build_generation_context(project_id).render() if project_id is not None else "")
+                + (__import__("app.services.personalization.teaching.generation_context", fromlist=["build_generation_context"]).build_generation_context(project_id, related_text=compact).render() if project_id is not None else "")
                 + "\n正文：\n" + compact
             ),
         },

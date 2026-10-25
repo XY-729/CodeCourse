@@ -1,4 +1,4 @@
-"""One complete, deterministic teaching input for every generation entry point.
+"""Deterministic teaching inputs: full outline context or a locally selected forest.
 
 The authoritative tree is supplied by knowledge_tree_service.get_tree_snapshot.
 The compatibility reader exposes *all* visible legacy identities, explicitly
@@ -70,6 +70,7 @@ class GenerationContext:
     state_json: str
     requirements_json: str
     learning_preferences_json: str = "{}"
+    generation_scope_json: str = "{}"
 
     @property
     def tree_snapshot(self) -> dict[str, int]:
@@ -82,7 +83,8 @@ class GenerationContext:
         states = {row["id"]: row for row in state["nodes"]}
         return {**self.tree_snapshot, "topology_status": topology["topology_status"],
                 "nodes": [{**node, **states[node["id"]]} for node in topology["nodes"]],
-                "requirements": json.loads(self.requirements_json)}
+                "requirements": json.loads(self.requirements_json),
+                "generation_scope": json.loads(self.generation_scope_json)}
 
     @property
     def fingerprint(self) -> str:
@@ -96,10 +98,12 @@ class GenerationContext:
         structure, so keying reuse on the tree would make the very lesson that
         just ran unreachable and turn "open the same lesson again" into a new
         model call. Reuse therefore follows the user's explicit requirements and
-        the material inputs; the complete current tree is still injected when the
-        generation actually runs.
+        the material inputs and the originating outline; the current selected
+        forest is injected when the generation actually runs.
         """
-        structural = "\u0000".join((self.requirements_json, self.learning_preferences_json))
+        scope = json.loads(self.generation_scope_json)
+        binding = {key: scope[key] for key in ('outline_path', 'outline_hash', 'major_ids') if key in scope}
+        structural = "\u0000".join((self.requirements_json, self.learning_preferences_json, stable_json(binding)))
         return hashlib.sha256(structural.encode("utf-8")).hexdigest()
 
     @cached_property
@@ -110,16 +114,32 @@ class GenerationContext:
         return encode(topology), encode(state)
 
     def render(self) -> str:
-        topology, state = self._prompt_json
-        context = (PROMPT_FOREST_INSTRUCTION + f"\n<knowledge_topology>\n{topology}\n</knowledge_topology>\n"
-                f"<knowledge_state>\n{state}\n</knowledge_state>\n"
-                f"<explicit_user_requirements>\n{self.requirements_json}\n</explicit_user_requirements>")
+        scope = json.loads(self.generation_scope_json)
+        if scope.get('mode') == 'none':
+            context = '本轮没有可用总纲，不提供知识树或学习状态；正常回答问题，不据此推断用户学过、未学过或掌握程度。'
+        else:
+            topology, state = self._prompt_json
+            context = (PROMPT_FOREST_INSTRUCTION + f"\n<knowledge_topology>\n{topology}\n</knowledge_topology>\n"
+                       f"<knowledge_state>\n{state}\n</knowledge_state>")
+        context += f"\n<explicit_user_requirements>\n{self.requirements_json}\n</explicit_user_requirements>"
         preferences = render_learning_preferences(json.loads(self.learning_preferences_json))
+        if scope.get('major_ids'):
+            from .outline_forest import scoped_instruction
+            context += scoped_instruction(scope)
         return context + ("\n" + preferences if preferences else "")
 
 
 def build_generation_context(project_id: int, current_requirements: str = "", *,
-                             snapshot: dict[str, Any] | None = None) -> GenerationContext:
+                             snapshot: dict[str, Any] | None = None,
+                             outline_path: str | None = None, related_text: str | None = None,
+                             source_type: str | None = None, source_path: str | None = None) -> GenerationContext:
+    if outline_path is not None:
+        from .outline_forest import build_lesson_context
+        return build_lesson_context(project_id, current_requirements, outline_path=outline_path)
+    if related_text is not None:
+        from .outline_forest import build_related_context
+        return build_related_context(project_id, current_requirements, text=related_text,
+                                     source_type=source_type, source_path=source_path)
     raw = copy.deepcopy(snapshot if snapshot is not None else get_full_tree_snapshot(project_id))
     if not isinstance(raw, dict) or not isinstance(raw.get("nodes"), list):
         raise ValueError("完整知识树快照格式无效；已停止生成，未截取局部树")
@@ -185,6 +205,7 @@ def build_generation_context(project_id: int, current_requirements: str = "", *,
         stable_json({"state_version": state_version, "nodes": sorted(state_nodes, key=lambda n: n["id"])}),
         stable_json(requirements),
         stable_json(preferences),
+        stable_json(raw.get('generation_scope', {})),
     )
 
 

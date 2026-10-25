@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getCourseUnderstanding, TEACHING_CHANGED } from "../../personalization/teachingApi";
 import { applyBackfill, listBackfills, prepareBackfill, undoKnowledgeChange, type BackfillPreview } from "../../personalization/knowledgeMaintenance";
+import { isNativeAndroidRuntime } from "../../platform/runtime";
 
 type Source = { sourceType: "course" | "qa"; sourcePath: string };
 export default function TeachingIndexControl({ projectId, source }: { projectId: number; source?: Source }) {
@@ -9,13 +10,15 @@ export default function TeachingIndexControl({ projectId, source }: { projectId:
   const [previews, setPreviews] = useState<BackfillPreview[]>([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [failedSource, setFailedSource] = useState<Source | null>(null);
+  const localCheckpoints = !isNativeAndroidRuntime();
   const cancel = useRef(false), mounted = useRef(true);
   const scope = `${projectId}:${source?.sourceType ?? ''}:${source?.sourcePath ?? ''}`;
   const currentScope = useRef(scope); currentScope.current = scope;
   const active = () => mounted.current && currentScope.current === scope;
   const key = (s: Source) => `${s.sourceType}:${s.sourcePath}`;
   useEffect(() => {
-    mounted.current = true; cancel.current = false; setBusy(false); setPending(null); setPreviews([]); setSelected([]); setMessage('');
+    mounted.current = true; cancel.current = false; setBusy(false); setPending(null); setPreviews([]); setSelected([]); setMessage(''); setFailedSource(null);
     return () => { mounted.current = false; cancel.current = true; };
   }, [scope]);
   const changed = () => window.dispatchEvent(new CustomEvent(TEACHING_CHANGED, { detail: { projectId } }));
@@ -26,24 +29,27 @@ export default function TeachingIndexControl({ projectId, source }: { projectId:
         .filter(d => d.indexStatus !== "complete" || d.schemaVersion !== 2)
         .sort((a, b) => Number(Boolean(b.documentConfirmed || b.courseCompleted)) - Number(Boolean(a.documentConfirmed || a.courseCompleted)));
       const saved = await listBackfills(projectId);
-      if (active()) { setPending(documents); setSelected(documents.map(key)); setPreviews(saved.filter(p => !source || key(p) === key(source))); if (!documents.length) setMessage("当前文档的知识索引已完整"); }
+      if (active()) { setPending(documents.map(({ sourceType, sourcePath }) => ({ sourceType, sourcePath }))); setSelected(documents.map(key)); setPreviews(saved.filter(p => !source || key(p) === key(source))); if (!documents.length) setMessage("当前文档的知识索引已完整"); }
     } catch (e) { if (active()) setMessage(e instanceof Error ? e.message : "读取文档失败"); }
     finally { if (active()) setBusy(false); }
   }
-  async function prepare() {
+  async function prepare(retryInvalid = false) {
     if (!pending?.length || busy) return;
     cancel.current = false; setBusy(true); setMessage('');
     let done = 0;
+    let processing: Source | null = null;
     try {
-      const sources = pending.filter(s => selected.includes(key(s)));
+      const sources = retryInvalid && failedSource ? [failedSource] : pending.filter(s => selected.includes(key(s)));
       for (const item of sources) {
         if (cancel.current || !active()) break;
+        processing = item;
         if (active()) setMessage(`正在生成预览 ${done + 1}/${sources.length}：${item.sourcePath}`);
-        const result = await prepareBackfill(projectId, item); done++;
+        const result = retryInvalid ? await prepareBackfill(projectId, item, { retryInvalid: true }) : await prepareBackfill(projectId, item); done++;
+        if (active()) setFailedSource(null);
         if (active()) setPreviews(old => [result, ...old.filter(p => key(p) !== key(result) || p.status !== 'preview')]);
       }
       if (active()) setMessage(`已生成 ${done} 份清单预览${cancel.current ? '，其余已停止' : ''}。尚未写入知识树，请核对后应用。`);
-    } catch (e) { if (active()) setMessage(`已生成 ${done} 份预览；${e instanceof Error ? e.message : '预览失败'}`); }
+    } catch (e) { if (active()) { setFailedSource(processing); setMessage(`已生成 ${done} 份预览；${e instanceof Error ? e.message : '预览失败'}`); } }
     finally { if (active()) setBusy(false); }
   }
   async function apply() {
@@ -75,9 +81,13 @@ export default function TeachingIndexControl({ projectId, source }: { projectId:
     {pending?.length ? <details open><summary>待补录文档（已完成或已确认的优先）</summary>
       {pending.map(item => <label key={key(item)} style={{ display: 'block' }}><input type="checkbox" disabled={busy} checked={selected.includes(key(item))}
         onChange={e => setSelected(old => e.target.checked ? [...old, key(item)] : old.filter(k => k !== key(item)))} />{item.sourcePath}</label>)}
-      <p>生成预览会使用当前模型，长文可能分段分析。预览不改正文、知识树或熟悉度；确认应用后只补清单与来源。</p>
+      <p>生成预览会使用当前模型，长文可能分段分析。预览不改正文、知识树或熟悉度；确认应用后只补清单与来源。{localCheckpoints ? '有缺口时只分析缺口章节，已完成清单段会复用。' : ''}</p>
       <button type="button" disabled={busy || !selected.length} onClick={() => void prepare()}>生成所选文档的清单预览</button>
     </details> : null}
+    {failedSource && localCheckpoints ? <div>
+      <p>重试会调用模型，只请求失败和未完成的清单段；已通过段与原正文均保留。</p>
+      <button type="button" disabled={busy} onClick={() => void prepare(true)}>仅重试失败清单段</button>
+    </div> : null}
     {previews.length ? <div>
       {previews.some(p => p.status === 'preview') ? <button type="button" disabled={busy} onClick={() => void apply()}>确认应用预览清单</button> : null}
       {previews.map(item => <details key={item.id}>

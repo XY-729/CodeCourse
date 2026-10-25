@@ -47,6 +47,7 @@ export default function LLMSettingsDialog({
   const [testing, setTesting] = useState(false);
   const [clearing, setClearing] = useState<"project" | "all" | null>(null);
   const [message, setMessage] = useState("");
+  const isAndroid = typeof document !== "undefined" && document.documentElement.classList.contains("platform-android");
 
   const controlsDisabled =
     saving ||
@@ -116,6 +117,7 @@ export default function LLMSettingsDialog({
         enabled: settings.enabled,
         api_key: apiKey || undefined,
         clear_api_key: clearApiKey,
+        section_reasoning_effort: settings.section_reasoning_effort ?? "low",
       });
       setSettings(saved);
       setApiKey("");
@@ -277,6 +279,21 @@ export default function LLMSettingsDialog({
                     placeholder="deepseek-flash"
                   />
                 </label>
+                {!isAndroid ? (
+                  <label>
+                    <span>章节写作思考强度</span>
+                    <select
+                      value={settings.section_reasoning_effort ?? "low"}
+                      onChange={(event) => setSettings({ ...settings, section_reasoning_effort: event.target.value })}
+                    >
+                      <option value="low">低（更快更省，推荐）</option>
+                      <option value="default">默认（high）</option>
+                      <option value="disabled">关闭思考（最快）</option>
+                      <option value="high">高</option>
+                      <option value="max">最高（max）</option>
+                    </select>
+                  </label>
+                ) : null}
                 <label>
                   <span>API Key</span>
                   <div className="settings-secret-row">
@@ -319,6 +336,9 @@ export default function LLMSettingsDialog({
             ) : (
               <div className="empty settings-loading">读取中...</div>
             )}
+            {!isAndroid ? (
+              <p className="settings-note">思考强度只影响逐章写作；规划、整合和职责校验仍使用模型默认强度。该开关仅对 DeepSeek 官方端点生效。</p>
+            ) : null}
           </section>
 
           <section className="settings-section settings-section--danger" aria-labelledby="settings-privacy-title">

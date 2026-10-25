@@ -10,6 +10,8 @@ def manifest_trailer(
     *,
     terms: Iterable[tuple[str, str, str]] | None = None,
     domain: str = "general",
+    parent: bool = False,
+    outline: bool = False,
 ) -> str:
     """entries: dict or (concept name, quote[, aspect[, kind]]).
 
@@ -46,9 +48,21 @@ def manifest_trailer(
     ]
     payload = {"schema_version": 2, "concepts": concepts, "coverage": coverage,
                "terms": term_rows, "placement_changes": []}
+    if parent and concepts:
+        for item in concepts:
+            item['parent_ref'] = 'fixture_root'
+        concepts.append({'ref': 'fixture_root', 'existing_id': None, 'name': '课程基础',
+                         'domain': domain, 'scope': 'global', 'parent_ref': None, 'aliases': []})
+    if outline:
+        payload['outline_knowledge'] = {'major_refs': [item['ref'] for item in concepts], 'repeated_ids': []}
     return "\n\n<!-- codecourse-teaching: " + json.dumps(
         payload, ensure_ascii=False, separators=(",", ":")) + " -->"
 
 
 def with_manifest(body: str, entries: Sequence[tuple], **kwargs) -> str:
     return body.rstrip("\n") + manifest_trailer(entries, **kwargs) + "\n"
+
+
+def with_outline_scope(body: str, *, domain='general') -> str:
+    quote = next(line.strip() for line in reversed(body.splitlines()) if line.strip())
+    return with_manifest(body, [('课程基础', quote, '课程目标', 'planned')], domain=domain, outline=True)

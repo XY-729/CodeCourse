@@ -54,11 +54,11 @@ TEACHING_MANIFEST_CONTRACT = """<teaching_manifest_v2_contract>
 对象格式：{"schema_version":2,"concepts":[{"ref":"local_ref","existing_id":null,"name":"规范概念名","domain":"领域","scope":"global","parent_ref":null,"aliases":[]}],"coverage":[{"concept_ref":"local_ref","aspect":"实际讲解的具体范围","kind":"explained","dimension":"conceptual","core":true,"quote":"正文中逐字出现且唯一定位的讲解片段"}],"terms":[{"concept_ref":"local_ref","text":"正文技术原词","quote":"包含该原词、逐字出现且唯一定位的上下文"}],"placement_changes":[{"concept_ref":"已存在概念的 ref","to_parent_ref":"本响应中作为新父的 ref","from_parent_id":null,"reason":"为什么现在补父或换父"}]}。
 concepts 包含归属所需全部祖先；ref 本响应唯一，parent_ref/concept_ref 引用同一对象的 ref。
 知识树是输入参考，不要把整棵树回传。concepts 仅列本次正文涉及的概念与它们必要的祖先，同一身份共用一个 ref；不要复制已有的历史 coverage、学习记录或同义范围目录。
-先匹配、后创建：existing_id 优先；没有 existing_id 时按完整树中同 scope、同 domain 的规范名或别名匹配，匹配到已有概念就复用该 ref，不要重复创建同一身份。
+先匹配、后创建：existing_id 优先；没有 existing_id 时按本次提供的树中同 scope、同 domain 的规范名或别名匹配，匹配到已有概念就复用该 ref，不要重复创建同一身份。
 新概念必须用 parent_ref 指向最近祖先（根用 null），并在 concepts 中列出归属所需的全部祖先（祖先可以是本响应新建的 ref）。
-已有概念：parent_ref 必须等于完整树里的当前父（根为 null），不得用 parent_ref 悄悄改父边。
+已有概念：parent_ref 必须等于本次提供的树里的当前父（根为 null），不得用 parent_ref 悄悄改父边。
 已有概念当前没有父（root/无父小概念）而本次能确定合理祖先时，必须在 placement_changes 中用 from_parent_id=null、to_parent_ref=该祖先 ref 明确补父。
-需要明确换父时也用 placement_changes，from_parent_id 必须等于完整树中的当前父 ID（根为 null）；不一致视为过期提案，系统保留原边并记录冲突。
+需要明确换父时也用 placement_changes，from_parent_id 必须等于本次提供的树中的当前父 ID（根为 null）；不一致视为过期提案，系统保留原边并记录冲突。
 保持同领域单向层级：通用概念用 global，私有符号用 project；global 概念不能挂到项目私有父下。
 coverage kind 只能为 planned/mentioned/brief/explained，dimension 为 conceptual/code_reading/implementation/debugging/transfer。
 有 lesson_responsibility_map 时，章节 brief/explained 的 coverage 必须增加对应 items 的 responsibility_id，沿用其 concept_ref、existing_id、dimension 和 aspect；不要给同一职责另造引用或改写范围名称。正文讲法不受此字段命名约束。

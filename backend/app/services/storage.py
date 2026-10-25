@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
-from app.core.config import DB_PATH, GENERATED_ROOT, REPOS_ROOT, WORKSPACE_ROOT
+from app.core.config import (
+    DB_PATH, GENERATED_ROOT, REPOS_ROOT, WORKSPACE_ROOT,
+    normalize_reasoning_effort, section_reasoning_effort_default,
+)
 
 
 @dataclass
@@ -4747,6 +4750,10 @@ def get_llm_settings() -> dict[str, str]:
             "model": os.getenv("DEEPSEEK_MODEL") or os.getenv("GPL_LLM_MODEL") or env_file_values.get("DEEPSEEK_MODEL") or env_file_values.get("GPL_LLM_MODEL") or "deepseek-flash",
             "api_key": env_api_key,
             "enabled": "true",
+            "section_reasoning_effort": normalize_reasoning_effort(
+                os.getenv("GPL_SECTION_REASONING_EFFORT") or env_file_values.get("GPL_SECTION_REASONING_EFFORT"),
+                default=section_reasoning_effort_default(),
+            ),
         }
     return {
         "provider": get_setting("llm.provider") or "deepseek",
@@ -4754,6 +4761,10 @@ def get_llm_settings() -> dict[str, str]:
         "model": get_setting("llm.model") or "deepseek-flash",
         "api_key": get_setting("llm.api_key") or "",
         "enabled": get_setting("llm.enabled") or "false",
+        "section_reasoning_effort": normalize_reasoning_effort(
+            get_setting("llm.section_reasoning_effort") or os.getenv("GPL_SECTION_REASONING_EFFORT"),
+            default=section_reasoning_effort_default(),
+        ),
     }
 
 
@@ -4774,11 +4785,14 @@ def _read_env_file() -> dict[str, str]:
     return values
 
 
-def save_llm_settings(provider: str, base_url: str, model: str, enabled: bool, api_key: Optional[str], clear_api_key: bool) -> dict[str, str]:
+def save_llm_settings(provider: str, base_url: str, model: str, enabled: bool, api_key: Optional[str], clear_api_key: bool,
+                      section_reasoning_effort: Optional[str] = None) -> dict[str, str]:
     set_setting("llm.provider", provider.strip() or "deepseek")
     set_setting("llm.base_url", base_url.strip().rstrip("/") or "https://api.deepseek.com")
     set_setting("llm.model", model.strip() or "deepseek-flash")
     set_setting("llm.enabled", "true" if enabled else "false")
+    if section_reasoning_effort is not None:
+        set_setting("llm.section_reasoning_effort", normalize_reasoning_effort(section_reasoning_effort))
     if clear_api_key:
         set_setting("llm.api_key", "")
     elif api_key is not None and api_key.strip():

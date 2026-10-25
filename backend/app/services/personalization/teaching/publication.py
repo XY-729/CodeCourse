@@ -10,7 +10,8 @@ from .manifest import parse_manifest
 
 
 def publish_course_document(project_id: int, source_path: str, content: str, *,
-                            tree_snapshot: dict | None = None, generation_id: str | None = None) -> str:
+                            tree_snapshot: dict | None = None, generation_id: str | None = None,
+                            scope_constraint: dict | None = None) -> str:
     from app.services.storage import GENERATED_ROOT, run_in_transaction, _connect
     from app.services.knowledge_tree_service import apply_manifest
     from app.services.teaching_index import index_document
@@ -28,9 +29,13 @@ def publish_course_document(project_id: int, source_path: str, content: str, *,
     def validate(conn):
         conn.execute("SAVEPOINT generation_preflight")
         try:
-            apply_manifest(project_id, manifest, source_type="course", source_path=source_path,
+            applied = apply_manifest(project_id, manifest, source_type="course", source_path=source_path,
                            artifact_kind=artifact_kind, content_hash=digest,
-                           tree_snapshot=tree_snapshot, generation_id=generation_id, conn=conn)
+                           tree_snapshot=tree_snapshot, generation_id=generation_id, conn=conn,
+                           scope_constraint=scope_constraint)
+            if artifact_kind == 'outline':
+                from .outline_forest import make_outline_scope
+                make_outline_scope(conn, project_id, source_path, manifest, applied)
         finally:
             conn.execute("ROLLBACK TO generation_preflight")
             conn.execute("RELEASE generation_preflight")
@@ -44,16 +49,19 @@ def publish_course_document(project_id: int, source_path: str, content: str, *,
     if existed:
         backup.write_bytes(target.read_bytes())
     event = {"source_path": source_path, "content_hash": digest, "tree_snapshot": tree_snapshot,
-             "generation_id": generation_id, "status": "staged", "had_previous": existed}
+             "generation_id": generation_id, "status": "staged", "had_previous": existed,
+             "scope_constraint": scope_constraint}
     outbox.write_text(json.dumps(event, ensure_ascii=False), encoding="utf-8", newline="\n")
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         staged.replace(target)
         identity = index_document(project_id, "course", source_path, content, artifact_kind=artifact_kind,
-                                  tree_snapshot=tree_snapshot, generation_id=generation_id)
+                                  tree_snapshot=tree_snapshot, generation_id=generation_id,
+                                  scope_constraint=scope_constraint)
         with _connect() as conn:
             row = conn.execute("SELECT metadata_status,content_status,metadata_errors_json FROM teaching_documents WHERE id=?", (identity,)).fetchone()
-        if not row or row["metadata_status"] != "valid" or row["content_status"] != "published":
+        accepted_status = {"valid", "pending"} if manifest.get("metadata_gaps") else {"valid"}
+        if not row or row["metadata_status"] not in accepted_status or row["content_status"] != "published":
             raise ValueError("知识清单发布失败：" + (row["metadata_errors_json"] if row else "无索引"))
         event["status"] = "published"
         outbox.write_text(json.dumps(event, ensure_ascii=False), encoding="utf-8", newline="\n")
@@ -89,6 +97,7 @@ def recover_course_publications(project_id: int) -> None:
         else:
             with target.open("r", encoding="utf-8", newline="") as stream:
                 index_document(project_id, "course", event["source_path"], stream.read(),
-                               tree_snapshot=event.get("tree_snapshot"), generation_id=event.get("generation_id"))
+                               tree_snapshot=event.get("tree_snapshot"), generation_id=event.get("generation_id"),
+                               scope_constraint=event.get('scope_constraint'))
             event["status"] = "recovered"
         path.write_text(json.dumps(event, ensure_ascii=False), encoding="utf-8", newline="\n")

@@ -346,7 +346,10 @@ def confirm_outline_generation(project_id: int, payload: OutlineConfirmRequest, 
 def generate_file_lesson(project_id: int, payload: GenerateFileLessonRequest, background_tasks: BackgroundTasks) -> GenerationTaskResponse:
     repo_root = _project_root(project_id)
     settings = get_llm_settings()
-    task, reused = create_or_reuse_file_lesson_task(project_id, repo_root, payload.path, payload.mode, settings.get("model"), payload.instructions)
+    try:
+        task, reused = create_or_reuse_file_lesson_task(project_id, repo_root, payload.path, payload.mode, settings.get("model"), payload.instructions)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not reused:
         background_tasks.add_task(run_file_lesson_task, project_id, task.id, payload.path, payload.mode, payload.instructions)
     return _to_task_response(task)
@@ -366,7 +369,7 @@ def generate_outline_lesson(project_id: int, payload: GenerateOutlineLessonReque
             payload.instructions,
             payload.outline_path,
         )
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not reused:
         background_tasks.add_task(

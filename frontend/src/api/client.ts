@@ -412,6 +412,7 @@ export type LLMSettings = {
   enabled: boolean;
   has_api_key: boolean;
   masked_api_key: string | null;
+  section_reasoning_effort?: string;
 };
 
 export type SaveLLMSettingsPayload = {
@@ -421,6 +422,7 @@ export type SaveLLMSettingsPayload = {
   enabled: boolean;
   api_key?: string;
   clear_api_key?: boolean;
+  section_reasoning_effort?: string;
 };
 
 export type LLMTestResponse = {

@@ -177,6 +177,13 @@ class CompactReferencePersistenceTests(unittest.TestCase):
         from app.services.teaching_index import document_state
         from app.services.term_service import get_document_term_annotations
         identity = self.apply(manifest([concept("v", "vector")]))["ref_to_id"]["v"]
+        from app.services.personalization.teaching.manifest import canonical_comment
+        outline = manifest([concept('v', 'vector', existing_id=identity)],
+                           [coverage('v', 'vector 将在本课讲解。', kind='planned')])
+        outline['outline_knowledge'] = {'major_refs': ['v'], 'repeated_ids': []}
+        target = storage.GENERATED_ROOT / str(self.project.id) / 'outline.md'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('# 总纲\n\nvector 将在本课讲解。\n\n' + canonical_comment(outline), encoding='utf-8', newline='\n')
         body = "vector 的连续存储支持下标访问。"
         payload = manifest([concept("v", "vector", existing_id=prompt_id(identity))],
                            [coverage("v", body)], [{"concept_ref": "v", "text": "vector", "quote": body}])

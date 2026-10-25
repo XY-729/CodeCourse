@@ -110,6 +110,13 @@ def validate_manifest(manifest: object, body: str | None = None, *,
     if not isinstance(manifest, dict) or type(manifest.get("schema_version")) is not int or manifest["schema_version"] != 2:
         raise ManifestValidationError("TeachingManifest schema_version 必须为 2")
     value = deepcopy(manifest)
+    gaps = value.get("metadata_gaps", [])
+    if not isinstance(gaps, list) or any(
+        not isinstance(gap, dict) or not isinstance(gap.get("section_id"), str)
+        or not gap["section_id"] or not isinstance(gap.get("reason"), str) or not gap["reason"]
+        for gap in gaps
+    ):
+        raise ManifestValidationError("metadata_gaps 必须包含章节编号和待补全原因")
     for key in ("concepts", "coverage", "terms"):
         if not isinstance(value.get(key), list):
             raise ManifestValidationError(f"TeachingManifest {key} 必须为数组")
@@ -154,6 +161,24 @@ def validate_manifest(manifest: object, body: str | None = None, *,
                 raise ManifestValidationError("概念父子关系存在循环")
             visited.add(parent)
             parent = concepts[parent]["parent_ref"]
+    outline = value.get('outline_knowledge')
+    if outline is not None:
+        if not isinstance(outline, dict) or not isinstance(outline.get('major_refs'), list) or not outline['major_refs']:
+            raise ManifestValidationError('outline_knowledge 必须包含非空 major_refs')
+        if any(not isinstance(ref, str) or ref not in concepts for ref in outline['major_refs']):
+            raise ManifestValidationError('outline_knowledge major_refs 引用不存在')
+        repeated = outline.get('repeated_ids', [])
+        if not isinstance(repeated, list) or any(not isinstance(identity, str) or not identity for identity in repeated):
+            raise ManifestValidationError('outline_knowledge repeated_ids 必须为概念编号数组')
+        # New outline identities must be major concepts or their structural ancestors.
+        required = set(outline['major_refs'])
+        for ref in list(required):
+            parent = concepts[ref]['parent_ref']
+            while parent is not None:
+                required.add(parent)
+                parent = concepts[parent]['parent_ref']
+        if any(not item['existing_id'] and ref not in required for ref, item in concepts.items()):
+            raise ManifestValidationError('总纲只能创建大概念及其必要祖先，次概念留到具体课件')
     visible = visible_body(body) if body is not None else None
     for key in ("coverage", "terms"):
         kept: list[dict] = []
@@ -320,6 +345,8 @@ def namespace_manifest(manifest: dict, namespace: str) -> dict:
             item["concept_ref"] = refs[item["concept_ref"]]
             if key == "placement_changes":
                 item["to_parent_ref"] = refs[item["to_parent_ref"]]
+    if value.get('outline_knowledge'):
+        value['outline_knowledge']['major_refs'] = [refs[ref] for ref in value['outline_knowledge']['major_refs']]
     return value
 
 
@@ -361,6 +388,13 @@ def merge_manifests(sections: Iterable[tuple[str, dict]], final_body: str, *, fi
             raise ManifestValidationError("章节 namespace 重复")
         seen.add(namespace)
         value = namespace_manifest(manifest, namespace)
+        if value.get('outline_knowledge'):
+            declaration = merged.setdefault('outline_knowledge', {'major_refs': [], 'repeated_ids': []})
+            declaration['major_refs'].extend(value['outline_knowledge']['major_refs'])
+            declaration['repeated_ids'] = sorted(set(declaration['repeated_ids']) |
+                                                 set(value['outline_knowledge'].get('repeated_ids', [])))
+        if value.get("metadata_gaps"):
+            merged.setdefault("metadata_gaps", []).extend(value["metadata_gaps"])
         if source_bodies is not None and namespace in source_bodies:
             _rebase_quotes(value, source_bodies[namespace], visible)
         for key in ("concepts", "coverage", "terms", "placement_changes"):

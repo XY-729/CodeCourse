@@ -8,7 +8,12 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from teaching_manifest_fixture import with_manifest
+from teaching_manifest_fixture import with_manifest as base_manifest, with_outline_scope
+
+
+def with_manifest(body, entries, **kwargs):
+    outline = bool(entries) and all(not isinstance(item, dict) and len(item) > 3 and item[3] == 'planned' for item in entries)
+    return base_manifest(body, entries, outline=outline, parent=not outline, **kwargs)
 
 
 def _setup_temp_workspace():
@@ -162,8 +167,8 @@ class LearningPlanProjectTests(unittest.TestCase):
         course_dir = self.generated / str(project["id"])
         course_dir.mkdir(parents=True, exist_ok=True)
         (course_dir / "outline.md").write_text(
-            "# 学习计划总纲\n\n### 第 1 课：异步编程基础\n\n"
-            "必须完整讲解：协程、async、await、事件循环。\n",
+            with_outline_scope("# 学习计划总纲\n\n### 第 1 课：异步编程基础\n\n"
+            "必须完整讲解：协程、async、await、事件循环。\n"),
             encoding="utf-8",
         )
         plan = {
@@ -293,7 +298,7 @@ class LearningPlanProjectTests(unittest.TestCase):
         lesson_dir = course_dir / "lessons"
         lesson_dir.mkdir(parents=True, exist_ok=True)
         (course_dir / "outline.md").write_text(
-            "# 学习计划总纲\n\n### 第 1 课：向量空间\n\n讲解向量、线性组合、基与维数。\n",
+            with_outline_scope("# 学习计划总纲\n\n### 第 1 课：向量空间\n\n讲解向量、线性组合、基与维数。\n"),
             encoding="utf-8",
         )
         output_path = lesson_dir / "lesson_01.md"

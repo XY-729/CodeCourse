@@ -18,5 +18,5 @@ export const undoKnowledgeChange = (project: number, id: string) => providerRequ
 export const getMaintenanceDetails = (project: number, id: string) => providerRequest<MaintenanceDetails>(`/projects/${project}/knowledge/concepts/${encodeURIComponent(id)}/maintenance`);
 export const correctConcept = (project: number, id: string, data: Record<string, unknown>) => providerRequest(`/projects/${project}/knowledge/concepts/${encodeURIComponent(id)}/maintenance`, { method: "POST", body: JSON.stringify(data) });
 export const listBackfills = (project: number) => providerRequest<BackfillPreview[]>(`/projects/${project}/teaching/backfills`);
-export const prepareBackfill = (project: number, source: { sourceType: string; sourcePath: string }) => providerRequest<BackfillPreview>(`/projects/${project}/teaching/backfills/preview`, { method: "POST", body: JSON.stringify(source) });
+export const prepareBackfill = (project: number, source: { sourceType: string; sourcePath: string }, options?: { retryInvalid: boolean }) => providerRequest<BackfillPreview>(`/projects/${project}/teaching/backfills/preview`, { method: "POST", body: JSON.stringify({ ...source, ...options }) });
 export const applyBackfill = (project: number, id: string) => providerRequest<BackfillPreview>(`/projects/${project}/teaching/backfills/${encodeURIComponent(id)}/apply`, { method: "POST" });

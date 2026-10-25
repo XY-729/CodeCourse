@@ -4,14 +4,19 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional
 from urllib.parse import quote
 
-from app.core.config import GENERATED_ROOT, PROMPT_VERSION
+from app.core.config import (
+    GENERATED_ROOT, PROMPT_VERSION,
+    normalize_reasoning_effort, section_reasoning_effort_default,
+)
 from app.services.lesson_preview import LessonPreview
 from app.services.llm_client import stream_openai_compatible_chat
 
@@ -83,7 +88,41 @@ from app.services.storage import (
 
 LOGGER = logging.getLogger(__name__)
 
-CONCURRENT_LESSON_PROMPT_VERSION = "section-coordination-v3"
+CONCURRENT_LESSON_PROMPT_VERSION = "outline-forest-v1"
+
+# Chapters are independent and the LLM client allows 12 connections. Four
+# workers forced six to ten chapters into two or three sequential waves.
+_SECTION_CONCURRENCY_DEFAULT = 6
+_SECTION_CONCURRENCY_MAX = 8
+
+
+def _section_concurrency() -> int:
+    raw = os.getenv("GPL_SECTION_CONCURRENCY", str(_SECTION_CONCURRENCY_DEFAULT))
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        value = _SECTION_CONCURRENCY_DEFAULT
+    return max(1, min(_SECTION_CONCURRENCY_MAX, value))
+
+
+def _section_reasoning_effort(settings: dict) -> str:
+    return normalize_reasoning_effort(
+        settings.get("section_reasoning_effort"),
+        default=section_reasoning_effort_default(),
+    )
+
+
+def _raise_section_failures(failures: list[tuple[tuple[int, dict], Exception]]) -> None:
+    """Keep the original failure type for one chapter, aggregate for several."""
+    if not failures:
+        return
+    detail = "；".join(
+        '第' + str(idx) + '章“' + str(sec.get("title", "")) + '”：' + str(exc)
+        for (idx, sec), exc in failures)
+    LOGGER.warning("lesson_sections_failed %s", detail)
+    if len(failures) == 1:
+        raise failures[0][1]
+    raise RuntimeError(str(len(failures)) + " 个章节未完成：" + detail)
 
 
 def _generation_messages(messages: list[dict], project_id: int, instructions: str = "",
@@ -102,7 +141,10 @@ def _outline_generation_messages(messages: list[dict], project_id: int, instruct
             content += ('' if seen else TEACHING_MANIFEST_CONTRACT) + part
             seen = True
         unique.append({**message, 'content': content})
-    return _generation_messages(unique, project_id, instructions, context)
+    from app.services.personalization.teaching.outline_forest import OUTLINE_FOREST_CONTRACT
+    result = _generation_messages(unique, project_id, instructions, context)
+    result[0]['content'] += '\n' + OUTLINE_FOREST_CONTRACT
+    return result
 
 
 def _repair_manifest_identity(manifest: dict, context: GenerationContext) -> tuple[dict, list[str]]:
@@ -266,6 +308,7 @@ def _prepare_lesson_plan(project_id: int, task_id: int, settings: dict, planner_
             "topology_json": context.topology_json, "state_json": context.state_json,
             "requirements_json": context.requirements_json,
             "learning_preferences_json": context.learning_preferences_json,
+            "generation_scope_json": context.generation_scope_json,
         }}, ensure_ascii=False, sort_keys=True))
     return plan, responsibilities, context
 
@@ -302,33 +345,73 @@ def _lesson_response_path(project_id: int, task_id: int, key: str) -> Path:
     return project_course_dir(project_id) / ".lesson-results" / f"task-{task_id}" / f"{key}.json"
 
 
+def _lesson_request_hash(settings: dict, messages: list[dict]) -> str:
+    return hashlib.sha256(json.dumps([settings["base_url"], settings["model"], messages],
+                                      ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def _cached_lesson_response(project_id: int, task_id: int, key: str, settings: dict,
+                            messages: list[dict], version: str,
+                            validate_cached: Callable[[str], None] | None = None) -> str | None:
+    """Return a reusable response without contacting the provider.
+
+    Reuse requires the same frozen plan, the same request and the same model.
+    An unaudited response returns only after the local validator accepts it
+    again, so a malformed chapter can never become "validated" by caching.
+    """
+    try:
+        record = json.loads(_lesson_response_path(project_id, task_id, key).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if record.get("version") != version or record.get("request_hash") != _lesson_request_hash(settings, messages):
+        return None
+    response = str(record.get("response") or "")
+    if record.get("validated"):
+        return response
+    if validate_cached is not None:
+        try:
+            validate_cached(response)
+        except (ValueError, RuntimeError):
+            return None
+        return response
+    return None
+
+
+@dataclass(frozen=True)
+class _LessonResponseResult:
+    content: str
+    reused: bool
+
+
+def _lesson_response_result(project_id: int, task_id: int, key: str, settings: dict,
+                            messages: list[dict], version: str,
+                            validate_cached: Callable[[str], None] | None = None, *,
+                            reasoning_effort: str | None = None,
+                            debug_name: str | None = None,
+                            debug_text: str | None = None) -> _LessonResponseResult:
+    cached = _cached_lesson_response(project_id, task_id, key, settings, messages, version, validate_cached)
+    if cached is not None:
+        return _LessonResponseResult(cached, True)
+    # Dump only requests that actually reach the provider; a retry that restores
+    # validated chapters must not leave a fresh prompt trail for every section.
+    if debug_name is not None:
+        _debug_dump(debug_name, debug_text if debug_text is not None
+                    else str(messages[-1].get("content", "")))
+    response = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"],
+                                          messages, timeout=240, reasoning_effort=reasoning_effort)
+    # Persist even a rejected response for diagnosis; only validated results may
+    # skip a model call on retry. Never cache a network/incomplete response.
+    _atomic_write(_lesson_response_path(project_id, task_id, key),
+                  json.dumps({"version": version, "request_hash": _lesson_request_hash(settings, messages),
+                              "response": response, "validated": False}, ensure_ascii=False))
+    return _LessonResponseResult(response, False)
+
+
 def _lesson_response(project_id: int, task_id: int, key: str, settings: dict,
                      messages: list[dict], version: str,
                      validate_cached: Callable[[str], None] | None = None) -> str:
-    path = _lesson_response_path(project_id, task_id, key)
-    request_hash = hashlib.sha256(json.dumps([settings["base_url"], settings["model"], messages],
-                                              ensure_ascii=False, sort_keys=True).encode()).hexdigest()
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        record = {}
-    if record.get("version") == version and record.get("request_hash") == request_hash:
-        if record.get("validated"):
-            return record["response"]
-        if validate_cached is not None:
-            try:
-                validate_cached(record["response"])
-            except (ValueError, RuntimeError):
-                pass
-            else:
-                return record["response"]
-    response = call_openai_compatible_chat(settings["base_url"], settings["api_key"], settings["model"],
-                                          messages, timeout=240)
-    # Persist even a rejected response for diagnosis; only validated results may
-    # skip a model call on retry. Never cache a network/incomplete response.
-    _atomic_write(path, json.dumps({"version": version, "request_hash": request_hash,
-                                    "response": response, "validated": False}, ensure_ascii=False))
-    return response
+    return _lesson_response_result(project_id, task_id, key, settings, messages, version,
+                                   validate_cached).content
 
 
 def _accept_lesson_response(project_id: int, task_id: int, key: str) -> None:
@@ -341,13 +424,63 @@ def _accept_lesson_response(project_id: int, task_id: int, key: str) -> None:
 def _validate_cached_section(raw: str, project_id: int, instructions: str,
                              context: GenerationContext, responsibilities: LessonResponsibilityMap,
                              section_id: str) -> None:
-    body, _terms = _parse_generation_response(raw, project_id, instructions, context)
-    parsed = _require_generated_manifest(body, context)
-    audit_section_manifest(responsibilities, section_id, parsed.manifest,
-        plan_version=responsibilities.version, tree_version=context.tree_snapshot)
-    repaired, _notes = _repair_manifest_identity(parsed.manifest, context)
-    canonical_comment(repaired)
+    parsed, _terms, _missing = _parse_lesson_section_response(
+        raw, project_id, instructions, context, responsibilities, section_id)
     _require_markdown(parsed.body)
+
+
+def _defer_lesson_metadata(raw: str, section_id: str, error: ValueError):
+    """Keep the paid-for body without manufacturing teaching evidence.
+
+    This server-owned envelope explicitly marks missing metadata. The index
+    remains pending; it must never be reported as a complete teaching manifest.
+    Raw provider responses remain in the task cache for later local repair.
+    """
+    parsed_body = parse_manifest(raw).body
+    if section_id == "synthesis" and not parsed_body.strip():
+        # No editor prose means no teaching claims to extract. A server-owned
+        # empty manifest is exact here; missing content is still audited later.
+        return parse_manifest(canonical_comment({"schema_version": 2, "concepts": [], "coverage": [], "terms": []}))
+    body = _require_markdown(parsed_body)
+    manifest = {"schema_version": 2, "concepts": [], "coverage": [], "terms": [],
+                "placement_changes": [],
+                "metadata_gaps": [{"section_id": section_id, "reason": str(error)}]}
+    LOGGER.warning("lesson_metadata_pending section=%s reason=%s", section_id, error)
+    return parse_manifest(body + "\n" + canonical_comment(manifest))
+
+
+def _parse_lesson_section_response(raw: str, project_id: int, instructions: str,
+                                  context: GenerationContext, responsibilities: LessonResponsibilityMap,
+                                  section_id: str):
+    # Version/ownership corruption is not a metadata formatting failure.
+    audit_section_manifest(responsibilities, section_id, {"concepts": [], "coverage": []},
+        plan_version=responsibilities.version, tree_version=context.tree_snapshot)
+    try:
+        body, terms = _parse_generation_response(raw, project_id, instructions, context)
+        parsed = _require_generated_manifest(body, context)
+        missing = audit_section_manifest(responsibilities, section_id, parsed.manifest,
+            plan_version=responsibilities.version, tree_version=context.tree_snapshot)
+        parsed.manifest, _notes = _repair_manifest_identity(parsed.manifest, context)
+        canonical_comment(parsed.manifest)
+        return parsed, terms, missing
+    except ValueError as exc:
+        # Unknown coverage is not missing teaching: don't spend another full
+        # generation trying to fill ranges whose metadata was simply omitted.
+        return _defer_lesson_metadata(raw, section_id, exc), [], []
+
+
+def _lesson_completion_label(content: str) -> str:
+    parsed = parse_manifest(content)
+    return ("正文生成完成，知识关联待补全" if parsed.manifest and parsed.manifest.get("metadata_gaps")
+            else "生成完成")
+
+
+def _validate_cached_editor_response(raw: str, project_id: int, instructions: str,
+                                     context: GenerationContext) -> None:
+    try:
+        _parse_generation_response(raw, project_id, instructions, context)
+    except ValueError as exc:
+        _defer_lesson_metadata(raw, "synthesis", exc)
 
 
 
@@ -527,13 +660,14 @@ def _outline_task_hash(input_hash: str, scope_type: str, context: GenerationCont
     prompt_key = "prompt.learning_plan.outline" if scope_type == "learning_plan" else "prompt.outline"
     # Structural fingerprint only: a published lesson changes familiarity state,
     # and that must not turn "open the same task again" into a new model call.
-    return hash_inputs(input_hash, load_prompt(prompt_key), load_prompt("prompt.system"), context.reuse_fingerprint)
+    return hash_inputs(input_hash, load_prompt(prompt_key), load_prompt("prompt.system"), context.reuse_fingerprint,
+                       CONCURRENT_LESSON_PROMPT_VERSION)
 
 
 def _file_lesson_task_hash(input_hash: str, mode: str, context: GenerationContext) -> str:
     return hash_inputs(input_hash, load_prompt("prompt.file_lesson.template"),
                        load_prompt(f"prompt.file_lesson.{mode}_expected"),
-                       load_prompt("prompt.system"), context.reuse_fingerprint)
+                       load_prompt("prompt.system"), context.reuse_fingerprint, CONCURRENT_LESSON_PROMPT_VERSION)
 
 
 def _outline_lesson_task_hash(input_hash: str, project_type: str, context: GenerationContext) -> str:
@@ -659,9 +793,13 @@ def _publish_generation(project_id: int, path: Path, content: str,
         if record_path.is_file():
             context = GenerationContext(**json.loads(record_path.read_text(encoding="utf-8"))["context"])
     relative = path.resolve().relative_to(project_course_dir(project_id).resolve()).as_posix()
+    if relative == 'outline.md' or _SUB_OUTLINE_RE.match(relative):
+        if not _require_generated_manifest(content, context).manifest.get('outline_knowledge'):
+            raise ValueError('总纲缺少大概念规划，请重新生成总纲；旧文档已保留')
     return publish_course_document(project_id, relative, content,
                                    tree_snapshot=context.tree_snapshot if context else None,
-                                   generation_id=f"task:{task_id}" if task_id is not None else None)
+                                   generation_id=f"task:{task_id}" if task_id is not None else None,
+                                   scope_constraint=json.loads(context.generation_scope_json) or None if context else None)
 
 
 def _require_markdown(content: str) -> str:
@@ -1304,7 +1442,7 @@ def run_file_lesson_task(project_id: int, task_id: int, relative_path: str, mode
     repo_root = Path(project.local_path).resolve()
     try:
         settings = _llm_settings_or_error()
-        context = build_generation_context(project_id, instructions)
+        context = build_generation_context(project_id, instructions, outline_path="outline.md")
         update_generation_task(
             task_id,
             "running",
@@ -1486,6 +1624,7 @@ def _run_learning_plan_lesson_task(
     settings: dict[str, str],
     preview: Optional[LessonPreview] = None,
     input_hash: str | None = None,
+    outline_path: str = 'outline.md',
 ) -> tuple[str, str]:
     preview = preview or LessonPreview(project_course_dir(project_id), task_id, {})
     preview.phase("planning")
@@ -1532,9 +1671,9 @@ def _run_learning_plan_lesson_task(
 学习材料：
 {lesson_input}
 """
-    context = build_generation_context(project_id, instructions)
+    context = build_generation_context(project_id, instructions, outline_path=outline_path or "outline.md")
     request_hash = hash_inputs(lesson_input, instructions, str(lesson_number),
-                               context.learning_preferences_json, CONCURRENT_LESSON_PROMPT_VERSION)
+                               context.reuse_fingerprint, CONCURRENT_LESSON_PROMPT_VERSION)
     plan, responsibilities, context = _prepare_lesson_plan(project_id, task_id, settings, planner_prompt, context, request_hash)
     if input_hash is not None:
         update_generation_task(task_id, "running", input_hash=_outline_lesson_task_hash(input_hash, "learning_plan", context))
@@ -1559,7 +1698,8 @@ def _run_learning_plan_lesson_task(
     preview.phase("sections")
     preview.sections(lesson_title, generated_sections)
 
-    def _gen_section(idx, sec):
+    section_inputs = []
+    for idx, sec in enumerate(sections, 1):
         ls = "\n".join("-" + it.get("name", "") + "（类型：" + it.get("kind", "") + "；重点：" + (it.get("focus") or "完整讲清") + "）" for it in sec.get("items", []))
         sp = lesson_policy + "\n\n"
         sp += "你正在编写一节课中的一个核心正文章节，而不是完整课件。\n\n"
@@ -1575,17 +1715,17 @@ def _run_learning_plan_lesson_task(
         sp += "用户补充要求：" + user_instructions + "\n\n"
         sp += "学习材料：\n" + lesson_input + "\n"
         sp += term_metadata_instruction(project_id)
-        _debug_dump(f"task-{task_id}_L{lesson_number}-section-{idx}-prompt.txt", sp)
-        c = _lesson_response(project_id, task_id, f"section-{idx}", settings,
-            _generation_messages([{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
-             {"role": "user", "content": sp}], project_id, instructions, context), responsibilities.version,
-            validate_cached=lambda raw: _validate_cached_section(raw, project_id, instructions, context,
-                                                                  responsibilities, sec["section_id"]))
-        body, model_terms = _parse_generation_response(c, project_id, instructions, context)
-        parsed = _require_generated_manifest(body, context)
-        missing_by_section[idx - 1] = audit_section_manifest(responsibilities, sec["section_id"], parsed.manifest,
-            plan_version=responsibilities.version, tree_version=context.tree_snapshot)
-        parsed.manifest, _notes = _repair_manifest_identity(parsed.manifest, context)
+        messages = _generation_messages(
+            [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
+             {"role": "user", "content": sp}], project_id, instructions, context)
+        section_inputs.append((idx, sec, sp, messages))
+
+    def _validate_section(raw, idx, sec):
+        _validate_cached_section(raw, project_id, instructions, context, responsibilities, sec["section_id"])
+
+    def _finish_section(idx, sec, c):
+        parsed, model_terms, missing_by_section[idx - 1] = _parse_lesson_section_response(
+            c, project_id, instructions, context, responsibilities, sec["section_id"])
         section_manifests[idx - 1] = parsed.manifest
         md = _require_markdown(parsed.body)
         _accept_lesson_response(project_id, task_id, f"section-{idx}")
@@ -1593,32 +1733,64 @@ def _run_learning_plan_lesson_task(
         if not md.lstrip().startswith("##"):
             md = "## " + sec.get("title", "") + "\n\n" + md
         _atomic_write(staging_dir / ("section-" + str(idx).zfill(2) + ".part"), md)
-        return idx, md.strip()
+        return md.strip()
+
+    def _gen_section(idx, sec, sp, messages):
+        result = _lesson_response_result(
+            project_id, task_id, f"section-{idx}", settings, messages, responsibilities.version,
+            validate_cached=lambda raw: _validate_section(raw, idx, sec),
+            reasoning_effort=_section_reasoning_effort(settings),
+            debug_name=f"task-{task_id}_L{lesson_number}-section-{idx}-prompt.txt",
+            debug_text=sp)
+        return idx, _finish_section(idx, sec, result.content), result.reused
 
     try:
-        update_generation_task(task_id, "running",
-            progress_current=1, progress_total=total_calls,
-            stage_label="并发生成 " + str(len(sections)) + " 个章节中…")
-        max_workers = min(len(sections), 4)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_gen_section, i + 1, sec): i for i, sec in enumerate(sections)}
+        reused_count = 0
+        pending = []
+        for idx, sec, sp, messages in section_inputs:
+            cached = _cached_lesson_response(
+                project_id, task_id, f"section-{idx}", settings, messages, responsibilities.version,
+                validate_cached=lambda raw, idx=idx, sec=sec: _validate_section(raw, idx, sec))
+            if cached is None:
+                pending.append((idx, sec, sp, messages))
+                continue
+            try:
+                generated_sections[idx - 1] = _finish_section(idx, sec, cached)
+            except Exception:
+                # A stale or externally damaged cache must regenerate, not abort the task.
+                pending.append((idx, sec, sp, messages))
+                continue
+            reused_count += 1
+            completed_count += 1
+            preview.sections(lesson_title, generated_sections)
+            update_generation_task(task_id, "running",
+                progress_current=1 + completed_count, progress_total=total_calls,
+                stage_label="已复用 " + str(reused_count) + " 个已验证章节")
+        if pending:
+            update_generation_task(task_id, "running",
+                progress_current=1 + completed_count, progress_total=total_calls,
+                stage_label=(("复用 " + str(reused_count) + " 个已验证章节，生成剩余 "
+                              + str(len(pending)) + " 个章节中…") if reused_count
+                             else ("并发生成 " + str(len(pending)) + " 个章节中…")))
             failures = []
-            for future in as_completed(futures):
-                try:
-                    idx, md = future.result()
-                except Exception as exc:
-                    failures.append(exc)
-                    continue
-                generated_sections[idx - 1] = md
-                completed_count += 1
-                preview.sections(lesson_title, generated_sections)
-                st = sections[idx - 1].get("title", "")
-                update_generation_task(task_id, "running",
-                    progress_current=1 + completed_count, progress_total=total_calls,
-                    stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
-
-        if failures:
-            raise failures[0]
+            with ThreadPoolExecutor(max_workers=min(len(pending), _section_concurrency())) as executor:
+                futures = {executor.submit(_gen_section, idx, sec, sp, messages): (idx, sec)
+                           for idx, sec, sp, messages in pending}
+                for future in as_completed(futures):
+                    try:
+                        idx, md, _reused = future.result()
+                    except Exception as exc:
+                        failures.append((futures[future], exc))
+                        continue
+                    generated_sections[idx - 1] = md
+                    completed_count += 1
+                    preview.sections(lesson_title, generated_sections)
+                    st = sections[idx - 1].get("title", "")
+                    update_generation_task(task_id, "running",
+                        progress_current=1 + completed_count, progress_total=total_calls,
+                        stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
+            if failures:
+                _raise_section_failures(failures)
         preview.phase("synthesis")
         joined_sections = "\n\n".join(generated_sections)
         missing = [item for group in missing_by_section for item in group]
@@ -1664,7 +1836,12 @@ def _run_learning_plan_lesson_task(
 教材参照由软件根据规划中的有效书目生成；不要自行编造书目或声称读取了教材原文。
 用户补充要求：{user_instructions}
 """
-        synthesis = _lesson_response(project_id, task_id, "synthesis", settings,
+        metadata_pending = any(manifest.get("metadata_gaps") for manifest in section_manifests)
+        # The editor cannot certify metadata that writers never returned. If
+        # there are no proven content omissions, publish the complete bodies
+        # with an honest pending index, without another paid model call.
+        synthesis = (canonical_comment({"schema_version": 2, "concepts": [], "coverage": [], "terms": []})
+                     if metadata_pending and not missing else _lesson_response(project_id, task_id, "synthesis", settings,
             _generation_messages([
                 {
                     "role": "system",
@@ -1674,12 +1851,20 @@ def _run_learning_plan_lesson_task(
                 },
                 {"role": "user", "content": synthesis_prompt + responsibilities.render() + term_metadata_instruction(project_id)},
             ], project_id, instructions, context), responsibilities.version,
-        ).strip()
-        synthesis, synthesis_terms = _parse_generation_response(synthesis, project_id, instructions, context)
-        parsed_synthesis = _require_generated_manifest(synthesis, context)
-        audit_synthesis_manifest(responsibilities, parsed_synthesis.manifest, missing)
-        parsed_synthesis.manifest, _notes = _repair_manifest_identity(parsed_synthesis.manifest, context)
-        _accept_lesson_response(project_id, task_id, "synthesis")
+            validate_cached=lambda raw: _validate_cached_editor_response(raw, project_id, instructions, context),
+        )).strip()
+        try:
+            synthesis, synthesis_terms = _parse_generation_response(synthesis, project_id, instructions, context)
+            parsed_synthesis = _require_generated_manifest(synthesis, context)
+        except ValueError as exc:
+            # An optional editor response must not discard every paid chapter.
+            parsed_synthesis = _defer_lesson_metadata(synthesis, "synthesis", exc)
+            synthesis_terms = []
+        if not parsed_synthesis.manifest.get("metadata_gaps"):
+            audit_synthesis_manifest(responsibilities, parsed_synthesis.manifest, missing)
+            parsed_synthesis.manifest, _notes = _repair_manifest_identity(parsed_synthesis.manifest, context)
+        if not (metadata_pending and not missing):
+            _accept_lesson_response(project_id, task_id, "synthesis")
         synthesis = parsed_synthesis.body
         _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
         joined_sections = "\n\n".join([*generated_sections, synthesis])
@@ -1711,6 +1896,7 @@ def _run_repository_lesson_task(
     settings: dict[str, str],
     preview: Optional[LessonPreview] = None,
     input_hash: str | None = None,
+    outline_path: str = 'outline.md',
 ) -> tuple[str, str]:
     preview = preview or LessonPreview(project_course_dir(project_id), task_id, {})
     preview.phase("planning")
@@ -1758,9 +1944,9 @@ def _run_repository_lesson_task(
 课程材料：
 {lesson_input}
 """
-    context = build_generation_context(project_id, instructions)
+    context = build_generation_context(project_id, instructions, outline_path=outline_path or "outline.md")
     request_hash = hash_inputs(lesson_input, instructions, str(lesson_number),
-                               context.learning_preferences_json, CONCURRENT_LESSON_PROMPT_VERSION)
+                               context.reuse_fingerprint, CONCURRENT_LESSON_PROMPT_VERSION)
     plan, responsibilities, context = _prepare_lesson_plan(project_id, task_id, settings, planner_prompt, context, request_hash)
     if input_hash is not None:
         update_generation_task(task_id, "running", input_hash=_outline_lesson_task_hash(input_hash, "repository", context))
@@ -1785,7 +1971,8 @@ def _run_repository_lesson_task(
     preview.phase("sections")
     preview.sections(lesson_title, generated_sections)
 
-    def _gen_section(idx, sec):
+    section_inputs = []
+    for idx, sec in enumerate(sections, 1):
         ls = "\n".join("-" + it.get("name", "") + "（类型：" + it.get("kind", "") + "；重点：" + (it.get("focus") or "完整讲清") + "）" for it in sec.get("items", []))
         sp = lesson_policy + "\n\n"
         sp += "你正在编写一节课中的一个核心正文章节，而不是完整课件。\n\n"
@@ -1801,17 +1988,17 @@ def _run_repository_lesson_task(
         sp += "用户补充要求：" + user_instructions + "\n\n"
         sp += "课程材料：\n" + lesson_input + "\n"
         sp += term_metadata_instruction(project_id)
-        _debug_dump(f"task-{task_id}_L{lesson_number}-repo-section-{idx}-prompt.txt", sp)
-        c = _lesson_response(project_id, task_id, f"section-{idx}", settings,
-            _generation_messages([{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
-             {"role": "user", "content": sp}], project_id, instructions, context), responsibilities.version,
-            validate_cached=lambda raw: _validate_cached_section(raw, project_id, instructions, context,
-                                                                  responsibilities, sec["section_id"]))
-        body, model_terms = _parse_generation_response(c, project_id, instructions, context)
-        parsed = _require_generated_manifest(body, context)
-        missing_by_section[idx - 1] = audit_section_manifest(responsibilities, sec["section_id"], parsed.manifest,
-            plan_version=responsibilities.version, tree_version=context.tree_snapshot)
-        parsed.manifest, _notes = _repair_manifest_identity(parsed.manifest, context)
+        messages = _generation_messages(
+            [{"role": "system", "content": compose_system_prompt(load_prompt("prompt.system"), "markdown")},
+             {"role": "user", "content": sp}], project_id, instructions, context)
+        section_inputs.append((idx, sec, sp, messages))
+
+    def _validate_section(raw, idx, sec):
+        _validate_cached_section(raw, project_id, instructions, context, responsibilities, sec["section_id"])
+
+    def _finish_section(idx, sec, c):
+        parsed, model_terms, missing_by_section[idx - 1] = _parse_lesson_section_response(
+            c, project_id, instructions, context, responsibilities, sec["section_id"])
         section_manifests[idx - 1] = parsed.manifest
         md = _require_markdown(parsed.body)
         _accept_lesson_response(project_id, task_id, f"section-{idx}")
@@ -1819,32 +2006,64 @@ def _run_repository_lesson_task(
         if not md.lstrip().startswith("##"):
             md = "## " + sec.get("title", "") + "\n\n" + md
         _atomic_write(staging_dir / ("section-" + str(idx).zfill(2) + ".part"), md)
-        return idx, md.strip()
+        return md.strip()
+
+    def _gen_section(idx, sec, sp, messages):
+        result = _lesson_response_result(
+            project_id, task_id, f"section-{idx}", settings, messages, responsibilities.version,
+            validate_cached=lambda raw: _validate_section(raw, idx, sec),
+            reasoning_effort=_section_reasoning_effort(settings),
+            debug_name=f"task-{task_id}_L{lesson_number}-repo-section-{idx}-prompt.txt",
+            debug_text=sp)
+        return idx, _finish_section(idx, sec, result.content), result.reused
 
     try:
-        update_generation_task(task_id, "running",
-            progress_current=1, progress_total=total_calls,
-            stage_label="并发生成 " + str(len(sections)) + " 个章节中…")
-        max_workers = min(len(sections), 4)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(_gen_section, i + 1, sec): i for i, sec in enumerate(sections)}
+        reused_count = 0
+        pending = []
+        for idx, sec, sp, messages in section_inputs:
+            cached = _cached_lesson_response(
+                project_id, task_id, f"section-{idx}", settings, messages, responsibilities.version,
+                validate_cached=lambda raw, idx=idx, sec=sec: _validate_section(raw, idx, sec))
+            if cached is None:
+                pending.append((idx, sec, sp, messages))
+                continue
+            try:
+                generated_sections[idx - 1] = _finish_section(idx, sec, cached)
+            except Exception:
+                # A stale or externally damaged cache must regenerate, not abort the task.
+                pending.append((idx, sec, sp, messages))
+                continue
+            reused_count += 1
+            completed_count += 1
+            preview.sections(lesson_title, generated_sections)
+            update_generation_task(task_id, "running",
+                progress_current=1 + completed_count, progress_total=total_calls,
+                stage_label="已复用 " + str(reused_count) + " 个已验证章节")
+        if pending:
+            update_generation_task(task_id, "running",
+                progress_current=1 + completed_count, progress_total=total_calls,
+                stage_label=(("复用 " + str(reused_count) + " 个已验证章节，生成剩余 "
+                              + str(len(pending)) + " 个章节中…") if reused_count
+                             else ("并发生成 " + str(len(pending)) + " 个章节中…")))
             failures = []
-            for future in as_completed(futures):
-                try:
-                    idx, md = future.result()
-                except Exception as exc:
-                    failures.append(exc)
-                    continue
-                generated_sections[idx - 1] = md
-                completed_count += 1
-                preview.sections(lesson_title, generated_sections)
-                st = sections[idx - 1].get("title", "")
-                update_generation_task(task_id, "running",
-                    progress_current=1 + completed_count, progress_total=total_calls,
-                    stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
-
-        if failures:
-            raise failures[0]
+            with ThreadPoolExecutor(max_workers=min(len(pending), _section_concurrency())) as executor:
+                futures = {executor.submit(_gen_section, idx, sec, sp, messages): (idx, sec)
+                           for idx, sec, sp, messages in pending}
+                for future in as_completed(futures):
+                    try:
+                        idx, md, _reused = future.result()
+                    except Exception as exc:
+                        failures.append((futures[future], exc))
+                        continue
+                    generated_sections[idx - 1] = md
+                    completed_count += 1
+                    preview.sections(lesson_title, generated_sections)
+                    st = sections[idx - 1].get("title", "")
+                    update_generation_task(task_id, "running",
+                        progress_current=1 + completed_count, progress_total=total_calls,
+                        stage_label="已完成 " + str(completed_count) + "/" + str(len(sections)) + "：" + st)
+            if failures:
+                _raise_section_failures(failures)
         preview.phase("synthesis")
         joined_sections = "\n\n".join(generated_sections)
         missing = [item for group in missing_by_section for item in group]
@@ -1890,7 +2109,12 @@ def _run_repository_lesson_task(
 项目路径、符号、调用关系和运行结果必须有材料依据；无法确认的结论说明证据缺口。
 用户补充要求：{user_instructions}
 """
-        synthesis = _lesson_response(project_id, task_id, "synthesis", settings,
+        metadata_pending = any(manifest.get("metadata_gaps") for manifest in section_manifests)
+        # The editor cannot certify metadata that writers never returned. If
+        # there are no proven content omissions, publish the complete bodies
+        # with an honest pending index, without another paid model call.
+        synthesis = (canonical_comment({"schema_version": 2, "concepts": [], "coverage": [], "terms": []})
+                     if metadata_pending and not missing else _lesson_response(project_id, task_id, "synthesis", settings,
             _generation_messages([
                 {
                     "role": "system",
@@ -1900,12 +2124,20 @@ def _run_repository_lesson_task(
                 },
                 {"role": "user", "content": synthesis_prompt + responsibilities.render() + term_metadata_instruction(project_id)},
             ], project_id, instructions, context), responsibilities.version,
-        ).strip()
-        synthesis, synthesis_terms = _parse_generation_response(synthesis, project_id, instructions, context)
-        parsed_synthesis = _require_generated_manifest(synthesis, context)
-        audit_synthesis_manifest(responsibilities, parsed_synthesis.manifest, missing)
-        parsed_synthesis.manifest, _notes = _repair_manifest_identity(parsed_synthesis.manifest, context)
-        _accept_lesson_response(project_id, task_id, "synthesis")
+            validate_cached=lambda raw: _validate_cached_editor_response(raw, project_id, instructions, context),
+        )).strip()
+        try:
+            synthesis, synthesis_terms = _parse_generation_response(synthesis, project_id, instructions, context)
+            parsed_synthesis = _require_generated_manifest(synthesis, context)
+        except ValueError as exc:
+            # An optional editor response must not discard every paid chapter.
+            parsed_synthesis = _defer_lesson_metadata(synthesis, "synthesis", exc)
+            synthesis_terms = []
+        if not parsed_synthesis.manifest.get("metadata_gaps"):
+            audit_synthesis_manifest(responsibilities, parsed_synthesis.manifest, missing)
+            parsed_synthesis.manifest, _notes = _repair_manifest_identity(parsed_synthesis.manifest, context)
+        if not (metadata_pending and not missing):
+            _accept_lesson_response(project_id, task_id, "synthesis")
         synthesis = parsed_synthesis.body
         _atomic_write(staging_dir / "lesson-synthesis.part", synthesis)
         joined_sections = "\n\n".join([*generated_sections, synthesis])
@@ -1968,6 +2200,7 @@ def run_outline_lesson_task(
                 settings,
                 preview,
                 input_hash=input_hash,
+                outline_path=outline_path or "outline.md",
             )
             preview.phase("saving")
             current_task = get_generation_task(task_id)
@@ -2005,7 +2238,7 @@ def run_outline_lesson_task(
                 "completed",
                 output_path=output_path,
                 progress_current=current_task.progress_total if current_task else 0,
-                stage_label="生成完成",
+                stage_label=_lesson_completion_label(lesson),
             )
             preview.finish("completed")
             return
@@ -2019,6 +2252,7 @@ def run_outline_lesson_task(
             settings,
             preview,
             input_hash=input_hash,
+            outline_path=outline_path or "outline.md",
         )
         preview.phase("saving")
         current_task = get_generation_task(task_id)
@@ -2056,7 +2290,7 @@ def run_outline_lesson_task(
             "completed",
             output_path=output_path,
             progress_current=current_task.progress_total if current_task else 0,
-            stage_label="生成完成",
+            stage_label=_lesson_completion_label(content),
         )
         preview.finish("completed")
     except Exception as exc:  # noqa: BLE001
@@ -2078,7 +2312,7 @@ def create_or_reuse_outline_lesson_task(
         _validate_sub_outline_path(project_id, outline_path)
     _, _, input_hash = build_outline_lesson_input(project_id, repo_root, lesson_number, title, instructions, outline_path)
     project = get_project(project_id)
-    context = build_generation_context(project_id, instructions)
+    context = build_generation_context(project_id, instructions, outline_path=outline_path or "outline.md")
     prompt_hash = _outline_lesson_task_hash(input_hash, project.project_type if project is not None else "repository", context)
     mode = f"lesson-{lesson_number:02d}"
     cached = find_completed_task(project_id, "outline_lesson", prompt_hash, PROMPT_VERSION, source_path=outline_rel, mode=mode)
@@ -2149,7 +2383,7 @@ def create_or_reuse_file_lesson_task(
     instructions: str = "",
 ) -> tuple[GenerationTask, bool]:
     _, _, input_hash = build_file_lesson_input(project_id, repo_root, relative_path, mode, instructions)
-    context = build_generation_context(project_id, instructions)
+    context = build_generation_context(project_id, instructions, outline_path="outline.md")
     input_hash = _file_lesson_task_hash(input_hash, mode, context)
     cached = find_completed_task(project_id, "file_lesson", input_hash, PROMPT_VERSION, source_path=relative_path, mode=mode)
     if cached and cached.output_path and Path(cached.output_path).exists():
@@ -2308,7 +2542,7 @@ async def stream_outline_generation(
         filename = _sub_outline_filename(scope)
     else:
         filename = "outline.md"
-    input_hash = hash_inputs(json.dumps(messages, sort_keys=True), context.fingerprint)
+    input_hash = hash_inputs(json.dumps(messages, sort_keys=True), context.fingerprint, CONCURRENT_LESSON_PROMPT_VERSION)
     cached = find_completed_task(project_id, task_type, input_hash, PROMPT_VERSION)
     if cached and cached.output_path and Path(cached.output_path).exists():
         yield _sse_event("completed", {
@@ -2340,7 +2574,7 @@ async def stream_outline_generation(
 
     try:
         full_text = ""
-        async for event in _stream_and_accumulate(settings, _generation_messages(messages, project_id, instructions, context), streaming_path, timeout=180):
+        async for event in _stream_and_accumulate(settings, _outline_generation_messages(messages, project_id, instructions, context), streaming_path, timeout=180):
             if event["event"] == "accumulated":
                 full_text = event["data"]["text"]
             else:
@@ -2415,7 +2649,7 @@ async def stream_file_lesson_generation(
         return
     repo_root = Path(project.local_path).resolve()
     settings = _llm_settings_or_error()
-    context = build_generation_context(project_id, instructions)
+    context = build_generation_context(project_id, instructions, outline_path="outline.md")
 
     prompt_input, _, _ = build_file_lesson_input(project_id, repo_root, relative_path, mode, instructions)
     user_instructions = _clean_instructions(instructions)
@@ -2522,7 +2756,7 @@ async def stream_outline_lesson_generation(
         return
     repo_root = Path(project.local_path).resolve()
     settings = _llm_settings_or_error()
-    context = build_generation_context(project_id, instructions)
+    context = build_generation_context(project_id, instructions, outline_path=outline_path or "outline.md")
 
     outline_rel = outline_path or "outline.md"
     if outline_path is not None and outline_path != "outline.md":

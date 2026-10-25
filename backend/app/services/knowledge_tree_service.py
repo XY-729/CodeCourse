@@ -88,7 +88,7 @@ def _validate_parent_graph(nodes):
 
 
 def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_kind,
-                   content_hash, tree_snapshot=None, generation_id=None, conn=None):
+                   content_hash, tree_snapshot=None, generation_id=None, conn=None, scope_constraint=None):
     """Apply one already quote-validated v2 manifest in a single transaction.
 
     Source fields are program-owned. The caller validates visible quote/spans
@@ -98,7 +98,8 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
     if conn is None:
         return run_in_transaction(lambda db: apply_manifest(project_id, manifest,
             source_type=source_type, source_path=source_path, artifact_kind=artifact_kind,
-            content_hash=content_hash, tree_snapshot=tree_snapshot, generation_id=generation_id, conn=db))
+            content_hash=content_hash, tree_snapshot=tree_snapshot, generation_id=generation_id, conn=db,
+            scope_constraint=scope_constraint))
     _project(conn, project_id)
     if source_type not in {"course", "qa"} or artifact_kind not in {"outline", "lesson", "answer", "root"}:
         raise ValueError("Unsupported teaching source")
@@ -222,6 +223,8 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
         if identity not in before:
             before[identity] = (nodes[identity]["parent_id"], nodes[identity]["placement_status"])
         change = explicit_changes.get(ref)
+        if scope_constraint and identity not in new_ids and (change is not None or nodes[identity]['parent_id'] != parent):
+            raise ValueError('教学内容只能追加次概念，已有概念归属须通过总纲或知识树维护调整')
         if change is not None:
             # An explicit proposal is the only way to move an already placed
             # node; a stale `from_parent_id` keeps the authoritative edge and is
@@ -248,6 +251,10 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
         requested_parents[identity] = parent
         nodes[identity]["parent_id"] = parent
     _validate_parent_graph(nodes)
+    scoped_ids = None
+    if scope_constraint:
+        from app.services.personalization.teaching.outline_forest import validate_lesson_scope
+        scoped_ids = validate_lesson_scope(conn, project_id, nodes, refs, new_ids, scope_constraint)
     placement_changed = False
     for identity, parent in requested_parents.items():
         status = "placed" if parent is not None else "root"
@@ -264,6 +271,8 @@ def apply_manifest(project_id, manifest, *, source_type, source_path, artifact_k
     for item in manifest["coverage"]:
         if not isinstance(item, dict) or item.get("concept_ref") not in refs:
             raise ValueError("Unresolved coverage concept_ref")
+        if scoped_ids is not None and refs[item['concept_ref']] not in scoped_ids:
+            raise ValueError('不能在总纲森林之外追加教学范围，请补充总纲')
         if item.get("kind") not in KINDS or item.get("dimension") not in DIMENSIONS:
             raise ValueError("Invalid coverage kind or dimension")
         _text(item.get("aspect"), "aspect")

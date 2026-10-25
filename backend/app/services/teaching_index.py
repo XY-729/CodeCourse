@@ -42,7 +42,7 @@ def initialize(conn):
     ):
         conn.execute(statement)
     additions = {
-        "teaching_documents": {"artifact_kind": "TEXT NOT NULL DEFAULT 'lesson'", "schema_version": "INTEGER NOT NULL DEFAULT 1", "manifest_json": "TEXT", "metadata_status": "TEXT NOT NULL DEFAULT 'pending'", "metadata_errors_json": "TEXT NOT NULL DEFAULT '[]'", "tree_snapshot_json": "TEXT", "generation_id": "TEXT", "content_status": "TEXT NOT NULL DEFAULT 'published'", "publication_error": "TEXT"},
+        "teaching_documents": {"artifact_kind": "TEXT NOT NULL DEFAULT 'lesson'", "schema_version": "INTEGER NOT NULL DEFAULT 1", "manifest_json": "TEXT", "metadata_status": "TEXT NOT NULL DEFAULT 'pending'", "metadata_errors_json": "TEXT NOT NULL DEFAULT '[]'", "tree_snapshot_json": "TEXT", "generation_id": "TEXT", "content_status": "TEXT NOT NULL DEFAULT 'published'", "publication_error": "TEXT", "outline_scope_json": "TEXT", "lesson_scope_json": "TEXT"},
         "teaching_passages": {"start_offset": "INTEGER", "end_offset": "INTEGER"},
         "understanding_feedback": {"action_id": "TEXT"},
         "teaching_publications": {"expected_hash": "TEXT", "artifact_kind": "TEXT", "tree_snapshot_json": "TEXT", "generation_id": "TEXT"},
@@ -202,11 +202,26 @@ def prepare_metadata(content: str, project_id: int | None = None, intent: str = 
 
 def merge_manifests(manifests: list[dict]) -> dict:
     """Namespace response-local refs before assembling independently generated sections."""
+    for manifest in manifests:
+        gaps = manifest.get("metadata_gaps", [])
+        if not isinstance(gaps, list) or any(
+            not isinstance(gap, dict) or not isinstance(gap.get("section_id"), str)
+            or not gap["section_id"] or not isinstance(gap.get("reason"), str) or not gap["reason"]
+            for gap in gaps
+        ):
+            raise ValueError("metadata_gaps 必须包含章节编号和待补全原因")
     if len(manifests) == 1:
         return manifests[0]
     merged = {"schema_version": 2, "concepts": [], "coverage": [], "terms": [], "placement_changes": []}
     for number, manifest in enumerate(manifests):
+        if manifest.get("metadata_gaps"):
+            merged.setdefault("metadata_gaps", []).extend(manifest["metadata_gaps"])
         prefix = f"section{number}:"
+        if manifest.get('outline_knowledge'):
+            declaration = merged.setdefault('outline_knowledge', {'major_refs': [], 'repeated_ids': []})
+            declaration['major_refs'].extend(prefix + ref for ref in manifest['outline_knowledge']['major_refs'])
+            declaration['repeated_ids'] = sorted(set(declaration['repeated_ids']) |
+                                                 set(manifest['outline_knowledge'].get('repeated_ids', [])))
         for field in ("concepts", "coverage", "terms", "placement_changes"):
             values = manifest.get(field, [])
             if not isinstance(values, list):
@@ -388,7 +403,7 @@ def _validate_terms(body: str, entries: object) -> list[dict]:
 def index_document(project_id: int, source_type: str, source_path: str, content: str,
                    *, artifact_kind: str | None = None, tree_snapshot: dict | None = None,
                    generation_id: str | None = None, content_status: str | None = None,
-                   conn=None, force: bool = False):
+                   conn=None, force: bool = False, scope_constraint=None):
     """Apply metadata only after validating the persisted source; never calls a model.
 
     Producers may stage a draft via publish_document. A source not yet durably
@@ -438,11 +453,17 @@ def index_document(project_id: int, source_type: str, source_path: str, content:
         previous = conn.execute("SELECT * FROM teaching_documents WHERE project_id=? AND source_type=? AND source_path=?",
                                 (project_id, source_type, source_path)).fetchone()
         if (not force and previous and previous["content_hash"] == digest and previous["manifest_json"] is not None
-                and previous["content_status"] == publication and previous["metadata_status"] in {"valid", "invalid"}):
+                and previous["content_status"] == publication and previous["metadata_status"] in {"valid", "invalid", "pending"}
+                and (scope_constraint is None or json.loads(previous['lesson_scope_json'] or 'null') == scope_constraint)
+                and (artifact_kind != 'outline' or previous['outline_scope_json'] or previous['schema_version'] != 2)):
             return previous["id"]
         document_id = previous["id"] if previous else str(uuid4())
         approved, resolved_terms, issues = [], [], list(errors)
         applied_snapshot = tree_snapshot
+        constraint = scope_constraint
+        if constraint is None and previous and previous['lesson_scope_json']:
+            constraint = json.loads(previous['lesson_scope_json'])
+        outline_scope = None
         if status == "valid" and publication == "published":
             conn.execute("SAVEPOINT teaching_manifest")
             try:
@@ -450,7 +471,10 @@ def index_document(project_id: int, source_type: str, source_path: str, content:
                     from app.services.knowledge_tree_service import apply_manifest
                     applied = apply_manifest(project_id, manifest, source_type=source_type, source_path=source_path,
                         artifact_kind=artifact_kind, content_hash=digest, tree_snapshot=tree_snapshot,
-                        generation_id=generation_id, conn=conn)
+                        generation_id=generation_id, conn=conn, scope_constraint=constraint)
+                    if artifact_kind == 'outline':
+                        from app.services.personalization.teaching.outline_forest import make_outline_scope
+                        outline_scope = make_outline_scope(conn, project_id, source_path, manifest, applied)
                     refs = applied["ref_to_id"]
                     from app.services.learning_ranges import resolve
                     approved = [{**item, 'aspect': resolve(conn, refs[item['concept_ref']], item['dimension'], item['aspect'])[0],
@@ -484,6 +508,9 @@ def index_document(project_id: int, source_type: str, source_path: str, content:
                 approved, resolved_terms = [], []
                 issues.append(str(exc))
         metadata_status = "invalid" if issues else status
+        if metadata_status == "valid" and version == 2 and manifest.get("metadata_gaps"):
+            metadata_status = "pending"
+            issues.extend(f"{gap['section_id']}：{gap['reason']}" for gap in manifest["metadata_gaps"])
         index_status = "complete" if metadata_status == "valid" and publication == "published" else "invalid" if metadata_status == "invalid" else "pending"
         if previous and previous["content_hash"] != digest:
             from app.services.personalization.knowledge_state_service import invalidate_source_evidence
@@ -498,6 +525,9 @@ def index_document(project_id: int, source_type: str, source_path: str, content:
                      "ON CONFLICT(project_id,source_type,source_path) DO UPDATE SET " +
                      ",".join(f"{column}=excluded.{column}" for column in columns if column not in {"id", "project_id", "source_type", "source_path"}), values)
         conn.execute("UPDATE teaching_passages SET active=0 WHERE document_id=?", (document_id,))
+        conn.execute('UPDATE teaching_documents SET outline_scope_json=?,lesson_scope_json=? WHERE id=?',
+                     (json.dumps(outline_scope, ensure_ascii=False) if outline_scope else None,
+                      json.dumps(constraint, ensure_ascii=False) if constraint else None, document_id))
         conn.execute("UPDATE teaching_terms SET active=0 WHERE document_id=?", (document_id,))
         for item in approved:
             conn.execute("""INSERT INTO teaching_passages
