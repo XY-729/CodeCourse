@@ -19,7 +19,7 @@ const MAX_TEXT_BYTES = 2 * 1024 * 1024;
 const LANGUAGE_BY_SUFFIX: Record<string, string> = {
   py: "python", js: "javascript", jsx: "javascript", ts: "typescript", tsx: "typescript", json: "json",
   md: "markdown", toml: "toml", yml: "yaml", yaml: "yaml", html: "html", css: "css", scss: "scss",
-  c: "c", h: "c", cpp: "cpp", hpp: "cpp", rs: "rust", go: "go", java: "java", kt: "kotlin",
+  c: "c", h: "c", cc: "cpp", cpp: "cpp", hpp: "cpp", rs: "rust", go: "go", java: "java", kt: "kotlin",
   sh: "shell", bash: "shell", zsh: "shell", fish: "shell",
   sql: "sql", vue: "html", svelte: "html", xml: "xml", svg: "xml",
   gradle: "groovy", kts: "kotlin", properties: "ini", ini: "ini", conf: "ini", cfg: "ini",

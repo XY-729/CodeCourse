@@ -24,6 +24,7 @@ LANGUAGE_BY_SUFFIX = {
     ".scss": "scss",
     ".c": "c",
     ".h": "c",
+    ".cc": "cpp",
     ".cpp": "cpp",
     ".hpp": "cpp",
     ".rs": "rust",

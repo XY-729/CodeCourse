@@ -1,7 +1,22 @@
 import { describe, it, expect } from "vitest";
 import { inferLanguage, normalizeLanguage } from "../platform/android/workspace";
+import { highlightCode } from "../utils/highlightRuntime";
 
 describe("inferLanguage", () => {
+  it.each(["src/main.cc", "src/MAIN.CC", "src/main.cpp", "include/main.hpp"])("detects C++ in %s", (path) => {
+    expect(inferLanguage(path)).toBe("cpp");
+  });
+
+  it("highlights C++ keywords, strings and comments in .cc files", async () => {
+    const code = 'int main() { const char* message = "hello"; return 0; } // greeting';
+    for (const language of [inferLanguage("src/main.cc"), normalizeLanguage("cc"), "cc"]) {
+      const html = await highlightCode(code, language);
+      expect(html).toContain('class="hljs-keyword"');
+      expect(html).toContain('class="hljs-string"');
+      expect(html).toContain('class="hljs-comment"');
+    }
+  });
+
   it("detects Python", () => {
     expect(inferLanguage("src/main.py")).toBe("python");
   });

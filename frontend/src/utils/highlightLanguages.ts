@@ -1,6 +1,6 @@
 export const HIGHLIGHT_LANGUAGE_ALIASES: Record<string, string> = {
   bash: "shell", sh: "shell", zsh: "shell", js: "javascript", jsx: "javascript",
-  ts: "typescript", tsx: "typescript", py: "python", yml: "yaml", h: "c", hpp: "cpp",
+  ts: "typescript", tsx: "typescript", py: "python", yml: "yaml", h: "c", cc: "cpp", hpp: "cpp",
   cs: "csharp", rb: "ruby", kt: "kotlin", kts: "kotlin", ps1: "powershell",
   text: "plaintext", txt: "plaintext",
 };
