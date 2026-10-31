@@ -118,7 +118,11 @@ describe("knowledge graph labels", () => {
 
     positionLabelOverlay(fakeCore(), value, labels);
 
-    expect(labels.get(1)?.style.transform).toContain("translate3d(100px, 112px, 0)");
+    const transform = labels.get(1)?.style.transform ?? "";
+    expect(transform).toContain("translate3d(100px,");
+    const labelY = Number(transform.match(/, ([\d.]+)px, 0\)/)?.[1]);
+    expect(labelY).toBeGreaterThan(105); // Below the node, with a small gap.
+    expect(labelY).toBeLessThanOrEqual(110);
     expect(labels.get(1)?.style.left).toBe("");
   });
 });

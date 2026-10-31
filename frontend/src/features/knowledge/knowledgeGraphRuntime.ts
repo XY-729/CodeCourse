@@ -22,11 +22,8 @@ function clamp(value: number, min: number, max: number) {
 function nodeVisuals(graph: KnowledgeGraph, container: HTMLElement | null, darkMode = false): Map<number, NodeVisual> {
   const { degreeById } = getKnowledgeGraphIndex(graph);
 
-  const minDimension = Math.min(container?.clientWidth ?? 900, container?.clientHeight ?? 680);
-  const density = clamp(Math.sqrt(12 / Math.max(1, graph.nodes.length)), 0.7, 1.18);
-  // 目标尺寸按当前容器计算；紧凑侧栏也保留足够大的最低节点尺寸。
-  const baseSize = clamp(minDimension * 0.06 * density, 52, 76);
-  const sizeSteps = [1, 1.28, 1.62, 2, 2.4, 2.82];
+  // Small dots grow gently with degree, independent of the panel dimensions.
+  // Preserve the existing six color classes in both themes.
   const colorSteps = darkMode
     ? [
         { color: "#343438", borderColor: "#8e8e93" },
@@ -49,7 +46,7 @@ function nodeVisuals(graph: KnowledgeGraph, container: HTMLElement | null, darkM
     graph.nodes.map((node) => {
       const degree = degreeById.get(node.id) ?? 0;
       const level = Math.min(5, degree);
-      const size = Math.round(baseSize * sizeSteps[level]);
+      const size = 6 + Math.min(12, Math.sqrt(degree) * 2);
       const color = colorSteps[level];
       return [node.id, { size, ...color }];
     }),

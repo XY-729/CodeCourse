@@ -1,0 +1,197 @@
+/* Native graph geometry, using the existing CodeCourse theme colors. */
+.knowledge-viewer.obsidian-graph {
+  position: relative;
+  isolation: isolate;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  --graph-surface: var(--apple-surface, var(--cc-surface, #fff));
+  --graph-panel: var(--apple-surface-muted, var(--cc-surface-secondary, #f1f6f3));
+  --graph-text: var(--apple-text, var(--cc-text, #17231f));
+  --graph-muted: var(--apple-text-secondary, var(--cc-text-secondary, #5e6d67));
+  --graph-line: var(--apple-separator, var(--cc-border, #d5dbe3));
+  --graph-accent: var(--apple-blue, var(--cc-accent, #25766c));
+  --graph-hover: var(--apple-fill-hover, var(--cc-hover, #e8f3ef));
+  background: var(--graph-surface);
+  color: var(--graph-text);
+}
+
+.knowledge-viewer.obsidian-graph .knowledge-body { position: absolute; inset: 0; display: block; border: 0; }
+.knowledge-viewer.obsidian-graph .knowledge-canvas-shell,
+.knowledge-viewer.obsidian-graph .knowledge-canvas {
+  background: var(--graph-surface);
+  background-image: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.knowledge-viewer.obsidian-graph .knowledge-canvas { cursor: grab; }
+.knowledge-viewer.obsidian-graph .knowledge-canvas:active { cursor: grabbing; }
+
+.knowledge-viewer.obsidian-graph .knowledge-node-label,
+.knowledge-viewer.obsidian-graph .knowledge-node-label.important,
+.knowledge-viewer.obsidian-graph .knowledge-node-label.matched {
+  will-change: auto;
+  max-width: 240px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: var(--graph-muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: nowrap;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: none;
+  text-shadow: 0 1px 2px var(--graph-surface), 0 -1px 2px var(--graph-surface);
+  transition: opacity 140ms ease, visibility 0s linear;
+}
+.knowledge-viewer.obsidian-graph .knowledge-node-label.important,
+.knowledge-viewer.obsidian-graph .knowledge-node-label.matched { color: var(--graph-text); }
+.knowledge-viewer.obsidian-graph .knowledge-node-label[data-visible="false"],
+.knowledge-viewer.obsidian-graph .knowledge-node-label[data-in-viewport="false"] { opacity: 0; visibility: hidden; }
+
+.knowledge-viewer.obsidian-graph .knowledge-graph-toolbar {
+  position: absolute;
+  z-index: 12;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  max-width: calc(100% - 16px);
+  padding: 2px;
+  border-radius: 5px;
+  background: var(--graph-surface);
+}
+.knowledge-viewer.obsidian-graph .graph-icon-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  padding: 0;
+  color: var(--graph-muted);
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+.knowledge-viewer.obsidian-graph .graph-icon-button svg { stroke-width: 1.65; pointer-events: none; }
+.knowledge-viewer.obsidian-graph .graph-icon-button:hover { color: var(--graph-text); background: var(--graph-hover); }
+.knowledge-viewer.obsidian-graph .graph-icon-button.is-active { color: var(--graph-accent); }
+.knowledge-viewer.obsidian-graph button:disabled { opacity: 0.38; cursor: default; }
+.knowledge-viewer.obsidian-graph .graph-icon-button:focus-visible,
+.knowledge-viewer.obsidian-graph .graph-setting-action:focus-visible { outline: 2px solid var(--graph-accent); outline-offset: -2px; }
+.knowledge-viewer.obsidian-graph .graph-local-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--graph-muted); padding: 0 6px; }
+
+.knowledge-viewer.obsidian-graph .knowledge-graph-settings {
+  position: absolute;
+  z-index: 13;
+  top: 45px;
+  right: 10px;
+  width: min(280px, calc(100% - 20px));
+  max-height: calc(100% - 57px);
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--graph-line);
+  border-radius: 7px;
+  padding: 6px 10px 8px;
+  color: var(--graph-text);
+  background: var(--graph-panel);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--graph-text) 8%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+  scrollbar-width: thin;
+}
+.knowledge-viewer.obsidian-graph .graph-settings-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 0 5px 2px; color: var(--graph-muted); font-size: 11px; }
+.knowledge-viewer.obsidian-graph .graph-settings-heading .graph-icon-button { height: 24px; min-height: 24px; width: 24px; min-width: 24px; }
+.knowledge-viewer.obsidian-graph .graph-settings-section { margin: 0; border: 0; }
+.knowledge-viewer.obsidian-graph .graph-settings-section + .graph-settings-section { border-top: 1px solid var(--graph-line); }
+.knowledge-viewer.obsidian-graph .graph-settings-section > summary { display: flex; align-items: center; gap: 5px; list-style: none; padding: 9px 0; color: var(--graph-text); font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; }
+.knowledge-viewer.obsidian-graph .graph-settings-section > summary::-webkit-details-marker { display: none; }
+.knowledge-viewer.obsidian-graph .graph-settings-section > summary svg { color: var(--graph-muted); transition: transform 120ms ease; }
+.knowledge-viewer.obsidian-graph .graph-settings-section[open] > summary svg { transform: rotate(90deg); }
+.knowledge-viewer.obsidian-graph .graph-settings-section-body { display: flex; flex-direction: column; gap: 11px; padding: 0 2px 13px 17px; }
+.knowledge-viewer.obsidian-graph .graph-setting-row { min-height: 20px; display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 400; }
+.knowledge-viewer.obsidian-graph .graph-setting-row > span { min-width: 0; overflow-wrap: anywhere; }
+.knowledge-viewer.obsidian-graph .graph-setting-row input[role="switch"] { appearance: none; position: relative; flex: 0 0 28px; width: 28px; height: 16px; margin: 0; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--graph-muted) 36%, var(--graph-panel)); cursor: pointer; transition: background-color 140ms ease; }
+.knowledge-viewer.obsidian-graph .graph-setting-row input[role="switch"]::after { content: ""; position: absolute; width: 12px; height: 12px; top: 2px; left: 2px; border-radius: 50%; background: var(--graph-surface); box-shadow: 0 1px 2px color-mix(in srgb, var(--graph-text) 22%, transparent); transition: transform 140ms ease; }
+.knowledge-viewer.obsidian-graph .graph-setting-row input[role="switch"]:checked { background: var(--graph-accent); }
+.knowledge-viewer.obsidian-graph .graph-setting-row input[role="switch"]:checked::after { transform: translateX(12px); }
+.knowledge-viewer.obsidian-graph .graph-slider-row { display: flex; flex-direction: column; gap: 6px; font-weight: 400; }
+.knowledge-viewer.obsidian-graph .graph-setting-caption { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.knowledge-viewer.obsidian-graph .graph-setting-caption output { font-size: 10px; color: var(--graph-muted); font-variant-numeric: tabular-nums; }
+.knowledge-viewer.obsidian-graph .graph-slider-row input[type="range"] { appearance: none; width: 100%; height: 3px; min-height: 3px; margin: 5px 0; padding: 0; border: 0; border-radius: 3px; outline-offset: 5px; background: color-mix(in srgb, var(--graph-muted) 25%, transparent); accent-color: var(--graph-accent); cursor: pointer; }
+.knowledge-viewer.obsidian-graph .graph-slider-row input[type="range"]::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; border: 0; border-radius: 50%; background: var(--graph-accent); box-shadow: none; }
+.knowledge-viewer.obsidian-graph .graph-slider-row input[type="range"]::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 50%; background: var(--graph-accent); }
+.knowledge-viewer.obsidian-graph .graph-filter-search { display: flex; align-items: center; gap: 5px; min-width: 0; min-height: 28px; padding: 0 6px; border: 1px solid var(--graph-line); border-radius: 4px; background: var(--graph-surface); color: var(--graph-muted); }
+.knowledge-viewer.obsidian-graph .graph-filter-search input { min-width: 0; flex: 1; width: 0; height: 28px; border: 0; border-radius: 0; padding: 0; outline: 0; box-shadow: none; color: var(--graph-text); background: transparent; font: inherit; }
+.knowledge-viewer.obsidian-graph .graph-filter-search:focus-within { border-color: var(--graph-accent); }
+.knowledge-viewer.obsidian-graph .graph-filter-search .graph-icon-button { width: 19px; min-width: 19px; height: 22px; min-height: 22px; margin-right: -4px; }
+.knowledge-viewer.obsidian-graph .graph-setting-action { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 28px; padding: 4px 8px; border: 1px solid var(--graph-line); border-radius: 4px; color: var(--graph-text); background: var(--graph-surface); box-shadow: none; cursor: pointer; font: inherit; }
+.knowledge-viewer.obsidian-graph .graph-setting-action:hover { background: var(--graph-hover); }
+.knowledge-viewer.obsidian-graph .graph-settings-note { margin: 0; color: var(--graph-muted); font-size: 11px; }
+.knowledge-viewer.obsidian-graph .graph-color-groups { display: grid; gap: 10px; }
+.knowledge-viewer.obsidian-graph .graph-color-group { display: flex; align-items: center; gap: 9px; }
+.knowledge-viewer.obsidian-graph .graph-color-swatch { width: 10px; height: 10px; flex: 0 0 10px; box-sizing: border-box; border-radius: 50%; }
+.knowledge-viewer.obsidian-graph .graph-color-0 { background: #fff; border: 1px solid #98a5b5; }
+.knowledge-viewer.obsidian-graph .graph-color-1 { background: #3aa76d; }
+.knowledge-viewer.obsidian-graph .graph-color-2 { background: #3b82e6; }
+.knowledge-viewer.obsidian-graph .graph-color-3 { background: #8b5cf6; }
+.knowledge-viewer.obsidian-graph .graph-color-4 { background: #f59e0b; }
+.knowledge-viewer.obsidian-graph .graph-color-5 { background: #e54b4b; }
+html[data-theme="dark"] .knowledge-viewer.obsidian-graph .graph-color-0 { background: #343438; border-color: #8e8e93; }
+html[data-theme="dark"] .knowledge-viewer.obsidian-graph .graph-color-1 { background: #30a46c; }
+html[data-theme="dark"] .knowledge-viewer.obsidian-graph .graph-color-2 { background: #3378d5; }
+html[data-theme="dark"] .knowledge-viewer.obsidian-graph .graph-color-3 { background: #7a4fd8; }
+html[data-theme="dark"] .knowledge-viewer.obsidian-graph .graph-color-4 { background: #d88a10; }
+html[data-theme="dark"] .knowledge-viewer.obsidian-graph .graph-color-5 { background: #d7474f; }
+
+.knowledge-viewer.obsidian-graph .graph-search-overlay { top: 45px; left: 10px; width: min(320px, calc(100% - 20px)); box-sizing: border-box; transform: none; padding: 3px; border-radius: 5px; background: var(--graph-panel); box-shadow: 0 2px 8px color-mix(in srgb, var(--graph-text) 8%, transparent); }
+.knowledge-viewer.obsidian-graph .graph-search-overlay input { color: var(--graph-text); font-size: 12px; }
+.knowledge-viewer.obsidian-graph .graph-search-overlay .knowledge-search-results button { color: var(--graph-text); font-size: 12px; }
+.knowledge-viewer.obsidian-graph .graph-search-overlay .knowledge-search-results button:hover { background: var(--graph-hover); }
+.knowledge-viewer.obsidian-graph .graph-search-empty { grid-column: 1 / -1; padding: 8px; color: var(--graph-muted); font-size: 12px; }
+.knowledge-viewer.obsidian-graph .knowledge-empty-overlay { background: var(--graph-surface); color: var(--graph-muted); }
+.knowledge-viewer.obsidian-graph .knowledge-empty-overlay strong { color: var(--graph-text); font-size: 13px; font-weight: 500; }
+.knowledge-viewer.obsidian-graph .knowledge-empty-overlay span { color: var(--graph-muted); font-size: 12px; }
+.knowledge-viewer.obsidian-graph .knowledge-empty-overlay > svg { margin-bottom: 6px; color: var(--graph-muted); }
+.knowledge-viewer.obsidian-graph .graph-filter-empty { pointer-events: none; }
+.knowledge-viewer.obsidian-graph .graph-filter-empty .graph-setting-action { width: auto; margin-top: 4px; pointer-events: auto; }
+.knowledge-viewer.obsidian-graph .knowledge-graph-status,
+.knowledge-viewer.obsidian-graph .knowledge-graph-connect-hint { position: absolute; z-index: 9; bottom: 10px; left: 10px; max-width: calc(100% - 20px); box-sizing: border-box; border: 1px solid var(--graph-line); border-radius: 5px; padding: 6px 9px; color: var(--graph-muted); background: var(--graph-panel); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.knowledge-viewer.obsidian-graph .knowledge-graph-status { pointer-events: none; }
+.knowledge-viewer.obsidian-graph .knowledge-graph-connect-hint { display: flex; align-items: center; gap: 7px; padding: 2px 5px 2px 9px; color: var(--graph-accent); }
+.knowledge-viewer.obsidian-graph .knowledge-graph-connect-hint > span { min-width: 0; }
+
+.knowledge-viewer.obsidian-graph .knowledge-graph-context-menu { position: absolute; z-index: 20; min-width: 0; width: min(220px, calc(100% - 12px)); max-height: calc(100% - 12px); box-sizing: border-box; overflow: auto; padding: 5px; border: 1px solid var(--graph-line); border-radius: 6px; background: var(--graph-panel); color: var(--graph-text); box-shadow: var(--apple-shadow-md, 0 4px 18px #0002); }
+.knowledge-viewer.obsidian-graph .knowledge-graph-context-menu > button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 29px; border: 0; border-radius: 4px; padding: 5px 8px; color: var(--graph-text); background: transparent; box-shadow: none; font-size: 12px; text-align: left; cursor: pointer; }
+.knowledge-viewer.obsidian-graph .knowledge-graph-context-menu > button > svg { flex-shrink: 0; color: var(--graph-muted); stroke-width: 1.6; }
+.knowledge-viewer.obsidian-graph .knowledge-graph-context-menu > button > span { min-width: 0; overflow-wrap: anywhere; }
+.knowledge-viewer.obsidian-graph .knowledge-graph-context-menu > button:not(:disabled):hover,
+.knowledge-viewer.obsidian-graph .knowledge-graph-context-menu > button:focus-visible { outline: 0; background: var(--graph-hover); }
+.knowledge-viewer.obsidian-graph .knowledge-graph-context-menu > button.is-danger,
+.knowledge-viewer.obsidian-graph .knowledge-graph-context-menu > button.is-danger > svg { color: var(--apple-red, #b92d35); }
+.knowledge-viewer.obsidian-graph .knowledge-graph-context-menu > [role="separator"] { height: 1px; margin: 4px 2px; background: var(--graph-line); }
+.knowledge-viewer.obsidian-graph .graph-menu-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; margin: 0; padding: 4px 8px 7px; color: var(--graph-muted); font-size: 11px; }
+
+@media (max-width: 500px) {
+  .knowledge-viewer.obsidian-graph .graph-local-title { display: none; }
+  .knowledge-viewer.obsidian-graph .graph-search-overlay { width: calc(100% - 20px); top: 45px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .knowledge-viewer.obsidian-graph .knowledge-node-label,
+  .knowledge-viewer.obsidian-graph .graph-settings-section > summary svg,
+  .knowledge-viewer.obsidian-graph .graph-setting-row input[role="switch"]::after { transition: none; }
+}

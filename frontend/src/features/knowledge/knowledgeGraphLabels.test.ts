@@ -38,6 +38,42 @@ function fakeCore(graph: KnowledgeGraph): Core {
 }
 
 describe("knowledge graph labels", () => {
+  it("does not rewrite DOM attributes for an unchanged frame", () => {
+    const graph = graphWithOverlappingNodes(20);
+    const cy = fakeCore(graph);
+    const layer = document.createElement("div");
+    const labels = new Map(graph.nodes.map((node) => {
+      const label = document.createElement("div"); layer.appendChild(label); return [node.id, label];
+    }));
+    const state = { viewMode: "overview" as const, focusedNodeId: null, focusDepth: 1,
+      selectedNodeId: null, hoveredNodeId: null, searchQuery: "", textFade: 0.5 };
+    updateLabelVisibility(cy, graph, labels, state);
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(layer, { attributes: true, subtree: true });
+    for (let frame = 0; frame < 10; frame++) updateLabelVisibility(cy, graph, labels, state);
+    expect(observer.takeRecords()).toHaveLength(0);
+    observer.disconnect();
+  });
+  it("fades labels with zoom while keeping a hovered node readable", () => {
+    const graph = graphWithOverlappingNodes(2);
+    const cy = fakeCore(graph);
+    let zoom = 0.2;
+    cy.zoom = (() => zoom) as Core["zoom"];
+    const labels = new Map(graph.nodes.map((node) => [node.id, document.createElement("div")]));
+    const state = { viewMode: "overview" as const, focusedNodeId: null, focusDepth: 1,
+      selectedNodeId: null, hoveredNodeId: null as number | null, searchQuery: "", textFade: 0.5 };
+    updateLabelVisibility(cy, graph, labels, state);
+    expect(labels.get(1)?.style.opacity).toBe("0");
+    zoom = 1.5;
+    updateLabelVisibility(cy, graph, labels, state);
+    expect(labels.get(1)?.style.opacity).toBe("1");
+    zoom = 0.2;
+    state.hoveredNodeId = 1;
+    updateLabelVisibility(cy, graph, labels, state);
+    expect(labels.get(1)?.style.opacity).toBe("1");
+    expect(labels.get(2)?.style.opacity).toBe("0");
+  });
+
   it("keeps every visible node name even when labels overlap", () => {
     const graph = graphWithOverlappingNodes(16);
     const labels = new Map(graph.nodes.map((node) => {

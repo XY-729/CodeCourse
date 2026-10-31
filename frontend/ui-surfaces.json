@@ -295,6 +295,7 @@
       ],
       "styles": [
         "src/styles/base/knowledge.css",
+          "src/styles/knowledge-obsidian.css",
         "src/styles/apple-content.css",
         "src/styles/android-assistant.css"
       ],
